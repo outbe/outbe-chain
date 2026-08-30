@@ -33,6 +33,7 @@ pub const NODE_HOST_REPLACEMENT_RELAY_V1: &str = "replacement-relay.v1";
 pub const NODE_HOST_REPLACEMENT_PROMOTION_V1: &str = "replacement-promotion.v1";
 pub const NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1: &str = "committed-join-submission.v1";
 pub const NODE_HOST_COMMITTED_JOIN_RELAY_V1: &str = "committed-join-relay.v1";
+pub const NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_V1: &str = "finalized-join-admission-anchor.v1";
 const NODE_HOST_NEXT_MANIFEST_V1: &str = "initialization-manifest.next";
 const NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1: &str = "replacement-candidate.next";
 const NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1: &str = "replacement-submission.next";
@@ -40,9 +41,13 @@ const NODE_HOST_REPLACEMENT_RELAY_NEXT_V1: &str = "replacement-relay.next";
 const NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1: &str = "replacement-promotion.next";
 const NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1: &str = "committed-join-submission.next";
 const NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1: &str = "committed-join-relay.next";
+const NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_NEXT_V1: &str =
+    "finalized-join-admission-anchor.next";
 const NODE_HOST_STATE_LOCK_V1: &str = "state.lock";
 const NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1: &str = "replacement-write.tmp";
 const NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1: &str = "committed-join-write.tmp";
+const NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_SCRATCH_V1: &str =
+    "finalized-join-admission-anchor.tmp";
 const MAX_INITIALIZATION_MANIFEST_BYTES: u64 = 512;
 const REPLACEMENT_CANDIDATE_VERSION_V1: u8 = 1;
 const MAX_REPLACEMENT_CANDIDATE_BYTES: u64 = 1 + 32 + 2 + MAX_INITIALIZATION_MANIFEST_BYTES;
@@ -57,12 +62,80 @@ const REPLACEMENT_PROMOTION_VERSION_V1: u8 = 1;
 const REPLACEMENT_PROMOTION_BYTES: u64 = 1 + 32 + 32;
 const COMMITTED_JOIN_RELAY_VERSION_V1: u8 = 1;
 const MAX_COMMITTED_JOIN_RELAY_BYTES: u64 = MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 4_104;
+const FINALIZED_JOIN_ADMISSION_ANCHOR_VERSION_V1: u8 = 1;
+const FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES: u64 = 1 + (7 * 32) + 8 + 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeHostIdentityV1 {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub reth_p2p_public: [u8; 33],
+}
+
+/// Exact finalized checkpoint that allows a restarted validator to catch up
+/// without trusting its stale local Registry state. This is owner-only local
+/// recovery evidence; it grants no consensus membership or voting authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinalizedJoinAdmissionAnchorV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub node_id_hash: B256,
+    pub enclave_id: B256,
+    pub intent_hash: B256,
+    pub finalized_height: u64,
+    pub finalized_hash: B256,
+    pub finalized_state_root: B256,
+    pub finalized_consensus_timestamp: u64,
+}
+
+impl FinalizedJoinAdmissionAnchorV1 {
+    fn encode_canonical(self) -> [u8; FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES as usize] {
+        let mut out = [0_u8; FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES as usize];
+        out[0] = FINALIZED_JOIN_ADMISSION_ANCHOR_VERSION_V1;
+        out[1..33].copy_from_slice(&self.chain_id);
+        out[33..65].copy_from_slice(self.genesis_hash.as_slice());
+        out[65..97].copy_from_slice(self.node_id_hash.as_slice());
+        out[97..129].copy_from_slice(self.enclave_id.as_slice());
+        out[129..161].copy_from_slice(self.intent_hash.as_slice());
+        out[161..169].copy_from_slice(&self.finalized_height.to_be_bytes());
+        out[169..201].copy_from_slice(self.finalized_hash.as_slice());
+        out[201..233].copy_from_slice(self.finalized_state_root.as_slice());
+        out[233..241].copy_from_slice(&self.finalized_consensus_timestamp.to_be_bytes());
+        out
+    }
+
+    fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
+        if input.len() != FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES as usize
+            || input[0] != FINALIZED_JOIN_ADMISSION_ANCHOR_VERSION_V1
+        {
+            return Err(TransportError::Codec(
+                "finalized join admission anchor framing is invalid".into(),
+            ));
+        }
+        let anchor = Self {
+            chain_id: input[1..33]
+                .try_into()
+                .map_err(|_| TransportError::Codec("finalized join chain id".into()))?,
+            genesis_hash: B256::from_slice(&input[33..65]),
+            node_id_hash: B256::from_slice(&input[65..97]),
+            enclave_id: B256::from_slice(&input[97..129]),
+            intent_hash: B256::from_slice(&input[129..161]),
+            finalized_height: u64::from_be_bytes(
+                input[161..169]
+                    .try_into()
+                    .map_err(|_| TransportError::Codec("finalized join height".into()))?,
+            ),
+            finalized_hash: B256::from_slice(&input[169..201]),
+            finalized_state_root: B256::from_slice(&input[201..233]),
+            finalized_consensus_timestamp: u64::from_be_bytes(
+                input[233..241]
+                    .try_into()
+                    .map_err(|_| TransportError::Codec("finalized join timestamp".into()))?,
+            ),
+        };
+        validate_finalized_join_admission_anchor(anchor)?;
+        Ok(anchor)
+    }
 }
 
 impl NodeHostIdentityV1 {
@@ -1025,6 +1098,91 @@ pub fn clear_committed_join_checkpoint(
     Ok(())
 }
 
+/// Persist an exact finalized join checkpoint before any local promotion,
+/// checkpoint cleanup, or successful CLI return. Exact replay is idempotent;
+/// only a strictly later checkpoint for the same chain and NodeHost identity
+/// may replace it.
+pub fn persist_finalized_join_admission_anchor(
+    node_data_dir: &Path,
+    anchor: FinalizedJoinAdmissionAnchorV1,
+) -> Result<FinalizedJoinAdmissionAnchorV1, TransportError> {
+    validate_finalized_join_admission_anchor(anchor)?;
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    reconcile_committed_join_state(&paths, &manifest)?;
+    reconcile_finalized_join_admission_anchor(&paths)?;
+    validate_anchor_against_local_state(&paths, &manifest, anchor)?;
+    if let Some(pending_intent_hash) = durable_join_intent_hash(&paths, &manifest)? {
+        if pending_intent_hash != anchor.intent_hash {
+            return Err(TransportError::Codec(
+                "finalized join admission anchor does not match the durable join intent".into(),
+            ));
+        }
+    } else if has_incomplete_join_checkpoint(&paths)? {
+        return Err(TransportError::Codec(
+            "unfinished join checkpoint is incomplete".into(),
+        ));
+    }
+
+    if path_exists(&paths.finalized_join_admission_anchor)? {
+        let durable = read_finalized_join_admission_anchor(&paths.finalized_join_admission_anchor)?;
+        validate_anchor_replacement(durable, anchor)?;
+        if durable == anchor {
+            return Ok(durable);
+        }
+    }
+    replace_bytes_atomically(
+        &paths.finalized_join_admission_anchor,
+        &paths.finalized_join_admission_anchor_next,
+        &paths.finalized_join_admission_anchor_scratch,
+        &anchor.encode_canonical(),
+        &paths.root,
+    )?;
+    Ok(anchor)
+}
+
+/// Load the validator catch-up authority. An unfinished durable join without
+/// its exact anchor fails closed so a stale prior anchor cannot be reused.
+pub fn load_finalized_join_admission_anchor(
+    node_data_dir: &Path,
+) -> Result<Option<FinalizedJoinAdmissionAnchorV1>, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    reconcile_committed_join_state(&paths, &manifest)?;
+    reconcile_finalized_join_admission_anchor(&paths)?;
+    let pending_intent_hash = durable_join_intent_hash(&paths, &manifest)?;
+    if !path_exists(&paths.finalized_join_admission_anchor)? {
+        if pending_intent_hash.is_some() || has_incomplete_join_checkpoint(&paths)? {
+            return Err(TransportError::Codec(
+                "unfinished join has no finalized admission anchor".into(),
+            ));
+        }
+        return Ok(None);
+    }
+    let anchor = read_finalized_join_admission_anchor(&paths.finalized_join_admission_anchor)?;
+    validate_anchor_against_local_state(&paths, &manifest, anchor)?;
+    if let Some(intent_hash) = pending_intent_hash {
+        if intent_hash != anchor.intent_hash {
+            return Err(TransportError::Codec(
+                "unfinished join conflicts with the finalized admission anchor".into(),
+            ));
+        }
+    } else if has_incomplete_join_checkpoint(&paths)? {
+        return Err(TransportError::Codec(
+            "unfinished join checkpoint is incomplete".into(),
+        ));
+    }
+    Ok(Some(anchor))
+}
+
 /// Persist the exact signed transaction before the first relay attempt. The
 /// transaction is inseparable from the already durable candidate submission.
 pub fn persist_replacement_candidate_relay(
@@ -1596,6 +1754,17 @@ fn read_replacement_promotion(
     FinalizedReplacementAuthorizationV1::decode_canonical(&bytes)
 }
 
+fn read_finalized_join_admission_anchor(
+    path: &Path,
+) -> Result<FinalizedJoinAdmissionAnchorV1, TransportError> {
+    let bytes = read_owned_bounded_file(
+        path,
+        FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES,
+        "finalized join admission anchor",
+    )?;
+    FinalizedJoinAdmissionAnchorV1::decode_canonical(&bytes)
+}
+
 fn validate_durable_replacement_submission(
     manifest: &EnclaveInitializationManifestV1,
     submission: &ReplacementCandidateSubmissionV1,
@@ -1745,6 +1914,118 @@ fn validate_finalized_replacement_binding(
         ));
     }
     Ok(())
+}
+
+fn validate_finalized_join_admission_anchor(
+    anchor: FinalizedJoinAdmissionAnchorV1,
+) -> Result<(), TransportError> {
+    if anchor.chain_id == [0; 32]
+        || anchor.genesis_hash.is_zero()
+        || anchor.node_id_hash.is_zero()
+        || anchor.enclave_id.is_zero()
+        || anchor.intent_hash.is_zero()
+        || anchor.finalized_height == 0
+        || anchor.finalized_hash.is_zero()
+        || anchor.finalized_state_root.is_zero()
+        || anchor.finalized_consensus_timestamp == 0
+    {
+        return Err(TransportError::Codec(
+            "finalized join admission anchor is incomplete".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_anchor_replacement(
+    durable: FinalizedJoinAdmissionAnchorV1,
+    requested: FinalizedJoinAdmissionAnchorV1,
+) -> Result<(), TransportError> {
+    if durable == requested {
+        return Ok(());
+    }
+    if durable.chain_id != requested.chain_id
+        || durable.genesis_hash != requested.genesis_hash
+        || durable.node_id_hash != requested.node_id_hash
+        || requested.finalized_height <= durable.finalized_height
+        || requested.finalized_consensus_timestamp < durable.finalized_consensus_timestamp
+    {
+        return Err(TransportError::Codec(
+            "finalized join admission anchor replacement must be newer for the same chain and NodeHost identity; requested value conflicts with durable state".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_anchor_against_local_state(
+    paths: &NodeHostPaths,
+    active: &EnclaveInitializationManifestV1,
+    anchor: FinalizedJoinAdmissionAnchorV1,
+) -> Result<(), TransportError> {
+    validate_finalized_join_admission_anchor(anchor)?;
+    let active_node_id_hash = active.node_id.node_id_hash().map_err(codec_error)?;
+    if anchor.chain_id != active.chain_id
+        || anchor.genesis_hash != active.genesis_hash
+        || anchor.node_id_hash != active_node_id_hash
+    {
+        return Err(TransportError::Codec(
+            "finalized join admission anchor targets another chain or NodeHost identity".into(),
+        ));
+    }
+    let active_enclave_id = active.enclave_id().map_err(codec_error)?;
+    let candidate_enclave_id = if path_exists(&paths.replacement_candidate)? {
+        Some(
+            read_replacement_candidate(&paths.replacement_candidate)?
+                .manifest
+                .enclave_id()
+                .map_err(codec_error)?,
+        )
+    } else {
+        None
+    };
+    if anchor.enclave_id != active_enclave_id && candidate_enclave_id != Some(anchor.enclave_id) {
+        return Err(TransportError::Codec(
+            "finalized join admission anchor targets another local enclave".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn durable_join_intent_hash(
+    paths: &NodeHostPaths,
+    active: &EnclaveInitializationManifestV1,
+) -> Result<Option<B256>, TransportError> {
+    let candidate_submission = path_exists(&paths.replacement_submission)?;
+    let committed_submission = path_exists(&paths.committed_join_submission)?;
+    if candidate_submission && committed_submission {
+        return Err(TransportError::Codec(
+            "candidate and committed join checkpoints coexist".into(),
+        ));
+    }
+    if candidate_submission {
+        if !path_exists(&paths.replacement_candidate)? {
+            return Err(TransportError::Codec(
+                "replacement submission is missing its candidate".into(),
+            ));
+        }
+        let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
+        let submission = read_replacement_submission(&paths.replacement_submission)?;
+        let intent = validate_durable_replacement_submission(&candidate.manifest, &submission)?;
+        return intent.intent_hash().map(Some).map_err(codec_error);
+    }
+    if committed_submission {
+        let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+        let intent = validate_durable_committed_join_submission(active, &submission)?;
+        return intent.intent_hash().map(Some).map_err(codec_error);
+    }
+    Ok(None)
+}
+
+fn has_incomplete_join_checkpoint(paths: &NodeHostPaths) -> Result<bool, TransportError> {
+    Ok(path_exists(&paths.replacement_candidate)?
+        || path_exists(&paths.replacement_submission)?
+        || path_exists(&paths.replacement_relay)?
+        || path_exists(&paths.committed_join_submission)?
+        || path_exists(&paths.committed_join_relay)?)
 }
 
 fn read_owned_bounded_file(
@@ -1928,6 +2209,36 @@ fn validate_candidate_refresh_pair(
             "candidate refresh journal changes replacement identity".into(),
         ));
     }
+    Ok(())
+}
+
+fn reconcile_finalized_join_admission_anchor(paths: &NodeHostPaths) -> Result<(), TransportError> {
+    if path_exists(&paths.finalized_join_admission_anchor_scratch)? {
+        remove_file_if_exists(&paths.finalized_join_admission_anchor_scratch)?;
+        File::open(&paths.root)?.sync_all()?;
+    }
+    if !path_exists(&paths.finalized_join_admission_anchor_next)? {
+        return Ok(());
+    }
+    let next = read_finalized_join_admission_anchor(&paths.finalized_join_admission_anchor_next)?;
+    if path_exists(&paths.finalized_join_admission_anchor)? {
+        let durable = read_finalized_join_admission_anchor(&paths.finalized_join_admission_anchor)?;
+        validate_anchor_replacement(durable, next)?;
+        if durable == next {
+            remove_file_if_exists(&paths.finalized_join_admission_anchor_next)?;
+        } else {
+            fs::rename(
+                &paths.finalized_join_admission_anchor_next,
+                &paths.finalized_join_admission_anchor,
+            )?;
+        }
+    } else {
+        fs::rename(
+            &paths.finalized_join_admission_anchor_next,
+            &paths.finalized_join_admission_anchor,
+        )?;
+    }
+    File::open(&paths.root)?.sync_all()?;
     Ok(())
 }
 
@@ -2331,6 +2642,7 @@ struct NodeHostPaths {
     replacement_promotion: PathBuf,
     committed_join_submission: PathBuf,
     committed_join_relay: PathBuf,
+    finalized_join_admission_anchor: PathBuf,
     next_manifest: PathBuf,
     replacement_candidate_next: PathBuf,
     replacement_submission_next: PathBuf,
@@ -2338,8 +2650,10 @@ struct NodeHostPaths {
     replacement_promotion_next: PathBuf,
     committed_join_submission_next: PathBuf,
     committed_join_relay_next: PathBuf,
+    finalized_join_admission_anchor_next: PathBuf,
     replacement_write_scratch: PathBuf,
     committed_join_write_scratch: PathBuf,
+    finalized_join_admission_anchor_scratch: PathBuf,
 }
 
 impl NodeHostPaths {
@@ -2356,6 +2670,8 @@ impl NodeHostPaths {
             replacement_promotion: root.join(NODE_HOST_REPLACEMENT_PROMOTION_V1),
             committed_join_submission: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1),
             committed_join_relay: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_V1),
+            finalized_join_admission_anchor: root
+                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_V1),
             next_manifest: root.join(NODE_HOST_NEXT_MANIFEST_V1),
             replacement_candidate_next: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1),
             replacement_submission_next: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1),
@@ -2363,8 +2679,12 @@ impl NodeHostPaths {
             replacement_promotion_next: root.join(NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1),
             committed_join_submission_next: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1),
             committed_join_relay_next: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1),
+            finalized_join_admission_anchor_next: root
+                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_NEXT_V1),
             replacement_write_scratch: root.join(NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1),
             committed_join_write_scratch: root.join(NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1),
+            finalized_join_admission_anchor_scratch: root
+                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_SCRATCH_V1),
             root,
         }
     }
@@ -2529,6 +2849,28 @@ mod tests {
             active,
             candidate,
             authorization,
+        }
+    }
+
+    fn finalized_join_anchor(fixture: &ReplacementFixture) -> FinalizedJoinAdmissionAnchorV1 {
+        let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
+        let intent = match evidence {
+            AttestationEvidenceV1::Dcap(value) => value.intent,
+            AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
+        };
+        FinalizedJoinAdmissionAnchorV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            node_id_hash: intent.node_id.node_id_hash().unwrap(),
+            enclave_id: intent.enclave_id,
+            intent_hash: intent.intent_hash().unwrap(),
+            finalized_height: 91,
+            finalized_hash: B256::repeat_byte(0x91),
+            finalized_state_root: B256::repeat_byte(0x92),
+            finalized_consensus_timestamp: 19_000,
         }
     }
 
@@ -3279,5 +3621,131 @@ mod tests {
         );
         assert!(!fixture.paths.replacement_submission.exists());
         assert!(fixture.paths.replacement_promotion.exists());
+    }
+
+    #[test]
+    fn finalized_join_anchor_is_owner_only_and_round_trips_exactly() {
+        let fixture = replacement_fixture();
+        let anchor = finalized_join_anchor(&fixture);
+
+        assert_eq!(
+            persist_finalized_join_admission_anchor(&fixture.node_data_dir, anchor).unwrap(),
+            anchor
+        );
+        assert_eq!(
+            load_finalized_join_admission_anchor(&fixture.node_data_dir).unwrap(),
+            Some(anchor)
+        );
+        assert_eq!(
+            std::fs::metadata(&fixture.paths.finalized_join_admission_anchor)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn finalized_join_anchor_replay_is_exact_and_replacement_is_strictly_monotonic() {
+        let fixture = replacement_fixture();
+        let anchor = finalized_join_anchor(&fixture);
+        persist_finalized_join_admission_anchor(&fixture.node_data_dir, anchor).unwrap();
+        persist_finalized_join_admission_anchor(&fixture.node_data_dir, anchor).unwrap();
+
+        let conflicting = FinalizedJoinAdmissionAnchorV1 {
+            finalized_hash: B256::repeat_byte(0xa1),
+            ..anchor
+        };
+        assert!(
+            persist_finalized_join_admission_anchor(&fixture.node_data_dir, conflicting)
+                .unwrap_err()
+                .to_string()
+                .contains("conflicts")
+        );
+
+        let lower = FinalizedJoinAdmissionAnchorV1 {
+            finalized_height: anchor.finalized_height - 1,
+            finalized_hash: B256::repeat_byte(0xa2),
+            ..anchor
+        };
+        assert!(
+            persist_finalized_join_admission_anchor(&fixture.node_data_dir, lower)
+                .unwrap_err()
+                .to_string()
+                .contains("newer")
+        );
+
+        let later = FinalizedJoinAdmissionAnchorV1 {
+            finalized_height: anchor.finalized_height + 1,
+            finalized_hash: B256::repeat_byte(0xa3),
+            finalized_state_root: B256::repeat_byte(0xa4),
+            finalized_consensus_timestamp: anchor.finalized_consensus_timestamp + 1,
+            ..anchor
+        };
+        persist_finalized_join_admission_anchor(&fixture.node_data_dir, later).unwrap();
+        assert_eq!(
+            load_finalized_join_admission_anchor(&fixture.node_data_dir).unwrap(),
+            Some(later)
+        );
+    }
+
+    #[test]
+    fn unfinished_join_without_matching_anchor_fails_closed() {
+        let fixture = replacement_fixture();
+        assert!(load_finalized_join_admission_anchor(&fixture.node_data_dir)
+            .unwrap_err()
+            .to_string()
+            .contains("unfinished join"));
+
+        let mut wrong = finalized_join_anchor(&fixture);
+        wrong.intent_hash = B256::repeat_byte(0xb1);
+        assert!(
+            persist_finalized_join_admission_anchor(&fixture.node_data_dir, wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("durable join intent")
+        );
+    }
+
+    #[test]
+    fn finalized_join_anchor_restart_recovers_only_complete_next_record() {
+        let fixture = replacement_fixture();
+        let anchor = finalized_join_anchor(&fixture);
+        let bytes = anchor.encode_canonical();
+        write_bytes_once(
+            &fixture.paths.finalized_join_admission_anchor_next,
+            &bytes,
+            &fixture.paths.root,
+        )
+        .unwrap();
+        write_bytes_once(
+            &fixture.paths.finalized_join_admission_anchor_scratch,
+            b"torn",
+            &fixture.paths.root,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_finalized_join_admission_anchor(&fixture.node_data_dir).unwrap(),
+            Some(anchor)
+        );
+        assert!(fixture.paths.finalized_join_admission_anchor.exists());
+        assert!(!fixture.paths.finalized_join_admission_anchor_next.exists());
+        assert!(!fixture
+            .paths
+            .finalized_join_admission_anchor_scratch
+            .exists());
+    }
+
+    #[test]
+    fn corrupt_finalized_join_anchor_is_retained_and_rejected() {
+        let fixture = replacement_fixture();
+        let anchor = finalized_join_anchor(&fixture);
+        persist_finalized_join_admission_anchor(&fixture.node_data_dir, anchor).unwrap();
+        std::fs::write(&fixture.paths.finalized_join_admission_anchor, [0xff, 0x00]).unwrap();
+
+        assert!(load_finalized_join_admission_anchor(&fixture.node_data_dir).is_err());
+        assert!(fixture.paths.finalized_join_admission_anchor.exists());
     }
 }

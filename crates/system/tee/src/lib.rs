@@ -53,12 +53,13 @@ pub use node_host::{
     clear_committed_join_checkpoint, connect_committed_node_host_enclave,
     connect_or_initialize_node_host_enclave, construct_finalized_replacement_authorization_v1,
     load_committed_enclave_manifest_v1, load_committed_join_relay, load_committed_join_submission,
-    load_replacement_candidate_relay, load_replacement_candidate_submission,
-    persist_committed_join_relay, persist_committed_join_submission,
+    load_finalized_join_admission_anchor, load_replacement_candidate_relay,
+    load_replacement_candidate_submission, persist_committed_join_relay,
+    persist_committed_join_submission, persist_finalized_join_admission_anchor,
     persist_replacement_candidate_relay, persist_replacement_candidate_submission,
     prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
-    CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedReplacementAuthorizationV1,
-    FinalizedReplacementBindingV1, NodeHostIdentityV1, ReplacementCandidateEnclaveV1,
+    CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1,
+    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, NodeHostIdentityV1,
     ReplacementCandidateRelayV1, ReplacementCandidateSubmissionV1,
 };
 pub use remote_session::{
