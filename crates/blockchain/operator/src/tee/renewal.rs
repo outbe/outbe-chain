@@ -492,12 +492,26 @@ async fn submit_attempt(
         .relay_variants
         .last()
         .ok_or_else(|| eyre::eyre!("renewal attempt has no relay transaction"))?;
-    let returned_hash = match rpc.send_raw_transaction(&raw.raw_transaction).await {
-        Ok(returned) => returned
-            .parse::<B256>()
-            .wrap_err("parse eth_sendRawTransaction renewal hash")?,
-        Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
-        Err(error) => return Err(error).wrap_err("submit exact renewal transaction"),
+    let already_observed = replayed && exact_transaction_receipt_exists(rpc, raw).await?;
+    let returned_hash = if already_observed {
+        raw.transaction_hash
+    } else {
+        match rpc.send_raw_transaction(&raw.raw_transaction).await {
+            Ok(returned) => returned
+                .parse::<B256>()
+                .wrap_err("parse eth_sendRawTransaction renewal hash")?,
+            Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
+            Err(error) if transaction_nonce_is_too_low(&error) => {
+                if exact_transaction_receipt_exists(rpc, raw).await? {
+                    raw.transaction_hash
+                } else {
+                    return Err(error).wrap_err(
+                        "renewal nonce was consumed without the exact transaction receipt",
+                    );
+                }
+            }
+            Err(error) => return Err(error).wrap_err("submit exact renewal transaction"),
+        }
     };
     if returned_hash != raw.transaction_hash {
         eyre::bail!("RPC returned a transaction hash different from the signed renewal bytes");
@@ -520,9 +534,42 @@ async fn submit_attempt(
     })
 }
 
+async fn exact_transaction_receipt_exists(
+    rpc: &(impl RenewalRpc + Sync),
+    raw: &crate::tx::RawRelayTransactionV1,
+) -> Result<bool> {
+    let expected_hash = format!("{:#x}", raw.transaction_hash);
+    let Some(receipt) = rpc.transaction_receipt(&expected_hash).await? else {
+        return Ok(false);
+    };
+    let observed_hash = receipt
+        .get("transactionHash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no transactionHash"))?;
+    eyre::ensure!(
+        observed_hash.eq_ignore_ascii_case(&expected_hash),
+        "renewal RPC returned a receipt for a different transaction hash"
+    );
+    let status = receipt
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no status"))?;
+    eyre::ensure!(
+        status != "0x0",
+        "exact renewal transaction reverted before canonical finality"
+    );
+    Ok(true)
+}
+
 fn transaction_is_already_known(error: &eyre::Report) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
     message.contains("already known") || message.contains("known transaction")
+}
+
+fn transaction_nonce_is_too_low(error: &eyre::Report) -> bool {
+    format!("{error:#}")
+        .to_ascii_lowercase()
+        .contains("nonce too low")
 }
 
 fn finalize(
@@ -718,6 +765,8 @@ mod tests {
         policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
         binding: RenewalBindingV1,
         schedule: TeeRenewalScheduleV1,
+        receipt: Option<serde_json::Value>,
+        send_error: Option<&'static str>,
         sent: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
@@ -726,7 +775,7 @@ mod tests {
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
-            eyre::bail!("unused transaction_receipt")
+            Ok(self.receipt.clone())
         }
 
         async fn logs(
@@ -793,6 +842,9 @@ mod tests {
 
         async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
             self.sent.lock().unwrap().push(raw_transaction.to_vec());
+            if let Some(error) = self.send_error {
+                return Err(eyre::eyre!(error));
+            }
             Ok(format!("{:#x}", keccak256(raw_transaction)))
         }
 
@@ -1083,6 +1135,8 @@ mod tests {
             policy,
             binding: source,
             schedule,
+            receipt: None,
+            send_error: None,
             sent,
         };
         let config = RenewalServiceConfigV1 {
@@ -1206,12 +1260,18 @@ mod tests {
     }
 
     #[test]
-    fn already_known_is_the_only_replay_error_treated_as_delivery() {
+    fn replay_transport_errors_are_classified_narrowly() {
         assert!(transaction_is_already_known(&eyre::eyre!("already known")));
         assert!(transaction_is_already_known(&eyre::eyre!(
             "known transaction"
         )));
         assert!(!transaction_is_already_known(&eyre::eyre!("nonce too low")));
+        assert!(transaction_nonce_is_too_low(&eyre::eyre!(
+            "nonce too low: next nonce 1, tx nonce 0"
+        )));
+        assert!(!transaction_nonce_is_too_low(&eyre::eyre!(
+            "replacement transaction underpriced"
+        )));
     }
 
     #[tokio::test]
@@ -1274,6 +1334,82 @@ mod tests {
                 assert_eq!(transaction_hashes, vec![expected_hash]);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn submitted_exact_transaction_observed_before_finality_is_not_rebroadcast() {
+        let node_data_dir = tempfile::tempdir().unwrap();
+        let (mut rpc, relay, config, attempt) =
+            replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        let expected_hash = attempt.relay_variants[0].transaction_hash;
+        rpc.receipt = Some(serde_json::json!({
+            "transactionHash": format!("{expected_hash:#x}"),
+            "status": "0x1",
+        }));
+        RenewalJournalGuard::acquire(node_data_dir.path())
+            .unwrap()
+            .store(RenewalJournalSnapshotV1::new(
+                RenewalJournalStateV1::Submitted {
+                    attempt,
+                    submitted_at_finalized_height: 119,
+                    transaction_hashes: vec![expected_hash],
+                },
+            ))
+            .unwrap();
+
+        let mut enclave = ReplayMustNotPrepare;
+        let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+            panic!("receipt reconciliation regenerated a NodeHost signature")
+        };
+        let outcome = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            RenewalOutcomeV1::Submitted {
+                transaction_hash: expected_hash,
+                replayed: true,
+            }
+        );
+        assert!(
+            rpc.sent.lock().unwrap().is_empty(),
+            "an exact transaction already observed by receipt must not be rebroadcast before finality"
+        );
+    }
+
+    #[tokio::test]
+    async fn nonce_too_low_without_exact_receipt_fails_closed() {
+        let node_data_dir = tempfile::tempdir().unwrap();
+        let (mut rpc, relay, config, attempt) =
+            replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        let expected_hash = attempt.relay_variants[0].transaction_hash;
+        rpc.send_error = Some("nonce too low: next nonce 1, tx nonce 0");
+        RenewalJournalGuard::acquire(node_data_dir.path())
+            .unwrap()
+            .store(RenewalJournalSnapshotV1::new(
+                RenewalJournalStateV1::Submitted {
+                    attempt,
+                    submitted_at_finalized_height: 119,
+                    transaction_hashes: vec![expected_hash],
+                },
+            ))
+            .unwrap();
+
+        let mut enclave = ReplayMustNotPrepare;
+        let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+            panic!("nonce conflict handling regenerated a NodeHost signature")
+        };
+        let error = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
+            .await
+            .expect_err("a consumed nonce without the exact receipt must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("consumed without the exact transaction receipt"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
