@@ -847,6 +847,20 @@ fn recovered_nodes_resume(world: &mut World) {
         .confirm_ready_outcome(&validator_key, MISSED_VALIDATOR)
         .expect("submit readiness after TEE rejoin");
     assert!(ready.success, "readiness confirmation failed");
+    let readiness_height = ready
+        .block_number()
+        .expect("readiness receipt block number");
+    let primary = world.validators.primary_port();
+    wait_until(
+        || {
+            world
+                .rpc
+                .finalized(primary)
+                .is_some_and(|height| height >= readiness_height)
+        },
+        60,
+        "readiness receipt canonical finality",
+    );
     assert_eq!(
         world
             .rpc
@@ -876,7 +890,6 @@ fn recovered_nodes_resume(world: &mut World) {
         world.localnet.validator_running(MISSED_VALIDATOR),
         "validator process exited during fresh DKG activation"
     );
-    let primary = world.validators.primary_port();
     let canonical_checkpoint = world
         .rpc
         .finalized(primary)
