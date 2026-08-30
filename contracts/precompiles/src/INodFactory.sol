@@ -56,18 +56,10 @@ interface INodFactory {
     /// @dev Callable only by the Nod's owner, who is also the gratis recipient
     ///      and so can always supply the mint authorization.
     ///
-    ///      The Nod's cost is discharged here, by spending a PayNote rather than
-    ///      by a prior transparent payment. The underlying value already reached
-    ///      the reserve vault when the note was deposited, so this call moves no
-    ///      tokens: it books the note's nullifier, appends any change note to the
-    ///      pool, and logs `NodPaid` naming that nullifier.
-    ///
-    ///      Guards run cheapest-first and the whole call is one rollback unit:
-    ///      owner, proof of work, bucket qualification, and the call-notice
-    ///      deadline are checked before the proof is verified, so a doomed call
-    ///      never pays for verification and a late failure leaves the note
-    ///      spendable. Reverts if the Nod's OCOMP generation is not yet fully
-    ///      materialized.
+    ///      The Nod's cost is discharged here, by spending a PayNote.
+    ///      The underlying value already reached the reserve vault when the note
+    ///      was deposited, so this call moves no tokens: it books the note's nullifier,
+    ///      appends any change note to the pool, and logs `NodPaid` event.
     ///
     /// @param nodId        Identifier of a Nod owned by the caller.
     /// @param nonce        Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
