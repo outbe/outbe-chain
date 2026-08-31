@@ -5,9 +5,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::errors::GemFactoryError;
 
-use crate::constants::{
-    EXPIRY_STALL_THRESHOLD, MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS,
-};
+use crate::constants::{MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS};
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
 
@@ -64,12 +62,12 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
                     .read(&position_id)?
                     .saturating_add(1);
                 factory.expiry_attempts.write(&position_id, attempts)?;
-                if attempts == EXPIRY_STALL_THRESHOLD {
+                // Announced on the first failure: nothing here fails transiently.
+                if attempts == 1 {
                     emit_event(
                         storage,
                         crate::precompile::IGemFactory::GemPositionExpiryStalled {
                             positionId: position_id,
-                            attempts,
                         },
                     )?;
                 }

@@ -9,7 +9,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::constants::{EXPIRY_STALL_THRESHOLD, MAX_SERIES_ACTIONS_PER_SWEEP};
+use crate::constants::MAX_SERIES_ACTIONS_PER_SWEEP;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
@@ -57,13 +57,13 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 );
                 let attempts = factory.expiry_attempts.read(&key)?.saturating_add(1);
                 factory.expiry_attempts.write(&key, attempts)?;
-                if attempts == EXPIRY_STALL_THRESHOLD {
+                // Announced on the first failure: nothing here fails transiently.
+                if attempts == 1 {
                     emit_event(
                         storage,
                         crate::precompile::IIntexFactory::SeriesExpiryStalled {
                             worldwideDay: worldwide_day.value(),
                             referenceCurrency: iso_code,
-                            attempts,
                         },
                     )?;
                 }

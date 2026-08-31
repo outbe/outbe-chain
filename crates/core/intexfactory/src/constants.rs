@@ -96,6 +96,3 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
-
-/// Failed expiry attempts in a row before the stall is announced on chain.
-pub const EXPIRY_STALL_THRESHOLD: u32 = 3;

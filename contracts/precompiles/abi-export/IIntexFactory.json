@@ -495,12 +495,6 @@
         "type": "uint16",
         "indexed": true,
         "internalType": "uint16"
-      },
-      {
-        "name": "attempts",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false

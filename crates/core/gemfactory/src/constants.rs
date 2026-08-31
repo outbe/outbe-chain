@@ -16,6 +16,3 @@ pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 
 /// Positions the daily sweep may retire before it gives out.
 pub const MAX_POSITION_EXPIRIES_PER_RUN: u32 = 256;
-
-/// Failed expiry attempts in a row before the stall is announced on chain.
-pub const EXPIRY_STALL_THRESHOLD: u32 = 3;

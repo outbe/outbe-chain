@@ -27,6 +27,3 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
 /// the holder must settle. Once elapsed the gem is forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
-
-/// Failed forfeit attempts in a row before the stall is announced on chain.
-pub const EXPIRY_STALL_THRESHOLD: u32 = 3;
