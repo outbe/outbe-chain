@@ -3,10 +3,14 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
+use outbe_gemfactory::schema::GemTypes;
+
 use crate::distribution::{calculate_distribution_with_cap, distribute_daily, PoolKind};
 use crate::schema::{AgentRewardContract, RewardPool};
 
 const CHAIN_ID: u64 = 1;
+const T_NOW: u64 = 1_700_000_000;
+const ONE_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 fn numbered_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
@@ -16,6 +20,7 @@ fn numbered_address(n: u64) -> Address {
 
 fn with_contract_mut<R>(f: impl FnOnce(StorageHandle, &mut AgentRewardContract) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |storage| {
         let mut contract = AgentRewardContract::new(storage.clone());
         f(storage, &mut contract)
@@ -262,59 +267,236 @@ fn test_address_list_deduplication() {
     });
 }
 
-#[test]
-fn test_claim_reward() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
+/// Registers COEN/840, publishes `live_quote` on it and adds 840 to the
+/// reference registry. `last_finalized_day` of 0 leaves the day ladder empty so
+/// the live quote answers.
+fn seed_oracle(storage: &StorageHandle<'_>, live_quote: U256, last_finalized_day: u32) {
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage.clone(),
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        live_quote,
+        1,
+        T_NOW,
+    )
+    .unwrap();
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle.reference_currencies.push(840u16).unwrap();
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(last_finalized_day)
+        .unwrap();
+}
 
-    with_contract_mut(|_storage, contract| {
-        // Fund the contract address so transfer_balance works.
+/// Publishes `vwap` as `day`'s finalized COEN/840 VWAP.
+fn seed_day_vwap(storage: &StorageHandle<'_>, day: u32, vwap: U256) {
+    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+        .unwrap()
+        .expect("COEN/840 registered");
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .utc_day_vwap_value
+        .get_nested(&day)
+        .write(&index, vwap)
+        .unwrap();
+}
+
+fn gem_of(storage: &StorageHandle<'_>, owner: Address) -> outbe_gem::schema::GemData {
+    let gem_id = outbe_gem::GemContract::new(storage.clone())
+        .token_of_owner_by_index(owner, 0)
+        .unwrap();
+    outbe_gem::api::get_gem(storage, gem_id).unwrap().unwrap()
+}
+
+#[test]
+fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let load = U256::from(500u64);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
         contract
             .storage
-            .increase_balance(
-                outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
-                U256::from(500u64),
-            )
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, load)
             .unwrap();
-
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
+            .add_claimable_reward(RewardPool::Waa, alice, load)
             .unwrap();
 
-        let claimed = contract.claim_reward(alice, U256::from(200u64)).unwrap();
-        assert_eq!(claimed, U256::from(200u64));
-        assert_eq!(
-            contract.get_claimable_reward(alice).unwrap(),
-            U256::from(300u64)
-        );
+        let gem_id = contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        assert!(!gem_id.is_zero());
 
-        // Claiming more than balance should fail.
-        assert!(contract.claim_reward(alice, U256::from(400u64)).is_err());
+        let gem = gem_of(&storage, alice);
+        assert_eq!(gem.gem_type, GemTypes::Wallet as u8);
+        assert_eq!(gem.gem_load_minor, load);
+        assert_eq!(gem.entry_price_minor, ONE_COEN);
+
+        // The balance is gone and so is the native COEN that backed it.
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            U256::ZERO
+        );
     });
 }
 
 #[test]
-fn test_claim_all_with_amount_zero() {
+fn the_sra_pool_mints_an_sra_gem_at_the_discounted_cost() {
     let alice = address!("0x1111111111111111111111111111111111111111");
+    let load = U256::from(1_000_000u64);
 
-    with_contract_mut(|_storage, contract| {
-        // Fund and add claimable reward.
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
         contract
             .storage
             .increase_balance(
                 outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
-                U256::from(1000u64),
+                load + load,
             )
             .unwrap();
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, U256::from(1000u64))
+            .add_claimable_reward(RewardPool::Sra, alice, load)
             .unwrap();
 
-        // Claim with amount=0 should claim full balance (handled at precompile layer).
-        // At logic layer, claiming exact balance works.
-        let balance = contract.get_claimable_reward(alice).unwrap();
-        let claimed = contract.claim_reward(alice, balance).unwrap();
-        assert_eq!(claimed, U256::from(1000u64));
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        contract.claim_reward(RewardPool::Sra, alice).unwrap();
+        let sra_gem = gem_of(&storage, alice);
+        assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
+        // SRA_RATE = 64: the Sra Gem costs 0.64 of the full agent cost.
+        assert_eq!(
+            sra_gem.cost_amount_minor,
+            load * U256::from(64u64) / U256::from(100u64)
+        );
+    });
+}
+
+#[test]
+fn a_claim_prices_on_the_last_finalized_utc_day() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let load = U256::from(500u64);
+    let day = 20_260_525u32;
+    let day_vwap = U256::from(2u64) * ONE_COEN;
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, day);
+        seed_day_vwap(&storage, day, day_vwap);
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, load)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .unwrap();
+
+        contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        // The closed day's VWAP wins over the live quote.
+        assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
+    });
+}
+
+#[test]
+fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let load = U256::from(500u64);
+
+    with_contract_mut(|storage, contract| {
+        // No pair, no quote, no closed day.
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, load)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .unwrap();
+
+        let err = contract.claim_reward(RewardPool::Waa, alice).unwrap_err();
+        assert!(err.to_string().contains("no usable COEN price"));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            load
+        );
+    });
+}
+
+#[test]
+fn a_load_whose_cost_rounds_to_zero_keeps_its_balance() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let dust = U256::from(1u64);
+
+    with_contract_mut(|storage, contract| {
+        // Entry 1 minor unit x load 1 minor unit floors to a zero cost.
+        seed_oracle(&storage, U256::from(1u64), 0);
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, dust)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, dust)
+            .unwrap();
+
+        assert!(contract.claim_reward(RewardPool::Waa, alice).is_err());
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), dust);
+    });
+}
+
+#[test]
+fn claiming_an_empty_pool_is_refused() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
+            .unwrap();
+
+        let err = contract.claim_reward(RewardPool::Sra, alice).unwrap_err();
+        assert!(err.to_string().contains("no claimable balance"));
+    });
+}
+
+#[test]
+fn the_pools_are_claimed_apart() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let waa = U256::from(500u64);
+    let sra = U256::from(700u64);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, waa + sra)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, waa)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Sra, alice, sra)
+            .unwrap();
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), waa + sra);
+
+        contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Waa, alice)
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Sra, alice)
+                .unwrap(),
+            sra
+        );
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            sra
+        );
     });
 }
 
@@ -600,7 +782,7 @@ fn iagentreward_sol_matches_contract_public_annotations() {
     let expected = [
         ("getClaimableBalance", "address", true, "uint256"),
         ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
-        ("claimReward", "uint256", false, "uint256"),
+        ("claimReward", "uint8", false, "uint256"),
     ];
     for (name, args_types, is_view, ret_types) in expected {
         let canon = sol_function_canonical(SOL, name)

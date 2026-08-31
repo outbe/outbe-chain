@@ -179,10 +179,13 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",
-    "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",
-    { amount: coen, wait: z.boolean().optional() },
-    handler(({ amount, wait }) =>
-      submit(ctx, "agentreward", "claimReward", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+    "Claim the whole AgentReward balance of one pool (0 = WAA, 1 = SRA) as a Gem. Requires OUTBE_PRIVATE_KEY.",
+    {
+      pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA"),
+      wait: z.boolean().optional(),
+    },
+    handler(({ pool, wait }) =>
+      submit(ctx, "agentreward", "claimReward", [pool], GAS_DEFAULT, wait ?? true),
     ),
   );
 

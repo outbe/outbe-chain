@@ -1,7 +1,10 @@
+use crate::constants::AGENT_GEM_CURRENCY;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -79,37 +82,41 @@ impl AgentRewardContract<'_> {
         }
     }
 
-    /// Claims reward: subtracts amount from the claimable balances and transfers
-    /// real native tokens from the contract address to the caller. WAA drains
-    /// before SRA.
-    pub fn claim_reward(&mut self, address: Address, amount: U256) -> Result<U256> {
-        if amount > self.get_claimable_reward(address)? {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "insufficient claimable balance".into(),
+    /// Claims the pool's whole balance as a Gem: mints the Gem, burns the native
+    /// COEN backing the balance and clears it. The Gem load is not that COEN - it
+    /// becomes Promis at mining time - so leaving the backing in place would let
+    /// one emission exist twice.
+    ///
+    /// Any failure reverts the call and leaves the balance for the next day, which
+    /// brings a new VWAP with it.
+    pub fn claim_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
+        let balance = self.get_pool_claimable_reward(pool, address)?;
+        if balance.is_zero() {
+            return Err(PrecompileError::Revert(
+                "no claimable balance in this pool".into(),
             ));
         }
-        let mut remaining = amount;
-        for pool in [RewardPool::Waa, RewardPool::Sra] {
-            if remaining.is_zero() {
-                break;
-            }
-            let balance = self.get_pool_claimable_reward(pool, address)?;
-            let taken = balance.min(remaining);
-            if taken.is_zero() {
-                continue;
-            }
-            self.write_pool_claimable_reward(pool, address, balance - taken)?;
-            remaining -= taken;
-        }
-
-        // Transfer real tokens from contract to claimant.
-        self.storage.transfer_balance(
-            outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+        let entry_price = resolve_gem_entry_price(&self.storage)?.ok_or_else(|| {
+            PrecompileError::Revert("agentreward has no usable COEN price yet".into())
+        })?;
+        let gem_type = match pool {
+            RewardPool::Waa => GemTypes::Wallet,
+            RewardPool::Sra => GemTypes::Sra,
+        };
+        let gem_id = outbe_gemfactory::api::mint_gem(
+            &self.storage,
             address,
-            amount,
+            gem_type,
+            balance,
+            AGENT_GEM_CURRENCY,
+            AGENT_GEM_CURRENCY,
+            entry_price,
         )?;
+        self.storage
+            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, balance)?;
+        self.write_pool_claimable_reward(pool, address, U256::ZERO)?;
 
-        Ok(amount)
+        Ok(gem_id)
     }
 
     /// Gets all WAA tribute counts for a day as (address, count) pairs.
@@ -183,6 +190,27 @@ impl AgentRewardContract<'_> {
         self.sra_address_count.write(&day, 0)?;
         Ok(())
     }
+}
+
+/// The COEN price an agent reward Gem mints at: the newest closed UTC day's
+/// VWAP, falling back to the live quote. The agent picks the moment it claims,
+/// so a price frozen on the day of accrual would be a look-back option.
+fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let last_finalized_day = oracle.utc_day_vwap_last_finalized.read()?;
+    if last_finalized_day != 0 {
+        if let Some(index) =
+            outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
+        {
+            if let Some(vwap) =
+                outbe_oracle::api::get_utc_day_vwap(storage.clone(), last_finalized_day, index)?
+            {
+                return Ok(Some(vwap));
+            }
+        }
+    }
+
+    outbe_oracle::api::fresh_coen_rate_for_opt(storage.clone(), AGENT_GEM_CURRENCY)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.

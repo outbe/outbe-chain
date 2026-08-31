@@ -4,14 +4,14 @@
     "name": "claimReward",
     "inputs": [
       {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "gemId",
         "type": "uint256",
         "internalType": "uint256"
       }

@@ -8116,7 +8116,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-common",
+ "outbe-gem",
+ "outbe-gemfactory",
  "outbe-macros",
+ "outbe-oracle",
  "outbe-primitives",
 ]
 
