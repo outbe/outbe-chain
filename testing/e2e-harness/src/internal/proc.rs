@@ -140,12 +140,23 @@ impl ChildGuard {
     /// arrive. Stopping the way an operator would is what makes a restart
     /// reproducible.
     pub(crate) fn stop(&mut self) {
+        self.stop_with_signal("TERM");
+    }
+
+    /// Stop through the operator Ctrl-C path. Reth and the outer node launcher
+    /// both observe SIGINT, allowing the launcher to drain its consensus thread
+    /// before ExEx resources disappear.
+    pub(crate) fn interrupt(&mut self) {
+        self.stop_with_signal("INT");
+    }
+
+    fn stop_with_signal(&mut self, signal: &str) {
         if self.exited() {
             let _ = self.child.wait();
             return;
         }
         let _ = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
+            .args([format!("-{signal}"), self.child.id().to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -778,6 +789,18 @@ pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_guard_interrupts_and_reaps_the_operator_ctrl_c_path() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "trap 'exit 0' INT; while true; do sleep 0.05; done"]);
+        let mut child = ChildGuard::spawn("interrupt fixture", command).expect("spawn fixture");
+        sleep(Duration::from_millis(50));
+
+        child.interrupt();
+
+        assert!(child.exited());
+    }
 
     #[test]
     fn sigstruct_parser_requires_exact_measurements_and_versions() {

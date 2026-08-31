@@ -22,6 +22,7 @@ impl Localnet {
         expected_dkg_reveal: Option<&str>,
         expected_ocomp_full_node_mismatch: Option<B256>,
         expected_tee_lease_guard_shutdown_validator: Option<usize>,
+        expected_tee_lease_guard_shutdown_full_node: Option<usize>,
     ) -> Result<LogAudit> {
         audit_runtime_logs(
             &self.cfg.dir,
@@ -30,6 +31,7 @@ impl Localnet {
             expected_dkg_reveal,
             expected_ocomp_full_node_mismatch,
             expected_tee_lease_guard_shutdown_validator,
+            expected_tee_lease_guard_shutdown_full_node,
         )
     }
 }
@@ -138,6 +140,7 @@ pub(super) fn audit_runtime_logs(
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    expected_tee_lease_guard_shutdown_full_node: Option<usize>,
 ) -> Result<LogAudit> {
     let mut paths = Vec::new();
     collect_logs(root, &mut paths)?;
@@ -158,6 +161,7 @@ pub(super) fn audit_runtime_logs(
         expected_dkg_reveal,
         expected_ocomp_full_node_mismatch,
         expected_tee_lease_guard_shutdown_validator,
+        expected_tee_lease_guard_shutdown_full_node,
     ))
 }
 
@@ -181,6 +185,7 @@ fn audit_loaded_logs_with_expectations(
         expected_dkg_reveal,
         expected_ocomp_full_node_mismatch,
         None,
+        None,
     )
 }
 
@@ -191,6 +196,7 @@ fn audit_loaded_logs_with_all_expectations(
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    expected_tee_lease_guard_shutdown_full_node: Option<usize>,
 ) -> LogAudit {
     let mut findings = Vec::new();
     let mut counts = LogCounts {
@@ -220,6 +226,17 @@ fn audit_loaded_logs_with_all_expectations(
             BTreeSet::new()
         }
     };
+    let expected_tee_lease_full_node_shutdown_records = expected_tee_lease_guard_shutdown_full_node
+        .map(|full_node| expected_tee_lease_full_node_shutdown_records(logs, validators, full_node))
+        .transpose();
+    let expected_tee_lease_full_node_shutdown_records =
+        match expected_tee_lease_full_node_shutdown_records {
+            Ok(records) => records.unwrap_or_default(),
+            Err(reason) => {
+                findings.push(reason);
+                BTreeSet::new()
+            }
+        };
     let expected_fragment = unsupported_version.map(|version| {
         format!(
             "cannot activate protocol version v{}.{} ({version}): binary supports at most v",
@@ -250,8 +267,9 @@ fn audit_loaded_logs_with_all_expectations(
             });
             let accepted_ocomp_mismatch =
                 expected_ocomp_mismatch_records.contains(&(path.clone(), index));
-            let accepted_tee_lease_shutdown =
-                expected_tee_lease_shutdown_records.contains(&(path.clone(), index));
+            let accepted_tee_lease_shutdown = expected_tee_lease_shutdown_records
+                .contains(&(path.clone(), index))
+                || expected_tee_lease_full_node_shutdown_records.contains(&(path.clone(), index));
             if accepted_update {
                 counts.expected_update_fatal += 1;
             }
@@ -429,7 +447,8 @@ fn is_machine_audit_log(path: &Path) -> bool {
 
 fn unexpected_log_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    fatal_at_runtime_severity(line)
+    exact_tee_lease_jailed_guard_shutdown(line)
+        || fatal_at_runtime_severity(line)
         || lower.contains("panic")
         || (lower.contains("dkg")
             && lower.contains("share")
@@ -785,8 +804,6 @@ fn expected_tee_lease_guard_shutdown_records(
     enum Record {
         Guard,
         StackShutdown,
-        Engine,
-        Cli,
     }
 
     if expected_validator >= validators {
@@ -834,7 +851,7 @@ fn expected_tee_lease_guard_shutdown_records(
         let guard_index = guard_indices[0];
         let mut records = vec![(guard_index, Record::Guard)];
         let mut cursor = guard_index.saturating_add(1);
-        for expected in [Record::StackShutdown, Record::Engine, Record::Cli] {
+        for expected in [Record::StackShutdown] {
             loop {
                 let Some(line) = lines.get(cursor).copied() else {
                     return Err(format!(
@@ -852,10 +869,6 @@ fn expected_tee_lease_guard_shutdown_records(
                     Some(Record::Guard)
                 } else if exact_consensus_stack_shutdown(line) {
                     Some(Record::StackShutdown)
-                } else if exact_engine_fatal_trailer(line) {
-                    Some(Record::Engine)
-                } else if exact_cli_fatal_trailer(line) {
-                    Some(Record::Cli)
                 } else {
                     None
                 };
@@ -878,12 +891,7 @@ fn expected_tee_lease_guard_shutdown_records(
                 "duplicate expected TEE lease guard shutdown sink {sink} for validator-{expected_validator}"
             ));
         }
-        accepted.extend(
-            records
-                .into_iter()
-                .filter(|(_, record)| matches!(record, Record::Engine | Record::Cli))
-                .map(|(index, _)| (path.clone(), index)),
-        );
+        accepted.extend(records.into_iter().map(|(index, _)| (path.clone(), index)));
     }
 
     if sinks != BTreeSet::from(["node.log", "reth.log"]) {
@@ -894,11 +902,205 @@ fn expected_tee_lease_guard_shutdown_records(
     Ok(accepted)
 }
 
+fn expected_tee_lease_full_node_shutdown_records(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+    expected_full_node: usize,
+) -> Result<BTreeSet<(PathBuf, usize)>, String> {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Record {
+        Guard,
+        StackShutdown,
+        EngineFatal,
+        CliFatal,
+    }
+
+    if expected_full_node != validators {
+        return Err(format!(
+            "expected TEE lease FullNode slot {expected_full_node} must equal committee size {validators}"
+        ));
+    }
+
+    let mut accepted = BTreeSet::new();
+    let mut sinks = BTreeSet::new();
+    for (path, content) in logs {
+        if validator_log_index(path, validators.saturating_add(1)) != Some(expected_full_node) {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let sink = if file_name == "node.log" {
+            "node.log"
+        } else if file_name == "reth.log" {
+            "reth.log"
+        } else {
+            continue;
+        };
+
+        let lines = content.lines().collect::<Vec<_>>();
+        let guard_indices = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                exact_tee_lease_expired_full_node_guard_shutdown(line).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if guard_indices.is_empty() {
+            continue;
+        }
+        if guard_indices.len() != 1 {
+            return Err(format!(
+                "expected exactly one TEE lease FullNode guard in {}, observed {}",
+                path.display(),
+                guard_indices.len()
+            ));
+        }
+
+        let guard_index = guard_indices[0];
+        let mut records = vec![(guard_index, Record::Guard)];
+        let mut cursor = guard_index.saturating_add(1);
+        for expected in [Record::StackShutdown] {
+            loop {
+                let Some(line) = lines.get(cursor).copied() else {
+                    return Err(format!(
+                        "incomplete expected TEE lease FullNode shutdown bundle in {}: missing {expected:?}",
+                        path.display()
+                    ));
+                };
+                if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
+                    return Err(format!(
+                        "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before {expected:?}",
+                        path.display()
+                    ));
+                }
+                let observed = if exact_tee_lease_expired_full_node_guard_shutdown(line) {
+                    Some(Record::Guard)
+                } else if exact_consensus_stack_shutdown(line) {
+                    Some(Record::StackShutdown)
+                } else if exact_engine_fatal_trailer(line) {
+                    Some(Record::EngineFatal)
+                } else if exact_cli_fatal_trailer(line) {
+                    Some(Record::CliFatal)
+                } else {
+                    None
+                };
+                cursor = cursor.saturating_add(1);
+                let Some(observed) = observed else {
+                    continue;
+                };
+                if observed != expected {
+                    return Err(format!(
+                        "malformed expected TEE lease FullNode shutdown bundle in {}: expected {expected:?}, observed {observed:?}",
+                        path.display()
+                    ));
+                }
+                records.push((cursor - 1, observed));
+                break;
+            }
+        }
+
+        // The role-neutral FullNode path must append its exact deterministic
+        // EngineFatal→CliFatal trailer. Never accept a partial bundle or cross
+        // into the restarted process while looking for either record.
+        loop {
+            let Some(line) = lines.get(cursor).copied() else {
+                return Err(format!(
+                    "incomplete expected TEE lease FullNode shutdown bundle in {}: missing EngineFatal",
+                    path.display()
+                ));
+            };
+            if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
+                return Err(format!(
+                    "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before EngineFatal",
+                    path.display()
+                ));
+            }
+            if exact_tee_lease_expired_full_node_guard_shutdown(line)
+                || exact_consensus_stack_shutdown(line)
+                || exact_cli_fatal_trailer(line)
+            {
+                return Err(format!(
+                    "malformed expected TEE lease FullNode shutdown bundle in {} after StackShutdown",
+                    path.display()
+                ));
+            }
+            if !exact_engine_fatal_trailer(line) {
+                cursor = cursor.saturating_add(1);
+                continue;
+            }
+
+            records.push((cursor, Record::EngineFatal));
+            cursor = cursor.saturating_add(1);
+            loop {
+                let Some(line) = lines.get(cursor).copied() else {
+                    return Err(format!(
+                        "incomplete expected TEE lease FullNode shutdown bundle in {}: missing CliFatal",
+                        path.display()
+                    ));
+                };
+                if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
+                    return Err(format!(
+                        "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before CliFatal",
+                        path.display()
+                    ));
+                }
+                if exact_cli_fatal_trailer(line) {
+                    records.push((cursor, Record::CliFatal));
+                    break;
+                }
+                if exact_tee_lease_expired_full_node_guard_shutdown(line)
+                    || exact_consensus_stack_shutdown(line)
+                    || exact_engine_fatal_trailer(line)
+                {
+                    return Err(format!(
+                        "malformed expected TEE lease FullNode shutdown bundle in {} before CliFatal",
+                        path.display()
+                    ));
+                }
+                cursor = cursor.saturating_add(1);
+            }
+            break;
+        }
+        if !sinks.insert(sink) {
+            return Err(format!(
+                "duplicate expected TEE lease FullNode shutdown sink {sink} for validator-{expected_full_node}"
+            ));
+        }
+        accepted.extend(records.into_iter().map(|(index, _)| (path.clone(), index)));
+    }
+
+    if sinks != BTreeSet::from(["node.log", "reth.log"]) {
+        return Err(format!(
+            "expected one node.log and one reth.log TEE lease FullNode shutdown bundle for validator-{expected_full_node}, observed {sinks:?}"
+        ));
+    }
+    Ok(accepted)
+}
+
 fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end().ends_with(
         "outbe_chain: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
     ) && line.contains("error")
+        && !contains_nonfatal_alarm(&line)
+}
+
+fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
+    const PREFIX: &str =
+        "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const SUFFIX: &str = "; stop node and run tee join";
+
+    let line = line.to_ascii_lowercase();
+    let Some((_, deadline_and_suffix)) = line.split_once(PREFIX) else {
+        return false;
+    };
+    let Some(deadline) = deadline_and_suffix.trim_end().strip_suffix(SUFFIX) else {
+        return false;
+    };
+    line.contains("error")
+        && !deadline.is_empty()
+        && deadline.bytes().all(|byte| byte.is_ascii_digit())
         && !contains_nonfatal_alarm(&line)
 }
 
@@ -1454,19 +1656,36 @@ mod tests {
         let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
             reason=validator is jailed; complete ordinary unjail and then run tee join";
         let shutdown = "INFO outbe_chain: consensus stack shutting down";
-        let cli = "ERROR reth::cli: Fatal error in consensus engine";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
-                format!("{guard}\n{shutdown}\nERROR engine::tree: Fatal error\n{cli}"),
+                format!("{guard}\n{shutdown}"),
             ),
             (
                 PathBuf::from(format!(
                     "scenario-1/validator-{validator}/logs/54322345/reth.log"
                 )),
-                format!(
-                    "{guard}\n{shutdown}\nERROR poll_next_event: engine::tree: Fatal error\n{cli}"
-                ),
+                format!("{guard}\n{shutdown}"),
+            ),
+        ]
+    }
+
+    fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
+        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
+            reason=finalized TEE lease expired at 1789389965; stop node and run tee join";
+        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let engine = "ERROR engine::tree: Fatal error";
+        let cli = "ERROR reth::cli: Fatal error in consensus engine";
+        vec![
+            (
+                PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
+                format!("{guard}\n{shutdown}\n{engine}\n{cli}"),
+            ),
+            (
+                PathBuf::from(format!(
+                    "scenario-1/validator-{full_node}/logs/54322345/reth.log"
+                )),
+                format!("{guard}\n{shutdown}\n{engine}\n{cli}"),
             ),
         ]
     }
@@ -1475,7 +1694,7 @@ mod tests {
     fn tee_lease_guard_accepts_only_the_explicit_exact_two_sink_shutdown_bundle() {
         let expected = tee_lease_guard_shutdown_bundle(3);
         let accepted =
-            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(3));
+            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(3), None);
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
         assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
 
@@ -1494,6 +1713,7 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
         );
         assert!(
             accepted_with_later_shutdown.is_clean(),
@@ -1511,7 +1731,7 @@ mod tests {
         assert!(!unarmed.is_clean());
 
         let wrong_validator =
-            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(2));
+            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(2), None);
         assert!(!wrong_validator.is_clean());
 
         let missing_sink = vec![expected[0].clone()];
@@ -1522,6 +1742,7 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
         )
         .is_clean());
 
@@ -1534,6 +1755,7 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
         )
         .is_clean());
 
@@ -1541,16 +1763,19 @@ mod tests {
             .iter()
             .map(|(path, content)| {
                 let lines = content.lines().collect::<Vec<_>>();
-                (
-                    path.clone(),
-                    format!("{}\n{}\n{}\n{}", lines[1], lines[0], lines[2], lines[3]),
-                )
+                (path.clone(), format!("{}\n{}", lines[1], lines[0]))
             })
             .collect::<Vec<_>>();
-        assert!(
-            !audit_loaded_logs_with_all_expectations(&reordered, 4, None, None, None, Some(3),)
-                .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &reordered,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let process_epoch_crossing = expected
             .iter()
@@ -1558,8 +1783,8 @@ mod tests {
                 (
                     path.clone(),
                     content.replacen(
-                        "\nERROR engine::tree: Fatal error",
-                        "\nINFO reth::cli: Starting Reth version=1.2.3\nERROR engine::tree: Fatal error",
+                        "\nINFO outbe_chain: consensus stack shutting down",
+                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain: consensus stack shutting down",
                         1,
                     ),
                 )
@@ -1572,6 +1797,7 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
         )
         .is_clean());
 
@@ -1586,6 +1812,7 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
         )
         .is_clean());
 
@@ -1600,6 +1827,70 @@ mod tests {
             None,
             None,
             Some(3),
+            None,
+        )
+        .is_clean());
+    }
+
+    #[test]
+    fn tee_lease_full_node_accepts_only_the_guarded_execution_shutdown_bundle() {
+        let expected = tee_lease_full_node_shutdown_bundle(4);
+        let accepted =
+            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, None, Some(4));
+        assert!(accepted.is_clean(), "{:?}", accepted.findings);
+        assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 8);
+
+        let graceful = expected
+            .iter()
+            .map(|(path, content)| {
+                (
+                    path.clone(),
+                    content.lines().take(2).collect::<Vec<_>>().join("\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let graceful_rejected =
+            audit_loaded_logs_with_all_expectations(&graceful, 4, None, None, None, None, Some(4));
+        assert!(!graceful_rejected.is_clean());
+
+        assert!(!audit_loaded_logs_with_expectations(&expected, 4, None, None, None).is_clean());
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &expected,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(5),
+        )
+        .is_clean());
+
+        let mut panic = expected.clone();
+        panic[0].1.push_str("\nthread tokio-rt panicked");
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &panic,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(4),
+        )
+        .is_clean());
+
+        let mut malformed = expected;
+        malformed[0].1 = malformed[0].1.replace(
+            "ERROR engine::tree: Fatal error\nERROR reth::cli: Fatal error in consensus engine",
+            "ERROR reth::cli: Fatal error in consensus engine\nERROR engine::tree: Fatal error",
+        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &malformed,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(4),
         )
         .is_clean());
     }

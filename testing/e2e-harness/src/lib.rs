@@ -186,6 +186,7 @@ pub async fn run() {
                     world.state.expected_dkg_reveal.as_deref(),
                     world.state.ocomp_full_node_mismatch_job_id,
                     world.state.expected_tee_lease_guard_shutdown_validator,
+                    world.state.expected_tee_lease_guard_shutdown_full_node,
                 );
                 let audit = match audit {
                     Ok(audit) => audit,

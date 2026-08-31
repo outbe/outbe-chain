@@ -309,7 +309,9 @@ impl Localnet {
 
     /// Stop one follower while preserving its durable datadir for restart/catch-up tests.
     pub fn stop_follower(&mut self, name: &str) -> Result<()> {
-        self.followers.remove(name);
+        if let Some(mut follower) = self.followers.remove(name) {
+            follower.interrupt();
+        }
         Ok(())
     }
 }
