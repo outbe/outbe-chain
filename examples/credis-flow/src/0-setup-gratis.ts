@@ -32,7 +32,7 @@ import {
 // to bootstrap; it defaults to the full gem load. Neither Gratis nor Promis can be
 // plaintext-seeded at genesis anymore (both are TEE-encrypted at rest), so genesis
 // seeds the user a Settled *gem* instead. This script burns that gem for confidential
-// Promis (`mineGemPromis`), then converts the Promis 1:1 into confidential Gratis
+// Promis (`minePromis`), then converts the Promis 1:1 into confidential Gratis
 // (`mineFromPromis`) — leaving the user real, enclave-encrypted Gratis to pledge.
 const amountArg = process.argv[2];
 const envName = process.argv[3] || DEFAULT_ENV;
@@ -84,7 +84,7 @@ async function main() {
   if (Number(gemStatus.state) !== GEM_STATE_SETTLED) {
     console.error(
       `Gem ${gemId} is in state ${gemStatus.state}, not Settled (${GEM_STATE_SETTLED}); ` +
-        `mineGemPromis requires a Settled gem.`,
+        `minePromis requires a Settled gem.`,
     );
     process.exit(1);
   }
@@ -137,11 +137,11 @@ async function main() {
     chainId,
     "Promis",
   );
-  console.log("\nStep 1: mineGemPromis(gemId, powNonce, mac, opNonce)...");
-  const tx1 = await gemFactory.mineGemPromis(gemId, powNonce, promisMintMac, promisMintNonce);
+  console.log("\nStep 1: minePromis(gemId, powNonce, mac, opNonce)...");
+  const tx1 = await gemFactory.minePromis(gemId, powNonce, promisMintMac, promisMintNonce);
   console.log(`  TX hash: ${tx1.hash}`);
   const receipt1 = await tx1.wait();
-  if (!receipt1) throw new Error("mineGemPromis tx receipt missing");
+  if (!receipt1) throw new Error("minePromis tx receipt missing");
   console.log(`  Block:   ${receipt1.blockNumber} — minted ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
 
   // Step 2 — Promis → Gratis: burn `amount` Promis and mint `amount` Gratis. Both

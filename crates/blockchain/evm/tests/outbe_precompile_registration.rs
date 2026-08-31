@@ -159,7 +159,7 @@ fn sponsored_whitelist_includes_gemfactory_cashout_entrypoint() {
 
     assert!(
         SPONSORED_TARGET_WHITELIST.contains(&GEM_FACTORY_ADDRESS),
-        "zero-balance Gem owners need sponsored settleGem and mineGemPromis"
+        "zero-balance Gem owners need sponsored settleGem and minePromis"
     );
 }
 

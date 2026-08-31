@@ -404,7 +404,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::mineGemPromisCall {
+        &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
             mac: B256::from(mint_mac),
@@ -464,7 +464,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     .expect("ZeroFee counter after Gem redemption");
     assert_eq!(
         counter_after.count, 3,
-        "settleGem, mineGemPromis, and mineCoen must consume three of eight sponsored slots"
+        "settleGem, minePromis, and mineCoen must consume three of eight sponsored slots"
     );
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",

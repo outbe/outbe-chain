@@ -79,7 +79,7 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | PFS-007-10 | wrong delegation target | funded delegated account | install a non-ZeroFee target and send a sponsored-shaped call | no sponsorship; quota remains unchanged | `@pfs-007-10` live-node |
 | PFS-007-11 | stale conflicting authorization | an existing wrong-target delegation | submit a stale conflicting authorization | prior delegation remains; quota remains unchanged | `@pfs-007-11` live-node |
 | PFS-007-12 | worldwide-day lazy reset | exhausted quota immediately before the UTC day boundary | advance through the boundary and submit the first eligible call | quota resets lazily once and converges on every validator | `@pfs-007-12` live-node |
-| PFS-007-13 | zero-balance validator Gem cashout | validator owns a reward Gem and settlement allowance but has exactly zero spendable COEN | distinct validator installs ZeroFee delegation; owner sends `settleGem`, `mineGemPromis`, `mineCoen` | three sponsored receipts, quota 3/8, reserve and confidential ledger exact, final native balance equals Gem load | `@gem-settlement` release SGX |
+| PFS-007-13 | zero-balance validator Gem cashout | validator owns a reward Gem and settlement allowance but has exactly zero spendable COEN | distinct validator installs ZeroFee delegation; owner sends `settleGem`, `minePromis`, `mineCoen` | three sponsored receipts, quota 3/8, reserve and confidential ledger exact, final native balance equals Gem load | `@gem-settlement` release SGX |
 
 ## Evidence boundary
 

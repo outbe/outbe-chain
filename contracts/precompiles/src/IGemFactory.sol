@@ -19,7 +19,7 @@ interface IGemFactory {
     ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
-    function mineGemPromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
     ///         Promis unit ever parked; it is not reduced when a position drains
     ///         or expires.

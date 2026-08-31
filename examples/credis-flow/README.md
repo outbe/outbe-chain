@@ -202,7 +202,7 @@ npx tsx src/0-setup-erc20.ts
 # Bootstrap confidential Gratis for the user. Gratis AND Promis are both
 # TEE-encrypted at rest, so neither can be plaintext-seeded at genesis — instead
 # genesis seeds the user a Settled *gem* (scripts/seed-testnet.json "gems"). This
-# script burns it for confidential Promis (IGemFactory.mineGemPromis), then
+# script burns it for confidential Promis (IGemFactory.minePromis), then
 # converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineFromPromis).
 npx tsx src/0-setup-gratis.ts                          # converts the whole gem load by default
 

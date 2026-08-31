@@ -522,7 +522,7 @@ pub fn position_data(
     })
 }
 
-pub fn mine_gem_promis(
+pub fn mine_promis(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
@@ -647,7 +647,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// PoW gate for `mine_gem_promis`, delegating to the shared
+/// PoW gate for `mine_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
 pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
