@@ -4,6 +4,8 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 
+use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GemTypes {
@@ -108,7 +110,8 @@ impl GemFactoryContract<'_> {
     pub(crate) fn compact_live_queue(&mut self) -> Result<()> {
         let tail = self.live_tail.read()?;
         let mut head = self.live_head.read()?;
-        while head < tail && self.live_queue_at.read(&head)?.is_zero() {
+        let limit = tail.min(head.saturating_add(MAX_POSITION_EXPIRIES_PER_RUN));
+        while head < limit && self.live_queue_at.read(&head)?.is_zero() {
             head = head.saturating_add(1);
         }
         if head >= tail {

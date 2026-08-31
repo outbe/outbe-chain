@@ -8,7 +8,10 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{
+        BIN_STEP_BP, MAX_GEM_FORFEITS_PER_RUN, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME,
+        TOKEN_SYMBOL,
+    },
     errors::GemError,
     schema::{GemContract, GemData, GemState},
 };
@@ -277,7 +280,8 @@ impl GemContract<'_> {
     pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
         let tail = self.called_tail.read()?;
         let mut head = self.called_head.read()?;
-        while head < tail && self.called_queue_at.read(&head)?.is_zero() {
+        let limit = tail.min(head.saturating_add(MAX_GEM_FORFEITS_PER_RUN));
+        while head < limit && self.called_queue_at.read(&head)?.is_zero() {
             head = head.saturating_add(1);
         }
         if head >= tail {

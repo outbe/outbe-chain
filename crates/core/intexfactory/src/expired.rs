@@ -26,7 +26,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
 
     let now = ctx.block.timestamp;
     let mut budget = MAX_SERIES_ACTIONS_PER_SWEEP;
-    for index in head..tail {
+    // Slots, not just actions: a group the sweep cannot retire pins the head, and
+    // the run of emptied slots behind it would otherwise grow without bound.
+    for index in head..tail.min(head.saturating_add(MAX_SERIES_ACTIONS_PER_SWEEP)) {
         // Not checked against the group's size: one larger than the whole budget
         // must still make progress.
         if budget == 0 {

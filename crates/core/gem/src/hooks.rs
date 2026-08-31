@@ -258,7 +258,9 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let now = ctx.block.timestamp;
     let mut budget = MAX_GEM_FORFEITS_PER_RUN;
     let mut burned: u32 = 0;
-    for index in head..tail {
+    // Slots, not just actions: an entry the sweep cannot retire pins the head, and
+    // the run of emptied slots behind it would otherwise grow without bound.
+    for index in head..tail.min(head.saturating_add(MAX_GEM_FORFEITS_PER_RUN)) {
         if budget == 0 {
             break;
         }

@@ -783,6 +783,20 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
     });
 }
 
+/// A head the sweep cannot advance must not make every later run a longer walk.
+#[test]
+fn queue_compaction_walks_at_most_one_run_worth() {
+    with_storage(|storage| {
+        let mut gem = GemContract::new(storage.clone());
+        gem.called_tail.write(10_000).unwrap();
+        gem.compact_called_queue().unwrap();
+        assert_eq!(
+            gem.called_head.read().unwrap(),
+            crate::constants::MAX_GEM_FORFEITS_PER_RUN
+        );
+    });
+}
+
 /// An entry the sweep cannot retire keeps its place and credits nothing: the
 /// burn and the credit share a checkpoint, so neither half can happen alone.
 #[test]
