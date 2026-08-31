@@ -49,7 +49,7 @@ impl NodContract<'_> {
         if !bucket.entry_price_minor.is_zero() {
             let call_price = bucket
                 .entry_price_minor
-                .checked_mul(U256::from(CALL_RATE_PCT))
+                .checked_mul(U256::from(100 + CALL_RATE_PCT))
                 .ok_or_else(|| {
                     PrecompileError::Fatal(format!(
                         "Nod bucket {} call price overflow",

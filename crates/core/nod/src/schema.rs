@@ -305,7 +305,7 @@ pub struct NodContract {
     #[attribute(order = 39)]
     pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `entry_price_minor x CALL_RATE_PCT / 100`, snapshotted at qualification so
+    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at qualification so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
