@@ -93,16 +93,17 @@ pub(crate) fn deposit(
 ) -> Result<()> {
     // Guards, before any mutation.
     if amount == 0 {
-        return Err(PayNoteError::MustBeNonZero("amount").into());
+        return Err(PayNoteError::InvalidInput("deposit amount must be non-zero".into()).into());
     }
     // `asset != 0` is enforced here such as we do not accept native currency here.
     if asset.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("asset").into());
+        return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    let serial =
-        field_from_be_bytes(&note_sn.0).ok_or(PayNoteError::NonCanonicalField("noteSn"))?;
+    let serial = field_from_be_bytes(&note_sn.0).ok_or(PayNoteError::InvalidInput(
+        "noteSn is not a canonical BN254 field".into(),
+    ))?;
     if serial.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("noteSn").into());
+        return Err(PayNoteError::InvalidInput("noteSn must be non-zero".into()).into());
     }
 
     let (chain_id, zeros) = chain_state(&storage)?;
@@ -118,7 +119,7 @@ pub(crate) fn deposit(
     // token and spend it as an expensive one.
     let commitment = note_commitment(chain_id, serial, asset.into(), amount)?;
     if commitment.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("commitment").into());
+        return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
     }
     let commitment_word = B256::new(field_to_be_bytes(commitment));
     if paynote.commitments.read(&commitment_word)? {
@@ -200,7 +201,7 @@ fn root_after_word(root: Field) -> B256 {
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim = decode_paynote_public_inputs(proof)
-        .map_err(|error| PayNoteError::MalformedProof(error.to_string()))?;
+        .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;
     let paynote: PayNoteContract<'_> = storage.contract();
@@ -210,27 +211,29 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     // A proof-supplied chain ID is never trusted.
     if claim.chain_id != runtime_chain_id {
-        return Err(PayNoteError::ChainIdMismatch.into());
+        return Err(PayNoteError::InvalidInput("chain ID does not match runtime".into()).into());
     }
 
     // `asset != 0` is enforced here such as we do not accept native currency here.
     if claim.asset.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("asset").into());
+        return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
     if claim.spender.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("spender").into());
+        return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
     }
     if claim.spend_amount == 0 {
-        return Err(PayNoteError::MustBeNonZero("spend_amount").into());
+        return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
     }
 
-    let nullifier = field_from_be_bytes(&claim.nullifier)
-        .ok_or(PayNoteError::NonCanonicalField("nullifier"))?;
+    let nullifier = field_from_be_bytes(&claim.nullifier).ok_or(PayNoteError::InvalidInput(
+        "nullifier is not a canonical BN254 field".into(),
+    ))?;
     if nullifier.is_zero() {
-        return Err(PayNoteError::MustBeNonZero("nullifier").into());
+        return Err(PayNoteError::InvalidInput("nullifier must be non-zero".into()).into());
     }
-    let change = field_from_be_bytes(&claim.change_commitment)
-        .ok_or(PayNoteError::NonCanonicalField("changeCommitment"))?;
+    let change = field_from_be_bytes(&claim.change_commitment).ok_or(
+        PayNoteError::InvalidInput("changeCommitment is not a canonical BN254 field".into()),
+    )?;
 
     let root_word = B256::new(claim.root);
     if !paynote.recent_roots.read_all()?.contains(&root_word) {
@@ -244,7 +247,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     match verify_paynote(proof) {
         Ok(true) => {}
-        Ok(false) => return Err(PayNoteError::ProofInvalid.into()),
+        Ok(false) => return Err(PayNoteError::InvalidInput("proof is invalid".into()).into()),
         // CRS initialization is the distinguishable infrastructure signal and
         // stays fatal.
         Err(ZkProofError::CrsInitialization(message)) => {
@@ -255,7 +258,9 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         // The backend cannot distinguish rejected input from a genuine FFI
         // failure at this seam; promoting attacker input to a fatal error
         // would be an unprivileged consensus-visible DoS.
-        Err(error) => return Err(PayNoteError::MalformedProof(error.to_string()).into()),
+        Err(error) => {
+            return Err(PayNoteError::InvalidInput(format!("proof is malformed: {error}")).into())
+        }
     }
 
     // A full spend requires the zero change sentinel; a partial spend appends

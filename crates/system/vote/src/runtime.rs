@@ -39,38 +39,6 @@ fn voting_window_blocks_with_override(chain_id: u64, override_value: Option<Stri
         .unwrap_or(VOTING_WINDOW_BLOCKS)
 }
 
-#[cfg(test)]
-mod voting_window_tests {
-    use super::*;
-    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID};
-
-    #[test]
-    fn only_testnet_accepts_the_test_voting_window_override() {
-        let override_value = Some("17".to_owned());
-
-        assert_eq!(
-            voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value.clone()),
-            17
-        );
-        for chain_id in [DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, 1_000_000_001] {
-            assert_eq!(
-                voting_window_blocks_with_override(chain_id, override_value.clone()),
-                VOTING_WINDOW_BLOCKS
-            );
-        }
-    }
-
-    #[test]
-    fn invalid_test_voting_window_overrides_use_the_protocol_default() {
-        for override_value in [None, Some("0".to_owned()), Some("invalid".to_owned())] {
-            assert_eq!(
-                voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value),
-                VOTING_WINDOW_BLOCKS
-            );
-        }
-    }
-}
-
 /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
 pub fn ensure_active_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     let vs = ValidatorSet::new(storage);
@@ -411,6 +379,38 @@ impl Vote<'_> {
             ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
                 unreachable!("only Approved or Expired can settle a proposal bond")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod voting_window_tests {
+    use super::*;
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID};
+
+    #[test]
+    fn only_testnet_accepts_the_test_voting_window_override() {
+        let override_value = Some("17".to_owned());
+
+        assert_eq!(
+            voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value.clone()),
+            17
+        );
+        for chain_id in [DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, 1_000_000_001] {
+            assert_eq!(
+                voting_window_blocks_with_override(chain_id, override_value.clone()),
+                VOTING_WINDOW_BLOCKS
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_test_voting_window_overrides_use_the_protocol_default() {
+        for override_value in [None, Some("0".to_owned()), Some("invalid".to_owned())] {
+            assert_eq!(
+                voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value),
+                VOTING_WINDOW_BLOCKS
+            );
         }
     }
 }

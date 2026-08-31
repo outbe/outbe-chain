@@ -9,7 +9,6 @@ const WWD: u32 = 20_260_726;
 fn active_generation() -> ActiveGenerationV1 {
     ActiveGenerationV1 {
         job_id: B256::with_last_byte(1),
-        protocol_bundle_hash: B256::repeat_byte(0x5b),
         program_semantics_hash: B256::with_last_byte(2),
         nod_root: B256::with_last_byte(3),
         bucket_root: B256::with_last_byte(4),
@@ -33,6 +32,7 @@ fn nod_projection() -> NodCertifiedGenerationProjection {
         generation: 9,
         job_id: B256::with_last_byte(1),
         program_semantics_hash: B256::with_last_byte(2),
+        protocol_bundle_hash: B256::repeat_byte(0x5b),
         nod_root: B256::with_last_byte(3),
         bucket_root: B256::with_last_byte(4),
         output_manifest_root: B256::with_last_byte(6),

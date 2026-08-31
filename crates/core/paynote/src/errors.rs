@@ -18,22 +18,14 @@ use outbe_primitives::error::PrecompileError;
 pub enum PayNoteError {
     #[error("PayNote is not initialized")]
     NotInitialized,
-    #[error("PayNote deposit amount must be non-zero")]
-    DepositAmountZero,
-    #[error("PayNote {0} is not a canonical BN254 field")]
-    NonCanonicalField(&'static str),
-    #[error("PayNote {0} must be non-zero")]
-    MustBeNonZero(&'static str),
-    #[error("PayNote proof is malformed: {0}")]
-    MalformedProof(String),
-    #[error("PayNote chain ID does not match runtime")]
-    ChainIdMismatch,
+    /// Caller-supplied input rejected by a guard; the payload is the reason,
+    /// rendered as `PayNote <reason>`.
+    #[error("PayNote {0}")]
+    InvalidInput(String),
     #[error("PayNote root is not recent")]
     RootNotRecent,
     #[error("PayNote nullifier has already been spent")]
     NullifierSpent,
-    #[error("PayNote proof is invalid")]
-    ProofInvalid,
     #[error("PayNote commitment tree is full")]
     TreeFull,
     #[error("PayNote commitment already exists")]
