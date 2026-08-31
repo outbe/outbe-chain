@@ -1462,9 +1462,9 @@ fn validate_offer_key_before_threshold_work(
 fn should_coordinate_genesis_tee_bootstrap(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
-    verifier_join: bool,
+    shareless_verifier: bool,
 ) -> bool {
-    !verifier_join
+    !shareless_verifier
         && startup_dkg_mode(context, local_key_in_current_consensus_set)
             == StartupDkgMode::InitialGenesisDkg
 }
@@ -2231,12 +2231,12 @@ fn validate_validator_evm_signer(
     args: &ConsensusArgs,
     signing_key: &bls12381::PrivateKey,
     consensus_validator_set: &validators::ValidatorSet,
-    active_validator_set: &validators::ValidatorSet,
+    reshare_target_validator_set: &validators::ValidatorSet,
     recovered_committee: Option<(
         &commonware_utils::ordered::Set<bls12381::PublicKey>,
         &DkgBoundaryArtifact,
     )>,
-    verifier_join: bool,
+    shareless_verifier: bool,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
         return Ok(None);
@@ -2256,14 +2256,40 @@ fn validate_validator_evm_signer(
                 .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
         let local_public_key = signing_key.public_key();
         let Some(participant_index) = participants.position(&local_public_key) else {
-            if verifier_join {
+            if shareless_verifier {
+                let Some(target_index) = reshare_target_validator_set
+                    .addresses
+                    .iter()
+                    .position(|address| *address == signer_address)
+                else {
+                    info!(
+                        %signer_address,
+                        epoch = boundary.epoch,
+                        "shareless verifier is not yet in the canonical reshare target; retaining no proposer identity"
+                    );
+                    return Ok(None);
+                };
+                let target_public_key = reshare_target_validator_set
+                    .public_keys
+                    .get(target_index)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "current reshare target is missing the BLS public key for EVM address {}",
+                            signer_address
+                        )
+                    })?;
+                ensure!(
+                    target_public_key == &local_public_key,
+                    "validator EVM key address {} belongs to a different BLS consensus key in the current reshare target",
+                    signer_address
+                );
                 info!(
                     %signer_address,
                     epoch = boundary.epoch,
-                    "verifier-join: local BLS key is not in the recovered DKG boundary committee; \
-                     the node syncs as a verifier"
+                    "shareless validator identity matches the canonical reshare target; \
+                     the node remains authority-free until DKG grants its threshold share"
                 );
-                return Ok(None);
+                return Ok(Some(signer_address));
             }
             eyre::bail!(
                 "local BLS key is not in recovered DKG boundary committee for epoch {}; \
@@ -2304,20 +2330,20 @@ fn validate_validator_evm_signer(
             )
         })
         .or_else(|| {
-            active_validator_set
+            reshare_target_validator_set
                 .addresses
                 .iter()
                 .position(|address| *address == signer_address)
                 .map(|index| {
                     (
-                        &active_validator_set.public_keys,
+                        &reshare_target_validator_set.public_keys,
                         index,
-                        "active validator set",
+                        "current reshare target",
                     )
                 })
         });
     let Some((public_keys, index, source_set)) = authorized else {
-        if verifier_join {
+        if shareless_verifier {
             info!(
                 %signer_address,
                 "verifier-join: EVM signer is not yet in the on-chain validator set; the node \
@@ -3732,6 +3758,10 @@ where
                 last_dkg_output,
             } => (None, polynomial, last_dkg_output, false),
         };
+    // Threshold material, not CLI file presence, owns consensus authority. A
+    // recovered validator excluded from the current boundary is VerifierOnly even
+    // when its original signing-share path is still configured on disk.
+    let shareless_verifier = signing_share.is_none();
 
     // Verifier-join supplies public threshold material without a signing share.
     // Its local database can still be at height zero while it joins an already
@@ -3739,7 +3769,7 @@ where
     let coordinate_genesis_bootstrap = should_coordinate_genesis_tee_bootstrap(
         startup_dkg_context,
         local_key_in_current_consensus_set,
-        verifier_join,
+        shareless_verifier,
     );
 
     // Block 1 carries `BoundaryOutcome` before `TeeBootstrap`. Only a proven
@@ -3783,8 +3813,14 @@ where
                 .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
         };
 
-    let active_validator_set = validators::read_validators_at_latest(&node.provider)
-        .wrap_err("failed to load active validator set for EVM signer validation")?;
+    let reshare_target_validator_set = {
+        let state = node
+            .provider
+            .latest()
+            .wrap_err("failed to load latest state for EVM signer validation")?;
+        validators::read_reshare_target_from_state(&state)
+            .wrap_err("failed to load current reshare target for EVM signer validation")?
+    };
     let recovered_committee_for_signer = recovered_boundary
         .as_ref()
         .map(|(_, boundary)| (&participants, boundary));
@@ -3792,9 +3828,9 @@ where
         &args,
         &signing_key,
         &validator_set,
-        &active_validator_set,
+        &reshare_target_validator_set,
         recovered_committee_for_signer,
-        verifier_join,
+        shareless_verifier,
     )?;
 
     // ── 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) ──
@@ -4034,11 +4070,12 @@ where
                 "mandatory OST3 bootstrap coordinated — payload ready for block 1"
             );
             bridge.set_pending_tee_bootstrap(payload);
-        } else if verifier_join {
+        } else if shareless_verifier {
             // The permissionless V1 onboarding transaction must have installed
-            // the permanent key before this process was launched. A share-less
-            // verifier joins only to certify and replay the existing chain; it
-            // neither has a proposer identity yet nor reproduces genesis OST3.
+            // the permanent key before this process was launched. A shareless
+            // validator certifies and replays the existing chain without threshold
+            // authority and never reproduces genesis OST3. Its canonical EVM/BLS
+            // identity may already be retained for the later DKG activation.
             let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
                 "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
             )?;

@@ -4859,6 +4859,96 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         None,
         "non-member must run as verifier (None) when verifier-join"
     );
+
+    // Lease recovery crosses a different boundary from an unregistered live join:
+    // the old finalized DKG committee excludes this validator, while the canonical
+    // reshare target already binds its EVM address to the same BLS key. Keep that
+    // identity available for the post-DKG signer transition, but do not infer any
+    // threshold authority from it (the runtime still has no signing share).
+    let (boundary_keys, boundary_participants, boundary_output, _polynomial) = run_test_dkg();
+    let boundary_set = ValidatorSet {
+        public_keys: boundary_keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x31),
+            Address::with_last_byte(0x32),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing; 3],
+    };
+    let boundary = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &boundary_set,
+        output: &boundary_output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 420,
+        planned_activation_height: 421,
+        vrf_material_version: 7,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        Some(evm_signer.address()),
+        "a shareless validator in the canonical reshare target must retain its identity for post-DKG promotion"
+    );
+
+    let mismatched_target = ValidatorSet {
+        public_keys: vec![bls12381::PrivateKey::from_seed(8).public_key()],
+        addresses: vec![evm_signer.address()],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing],
+    };
+    let mismatch = super::validate_validator_evm_signer(
+        &args,
+        &bls_key,
+        &boundary_set,
+        &mismatched_target,
+        Some((&boundary_participants, &boundary)),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        mismatch.contains("belongs to a different BLS consensus key"),
+        "shareless recovery must fail closed on an address/BLS mismatch: {mismatch}"
+    );
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &empty,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        None,
+        "an unregistered shareless verifier has no canonical proposer identity"
+    );
+    assert!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            false,
+        )
+        .is_err(),
+        "an excluded validator must fail closed outside shareless recovery mode"
+    );
 }
 
 // T-3 / behavioural counterpart of the removed source-grep test in
