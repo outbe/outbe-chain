@@ -275,8 +275,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 gem.expiry_attempts.clear(&gem_id)?;
                 continue;
             }
-            // Due and still not burning: the entry no longer matches its gem,
-            // and it holds up every entry behind it just as an error does.
+            // Due and still not burning: the entry no longer matches its gem.
             Ok(false) => {
                 tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
             }
