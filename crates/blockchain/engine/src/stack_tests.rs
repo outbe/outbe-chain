@@ -1859,7 +1859,7 @@ async fn start_recovery_marshal(
     )
     .await;
 
-    // 2026.5.0: the resolver handoff changed — the marshal actor takes
+    // 2026.5.0: the resolver handoff changed - the marshal actor takes
     // `(handler::Receiver<Commitment>, R)` where `R: TargetedResolver`. The
     // receiver/handler pair is produced by `handler::init`; the `Handler` is
     // returned as the keepalive (dropping it closes the receiver and shuts the
@@ -2199,7 +2199,7 @@ fn test_build_boundary_artifact_deterministic() {
         p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
     };
 
-    // Same inputs → same output.
+    // Same inputs -> same output.
     let r1 = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: Epoch::new(1),
         validator_set: &validator_set,
@@ -3074,7 +3074,7 @@ fn test_build_peer_map_excludes_unreachable() {
     let key = bls12381::PrivateKey::random(rand_core::OsRng);
     let pk = key.public_key();
 
-    // No p2p_address and no bootnode entry → excluded.
+    // No p2p_address and no bootnode entry -> excluded.
     let bootnode_map = std::collections::BTreeMap::new();
 
     let validator_set = validators::ValidatorSet {
@@ -3725,7 +3725,7 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 }
 
 // =============================================================================
-// T3 — ordered::Set index shift on prefix-sort join (must pass).
+// T3 - ordered::Set index shift on prefix-sort join (must pass).
 //
 // Prepending a BLS pubkey that sorts before all existing keys to an ordered::Set
 // shifts the indices of every original key by +1. Production code that builds
@@ -3806,13 +3806,13 @@ fn ordered_set_index_shift_on_prefix_join() {
 }
 
 // =============================================================================
-// T0 — Commonware Muxer drop vs backup-capture contract.
+// T0 - Commonware Muxer drop vs backup-capture contract.
 //
 // The Outbe consensus stack uses `Muxer::new(...)` (no backup) for vote / cert
 // / resolver / dkg sub-channels and registers a fresh sub-channel for every
 // new epoch (see stack.rs:513-549, 1009-1017). If a peer sends a message on
 // epoch N's sub-channel before the receiver has registered that sub-channel
-// on its end, the message is dropped — there is no replay path back into the
+// on its end, the message is dropped - there is no replay path back into the
 // late registrant.
 //
 // These two tests pin the Muxer contract for the pinned commonware-p2p tag
@@ -3969,7 +3969,7 @@ mod muxer_contract {
                 Muxer::new(context.child("sender_mux"), s_sender, s_receiver, CAPACITY);
             s_mux.start();
 
-            // Receiver peer: register the physical channel only — sub-channel
+            // Receiver peer: register the physical channel only - sub-channel
             // is *not* registered yet.
             let (r_sender, r_receiver) = oracle
                 .control(pk_receiver.clone())
@@ -3999,7 +3999,7 @@ mod muxer_contract {
             // not registered there).
             context.sleep(Duration::from_millis(100)).await;
 
-            // Now the receiver registers the sub-channel — too late.
+            // Now the receiver registers the sub-channel - too late.
             let (_, mut rx) = r_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
 
             // Bound the wait. With LINK latency = 0 and SubReceiver mailbox
@@ -4016,7 +4016,7 @@ mod muxer_contract {
                     );
                 }
                 _ = &mut timed => {
-                    // Expected: timed out without receiving — message was dropped.
+                    // Expected: timed out without receiving - message was dropped.
                 }
             }
         });
@@ -4024,7 +4024,7 @@ mod muxer_contract {
 
     /// With `.with_backup()`, the same early message is captured into the
     /// backup receiver as `(subchannel, (peer_pk, payload))`. The late-
-    /// registrant of the sub-channel still does **not** see it — backup is
+    /// registrant of the sub-channel still does **not** see it - backup is
     /// a capture surface, not an auto-replay mechanism.
     #[test]
     fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
@@ -4103,7 +4103,7 @@ mod muxer_contract {
                 "backup-captured bytes did not contain the original payload as suffix"
             );
 
-            // Now register the sub-channel on the receiver — assert that the
+            // Now register the sub-channel on the receiver - assert that the
             // late registrant does **not** receive the message that was
             // already drained into backup.
             let (_, mut rx) = r_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
@@ -4114,7 +4114,7 @@ mod muxer_contract {
                     let _ = received;
                     panic!(
                         "muxer with backup auto-replayed into the late registrant; this is \
-                         not the v2026.3.0 contract — production fix design must change"
+                         not the v2026.3.0 contract - production fix design must change"
                     );
                 }
                 _ = &mut timed_late => {
@@ -4126,7 +4126,7 @@ mod muxer_contract {
 }
 
 // =============================================================================
-// T1 / T2a / T2b / T5 — multi-node simplex deterministic harness.
+// T1 / T2a / T2b / T5 - multi-node simplex deterministic harness.
 //
 // These tests run the actual `simplex::Engine` over a deterministic
 // simulated network with outbe-chain's `HybridScheme<MinSig>` and the
@@ -4150,7 +4150,7 @@ fn epoch_transition_finalizes_view_one() {
     let runner = deterministic::Runner::timed(Duration::from_secs(30));
     runner.start(|ctx| async move {
         let mut harness = outbe_consensus::test_harness::Harness::new(&ctx, 3).await;
-        // Epoch::new(2) → RoundRobin leader = (2+1) % 3 = 0; arbitrary
+        // Epoch::new(2) -> RoundRobin leader = (2+1) % 3 = 0; arbitrary
         // baseline cycle.
         let outcome = harness
             .run_cycle(
@@ -4189,7 +4189,7 @@ fn cross_node_race_stalls_under_lazy_registration() {
         // differs. In the lazy path, `dkg_completion_delay` is ignored
         // (no pre-register) so followers' Mux registers the new epoch
         // only at `activation_delay = 500ms`. Leader fires at 150ms;
-        // 150-500ms window has no follower route → Mux drop → stall.
+        // 150-500ms window has no follower route -> Mux drop -> stall.
         let mut dkg_completion = HashMap::new();
         let mut activation = HashMap::new();
         for i in 0..3 {
@@ -4247,7 +4247,7 @@ fn pre_register_helper_avoids_cross_node_race() {
         // Same timing scenario as T2a: leader activates fast,
         // followers slow. The only difference is `use_pre_registration:
         // true`, which in the harness invokes
-        // `register_epoch_subchannels` at modeled DKG completion —
+        // `register_epoch_subchannels` at modeled DKG completion -
         // exactly the function the production fix calls in
         // stack.rs:1124-1190.
         let mut dkg_completion = HashMap::new();
@@ -4420,7 +4420,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     assert_eq!(address, Some(evm_signer.address()));
 
     // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
-    // is true — it returns None (the node syncs as a verifier). The same signer with
+    // is true - it returns None (the node syncs as a verifier). The same signer with
     // verifier_join=false bails (the existing member-required contract).
     let empty = crate::validators::ValidatorSet {
         public_keys: Vec::new(),
@@ -4442,7 +4442,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
 // `crates/blockchain/evm/tests/genesis.rs`. `validate_recovered_vrf_material`
 // must reject when the locally-recovered VRF group public key disagrees with
 // the finalized boundary artifact, and must accept when they match (or when
-// no boundary is supplied — bootstrap path).
+// no boundary is supplied - bootstrap path).
 #[test]
 fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() {
     let (_keys, _participants, _output, _share, polynomial) = run_test_dkg_complete();
@@ -4450,15 +4450,15 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
     let local_group_pk =
         alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial.public()));
 
-    // No boundary → bootstrap path is allowed.
+    // No boundary -> bootstrap path is allowed.
     super::validate_recovered_vrf_material(&polynomial, None).expect("bootstrap path must accept");
 
-    // Matching boundary → accept.
+    // Matching boundary -> accept.
     let matching = test_boundary_with_vrf_hash(local_group_pk, 1);
     super::validate_recovered_vrf_material(&polynomial, Some(&matching))
         .expect("matching VRF group public key must accept");
 
-    // Mismatching boundary → reject with the operator-facing error string.
+    // Mismatching boundary -> reject with the operator-facing error string.
     let mismatching = test_boundary_with_vrf_hash(B256::repeat_byte(0xEE), 1);
     let err = super::validate_recovered_vrf_material(&polynomial, Some(&mismatching))
         .expect_err("mismatched VRF group public key must reject");
@@ -4470,18 +4470,18 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 — recovery picks participants from the recovered DKG output's committee
+// T4 - recovery picks participants from the recovered DKG output's committee
 //      (the share holders), NOT the latest on-chain set, and fails fast when
 // the restored material does not match the recovered boundary.
 //
 // `select_recovery_participants` is the pure decision the recovery path now
-// uses at stack.rs §7. The output's `players()` is already a sorted/deduped
+// uses at stack.rs section 7. The output's `players()` is already a sorted/deduped
 // `commonware_utils::ordered::Set`, so participant indices derive from it
-// canonically — the test asserts membership and the explicit drift error.
+// canonically - the test asserts membership and the explicit drift error.
 // =============================================================================
 
 /// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
-/// distinct validator addresses — the committee the ceremony ran for.
+/// distinct validator addresses - the committee the ceremony ran for.
 fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
     let mut boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0xC1), 7);
     boundary.reshare.new_active_set = (0..n).map(|i| Address::repeat_byte(i as u8 + 1)).collect();
@@ -4491,7 +4491,7 @@ fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
 #[test]
 fn recovery_uses_recovered_committee_not_latest() {
     // Recovered DKG output for a 3-validator committee. `players()` is the
-    // sorted set of the three consensus pubkeys — the share holders.
+    // sorted set of the three consensus pubkeys - the share holders.
     let recovered_players: commonware_utils::ordered::Set<bls12381::PublicKey> = (1u64..=3)
         .map(bls12381::PrivateKey::from_seed)
         .map(|key| key.public_key())
@@ -4515,7 +4515,7 @@ fn recovery_uses_recovered_committee_not_latest() {
     );
 
     // Subcase 2: the recovered boundary records a 4-validator active set while the
-    // restored DKG output has only 3 players — the consensus material does not
+    // restored DKG output has only 3 players - the consensus material does not
     // match the recovered chain boundary. Recovery must fail fast with an explicit
     // drift error rather than build the scheme against the wrong committee.
     let boundary_drift = test_boundary_with_active_set_len(4);
@@ -4535,7 +4535,7 @@ fn recovery_uses_recovered_committee_not_latest() {
 /// commonware 2026.5.0's `validate_label` panics if a span/metric label is not
 /// `[a-zA-Z][a-zA-Z0-9_]*`. The `with_label` -> `.child()` migration carried
 /// dotted labels `dkg.live`/`dkg.retry`, which panicked at block ~90 during DKG
-/// rotation — a rare path no short localnet hits. This feeds the labels the
+/// rotation - a rare path no short localnet hits. This feeds the labels the
 /// engine passes to `Context::child(...)` through the REAL commonware validator
 /// (the same function the runtime invokes), so an invalid label fails here
 /// instead of in production. Asserts real label values via the real validator;
@@ -4598,7 +4598,7 @@ fn dotted_label_is_rejected_by_commonware_validate_label() {
 #[test]
 fn marshal_init_option_height_maps_none_to_genesis_zero() {
     // Exercise the PRODUCTION mapping (super::map_marshal_init_height), not stdlib
-    // Option::unwrap_or — so a regression in how Actor::init's Option<Height> is
+    // Option::unwrap_or - so a regression in how Actor::init's Option<Height> is
     // mapped (e.g. mapping None to a non-zero height, or dropping Some(n)) fails here.
     assert_eq!(super::map_marshal_init_height(None).get(), 0);
     assert_eq!(
@@ -4611,8 +4611,8 @@ fn marshal_init_option_height_maps_none_to_genesis_zero() {
     );
 }
 
-/// A node that has already finalized (`Some(N>0)`) — or whose execution layer
-/// recovered after a crash with consensus still durable — must classify as an
+/// A node that has already finalized (`Some(N>0)`) - or whose execution layer
+/// recovered after a crash with consensus still durable - must classify as an
 /// existing-chain join: it must NOT re-run the initial genesis DKG and the
 /// genesis-formation gate must NOT (re)form genesis. An inverted height check
 /// would compile clean but re-run genesis DKG on a restarted validator.
@@ -4771,14 +4771,14 @@ mod restart_recovery {
 
     #[test]
     fn zero_finalized_tip_is_not_recoverable() {
-        // No durable finalized tip at all → fresh/corrupt, never the benign case.
+        // No durable finalized tip at all -> fresh/corrupt, never the benign case.
         assert!(!unfinalized_head_lead_is_recoverable(5, 0));
     }
 
     #[test]
     fn lead_beyond_bound_stays_fatal() {
         // A head far ahead of the finalized tip is suspicious, not an in-flight
-        // head — it must NOT be silently tolerated.
+        // head - it must NOT be silently tolerated.
         assert!(!unfinalized_head_lead_is_recoverable(
             69 + MAX_UNFINALIZED_HEAD_LEAD + 1,
             69
@@ -4946,7 +4946,7 @@ fn read_ms_uses_default_when_absent() {
     );
 }
 
-/// Test 9: a present value is returned verbatim (including 0 — the value is read
+/// Test 9: a present value is returned verbatim (including 0 - the value is read
 /// here; the `> 0` rule is enforced by `validate_timing`, see Test 11).
 #[test]
 fn read_ms_accepts_present_value() {

@@ -25,7 +25,7 @@ interface IGovernance {
         string text;
     }
 
-    // Listing projection — a proposal without its text body.
+    // Listing projection - a proposal without its text body.
     struct ProposalMeta {
         uint256 id;
         uint8 status;

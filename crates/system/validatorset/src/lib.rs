@@ -1,11 +1,11 @@
 //! Module-structure standard layout:
-//! - `schema.rs` — storage schema for the `ValidatorSet` facade.
-//! - `state.rs` — `CommitteeSnapshotStore` helpers.
-//! - `runtime.rs` — validator-set use-cases and the raw-storage adapter.
-//! - `state_machine/` — typed validator lifecycle, transitions and storage adapter.
-//! - `hooks.rs` — per-finalized-block guard wrappers.
-//! - `precompile.rs` — ABI dispatch.
-//! - `errors.rs` — module-local activation error type.
+//! - `schema.rs` - storage schema for the `ValidatorSet` facade.
+//! - `state.rs` - `CommitteeSnapshotStore` helpers.
+//! - `runtime.rs` - validator-set use-cases and the raw-storage adapter.
+//! - `state_machine/` - typed validator lifecycle, transitions and storage adapter.
+//! - `hooks.rs` - per-finalized-block guard wrappers.
+//! - `precompile.rs` - ABI dispatch.
+//! - `errors.rs` - module-local activation error type.
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers; migrate them opportunistically.

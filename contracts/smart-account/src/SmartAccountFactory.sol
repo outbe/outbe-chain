@@ -21,7 +21,7 @@ import {
 /// @notice Deploys Credis-configured Kernel v4 smart accounts.
 /// @dev Kernel v4 initializes an account from an ordered `Install[]` package list where `packages[0]`
 ///      becomes the root validation and every package installs strictly in order. A validation's
-///      hook must be enabled *before* the package that references it — impossible for a plain root
+///      hook must be enabled *before* the package that references it - impossible for a plain root
 ///      validator (nothing precedes `packages[0]`). We therefore model the OWNER as a permission
 ///      `[SudoPolicy(always-pass) + ECDSASigner(owner)]` carrying `BundleSpendProtectorHook` when
 ///      bundle tokens are configured, installed as `[policy, hook, signer]` so the hook is enabled
@@ -45,7 +45,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
     /// @notice Credis Card Agent precompile.
     /// @dev A protocol address, not a deployment parameter: an injectable registry could be
     ///      pointed at a look-alike that reports every agent active, which would silently defeat
-    ///      the standing check below. This also confines the factory to Outbe chains — elsewhere
+    ///      the standing check below. This also confines the factory to Outbe chains - elsewhere
     ///      0x1011 has no code and `createAccount` reverts on the empty return data.
     address public constant CCA_REGISTRY = 0x0000000000000000000000000000000000001011;
 
@@ -73,7 +73,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
         _BUNDLE_WITHDRAW_HOOK = bundleWithdrawHook_;
     }
 
-    // ── ISmartAccountFactory getters ─────────────────────────────────────
+    // -- ISmartAccountFactory getters -------------------------------------
 
     /// @inheritdoc ISmartAccountFactory
     function kernelFactory() external view override returns (address) {
@@ -115,7 +115,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
         return _BUNDLE_WITHDRAW_HOOK;
     }
 
-    // ── Account creation ─────────────────────────────────────────────────
+    // -- Account creation -------------------------------------------------
 
     function createAccount(
         address owner,

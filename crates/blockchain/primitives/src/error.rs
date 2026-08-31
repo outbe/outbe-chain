@@ -46,7 +46,7 @@ pub enum PrecompileError {
     #[error("write protection: cannot modify state during static call")]
     WriteProtection,
 
-    /// User-triggerable error — transaction reverts but does not halt the EVM.
+    /// User-triggerable error - transaction reverts but does not halt the EVM.
     #[error("revert: {0}")]
     Revert(String),
 

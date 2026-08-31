@@ -11,7 +11,7 @@
 //!    the bytes produced by the child contract's `RETURN` opcode.
 //!
 //! The "contract" is a 10-byte EVM bytecode sequence that pushes
-//! `0x000…001` onto memory and returns its 32-byte word:
+//! `0x000...001` onto memory and returns its 32-byte word:
 //!
 //! ```text
 //! 6001         PUSH1 0x01
@@ -36,7 +36,7 @@ use revm::{
 const TARGET: Address = Address::new([0xAB; 20]);
 const CALLER: Address = Address::new([0xC0; 20]);
 
-/// Minimal EVM bytecode: stores `0x000…001` at memory offset 0 and
+/// Minimal EVM bytecode: stores `0x000...001` at memory offset 0 and
 /// returns the 32-byte word.
 const RETURN_ONE_BYTECODE: &[u8] = &[
     0x60, 0x01, // PUSH1 0x01
@@ -88,7 +88,7 @@ fn staticcall_returns_contract_returndata() {
         result.status,
     );
 
-    // Bytecode returns 32 bytes with value 0x00..01 — verify byte-exact.
+    // Bytecode returns 32 bytes with value 0x00..01 - verify byte-exact.
     let expected = {
         let mut buf = [0u8; 32];
         buf[31] = 1;

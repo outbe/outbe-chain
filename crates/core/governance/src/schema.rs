@@ -3,7 +3,7 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, StorageBytes, StorageSet};
 
-/// An Outbe Improvement Proposal — a protocol-level change proposal.
+/// An Outbe Improvement Proposal - a protocol-level change proposal.
 ///
 /// The `text` field lives in-record via the String-in-record DSL support:
 /// one length/base slot in the record layout, payload in a keccak-derived
@@ -32,7 +32,7 @@ pub struct Oip {
     pub text: String,
 }
 
-/// A Governance Improvement Proposal — a proposal to change the canon and/or
+/// A Governance Improvement Proposal - a proposal to change the canon and/or
 /// meta-canon. Field set is identical to [`Oip`] for now (per design decision);
 /// the two are separate record types so they can diverge independently when GIP
 /// gains its git-style semantics.

@@ -3,8 +3,8 @@
 //! When the node is started with `--tee-enclave-socket`, [`init_enclave_client`]
 //! connects to the enclave sidecar (validating quote/key bindings and pinning its
 //! Noise-IK static key) and installs a process-global client. Every offer decryption then
-//! routes through the enclave via [`process_tribute_offer_batch_via_enclave`] — the offer
-//! key exists only inside the enclave, and there is no in-process key path. The L1↔L2 linkage
+//! routes through the enclave via [`process_tribute_offer_batch_via_enclave`] - the offer
+//! key exists only inside the enclave, and there is no in-process key path. The L1<->L2 linkage
 //! (`creator`, `tribute_draft_id`) is parsed
 //! and validated inside the enclave but withheld from the host (Enclave Return
 //! Rule); the public draft fields are returned and used to issue the tribute.
@@ -12,10 +12,10 @@
 //! Determinism: every node's enclave holds the same shared offer key, so the same
 //! ciphertext decrypts identically on all validators (re-execution agrees). The
 //! enclave call is a **blocking** UDS round-trip made straight from the precompile
-//! path — it never holds a `StorageHandle` across an await and never spawns a
+//! path - it never holds a `StorageHandle` across an await and never spawns a
 //! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
 //! session's one bounded reconnect + retry) surfaces as `PrecompileError::Fatal`
-//! (`tee_sidecar_unavailable`) — a node-local fault, never a deterministic
+//! (`tee_sidecar_unavailable`) - a node-local fault, never a deterministic
 //! revert, matching the gratis/promis/fidelity enclave paths. Only per-offer
 //! rejections reported by the enclave inside the results are deterministic and
 //! revert.
@@ -86,7 +86,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 /// of the private economics).
 ///
 /// The host recomputes `inputs_canonical_hash` from the request it sent and
-/// compares it to the enclave's — a mismatch is enclave non-determinism
+/// compares it to the enclave's - a mismatch is enclave non-determinism
 /// (`tee_enclave_nondeterminism`). It then verifies the per-offer `attestation_tag`
 /// (an Ed25519 signature over the inputs hash + results) against the attestation
 /// key pinned for the enclave session, binding the results to that peer
@@ -95,7 +95,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
 ///
 /// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
-/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`) —
+/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`) -
 /// dead sidecar, transport error after the session's bounded reconnect+retry,
 /// enclave authorization denial (keyless enclave), non-determinism, bad
 /// attestation. Executing the tx differently from healthy validators would
@@ -106,7 +106,7 @@ pub fn process_tribute_offer_batch_via_enclave(
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
     // Route through the process-global enclave session (shared with the TEE registry
     // seal). Pin the attestation key from the installed identity before the
-    // call. `None` means no client is configured → typed `tee_sidecar_unavailable`.
+    // call. `None` means no client is configured -> typed `tee_sidecar_unavailable`.
     let (attestation_pub, response) = outbe_tee::try_with_enclave(|session| {
         let attestation_pub = session.attestation_pub();
         let response = session.request(&EnclaveRequest::ProcessTributeOfferBatch {
@@ -141,8 +141,8 @@ pub fn process_tribute_offer_batch_via_enclave(
 
 /// Validate the enclave's `TributeOfferBatch` response: (1) the canonical-inputs hash
 /// equals the host's recompute over the exact request it sent (non-determinism
-/// detector → `tee_enclave_nondeterminism`); (2) the per-offer attestation tag
-/// verifies against the pinned attestation key (→ `tee_offer_attestation_invalid`).
+/// detector -> `tee_enclave_nondeterminism`); (2) the per-offer attestation tag
+/// verifies against the pinned attestation key (-> `tee_offer_attestation_invalid`).
 /// Both failures are node-local (`Fatal`), never deterministic reverts.
 /// Returns the results on success. Pure (no transport) so it is unit-testable.
 fn validate_tribute_offer_batch_response(
@@ -241,7 +241,7 @@ mod tests {
 
     /// Regression (2026-08-22 testnet incident): a dead/unconfigured sidecar is
     /// a NODE-LOCAL fault. It must surface as `PrecompileError::Fatal`, never as
-    /// a deterministic revert — reverting a tx that healthy validators execute
+    /// a deterministic revert - reverting a tx that healthy validators execute
     /// diverges state.
     #[test]
     fn transport_unavailability_is_fatal_not_revert() {
@@ -258,7 +258,7 @@ mod tests {
     }
 
     /// A returned `inputs_canonical_hash` that disagrees with the host's
-    /// recompute is enclave non-determinism → `tee_enclave_nondeterminism`. The
+    /// recompute is enclave non-determinism -> `tee_enclave_nondeterminism`. The
     /// hash check runs before attestation, so a bogus tag is irrelevant here.
     #[test]
     fn validate_rejects_inputs_canonical_hash_divergence() {
@@ -280,7 +280,7 @@ mod tests {
     }
 
     /// The day, currency and price are request inputs the node resolved, so a
-    /// response hashed over different values must not validate — otherwise they
+    /// response hashed over different values must not validate - otherwise they
     /// ride to the enclave unattested.
     #[test]
     fn validate_binds_the_priced_request_fields() {

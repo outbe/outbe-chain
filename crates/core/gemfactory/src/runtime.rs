@@ -578,9 +578,9 @@ fn compute_params(
     coen_rate: U256,
 ) -> Result<(U256, U256, GemState)> {
     let (cost_amount, floor_price, initial_state) = match gem_type {
-        // Genesis: validator gem during the genesis window — born Qualified
+        // Genesis: validator gem during the genesis window - born Qualified
         // (no maturity wait), but validators pay like every other agent
-        // class: cost = entry × load, floor = rate × 1.08. settleGem moves
+        // class: cost = entry x load, floor = rate x 1.08. settleGem moves
         // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
             let cost = compute_cost(coen_rate, gem_load, 100)?;
@@ -592,8 +592,8 @@ fn compute_params(
             let floor = derived_floor(coen_rate)?;
             (cost, floor, GemState::Issued)
         }
-        // Validator (post-genesis), Wallet, Cca — standard agent-class flow:
-        // cost = entry × load, floor = rate × 1.08, born Issued.
+        // Validator (post-genesis), Wallet, Cca - standard agent-class flow:
+        // cost = entry x load, floor = rate x 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             let cost = compute_cost(coen_rate, gem_load, 100)?;
             let floor = derived_floor(coen_rate)?;
@@ -626,7 +626,7 @@ fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
     Ok(cost)
 }
 
-/// Floor price = `entry × (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
+/// Floor price = `entry x (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
 fn derived_floor(entry_price: U256) -> Result<U256> {
     let acc = entry_price
         .checked_mul(U256::from(100 + FLOOR_RATE))
@@ -634,7 +634,7 @@ fn derived_floor(entry_price: U256) -> Result<U256> {
     Ok(acc / U256::from(100u64))
 }
 
-/// Call price = `entry × (100 + CALL_RATE) / 100` (128% markup => 2.28x).
+/// Call price = `entry x (100 + CALL_RATE) / 100` (128% markup => 2.28x).
 /// Entry equals the issuance-time coen rate in the single-currency case.
 fn derived_call_price(entry_price: U256) -> Result<U256> {
     let acc = entry_price

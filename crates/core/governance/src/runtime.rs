@@ -87,7 +87,7 @@ macro_rules! impl_proposal_ops {
         /// Used by the vote path ([`crate::vote_target::GovernanceVoteTarget`])
         /// after quorum; not exposed on the public ABI submit path.
         ///
-        /// Implemented as submit (Draft) then Draft → Approved (same status
+        /// Implemented as submit (Draft) then Draft -> Approved (same status
         /// write as set-status, without the ABI authority gate).
         pub fn $create_approved(&mut self, author: Address, text: &str) -> Result<U256> {
             let id = self.$submit(author, text)?;
@@ -125,7 +125,7 @@ macro_rules! impl_proposal_ops {
 
         /// Transitions a proposal's status. Authorities-gated, with one
         /// exception: the author may perform `Rework -> Draft` (resubmission).
-        /// Touches only the status/updated-block slots — never the text.
+        /// Touches only the status/updated-block slots - never the text.
         pub fn $set_status(&mut self, caller: Address, id: U256, new_status: u8) -> Result<()> {
             let entry = self.$map.entry(id);
             if !entry.exists()? {

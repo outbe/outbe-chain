@@ -42,7 +42,7 @@ pub fn dispatch(
             decimals(_) => metadata::<IPromis::decimalsCall>(|| Ok(promis.decimals())),
             totalSupply(_) => metadata::<IPromis::totalSupplyCall>(|| promis.total_supply()),
 
-            // Confidential read — return ciphertext; decrypt client-side.
+            // Confidential read - return ciphertext; decrypt client-side.
             balanceOf(c) => view(c, |c| promis.balance_ct_of(c.account).map(Bytes::from)),
             opNonceOf(c) => view(c, |c| promis.op_nonce_of(c.account)),
 

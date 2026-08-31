@@ -6,7 +6,7 @@ export default defineConfig({
   target: "node18",
   clean: true,
   bundle: true,
-  // Keep deps external — `npx` installs them from package.json. Bundling viem +
+  // Keep deps external - `npx` installs them from package.json. Bundling viem +
   // noble would bloat dist and risk dual-package issues.
   banner: { js: "#!/usr/bin/env node" },
 });

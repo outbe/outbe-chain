@@ -1,10 +1,10 @@
 //! Enclave-side request telemetry: per-request stderr log lines, process-global
 //! request counters, uptime, and heap accounting via a counting allocator.
 //!
-//! Everything here is observability only — no wire data, no key material, no
+//! Everything here is observability only - no wire data, no key material, no
 //! consensus input. Counters are relaxed atomics; exact cross-thread ordering
 //! is not required. Timing uses `SystemTime` (the production-precedent clock
-//! source under Gramine — see `set_remote_read_deadline`); a negative elapsed
+//! source under Gramine - see `set_remote_read_deadline`); a negative elapsed
 //! from clock adjustment clamps to zero.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -32,7 +32,7 @@ impl RequestOutcome {
 
 /// Request class as counted by [`EnclaveHealthStatusV1`]'s fixed fields.
 /// Mirrors the private `CommandClass` capability matrix in `initialization.rs`
-/// (which stays the single authorization authority — this enum only names the
+/// (which stays the single authorization authority - this enum only names the
 /// health-counter buckets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestClassLabel {
@@ -190,13 +190,13 @@ fn heap_sub(bytes: usize) {
 /// allocator overhead/fragmentation, and direct mmaps.
 pub struct CountingAllocator;
 
-// `GlobalAlloc` is an inherently `unsafe` trait — there is no safe way to
+// `GlobalAlloc` is an inherently `unsafe` trait - there is no safe way to
 // provide a global allocator. This is the crate's documented exception to the
 // no-unsafe rule: the impl delegates every allocation verbatim to `System`
 // (upholding its contract unchanged) and only adds relaxed atomic bookkeeping,
 // which cannot allocate or unwind.
 #[allow(unsafe_code)]
-// SAFETY: see above — pure delegation to `System` plus lock-free counters.
+// SAFETY: see above - pure delegation to `System` plus lock-free counters.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: caller upholds `GlobalAlloc::alloc`'s contract; forwarded as-is.

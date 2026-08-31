@@ -20,7 +20,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     using SafeERC20 for IERC20;
 
     /// @notice Emitted when slashing collateral on refund fails (e.g. solver revoked the ERC-6909 operator grant).
-    ///         The refund itself still completes — slash is best-effort to preserve user-side liveness.
+    ///         The refund itself still completes - slash is best-effort to preserve user-side liveness.
     event SlashSkipped(bytes32 indexed orderId);
 
     /// @notice Thrown when a settle/refund batch mixes orders from different origin domains.
@@ -30,7 +30,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
 
     // ========== CLAIM ==========
 
-    /// @notice Claim an order after quoting ends — locks collateral of the winning solver.
+    /// @notice Claim an order after quoting ends - locks collateral of the winning solver.
     ///         If the winner lacks sufficient collateral, the auction is restarted automatically.
     /// @param _orderId The unique identifier of the order
     /// @param _originData The order data encoded as bytes (OrderData)
@@ -41,7 +41,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         (address winner, uint256 outputAmount) = _auction().getWinner(_orderId);
         OrderData memory orderData = OrderValidator.decodeAndCheck(_originData, _orderId, outputAmount);
 
-        // Check if winner can cover collateral — if not, restart auction
+        // Check if winner can cover collateral - if not, restart auction
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) != address(0)) {
             address outputToken = TypeCasts.bytes32ToAddress(orderData.outputToken);

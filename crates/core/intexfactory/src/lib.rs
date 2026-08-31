@@ -1,5 +1,5 @@
 //! IntexFactory: Intex issuance, settlement (settle / minePromis), and the
-//! autonomous Issued → Qualified → Called lifecycle. Series state is written to
+//! autonomous Issued -> Qualified -> Called lifecycle. Series state is written to
 //! Intex; this module owns the settlement bookkeeping and candidate index.
 
 pub mod api;

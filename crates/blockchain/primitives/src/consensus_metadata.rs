@@ -12,7 +12,7 @@ const CERTIFIED_PARENT_ACCOUNTING_MAGIC: &[u8; 4] = b"OAV3";
 const CERTIFIED_PARENT_ACCOUNTING_VERSION: u8 = 1;
 
 // ============================================================================
-// V2 — Certified-Parent Accounting metadata
+// V2 - Certified-Parent Accounting metadata
 // ============================================================================
 
 /// Which Activity the V2 parent-participation proof came from.
@@ -67,7 +67,7 @@ pub struct MissedProposerEvent {
 ///
 /// Carries the exact-parent participation proof for block `B-1` (the parent
 /// of the block this metadata is included in). Contains **no** money fields
-/// and **no** raw consensus public keys — only the canonical
+/// and **no** raw consensus public keys - only the canonical
 /// `committee_set_hash` and `vrf_group_public_key_hash` (keccak of the
 /// encoded BLS group key) so the on-chain footprint stays minimal.
 ///
@@ -147,7 +147,7 @@ impl CertifiedParentAccountingMetadata {
     /// committee_set_hash         (B256)
     /// vrf_material_version       (u64)
     /// vrf_group_public_key_hash  (B256)
-    /// proof_kind                 (u8 tag — see ParentParticipationProof::tag)
+    /// proof_kind                 (u8 tag - see ParentParticipationProof::tag)
     /// missed_proposers_len       (u16) || repeated { view (u64) || validator (20) }
     /// ```
     pub fn encode(&self) -> Result<Bytes> {

@@ -22,12 +22,12 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// schedule is tracked on-chain by the Credis position, not here.
 ///
 /// Storage slots:
-///   0: total_supply (U256, plaintext aggregate — feeds `GratisMined/Burned`)
-///   1: pledged_total_supply (U256, plaintext aggregate — per-account hidden)
-///   2: mapping(address => bytes)  — encrypted balance blob
-///   3: mapping(address => bytes)  — encrypted pledged-ledger blob
-///   4: mapping(address => u64)    — modify-auth replay counter (monotonic)
-///   5: mapping(bytes32 => bytes)  — encrypted pledge-lock-tickets keyed by pledge_handle
+///   0: total_supply (U256, plaintext aggregate - feeds `GratisMined/Burned`)
+///   1: pledged_total_supply (U256, plaintext aggregate - per-account hidden)
+///   2: mapping(address => bytes)  - encrypted balance blob
+///   3: mapping(address => bytes)  - encrypted pledged-ledger blob
+///   4: mapping(address => u64)    - modify-auth replay counter (monotonic)
+///   5: mapping(bytes32 => bytes)  - encrypted pledge-lock-tickets keyed by pledge_handle
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
     pub total_supply: Slot<U256>,

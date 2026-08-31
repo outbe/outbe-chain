@@ -1,4 +1,4 @@
-//! Application actor — handles propose/verify/finalize via beacon_engine_handle.
+//! Application actor - handles propose/verify/finalize via beacon_engine_handle.
 //!
 //! Implements the consensus `Automaton` and `Relay` traits, bridging
 //! Commonware Simplex with Reth's execution layer.
@@ -25,7 +25,7 @@ pub struct OutbeApplication {
     ///
     /// The block is cached into marshal at propose time (`handle_propose` calls
     /// `marshal.proposed`), so [`Relay::broadcast`] only needs the synchronous
-    /// `marshal.forward` wire-push — it does not hop through the bounded
+    /// `marshal.forward` wire-push - it does not hop through the bounded
     /// application mailbox (which could drop the trigger under saturation).
     marshal_mailbox: MarshalMailbox,
 }
@@ -67,7 +67,7 @@ impl Automaton for OutbeApplication {
 }
 
 impl CertifiableAutomaton for OutbeApplication {
-    // Use default implementation — always certify.
+    // Use default implementation - always certify.
 }
 
 impl Relay for OutbeApplication {
@@ -81,7 +81,7 @@ impl Relay for OutbeApplication {
     /// dissemination: `marshal.proposed` only caches the block locally;
     /// `marshal.forward` performs the wire-push (`Buffer::send`). The block was
     /// already cached at propose time (`handle_propose` -> `marshal.proposed`),
-    /// so here we call `marshal.forward` DIRECTLY — no hop through the bounded
+    /// so here we call `marshal.forward` DIRECTLY - no hop through the bounded
     /// application mailbox. This is drop-proof for the push trigger and keeps
     /// the proposer's block servable on demand even if `forward` itself is
     /// throttled (verifiers can pull it). Dissemination is networking, not a

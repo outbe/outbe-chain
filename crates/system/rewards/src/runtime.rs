@@ -28,7 +28,7 @@ pub enum MetadataFingerprintOutcome {
     Fresh,
     /// Same `fb_hash` + same fingerprint already processed; full no-op.
     /// Caller MUST skip per-block module hooks (participation, slashing,
-    /// fees) — they would all short-circuit anyway via per-module guards,
+    /// fees) - they would all short-circuit anyway via per-module guards,
     /// but skipping early avoids redundant SLOAD/SSTORE work.
     IdenticalReplay,
 }
@@ -48,12 +48,12 @@ pub enum MetadataFingerprintOutcome {
 // - `signer_set_hash = canonical_signer_set_hash(signer_bitmap)`.
 // - `vrf_material_version`.
 // - `vrf_group_public_key_hash`.
-// - `canonical_vrf_proof_hash` — derived by the executor from the
+// - `canonical_vrf_proof_hash` - derived by the executor from the
 //   verified certificate's VRF proof and threaded through
 //   [`crate::runtime::check_and_record_metadata_fingerprint`] as the
 //   `canonical_vrf_proof_hash` argument.
 //
-// Domain bump V2 → V3 makes V3 fingerprints non-collide with any V2
+// Domain bump V2 -> V3 makes V3 fingerprints non-collide with any V2
 // entries that pre-genesis test runs may have written.
 const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 
@@ -86,13 +86,13 @@ pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// Reads the locked-in genesis UTC day. Returns `Fatal` if the slot is
 /// uninitialized (which can only happen if `ensure_genesis_anchor` has
-/// not yet run for this chain — i.e., the lifecycle is misconfigured).
+/// not yet run for this chain - i.e., the lifecycle is misconfigured).
 pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let day = rewards.genesis_utc_day.read()?;
     if day == 0 {
         return Err(PrecompileError::Revert(
-            "Rewards.genesis_utc_day not initialized — \
+            "Rewards.genesis_utc_day not initialized - \
              RewardsLifecycle::begin_block did not run on block 0"
                 .into(),
         ));
@@ -173,7 +173,7 @@ pub fn check_and_record_metadata_fingerprint(
     let prev = rewards.metadata_fingerprint_for_block.read(&fb_hash)?;
 
     if prev == B256::ZERO {
-        // First time seeing this fb_hash — persist and proceed.
+        // First time seeing this fb_hash - persist and proceed.
         rewards.metadata_fingerprint_for_block.write(&fb_hash, fp)?;
         return Ok(MetadataFingerprintOutcome::Fresh);
     }
@@ -181,7 +181,7 @@ pub fn check_and_record_metadata_fingerprint(
         return Ok(MetadataFingerprintOutcome::IdenticalReplay);
     }
     // Same fb_hash, different fingerprint: contradictory metadata for
-    // the same finalized block. Protocol violation — fatal so post-exec
+    // the same finalized block. Protocol violation - fatal so post-exec
     // module hooks never observe contradictory inputs.
     Err(PrecompileError::Revert(format!(
         "contradictory consensus metadata for fb_hash={fb_hash}: \
@@ -247,7 +247,7 @@ fn write_addr_list(buf: &mut Vec<u8>, list: &[Address]) {
 /// re-export the proof-kind enum from the wire-format crate
 /// so test crates can construct synthetic metadata without depending on
 /// `outbe-primitives` directly. Tests use this to assert that swapping
-/// `Finalization ↔ CertifiedNotarization` changes the fingerprint.
+/// `Finalization <-> CertifiedNotarization` changes the fingerprint.
 pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofKind;
 
 /// Validator emission percentage (kept for documentation/compat; the
@@ -419,7 +419,7 @@ mod tests {
                 check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
                     .unwrap();
 
-            // Mutate `missed_proposers` (canonical content) — same fb_hash.
+            // Mutate `missed_proposers` (canonical content) - same fb_hash.
             let mut m2 = m1.clone();
             m2.missed_proposers = vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
                 view: 1,
@@ -433,7 +433,7 @@ mod tests {
                 "expected contradictory-fatal, got: {err}"
             );
 
-            // Different fee sum, original metadata — also contradictory.
+            // Different fee sum, original metadata - also contradictory.
             let err2 =
                 check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(101u64), B256::ZERO)
                     .unwrap_err();
@@ -445,7 +445,7 @@ mod tests {
     /// same `fb_hash` may legitimately carry different supplemental
     /// finalize-vote bits (canonical certificate bitmap +
     /// proposer-locally-observed late votes). This must NOT trigger the
-    /// contradictory-metadata fatal — see the freeze-closure note in
+    /// contradictory-metadata fatal - see the freeze-closure note in
     /// and `OutbeReporter::build_finalized_certificate`.
     /// under V3 the signer bitmap is part of the
     /// fingerprint; two metadata-txes for the same `fb_hash` with

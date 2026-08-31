@@ -1,6 +1,6 @@
 //! ABI dispatch for the zero-fee paymaster precompile.
 //!
-//! Only view methods are exposed. `recordUse` is **not** an ABI method —
+//! Only view methods are exposed. `recordUse` is **not** an ABI method -
 //! the counter is only mutated by the executor pre-fee hook via the
 //! direct Rust function [`crate::record_sponsorship_use`], gated by a
 //! successful [`crate::authorize_sponsorship`]. Allowing out-of-band
@@ -29,9 +29,9 @@ sol!(
 ///
 /// Two view methods, both anchored to the current block's UTC day so a
 /// caller never has to supply or reconcile the day themselves:
-///   - [`authorizeSponsorship`] — the bool "can this signer send a free
+///   - [`authorizeSponsorship`] - the bool "can this signer send a free
 ///     tx right now" predicate.
-///   - [`getCounter`] — the effective `(day, count)` for today, with the
+///   - [`getCounter`] - the effective `(day, count)` for today, with the
 ///     lazy day-reset already applied.
 ///
 /// The raw packed slot (`date_key << 32 | count`) is still readable via
@@ -48,7 +48,7 @@ impl ZeroFeeContract<'_> {
     /// (`timestamp_to_date_key(block.timestamp)`).
     ///
     /// This is the canonical "may this signer use a free tx now?" RPC
-    /// for off-chain wallets — they can call it before submitting a
+    /// for off-chain wallets - they can call it before submitting a
     /// sponsored transaction to surface `false` as a UX warning instead
     /// of waiting for a soft-failure receipt.
     #[contract_public("authorizeSponsorship(address) view returns (bool)")]
@@ -96,8 +96,8 @@ impl ZeroFeeContract<'_> {
 #[cfg(test)]
 mod tests {
     //! ABI dispatch round-trip tests. These exercise the generated
-    //! `dispatch` entrypoint (selector decode → method → ABI encode),
-    //! which is a code path distinct from the runtime helpers — in
+    //! `dispatch` entrypoint (selector decode -> method -> ABI encode),
+    //! which is a code path distinct from the runtime helpers - in
     //! particular `authorizeSponsorship` reimplements the gate inline
     //! and must be verified independently of `runtime::authorize_sponsorship`.
 
@@ -114,7 +114,7 @@ mod tests {
     use super::__ZeroFeeContractAbi as abi;
 
     const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
-    // 2026-04-01 00:00:00 UTC → date_key 20260401.
+    // 2026-04-01 00:00:00 UTC -> date_key 20260401.
     const BLOCK_TS: u64 = 1_775_001_600;
     const BLOCK_DAY: u32 = 20_260_401;
 
@@ -146,7 +146,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(BLOCK_TS));
         StorageHandle::enter(&mut provider, |storage| {
-            // Stored slot belongs to a PRIOR day → getCounter must
+            // Stored slot belongs to a PRIOR day -> getCounter must
             // report today with count 0 (lazy reset applied on read),
             // NOT the stale (day-1, 8) raw slot. This is the whole
             // reason getCounter is timestamp-anchored rather than raw.
@@ -208,7 +208,7 @@ mod tests {
         provider.set_balance(ZEROFEE_ADDRESS, U256::from(1));
         provider.set_timestamp(U256::from(BLOCK_TS));
         StorageHandle::enter(&mut provider, |storage| {
-            // Self-sponsorship → false.
+            // Self-sponsorship -> false.
             let self_call = abi::authorizeSponsorshipCall {
                 signer: ZEROFEE_ADDRESS,
             }
@@ -219,7 +219,7 @@ mod tests {
                 "paymaster must not authorize itself"
             );
 
-            // Quota exhausted for today → false.
+            // Quota exhausted for today -> false.
             ZeroFeeContract::new(storage.clone())
                 .counter
                 .write(&SIGNER, pack_counter(BLOCK_DAY, crate::FREE_TX_DAILY_LIMIT))
@@ -238,7 +238,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             // `recordUse(address,uint32)` selector is deliberately NOT in
-            // the ABI — any unknown selector must fail to dispatch, so a
+            // the ABI - any unknown selector must fail to dispatch, so a
             // signer cannot burn quota out-of-band.
             let bogus = [0xde, 0xad, 0xbe, 0xef];
             let res = super::dispatch(storage, &bogus, Address::ZERO, U256::ZERO);

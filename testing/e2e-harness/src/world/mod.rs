@@ -1,6 +1,6 @@
 //! The cucumber `World` and the encapsulated handles the steps drive.
 //!
-//! Steps never shell out directly — they call verb methods on these handles
+//! Steps never shell out directly - they call verb methods on these handles
 //! (`world.localnet.start(...)`, `world.rpc.send_propose(...)`,
 //! `world.validators.operator(...)`) and thread scratch values through
 //! `world.state`. The handles hold a cloned [`Config`] and defer all subprocess

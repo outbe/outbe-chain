@@ -109,7 +109,7 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
         _deliver(lastSender, lastRecipient, lastPayload);
     }
 
-    /// @dev Delivers `payload` to `recipient` as if it came from `sender` — for peer-auth negative tests.
+    /// @dev Delivers `payload` to `recipient` as if it came from `sender` - for peer-auth negative tests.
     function deliverAs(bytes calldata sender, bytes calldata recipient, bytes calldata payload) external {
         _deliver(sender, recipient, payload);
     }

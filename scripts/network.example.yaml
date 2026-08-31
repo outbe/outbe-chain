@@ -1,4 +1,4 @@
-# network.yaml — describes an Outbe network; produces its genesis.
+# network.yaml - describes an Outbe network; produces its genesis.
 #
 #   python3 scripts/create_genesis.py network.yaml
 #
@@ -23,7 +23,7 @@ validators:
 #   keys_dir/validator-0/radicle/keys/radicle.pub Radicle identity
 #   keys_dir/validator-0/ocomp-registration-v1.ocb1   minted here if absent
 # Produced by `outbe-keygen validator --output-dir <dir> --chain-id <id>`.
-# Public keys, addresses and node ids are read from these files — nothing is
+# Public keys, addresses and node ids are read from these files - nothing is
 # duplicated into this yaml.
 keys_dir: ./keys
 
@@ -45,7 +45,7 @@ tee:
 
 # Dev lane only: the container image the mock/gramine-direct enclave runs from.
 # enclave_image: outbe-tee-enclave:latest
-# Production (dcap-required) runs gramine-sgx on the host instead — point
+# Production (dcap-required) runs gramine-sgx on the host instead - point
 # these at the release enclave checkout on each machine.
 # enclave_dir: /opt/outbe-chain/enclave
 # enclave_runner: ./run-enclave.sh     # TEE enclave container image
@@ -96,17 +96,17 @@ tee:
 # SHORTENING THE METADOSIS WINDOWS WILL STOP A NETWORK THAT STARTS MID-DAY.
 # A worldwide day measures its windows from midnight UTC, not from the moment
 # the network boots (`forming_start = wwd.start_timestamp()`). With, say, a
-# 900s forming and a 600s offering, a day's offering closed at 00:25 UTC — so a
+# 900s forming and a 600s offering, a day's offering closed at 00:25 UTC - so a
 # network started at 10:00 creates a day that is already nine hours past its
 # window, the reducer moves it straight to MissedOffering, and the
 # ProtocolCycle dies with `MissedOffering requires an immutable formed day
 # limit`. No blocks are produced at all.
 #
 # The live testnet sets schemaVersion 1 and metadosis.lookbackDelaySeconds 0,
-# and nothing else — the rest stays on the built-in schedule (50h forming /
+# and nothing else - the rest stays on the built-in schedule (50h forming /
 # 50h offering), which covers a start at any time of day. Copy that shape.
 #
-# Every knob, for reference — set the timings only if the network genuinely
+# Every knob, for reference - set the timings only if the network genuinely
 # needs short cycles AND you start it right after midnight UTC:
 # protocol_constants:
 #   schemaVersion: 1

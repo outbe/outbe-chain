@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RCFI reference implementation — golden oracle for the Rust `outbe-fidelity` crate.
+"""RCFI reference implementation - golden oracle for the Rust `outbe-fidelity` crate.
 
 This is the PDF "Retention component - time decay" reference (`decay.py`), trimmed
 to the pure model (no matplotlib/pandas/numpy) plus a stdlib-only golden-vector
@@ -11,7 +11,7 @@ Regenerate the committed fixture with:
 
 Amounts are emitted in six-decimal GRATIS units;
 timestamps are UTC unix seconds. RCFI / efficiency / d_age are the float-model
-reference values the Rust integer model is checked against (±1 day / ±1e-3).
+reference values the Rust integer model is checked against (+/-1 day / +/-1e-3).
 """
 
 import json

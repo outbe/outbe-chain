@@ -86,7 +86,7 @@ pub async fn submit_vote(
         );
     }
 
-    // Send — alloy handles nonce, gas estimation, signing, and broadcasting.
+    // Send - alloy handles nonce, gas estimation, signing, and broadcasting.
     // Gasless votes remain normal signed EVM transactions. The fee cap is still
     // set high enough for Reth's public txpool protocol checks, while the node's
     // ZeroFee policy waives native fee debit after revalidating signer and state.

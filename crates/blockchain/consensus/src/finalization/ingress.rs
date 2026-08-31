@@ -36,8 +36,8 @@ impl std::error::Error for FinalizationMailboxClosed {}
 /// (b) keeps the actor the single durable writer to `FinalizedParentCertStore`
 /// (the reporter previously wrote it inline on the voter thread). The
 /// parity-critical record (including `committee_set_hash`) is built by the
-/// reporter before enqueue and is byte-identical to before — only the write
-/// moves — so there is no proposer/validator divergence risk.
+/// reporter before enqueue and is byte-identical to before - only the write
+/// moves - so there is no proposer/validator divergence risk.
 pub enum Message {
     Finalized(Finalized),
     CertifiedNotarization(CertifiedParentProofRecord),
@@ -169,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn notify_finalized_is_non_blocking_for_burst() {
-        // 10_000 sends with no concurrent receiver — unbounded_send
+        // 10_000 sends with no concurrent receiver - unbounded_send
         // returns instantly each time. Reads happen after.
         let (tx, mut rx) = mpsc::unbounded::<Message>();
         let mailbox = Mailbox::from_sender(tx);
@@ -181,7 +181,7 @@ mod tests {
         let burst_elapsed = start.elapsed();
         assert!(
             burst_elapsed < std::time::Duration::from_millis(500),
-            "10k unbounded_send burst took {:?} — should be sub-second",
+            "10k unbounded_send burst took {:?} - should be sub-second",
             burst_elapsed
         );
 

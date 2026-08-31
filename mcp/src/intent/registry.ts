@@ -5,7 +5,7 @@ import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 /**
  * ABI + constants for the intent (ERC-7683 LayerZeroRouter) tools.
  *
- * ABIs are generated, not hand-written — see `src/abi.ts`. Source of truth:
+ * ABIs are generated, not hand-written - see `src/abi.ts`. Source of truth:
  *  - contracts/intent/src/router/... via contracts/intent/abi-export/Router.json
  *  - contracts/tokens/src/interfaces/IERC20.sol
  */
@@ -15,8 +15,8 @@ export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
 
 /**
  * Supported networks besides `outbe` (always the connected ctx). Resolved by
- * name or chain id — no RPC URLs, no aliases; the model normalizes natural
- * language ("бсц", "BSC testnet") to `bsc`. Add a row to support another chain.
+ * name or chain id - no RPC URLs, no aliases; the model normalizes natural
+ * language ("bsc" typed in Cyrillic, "BSC testnet") to `bsc`. Add a row to support another chain.
  */
 export interface NetworkDef {
   name: string;

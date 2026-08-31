@@ -23,7 +23,7 @@ pub fn record_proposer_miss_count(addr: Address, count: u64) {
     gauge!("outbe_proposer_miss_count", "addr" => addr_label(addr)).set(count as f64);
 }
 
-/// Cumulative counter — one increment per `slash_proposer` call.
+/// Cumulative counter - one increment per `slash_proposer` call.
 pub fn record_proposer_miss_event(addr: Address) {
     counter!("outbe_proposer_missed_views_total", "addr" => addr_label(addr)).increment(1);
 }
@@ -33,7 +33,7 @@ pub fn record_voter_miss_count(addr: Address, count: u64) {
     gauge!("outbe_voter_miss_count", "addr" => addr_label(addr)).set(count as f64);
 }
 
-/// Cumulative counter — one increment per `slash_voter` call.
+/// Cumulative counter - one increment per `slash_voter` call.
 pub fn record_voter_miss_event(addr: Address) {
     counter!("outbe_voter_missed_votes_total", "addr" => addr_label(addr)).increment(1);
 }

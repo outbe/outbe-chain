@@ -1,4 +1,4 @@
-//! DKG bootstrap — generate BLS threshold keys and BLS individual identity keys for genesis.
+//! DKG bootstrap - generate BLS threshold keys and BLS individual identity keys for genesis.
 //!
 //! Generates all cryptographic material needed to launch a validator set:
 //! - One shared public polynomial (distributed to all validators)
@@ -6,7 +6,7 @@
 //! - Per-validator BLS threshold signing shares
 //! - Per-validator BLS individual identity keys (MinPk)
 //!
-//! This is centralized dealing — suitable for testnets and genesis ceremonies.
+//! This is centralized dealing - suitable for testnets and genesis ceremonies.
 //! For production, a distributed DKG protocol should be used.
 
 use commonware_codec::Encode;
@@ -32,11 +32,11 @@ pub struct BootstrapResult {
 /// Creates the following directory structure under `output_dir`:
 /// ```text
 /// output_dir/
-///   polynomial.hex          — shared BLS public polynomial
-///   dkg-output.hex          — full DKG output artifact bound to validator public keys
+///   polynomial.hex          - shared BLS public polynomial
+///   dkg-output.hex          - full DKG output artifact bound to validator public keys
 ///   validator-0/
-///     signing-key.hex       — BLS individual private key (MinPk)
-///     signing-share.hex     — BLS threshold signing share
+///     signing-key.hex       - BLS individual private key (MinPk)
+///     signing-share.hex     - BLS threshold signing share
 ///   validator-1/
 ///     ...
 /// ```
@@ -96,7 +96,7 @@ pub fn bootstrap_and_save(
         bls::save_individual_key(&key_path, bls_key, backend)
             .wrap_err("failed to save signing key")?;
 
-        // BLS signing share — share[i] goes to the key at sorted position i.
+        // BLS signing share - share[i] goes to the key at sorted position i.
         let share_path = dir.join("signing-share.hex");
         bls::save_signing_share(&share_path, share, backend)
             .wrap_err("failed to save signing share")?;

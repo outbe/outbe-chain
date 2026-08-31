@@ -1,9 +1,9 @@
-//! — byte-pinned VRF seed-message and namespace test vectors.
+//! - byte-pinned VRF seed-message and namespace test vectors.
 //!
 //! The V2 verifier computes the seed message as `Round(epoch, view).encode()`
 //! via `commonware_codec::Encode`. A future commonware bump could silently
 //! change this encoding and produce subtly different VRF inputs across the
-//! network — a hard consensus split. These tests pin the byte layout against
+//! network - a hard consensus split. These tests pin the byte layout against
 //! known `(epoch, view)` pairs so any drift fails the build.
 //!
 //! Tests:
@@ -23,9 +23,9 @@ use outbe_consensus::proof::{
 
 #[test]
 fn round_encode_test_vector_for_vrf_seed_message() {
-    // (epoch=0, view=1) — genesis-adjacent round used by block 1 production.
+    // (epoch=0, view=1) - genesis-adjacent round used by block 1 production.
     // Round encodes via commonware varint: single-byte values < 128 emit one
-    // byte directly. So Round(0, 1) → [0x00, 0x01].
+    // byte directly. So Round(0, 1) -> [0x00, 0x01].
     let r0 = Round::new(Epoch::new(0), View::new(1));
     let bytes0 = r0.encode().to_vec();
     assert_eq!(
@@ -34,7 +34,7 @@ fn round_encode_test_vector_for_vrf_seed_message() {
         "Round(0, 1).encode() byte-pin: varint epoch=0 || varint view=1"
     );
 
-    // (epoch=12, view=61) — view-61 reproduction round halt.
+    // (epoch=12, view=61) - view-61 reproduction round halt.
     // Both fit single-byte varints: 12 = 0x0c, 61 = 0x3d.
     let r1 = Round::new(Epoch::new(12), View::new(61));
     let bytes1 = r1.encode().to_vec();

@@ -116,7 +116,7 @@ pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> U256 {
         };
         // Squaring and then taking the integer square root preserves the
         // ballot's own rate scale.
-        // On overflow: return ZERO (deterministic fallback — base_spread is used instead).
+        // On overflow: return ZERO (deterministic fallback - base_spread is used instead).
         let sq = match deviation.checked_mul(deviation) {
             Some(v) => v,
             None => return U256::ZERO,
@@ -130,7 +130,7 @@ pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> U256 {
     // variance = sum_sq / count (at the square of the rate scale)
     let variance = sum_sq / count;
 
-    // sqrt(variance) → result in the original rate scale
+    // sqrt(variance) -> result in the original rate scale
     isqrt(variance)
 }
 
@@ -295,7 +295,7 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
     // Read all votes and organize into per-pair ballots
     let voter_count = oracle.voter_list.len()?;
     if voter_count == 0 {
-        // No votes this period — all validators get abstain
+        // No votes this period - all validators get abstain
         for v in &all_validators {
             oracle.increment_abstain(&v.validator_address)?;
         }
@@ -629,7 +629,7 @@ mod tests {
     fn test_weighted_median_odd_power() {
         // Three voters: powers 10, 20, 30. Total=60, half=30.
         // Sorted by rate: 100, 200, 300
-        // Cumsum: 10 (<30), 30 (>=30) → median = 200
+        // Cumsum: 10 (<30), 30 (>=30) -> median = 200
         let ballot = vec![
             VoteForTally {
                 exchange_rate: fixed18(100u64),
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn test_weighted_median_equal_power() {
         // Equal power: 10, 10, 10. Total=30, half=15.
-        // Cumsum: 10 (<15), 20 (>=15) → median = 200
+        // Cumsum: 10 (<15), 20 (>=15) -> median = 200
         let ballot = vec![
             VoteForTally {
                 exchange_rate: fixed18(100u64),
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_standard_deviation_identical() {
-        // All same rate → std dev = 0
+        // All same rate -> std dev = 0
         let ballot = vec![
             VoteForTally {
                 exchange_rate: fixed18(100u64),
@@ -762,7 +762,7 @@ mod tests {
         // Squared = 2500e36. Variance = 2500e36/2 = 1250e36. sqrt = ~35.35e18
         // Wait, let me recalculate properly with median being the weighted median.
         // With equal powers: weighted median is 200 (cumsum: 10 >= 10=total/2 at first vote of 100? no)
-        // total=20, half=10. cumsum after first: 10 >= 10 → median = 100.
+        // total=20, half=10. cumsum after first: 10 >= 10 -> median = 100.
         // Deviations: |100-100|=0, |200-100|=100e18.
         // Squared: 0, (100e18)^2 = 1e40.
         // Variance = 1e40/2 = 5e39. sqrt(5e39) = sqrt(5)*1e19.5... hmm this gets complicated.
@@ -824,13 +824,13 @@ mod tests {
         // Rates: 100, 101, 200 (1e18 scaled).
         // Powers: 10, 20, 10. Total=40, half=20.
         // Sorted: 100(10), 101(20), 200(10).
-        // Cumsum: 10(<20), 30(>=20) → median = 101.
+        // Cumsum: 10(<20), 30(>=20) -> median = 101.
         // StdDev: deviations from 101 = |100-101|=1, |101-101|=0, |200-101|=99
-        // Squared: 1, 0, 9801. Sum=9802. Variance=9802/3=3267.33. StdDev=sqrt(3267.33)≈57.16
+        // Squared: 1, 0, 9801. Sum=9802. Variance=9802/3=3267.33. StdDev=sqrt(3267.33)~=57.16
         // Reward band = 0.02 * 1e18. base_spread = 101 * 0.02 / 2 = 1.01.
         // Since stddev(57.16) > base_spread(1.01), reward_spread = 57.16.
         // Range: [101-57.16, 101+57.16] = [43.84, 158.16]
-        // Vote 100 is in range → win. Vote 101 is in range → win. Vote 200 is NOT in range → miss.
+        // Vote 100 is in range -> win. Vote 101 is in range -> win. Vote 200 is NOT in range -> miss.
 
         let addr1 = Address::new([1u8; 20]);
         let addr2 = Address::new([2u8; 20]);

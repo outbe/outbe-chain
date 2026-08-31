@@ -7,7 +7,7 @@
 //
 // The `pledgeSecret` is the bearer secret the user hands to the CCA off-chain:
 // the CCA computes `spendAuth(pledgeSecret, smartAccount)` to bind the pledge to
-// its smart account at `requestCredis`. It is `HMAC(modifyKey, handle)` — the
+// its smart account at `requestCredis`. It is `HMAC(modifyKey, handle)` - the
 // modify key never leaves the user's machine.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "fs";
@@ -15,8 +15,8 @@ import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
 export interface Ticket {
-  pledgeHandle: string; // 0x-prefixed 32-byte hex — the public pledge record id
-  pledgeSecret: string; // 0x-prefixed 32-byte hex — HMAC(modifyKey, handle), hand to the CCA
+  pledgeHandle: string; // 0x-prefixed 32-byte hex - the public pledge record id
+  pledgeSecret: string; // 0x-prefixed 32-byte hex - HMAC(modifyKey, handle), hand to the CCA
   stablesAmount: string; // credit the pledge was quoted for, in stablecoin minor units
   asset: string; // the stablecoin the credis will be disbursed in
   amount: string; // gratis collateral the quote cost (decimal string)

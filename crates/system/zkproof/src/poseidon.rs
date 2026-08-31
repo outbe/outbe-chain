@@ -12,7 +12,7 @@ use crate::constants::MAX_INPUTS;
 use crate::errors::ZkProofError;
 
 /// Compute Poseidon-BN254 hash over `N` BE-encoded uint256 field
-/// elements packed into `input` (no length prefix). `1 ≤ N ≤ 12`.
+/// elements packed into `input` (no length prefix). `1 <= N <= 12`.
 pub fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], ZkProofError> {
     if input.is_empty() {
         return Err(ZkProofError::EmptyInput);

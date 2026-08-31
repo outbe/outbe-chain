@@ -10,7 +10,7 @@ import {ConfigureBridge} from "./3_ConfigureBridge.s.sol";
 
 /// @dev Full hub deploy + wiring on one chain, in one shot:
 ///   1. CreateX factory (reused if `CREATEX_ADDRESS` set)
-///   2. Adapters — each deployed only when its endpoint env is set (`LZ_ENDPOINT` / `HYPERLANE_MAILBOX`)
+///   2. Adapters - each deployed only when its endpoint env is set (`LZ_ENDPOINT` / `HYPERLANE_MAILBOX`)
 ///   3. Bridge (with the active gateway)
 ///   4. Wire remotes for each `REMOTE_CHAIN_IDS` (remote addresses == local CREATE3 addresses)
 /// Remote addresses are deterministic, so step 4 is safe even before other chains are deployed.
@@ -36,7 +36,7 @@ contract DeployAll is DeployCreateXDeterministic, DeployAdapters, DeployBridge, 
 
         vm.startBroadcast(deployerPk);
 
-        // 1. CreateX factory — reuse CREATEX_ADDRESS if set, otherwise deploy a fresh one
+        // 1. CreateX factory - reuse CREATEX_ADDRESS if set, otherwise deploy a fresh one
         console2.log("[1/4] CreateX...");
         address createX = vm.envOr("CREATEX_ADDRESS", address(0));
         if (createX == address(0)) createX = deployCreateX(salt);

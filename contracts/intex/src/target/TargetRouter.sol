@@ -43,7 +43,7 @@ contract TargetRouter is
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
-    /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
+    /// @notice Destination chainId of Outbe - the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -231,7 +231,7 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself —
+    /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself -
     ///         exposing it externally would let anyone trigger relayed bids without going through
     ///         the auction-stage handler.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
@@ -254,7 +254,7 @@ contract TargetRouter is
     /// @notice Fetch revealed bids from Auction and relay them to Outbe in chunked BIDS_BATCH sends.
     /// @dev Chunks of `MAX_PAYLOAD_ARRAY_LEN` share one `generation` and carry `batchIndex`/`totalBatches`, so the
     ///      unordered bridge can deliver them in any order and the receiver collects the whole generation before
-    ///      finalizing. No bids → one empty batch (0 of 1) as the completion signal. Any chunk reverting reverts the
+    ///      finalizing. No bids -> one empty batch (0 of 1) as the completion signal. Any chunk reverting reverts the
     ///      whole call, so a `flushPendingBidsRelay` retry re-sends the full set under a fresh generation.
     function _doSendBidsToOutbe(uint32 worldwideDay) internal {
         TargetRouterStorage storage $ = _ts();

@@ -83,7 +83,7 @@ contract IntexNFT1155ExpiredTest is Test {
     }
 
     /// `statusOf` answers which of the two token ids this is, not where the series
-    /// stands, so expiry must leave it alone — a settled unit is paid for and alive.
+    /// stands, so expiry must leave it alone - a settled unit is paid for and alive.
     function test_StatusOfIsUntouched() public {
         vm.warp(deadline + 1);
         assertEq(uint8(token.statusOf(iTok)), uint8(IIntexNFT1155.IntexStatus.Issued));

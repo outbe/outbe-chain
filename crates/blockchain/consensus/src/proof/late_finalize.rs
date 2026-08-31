@@ -5,22 +5,22 @@
 //! inclusion window. Unlike the full Hybrid certificate verifier
 //! ([`crate::proof::verifier`]) this:
 //!
-//! - **drops the 2f+1 quorum floor** — a late credit is, by construction, the
+//! - **drops the 2f+1 quorum floor** - a late credit is, by construction, the
 //!   sub-quorum tail of validators who signed after the eager quorum froze;
-//! - **drops the mandatory threshold-VRF proof** — late credits carry no VRF;
-//! - **drops the exact-parent Rule 2** — the target is any in-window finalized
+//! - **drops the mandatory threshold-VRF proof** - late credits carry no VRF;
+//! - **drops the exact-parent Rule 2** - the target is any in-window finalized
 //!   block, not necessarily the header's parent.
 //!
 //! The finalized-block-hash binding is enforced by the signature itself: the
 //! verified message is rebuilt as `Proposal{round, parent, payload = fb_hash}`,
 //! and the aggregate verifies only if every signer actually signed exactly that
 //! proposal under the committee-bound finalize namespace
-//! (`finalize_namespace(committee)`, derived from the snapshot — never from the
+//! (`finalize_namespace(committee)`, derived from the snapshot - never from the
 //! wire). The committee is pinned by `committee_set_hash`.
 //!
 //! The whole aggregate is verified FIRST; state-level dedup of already-credited
 //! signers happens downstream, after this returns the verified
-//! signer set — filtering bits before verification would break the recomputed
+//! signer set - filtering bits before verification would break the recomputed
 //! aggregate public key.
 
 use crate::digest::Digest as OutbeDigest;
@@ -221,7 +221,7 @@ mod tests {
         }
     }
 
-    /// A sub-quorum (2 of 4) aggregate with no VRF proof verifies — proving the
+    /// A sub-quorum (2 of 4) aggregate with no VRF proof verifies - proving the
     /// quorum floor and threshold-VRF requirement are dropped.
     #[test]
     fn bls_only_verifier_no_quorum_no_vrf() {
@@ -246,7 +246,7 @@ mod tests {
     }
 
     /// the aggregate is verified over the FULL signer bitmap and
-    /// the verifier returns every set-bit index — state-level dedup of
+    /// the verifier returns every set-bit index - state-level dedup of
     /// already-credited signers happens downstream (in `record_late_credit`),
     /// AFTER this returns. Filtering bits before verify would break the
     /// recomputed aggregate public key, so verify must precede dedup.
@@ -272,7 +272,7 @@ mod tests {
         let keys = keys(4);
         let snapshot = snapshot_for(&keys);
         let fb = B256::repeat_byte(0x5a);
-        // Signers signed a different proposal payload → aggregate must not verify.
+        // Signers signed a different proposal payload -> aggregate must not verify.
         let credit = build_credit(&keys, &snapshot, &[0, 1, 2], fb, 3, 9, 8, true);
         assert!(matches!(
             verify_late_finalize_proof(&snapshot, &credit),

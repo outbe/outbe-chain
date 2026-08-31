@@ -6,8 +6,8 @@
 //! magic   "TSEAL" (5B)
 //! header  format_version u8 | key_policy u8 | isv_svn u16 LE
 //!         | key_epoch u64 LE | tribute_offer_epoch u64 LE | nonce 12B   (= 32B)
-//! ciphertext = AES-256-GCM( payload ),  AAD = header ‖ chain_id
-//!   payload = tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig_bytes
+//! ciphertext = AES-256-GCM( payload ),  AAD = header || chain_id
+//!   payload = tribute_offer_secret(32) || group_sig_len u16 LE || group_sig_bytes
 //! ```
 //!
 //! The blob seals the DKG-derived offer secret and group threshold signature
@@ -77,9 +77,9 @@ pub const HEADER_LEN: usize = 32;
 pub enum KeyPolicy {
     /// dev/CI stub key (no real SGX).
     Mock = 0,
-    /// EGETKEY bound to MRSIGNER — survives enclave update by the same signer.
+    /// EGETKEY bound to MRSIGNER - survives enclave update by the same signer.
     MrSigner = 1,
-    /// EGETKEY bound to MRENCLAVE — strict, per-build (no update survival).
+    /// EGETKEY bound to MRENCLAVE - strict, per-build (no update survival).
     MrEnclaveStrict = 2,
 }
 
@@ -176,7 +176,7 @@ fn aes256gcm_decrypt(
     Ok(in_out)
 }
 
-/// Encode the sealed payload: `tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig`.
+/// Encode the sealed payload: `tribute_offer_secret(32) || group_sig_len u16 LE || group_sig`.
 /// `group_sig` is the encoded group threshold signature (Seam F). Errors if it is
 /// larger than `u16::MAX`. The returned buffer is `Zeroizing` so the plaintext is
 /// wiped after AEAD.
@@ -286,7 +286,7 @@ pub fn unseal_tribute_offer_and_group_sig(
     Ok((tribute_offer_secret, group_sig, header))
 }
 
-/// Fixed mock sealing key — stable across rebuilds so it simulates MRSIGNER
+/// Fixed mock sealing key - stable across rebuilds so it simulates MRSIGNER
 /// (a rebuilt mock enclave unseals an older mock blob). Gated so it never links
 /// into the production binary.
 #[cfg(any(test, feature = "mock"))]

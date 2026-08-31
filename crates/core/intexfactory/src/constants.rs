@@ -3,7 +3,7 @@
 //!
 //! NFT / router addresses are permanent CREATE3 proxies via the outbe-intex
 //! Create3Factory (deployer 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05, salt
-//! "outbe-intex:<Name>:v3.0.0") — stable across chains and redeploys.
+//! "outbe-intex:<Name>:v3.0.0") - stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
 use outbe_primitives::units::SCALE_1E6_U128;
@@ -41,7 +41,7 @@ pub const POW_DIFFICULTY: usize = 1;
 pub const DIST_CHUNK_LIMIT: u32 = 200;
 
 /// Proceeds fan-in window: creators are paid once every winning chain has
-/// routed its proceeds, or this long after issuance — whichever comes first.
+/// routed its proceeds, or this long after issuance - whichever comes first.
 /// A full day absorbs legitimate escrow-finalize retries so, in virtually all
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;

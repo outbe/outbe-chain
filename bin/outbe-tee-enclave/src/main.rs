@@ -11,7 +11,7 @@
 //! one-time initialization, and authorized reconnect. It never serves the legacy
 //! cleartext `GetQuote` behavior used by the separate dev/mock binary.
 //!
-//! This is the production entrypoint — a thin shim over [`outbe_tee_enclave::run`]
+//! This is the production entrypoint - a thin shim over [`outbe_tee_enclave::run`]
 //! with [`RunOpts::prod`] (no mock code). The dev mock binary
 //! (`outbe-tee-enclave-mock`, `--features mock`) is the sibling shim.
 

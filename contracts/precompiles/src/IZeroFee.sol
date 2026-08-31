@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 /// @title IZeroFee
 /// @notice ZeroFee paymaster precompile at 0x000000000000000000000000000000000000EE09.
 ///
-/// Acts as the EIP-7702 delegation target for void sponsorship — EOAs
+/// Acts as the EIP-7702 delegation target for void sponsorship - EOAs
 /// that delegate to this address may submit up to 8 free transactions
 /// per UTC day, each capped by hard envelope limits enforced in the
 /// txpool admission policy and re-enforced by the executor pre-fee

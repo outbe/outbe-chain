@@ -1,7 +1,7 @@
 //! Rewards economics + late-vote invariant tests.
 //!
 //! Per, economic distribution is unchanged
-//! from V1 — only the source of money fields changes (parent
+//! from V1 - only the source of money fields changes (parent
 //! `ExecutionSummaryArtifact` instead of metadata). These tests pin the
 //! existing constants and assert that V3 fingerprint semantics enforce
 //! ("late local votes never add credit beyond block-carried
@@ -118,7 +118,7 @@ fn late_local_votes_do_not_add_credit_beyond_block_carried_certificate() {
         // Second metadata-tx: same fb_hash but the bitmap now claims
         // the third validator also signed (a "late local vote"). Under
         // V3 this is a contradictory metadata for the same parent and
-        // is rejected — the late-vote bit cannot top up the first
+        // is rejected - the late-vote bit cannot top up the first
         // metadata's credit.
         let mut m2 = m1.clone();
         m2.signer_bitmap = vec![1, 1, 1];
@@ -130,7 +130,7 @@ fn late_local_votes_do_not_add_credit_beyond_block_carried_certificate() {
         );
 
         // Re-submitting the original metadata-tx is still a no-op
-        // (`IdenticalReplay`) — the guard remains idempotent on the
+        // (`IdenticalReplay`) - the guard remains idempotent on the
         // canonical first-seen content.
         let outcome_replay =
             check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(0u64), VRF_HASH).unwrap();
@@ -168,7 +168,7 @@ fn insufficient_rewards_backing_rejects_phase1_and_leaves_progress_unchanged() {
         let _ =
             check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(0u64), VRF_HASH).unwrap();
 
-        // Contradictory metadata (different fee sum) — fingerprint
+        // Contradictory metadata (different fee sum) - fingerprint
         // returns `Fatal`. In the executor path this maps to a precompile
         // error which short-circuits Phase 1 before any per-voter
         // participation/fee accounting write. Subsequent attempts with the

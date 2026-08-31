@@ -12,9 +12,9 @@ import {SolverEscrow} from "../src/SolverEscrow.sol";
 /// @dev Deployment script for solver collateral system.
 ///
 /// Required env vars:
-///   DEPLOYER_PK           — deployer private key
-///   COMPACT_ADDRESS       — The Compact address
-///   COLLATERAL_BPS        — collateral requirement in basis points (e.g. 1000 = 10%)
+///   DEPLOYER_PK           - deployer private key
+///   COMPACT_ADDRESS       - The Compact address
+///   COLLATERAL_BPS        - collateral requirement in basis points (e.g. 1000 = 10%)
 contract DeploySolverEscrow is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");

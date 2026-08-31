@@ -1,11 +1,11 @@
 //! ProtocolCycle calendar orchestration and completed-day emission settlement.
 //!
-//! This is the natural home of the `Cycle → EmissionLimit → AgentReward
-//! → Rewards → Metadosis` orchestration. Putting
+//! This is the natural home of the `Cycle -> EmissionLimit -> AgentReward
+//! -> Rewards -> Metadosis` orchestration. Putting
 //! it inside `outbe-cycle` (rather than `outbe-emissionlimit`) avoids
-//! a `outbe-emissionlimit → outbe-rewards` dependency edge, which
+//! a `outbe-emissionlimit -> outbe-rewards` dependency edge, which
 //! would close the cycle with the existing
-//! `outbe-rewards → outbe-emissionlimit` re-export.
+//! `outbe-rewards -> outbe-emissionlimit` re-export.
 
 use alloy_primitives::U256;
 
@@ -98,7 +98,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     // a second invocation for an already-settled `prev_day` would double-mint
     // those pools. That re-fire is reachable whenever more than one CycleTick
     // resolves the same `prev_day` (e.g. several blocks within one UTC day after
-    // a forward timestamp advance — bounded but not eliminated by the C-01 drift
+    // a forward timestamp advance - bounded but not eliminated by the C-01 drift
     // band). Gate the WHOLE settlement on `daily_settled[prev_day]` so each day
     // settles exactly once regardless of how many times the handler fires.
     let settled = outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
@@ -123,7 +123,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
                 target: "outbe::cycle",
                 prev_day,
                 block_number = ctx.block.block_number,
-                "emission_limit_daily: prev_day already settled — skipping (idempotent)"
+                "emission_limit_daily: prev_day already settled - skipping (idempotent)"
             );
             return Ok(());
         }

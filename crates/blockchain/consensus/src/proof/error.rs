@@ -4,7 +4,7 @@
 //! depend on the variant names + Display strings for alerting; the `Debug`
 //! form is also exposed via the verifier's structured logs.
 //!
-//! `#[non_exhaustive]` — callers must always include a wildcard arm so a
+//! `#[non_exhaustive]` - callers must always include a wildcard arm so a
 //! future + variant addition does not require synchronized
 //! downstream edits.
 
@@ -19,7 +19,7 @@ use alloy_primitives::B256;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum V2VerifyError {
-    // ── Structural / codec ────────────────────────────────────────────────
+    // -- Structural / codec ------------------------------------------------
     /// Encoded `HybridCertificate` failed to decode against the active
     /// committee size.
     #[error("certificate decode failed: {0}")]
@@ -28,13 +28,13 @@ pub enum V2VerifyError {
     /// `HybridCertificate` body. The verifier forbids any trailing bytes.
     #[error("certificate has trailing bytes after canonical HybridCertificate body")]
     TrailingBytes,
-    /// Encoded proof is not a `HybridCertificate` — for example, a bare
+    /// Encoded proof is not a `HybridCertificate` - for example, a bare
     /// `Notarization` wire envelope or a threshold-only certificate. The
     /// V2 verifier accepts only the Hybrid form.
     #[error("proof is not a HybridCertificate: {reason}")]
     NonHybridEncoding { reason: &'static str },
 
-    // ── Quorum / signer-bitmap consistency ────────────────────────────────
+    // -- Quorum / signer-bitmap consistency --------------------------------
     /// Certificate dropped below the simplex `N3f1` quorum required by the
     /// committee size.
     #[error("certificate below quorum: {signers}/{quorum}")]
@@ -51,12 +51,12 @@ pub enum V2VerifyError {
     #[error("duplicate signer index in certificate: {index}")]
     DuplicateSigner { index: u32 },
 
-    // ── BLS aggregate vote ────────────────────────────────────────────────
+    // -- BLS aggregate vote ------------------------------------------------
     /// Aggregated BLS MinPk vote signature failed verification.
     #[error("BLS aggregate vote signature failed verification")]
     BlsAggregateInvalid,
 
-    // ── VRF threshold proof ───────────────────────────────────────────────
+    // -- VRF threshold proof -----------------------------------------------
     /// `VrfProof` decoded but is structurally malformed (e.g., zero
     /// signature length, version-byte rejection in the payload).
     #[error("VRF proof structurally malformed")]
@@ -70,7 +70,7 @@ pub enum V2VerifyError {
     #[error("VRF group public key hash mismatch: expected {expected}, got {actual}")]
     WrongVrfGroupKeyHash { expected: B256, actual: B256 },
     /// VRF verification was attempted under a namespace other than
-    /// [`crate::hybrid_seed_namespace`] (defence-in-depth — the
+    /// [`crate::hybrid_seed_namespace`] (defence-in-depth - the
     /// verifier hard-codes the namespace, so this only triggers if an
     /// upstream caller smuggled a different one).
     #[error("VRF namespace differs from hybrid_seed_namespace")]
@@ -89,7 +89,7 @@ pub enum V2VerifyError {
     #[error("VRF threshold signature failed verification")]
     InvalidVrfSignature,
 
-    // ── Exact-parent / accounting binding ─────────────────────────────────
+    // -- Exact-parent / accounting binding ---------------------------------
     /// `metadata.finalized_block_number` differs from the expected accounted
     /// parent block number (derived from `header_parent_hash` + chain state).
     #[error("accounted parent block number mismatch: expected {expected}, got {actual}")]
@@ -100,9 +100,9 @@ pub enum V2VerifyError {
     #[error("accounted parent block hash mismatch: expected {expected}, got {actual}")]
     WrongAccountedHash { expected: B256, actual: B256 },
 
-    // ── Proof binding to metadata / committee snapshot ────────────────────
+    // -- Proof binding to metadata / committee snapshot --------------------
     /// The certificate's embedded `proposal.payload` differs from
-    /// `metadata.finalized_block_hash` — the proof attests a different
+    /// `metadata.finalized_block_hash` - the proof attests a different
     /// payload than the metadata claims.
     #[error("proof domain mismatch: cert payload {actual}, metadata hash {expected}")]
     WrongProofDomain { expected: B256, actual: B256 },
@@ -115,7 +115,7 @@ pub enum V2VerifyError {
     #[error("committee_set_hash mismatch: expected {expected}, got {actual}")]
     CommitteeSetHashMismatch { expected: B256, actual: B256 },
 
-    // ── missed_proposers — V2 always empty ────────────────────────────────
+    // -- missed_proposers - V2 always empty --------------------------------
     /// V2 protocol invariant: `metadata.missed_proposers` MUST be empty.
     /// Any non-empty list rejects pre-mutation, for BOTH `Finalization`
     /// and `CertifiedNotarization`.

@@ -379,7 +379,7 @@ pub fn load_committed_enclave_manifest_v1(
 /// session can later reconnect without re-acquiring the NodeHost file lock in
 /// the hot path (the committed manifest is write-once, and a legitimately
 /// replaced enclave fails the Noise-IK handshake against the cached responder
-/// static — fail-closed, requiring the operator restart that replacement
+/// static - fail-closed, requiring the operator restart that replacement
 /// already demands).
 pub fn committed_node_host_session_material(
     node_data_dir: &Path,

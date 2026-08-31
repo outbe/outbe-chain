@@ -17,7 +17,7 @@ contract BridgeMsgCodecMinLengthTest is Test {
     }
 
     function test_IssuanceFloorIsTheSmallestRealIssuance() public pure {
-        // One series, no winners on this chain — the message a snapshot chain gets when it
+        // One series, no winners on this chain - the message a snapshot chain gets when it
         // only needs the series created.
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         series[0].seriesId = "20250101-USD-U";

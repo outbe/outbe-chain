@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
   # The `bump` job's commit + tag push to protected main is done with a PAT
   # (secrets.RELEASE_TOKEN, in the branch ruleset's bypass list), NOT the
-  # GITHUB_TOKEN — so GITHUB_TOKEN stays least-privilege here.
+  # GITHUB_TOKEN - so GITHUB_TOKEN stays least-privilege here.
 
 env:
   CARGO_TERM_COLOR: always
@@ -61,7 +61,7 @@ jobs:
           install: true
           cache: true
       # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
-      # keyed on Cargo.lock + rustc version — so must come after the toolchain
+      # keyed on Cargo.lock + rustc version - so must come after the toolchain
       # install. sccache still helps on lockfile changes (per-crate granularity).
       - uses: Swatinem/rust-cache@v2
         with:
@@ -266,7 +266,7 @@ jobs:
           install: true
           cache: true
       # cargo tree resolves the full dep graph (downloads every crate manifest);
-      # cache the registry only — nothing is built here.
+      # cache the registry only - nothing is built here.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -353,12 +353,12 @@ jobs:
           allowed-skips: clippy, test, doctests, localnet, udeps, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}
 
-  # ─── Versioning (cocogitto) ───────────────────────────────────────── #
+  # --- Versioning (cocogitto) ----------------------------------------- #
   # PR-only: preview the version cog WOULD cut, without tagging anything.
   # cog is pinned in mise.toml (`cocogitto = "7"`); installed on demand here
   # rather than the full mise toolchain. Legacy pre-adoption commits are not
   # Conventional, so checks run `--from-latest-tag` (validate only commits
-  # since the last `v*` release — requires a baseline `v0.1.0` tag to exist).
+  # since the last `v*` release - requires a baseline `v0.1.0` tag to exist).
   preview-version:
     name: preview next version
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft

@@ -167,9 +167,9 @@ fn mint_genesis_pays_like_agents_but_born_qualified() {
         let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        // Genesis now pays like Wallet/Cca/Validator: cost = entry × load,
-        // floor = rate × 1.08. It only keeps the born-Qualified fast path
-        // (no maturity wait) — settle still moves cost into the Reserve.
+        // Genesis now pays like Wallet/Cca/Validator: cost = entry x load,
+        // floor = rate x 1.08. It only keeps the born-Qualified fast path
+        // (no maturity wait) - settle still moves cost into the Reserve.
         assert_eq!(
             item.cost_amount_minor,
             U256::from(20u64) * six_decimal_unit()
@@ -196,7 +196,7 @@ fn mint_validator_post_genesis_behaves_like_wallet() {
             mint_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        // Same as WALLET: cost = entry × load, floor with 8% markup, Issued.
+        // Same as WALLET: cost = entry x load, floor with 8% markup, Issued.
         assert_eq!(
             item.cost_amount_minor,
             U256::from(10u64) * six_decimal_unit()
@@ -655,7 +655,7 @@ fn settle_rejects_a_deposit_that_mints_no_shares() {
 fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
     // 899 is inside the three-digit range but is not an assigned ISO 4217 code.
     // Gem no longer refuses it: nothing prices against it, and no settlement
-    // asset can ever report it, so it is inert — exactly as it is for a bid.
+    // asset can ever report it, so it is inert - exactly as it is for a bid.
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let cost = StorageHandle::enter(&mut provider, |storage| {
@@ -882,7 +882,7 @@ fn settle_rejects_non_qualified_state() {
             840,
         )
         .unwrap();
-        // WALLET is born Issued — settle should reject (must be Qualified).
+        // WALLET is born Issued - settle should reject (must be Qualified).
         let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE);
         assert!(err_msg(res).contains("invalid state"));
     });
@@ -896,8 +896,8 @@ fn mine_promis_full_genesis_flow() {
         let load = U256::from(10u64) * six_decimal_unit();
         // Genesis is born Qualified. settle now carries a non-zero cost and
         // deposits into the Reserve vault, which the storage-only harness
-        // can't service — force `Settled` directly so this test still covers
-        // the mine → burn → Promis path. The paid settle is exercised on
+        // can't service - force `Settled` directly so this test still covers
+        // the mine -> burn -> Promis path. The paid settle is exercised on
         // localnet with a real Reserve (see TODO below).
         let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
@@ -940,7 +940,7 @@ fn mine_promis_rejects_non_settled() {
             840,
         )
         .unwrap();
-        // WALLET is Issued, not Settled — mine should reject before PoW.
+        // WALLET is Issued, not Settled - mine should reject before PoW.
         let res = runtime::mine_promis(storage, ALICE, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
@@ -970,7 +970,7 @@ fn statistics_track_mint_count() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let base = U256::from(1u64) * six_decimal_unit();
-        // `gem_id = keccak(owner ‖ amount ‖ block_number)` — vary `load`
+        // `gem_id = keccak(owner || amount || block_number)` - vary `load`
         // per mint so the same (owner, block) pair doesn't collide.
         for i in 0..3 {
             let load = base + U256::from(i as u64);
@@ -992,7 +992,7 @@ fn six_decimal_u128() -> u128 {
 }
 
 /// Whole-position capacity for a series with `promis_load` per unit: the stubbed
-/// `parkIntex` burns `PARK_UNITS`, so capacity = `promis_load × PARK_UNITS`.
+/// `parkIntex` burns `PARK_UNITS`, so capacity = `promis_load x PARK_UNITS`.
 fn parked_capacity(promis_load: u128) -> U256 {
     U256::from(promis_load) * U256::from(PARK_UNITS)
 }
@@ -1204,7 +1204,7 @@ fn mint_merchant_gem_rejects_non_merchant() {
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        // BOB is not the position's merchant (ALICE) — must reject.
+        // BOB is not the position's merchant (ALICE) - must reject.
         let r = runtime::mint_merchant_gem(storage, BOB, id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("position owner"));
     });

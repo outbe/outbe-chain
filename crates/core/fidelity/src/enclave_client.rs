@@ -3,7 +3,7 @@
 //! Every RCFI/league value and every cohort mutation routes through the enclave:
 //! [`crate::runtime`] reads the current cohort ciphertext from committed storage,
 //! hands it to the enclave, and stores the returned ciphertext verbatim. Mirrors
-//! [`outbe_gratis`]'s `enclave_client` — same determinism (canonical-hash
+//! [`outbe_gratis`]'s `enclave_client` - same determinism (canonical-hash
 //! recheck), attestation (verify-then-discard), and `tee_sidecar_unavailable`
 //! failure mode.
 
@@ -181,7 +181,7 @@ pub mod test_enclave {
 
     /// Chain id the in-process enclave binds. Query auth is chain-scoped, so the
     /// resident chain must equal what the runtime derives from
-    /// `storage.chain_id()` — tests that exercise the query path build their
+    /// `storage.chain_id()` - tests that exercise the query path build their
     /// storage with this id and sign over [`dev_chain`]. Cohort/snapshot ops do
     /// not verify chain id, so downstream crates may use any storage chain id.
     ///

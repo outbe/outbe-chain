@@ -66,11 +66,11 @@ impl TransportError {
     /// - `FrameTooLarge` on read: corrupt stream.
     ///
     /// Deliberately excluded:
-    /// - `Handshake` — also produced by local policy rejections
+    /// - `Handshake` - also produced by local policy rejections
     ///   (e.g. `AuthorizeRemoteSessionV1` misuse), not only by transport;
-    /// - `EnclaveError` — the enclave answered; the connection is healthy and
+    /// - `EnclaveError` - the enclave answered; the connection is healthy and
     ///   the answer is deterministic;
-    /// - `Codec` / `UnexpectedResponse` / attestation errors — post-decryption
+    /// - `Codec` / `UnexpectedResponse` / attestation errors - post-decryption
     ///   protocol or enclave faults a fresh connection deterministically repeats.
     pub fn is_connection_fault(&self) -> bool {
         matches!(

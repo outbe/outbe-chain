@@ -14,8 +14,8 @@ pub use outbe_primitives::addresses::VOTE_ADDRESS;
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
 pub const SLASH_INDICATOR_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 pub const STAKING_ADDR: Address = address!("0x000000000000000000000000000000000000EE02");
-// Rewards precompile (EE03) exposes no callable methods — validator emission is
-// paid in gems — so it is referenced only by the address-pin test.
+// Rewards precompile (EE03) exposes no callable methods - validator emission is
+// paid in gems - so it is referenced only by the address-pin test.
 #[cfg(test)]
 pub const REWARDS_ADDR: Address = address!("0x000000000000000000000000000000000000EE03");
 pub const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
@@ -95,7 +95,7 @@ mod tests {
         let stake = IStaking::stakeCall::SELECTOR;
         let submit_double = ISlashIndicator::submitDoubleProposalEvidenceCall::SELECTOR;
 
-        // Selectors are deterministic from the signature — just assert they're stable
+        // Selectors are deterministic from the signature - just assert they're stable
         assert_eq!(register.len(), 4);
         assert_eq!(stake.len(), 4);
         assert_eq!(submit_double.len(), 4);

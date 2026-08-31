@@ -2,7 +2,7 @@
 //!
 //! RCFI/league are no longer computed on-chain: cohorts are encrypted and the
 //! enclave is the sole evaluator. This layer reads/writes the cohort ciphertext
-//! from committed storage and drives the enclave for the three flows —
+//! from committed storage and drives the enclave for the three flows -
 //! cohort mutations ([`FidelityContract::cohort_in`]/[`FidelityContract::cohort_out`]),
 //! the per-owner league snapshot ([`FidelityContract::snapshot_leagues`],
 //! [`FidelityContract::league_at`]), and owner-authorized index queries
@@ -138,8 +138,8 @@ impl FidelityContract<'_> {
         self.league_at(account, self.now()?)
     }
 
-    /// Synthetic-max RCFI at `timestamp`: `t_dec(timestamp − first_qualified_start)`.
-    /// Pure function of the plaintext anchor — computed on-chain, no enclave.
+    /// Synthetic-max RCFI at `timestamp`: `t_dec(timestamp - first_qualified_start)`.
+    /// Pure function of the plaintext anchor - computed on-chain, no enclave.
     /// Zero before any account has qualified.
     pub fn max_rcfi_at(&self, timestamp: u64) -> Result<U256> {
         let first = self.first_qualified_start()?;

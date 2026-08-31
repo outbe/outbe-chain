@@ -108,7 +108,7 @@ done
 # No config.json is written here. The sidecar builds its own runtime config
 # from these command-line options (`Options::node_config` in the fork) and
 # never reads config.json, so a second copy of those settings could only drift
-# out of sync — and the `network: outbe` it used to write makes a stock `rad`
+# out of sync - and the `network: outbe` it used to write makes a stock `rad`
 # refuse to start, since upstream accepts only `main` or `test`.
 # A client that needs config.json gets it from `outbe-cli rad init`.
 

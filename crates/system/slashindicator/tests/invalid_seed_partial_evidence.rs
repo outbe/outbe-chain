@@ -267,7 +267,7 @@ fn wrong_signer_index_pubkey_mismatch_rejected() {
         let signer = 1usize;
         let bad = sign_partial(&fx, signer, ROUND_EPOCH, ROUND_VIEW + 1);
         let id_sig = identity_sign(&fx, signer, &bad);
-        // Claim signer_index 0 but carry signer 1's pubkey → committee[0] != pubkey.
+        // Claim signer_index 0 but carry signer 1's pubkey -> committee[0] != pubkey.
         let mut evidence = build_ipe1(&fx, signer as u32, &bad, &id_sig, &fx.commitment);
         // overwrite signer_index (bytes [45..49]) with 0
         let idx_off = 4 + 1 + 32 + 8 + 8 + 8;

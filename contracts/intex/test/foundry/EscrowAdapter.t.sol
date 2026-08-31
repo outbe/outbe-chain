@@ -151,7 +151,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Wire_EmitsWired_OnRotation() public {
-        // Rotate the auction address (no LiveLocksOutstanding constraint — no locks opened in setUp).
+        // Rotate the auction address (no LiveLocksOutstanding constraint - no locks opened in setUp).
         // `escrow` was wired in setUp with (auction, compact, paymentToken); only the auction
         // rotates, so its old value is non-zero and the rest carry their prior addresses.
         address newAuction = address(0xBEEF);
@@ -497,7 +497,7 @@ contract EscrowAdapterTest is Test {
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1,
             refundedAmount: LOCK_AMOUNT / 2,
-            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch — will fail
+            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch - will fail
         });
         instructions[1] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder2,
@@ -542,7 +542,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_FinalizeAuction_AllFail_EmitsFinalizationNoOp() public {
-        // Every instruction fails (here: amount mismatch on the only bidder) → zero settled. The
+        // Every instruction fails (here: amount mismatch on the only bidder) -> zero settled. The
         // series is finalized but degenerate; FinalizationNoOp surfaces it instead of a silent no-op.
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
@@ -694,7 +694,7 @@ contract EscrowAdapterTest is Test {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
-        // Rewire targeting a new token while locks are still in flight — must revert
+        // Rewire targeting a new token while locks are still in flight - must revert
         MockWCOEN rotated = new MockWCOEN();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
@@ -821,7 +821,7 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_ClaimRefund_PostFinalize_RevertsSplitNotRecorded() public {
-        // An amount-mismatch failure records no valid split, so claimRefund cannot pay out — the
+        // An amount-mismatch failure records no valid split, so claimRefund cannot pay out - the
         // relayer must retryFinalize with a correct split.
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
@@ -879,7 +879,7 @@ contract EscrowAdapterTest is Test {
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1,
             refundedAmount: LOCK_AMOUNT / 2,
-            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch — will fail
+            paidAmount: LOCK_AMOUNT / 2 - 1 // mismatch - will fail
         });
         instructions[1] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});

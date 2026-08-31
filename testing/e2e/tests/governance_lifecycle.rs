@@ -1,5 +1,5 @@
 //! End-to-end for the Governance precompile driven through its real ABI
-//! dispatch (`outbe_governance::precompile::dispatch`) — the same entrypoint the
+//! dispatch (`outbe_governance::precompile::dispatch`) - the same entrypoint the
 //! EVM registers at `GOVERNANCE_ADDRESS`. Unlike the crate's unit tests (which
 //! call the contract methods directly), this exercises the full path: ABI decode
 //! -> dispatch -> caller gating -> ABI encode of the return value.
@@ -190,7 +190,7 @@ fn governance_full_lifecycle_via_dispatch() {
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0].author, AUTHOR);
 
-        // nobody rejected → empty
+        // nobody rejected -> empty
         let out = gov_dispatch(
             storage.clone(),
             &IGovernance::getOipsByStatusCall {

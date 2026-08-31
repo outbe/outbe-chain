@@ -10,7 +10,7 @@ use commonware_cryptography::Digest as CwDigest;
 use commonware_utils::{Array, Span};
 use std::fmt;
 
-/// Outbe block digest — thin wrapper around a 32-byte block hash.
+/// Outbe block digest - thin wrapper around a 32-byte block hash.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug)]
 #[repr(transparent)]
 pub struct Digest(pub B256);

@@ -14,10 +14,10 @@ use outbe_primitives::storage::types::Slot;
 /// EVM storage layout for the credisfactory precompile.
 ///
 /// Storage slots:
-///   0: u32 — daily price-path scan cursor, stored as `index + 1` into the credis
+///   0: u32 - daily price-path scan cursor, stored as `index + 1` into the credis
 ///      active-position index. 0 means the last pass completed and the next run
 ///      starts a fresh one from the top.
-///   1: map positionId -> U256 — the originating CCA's escrowed COEN stake, taken at
+///   1: map positionId -> U256 - the originating CCA's escrowed COEN stake, taken at
 ///      `requestCredis` and equal to the pledged collateral. Returned to the CCA when
 ///      the position closes, burned when it voids. The native COEN itself sits in this
 ///      precompile's own balance; this map is the per-position claim on it.

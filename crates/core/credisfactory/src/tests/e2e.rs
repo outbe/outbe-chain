@@ -1,4 +1,4 @@
-//! End-to-end flow: mine → pledge → requestCredis → latch → settle → void.
+//! End-to-end flow: mine -> pledge -> requestCredis -> latch -> settle -> void.
 //!
 //! The harness (in-process enclave, sub-call stubs, view-key decryption, the
 //! finalized daily series) lives in [`crate::tests::common`].
@@ -38,7 +38,7 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
 
         // The collateral moved into alice's OWN pledged ledger.
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
-        // The loan is exactly what the pledger asked for — credis does not re-price it.
+        // The loan is exactly what the pledger asked for - credis does not re-price it.
         assert_eq!(amount_stables, pledge_stables());
 
         let position = CredisContract::new(storage.clone())
@@ -98,7 +98,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
 
-        // Half the principal, 30 days in → half the collateral back.
+        // Half the principal, 30 days in -> half the collateral back.
         advance_to(&storage, CREATED_AT + 30 * DAY);
         let half = pledge_stables() / U256::from(2u64);
         let (principal_paid, interest_paid) =
@@ -204,7 +204,7 @@ fn settle_takes_only_what_the_position_needs() {
         )
         .unwrap();
         // The split is reported separately, and only what the position needed
-        // was pulled — the vast over-payment is not.
+        // was pulled - the vast over-payment is not.
         assert_eq!(principal_paid, pledge_stables());
         assert_eq!(interest_paid, interest);
         assert_eq!(
@@ -228,7 +228,7 @@ fn settle_accepts_a_third_party_payer() {
         let half = pledge_stables() / U256::from(2u64);
         settle_principal(&storage, bob(), position_id, half);
 
-        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
+        // The freed collateral goes to the ORIGINAL pledger, never to the payer - this
         // is what makes an open payer safe without an access check.
         assert_eq!(
             view_balance(&storage, alice()),
@@ -342,7 +342,7 @@ fn the_void_burns_only_the_unpaid_share() {
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 
-        // Encrypted cohort ledger before the burn — the burn records a sale
+        // Encrypted cohort ledger before the burn - the burn records a sale
         // cohort, so the ciphertext must change afterwards.
         let cohorts_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())

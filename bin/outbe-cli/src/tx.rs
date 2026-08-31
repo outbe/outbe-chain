@@ -10,13 +10,13 @@ use k256::ecdsa::SigningKey;
 use crate::rpc::Rpc;
 
 /// Price a legacy tx off the block's base fee, with `2x` headroom so it survives a
-/// base-fee rise between the read and inclusion — the begin-zone system txs and offer
+/// base-fee rise between the read and inclusion - the begin-zone system txs and offer
 /// decryption make blocks bursty enough for several steps.
 ///
 /// Deliberately not the `eth_gasPrice` suggestion: that figure includes the tips of
 /// recently mined txs, which on this chain are mostly our own. Doubling it fed the
 /// next suggestion, which we doubled again, and the advised price climbed 7, 14, 28,
-/// 56 with no demand behind it. Over-pricing is not free either — the sender must
+/// 56 with no demand behind it. Over-pricing is not free either - the sender must
 /// hold `gas_limit * gas_price` up front, so a runaway price locks a payer out.
 pub(crate) fn buffered_gas_price(base_fee: U256) -> U256 {
     base_fee
@@ -71,7 +71,7 @@ impl TxSigner {
     /// Borrow the underlying secp256k1 signing key.
     ///
     /// Exposed so subcommands can sign payloads other than legacy
-    /// transactions — e.g. the `keccak(0x05 || rlp(chain_id, address,
+    /// transactions - e.g. the `keccak(0x05 || rlp(chain_id, address,
     /// nonce))` digest defined by EIP-7702. Keep new use-sites narrow.
     pub fn key(&self) -> &SigningKey {
         &self.key
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_rlp_encode_list_long_payload() {
-        // 60 bytes of 0x01 items → payload > 55
+        // 60 bytes of 0x01 items -> payload > 55
         let items: Vec<Vec<u8>> = (0..60).map(|_| rlp_encode_u64(1)).collect();
         let refs: Vec<&[u8]> = items.iter().map(|v| v.as_slice()).collect();
         let mut out = Vec::new();

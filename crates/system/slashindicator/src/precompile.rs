@@ -21,7 +21,7 @@ sol!(
 ///
 /// Each evidence verifier runs ~2+ BLS12-381 pairings plus ecrecover/storage
 /// reads. On the ZeroFee chain those would be near-free to spam, so this charges
-/// a heavy base proportional to that work — block gas then bounds how many
+/// a heavy base proportional to that work - block gas then bounds how many
 /// evidence txs fit in one block, complementing the ACTIVE-validator ACL. The
 /// value is the single source of truth in
 /// [`OutbeProtocolSchedule::slash_indicator_vrf_evidence_base_gas`], read here

@@ -149,7 +149,7 @@ export async function sendTx(
 ): Promise<Hex> {
   if (!ctx.walletClient || !ctx.account) {
     throw new Error(
-      "signing requires a key — set OUTBE_PRIVATE_KEY in the MCP server env",
+      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
     );
   }
   const fn = abiFn(entry.abi, method);
@@ -174,7 +174,7 @@ export async function sendRaw(
 ): Promise<Hex> {
   if (!ctx.walletClient || !ctx.account) {
     throw new Error(
-      "signing requires a key — set OUTBE_PRIVATE_KEY in the MCP server env",
+      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
     );
   }
   return ctx.walletClient.sendTransaction({

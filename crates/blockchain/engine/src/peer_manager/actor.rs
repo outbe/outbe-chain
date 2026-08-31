@@ -36,9 +36,9 @@ type FinalizedWait = Pin<Box<dyn Future<Output = FinalizedWaitResult> + Send>>;
 #[derive(Debug, Clone)]
 struct LastTrackedPeerSet {
     height: u64,
-    /// Consensus participants (ACTIVE|EXITING with share) — the voting committee.
+    /// Consensus participants (ACTIVE|EXITING with share) - the voting committee.
     primary: Map<PublicKey, Address>,
-    /// Non-voting admitted peers (status ∈ {REGISTERED, PENDING}): TEE full-nodes +
+    /// Non-voting admitted peers (status in {REGISTERED, PENDING}): TEE full-nodes +
     /// staked joiners, admitted for sync but not yet voting.
     secondary: Map<PublicKey, Address>,
 }
@@ -58,7 +58,7 @@ fn classify_peer_set_refresh(
     let Some(tracked) = last_tracked else {
         return PeerSetRefreshAction::Track;
     };
-    // A membership change in EITHER tier needs a new tracked peer-set index — a
+    // A membership change in EITHER tier needs a new tracked peer-set index - a
     // PENDING joiner appearing in `secondary` must re-track even when the primary
     // (voting) committee is unchanged, or the joiner is never admitted to P2P.
     if primary.keys() != tracked.primary.keys() || secondary.keys() != tracked.secondary.keys() {
@@ -241,12 +241,12 @@ where
     #[instrument(skip_all, fields(height = block.number(), hash = %block.block_hash()))]
     async fn try_refresh_from_block(&mut self, block: ConsensusBlock) -> eyre::Result<()> {
         ensure_provider_ready(&self.node.provider, &block)?;
-        // PRIMARY = current consensus participants (ACTIVE|EXITING with share — the
-        // voting committee). SECONDARY = non-voting admitted peers (status ∈
+        // PRIMARY = current consensus participants (ACTIVE|EXITING with share - the
+        // voting committee). SECONDARY = non-voting admitted peers (status in
         // {REGISTERED, PENDING}, no share): PENDING joiners (staked, syncing toward
         // their activating reshare) PLUS TEE full-nodes
         // (REGISTERED, P2P-announced, enclave-registered, NOT staked). Both are
-        // admitted so they reach head and execute offer blocks BEFORE voting — a
+        // admitted so they reach head and execute offer blocks BEFORE voting - a
         // joiner must be synced before the reshare (else its DKG output diverges); a
         // full-node just syncs + serves. Voting needs `has_bls_share`, so a secondary
         // peer cannot affect consensus. The tiers are disjoint by status.
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn pending_joiner_in_secondary_tracks_new_peer_set() {
         // A PENDING joiner appearing in the SECONDARY tier (primary committee
-        // unchanged) must re-track — otherwise the joiner is never admitted to P2P
+        // unchanged) must re-track - otherwise the joiner is never admitted to P2P
         // and can only connect at the reshare, mid-sync.
         let primary = peer_map(&[(1, 9001), (2, 9002)]);
         let tracked = LastTrackedPeerSet {

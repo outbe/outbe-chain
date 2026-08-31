@@ -523,7 +523,7 @@ contract OriginRouter is
     }
 
     /// @dev Decode a BIDS_BATCH and forward it to Desis; the body `srcChainId` is cross-checked against the
-    ///      authenticated source. Clearing is not fired here — the Desis begin-block gate owns that.
+    ///      authenticated source. Clearing is not fired here - the Desis begin-block gate owns that.
     function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
         (
             uint32 worldwideDay,
@@ -560,7 +560,7 @@ contract OriginRouter is
     /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge
     ///      authenticated, or a source outside the day's frozen snapshot, can never become acceptable: it is
     ///      acknowledged without effect (a rogue/late-registered source would otherwise leave storage residue
-    ///      Desis never clears — it resets only snapshot chains).
+    ///      Desis never clears - it resets only snapshot chains).
     function _acceptBids(uint32 srcChainId, uint32 bodySrcChainId, uint32 worldwideDay, uint8 msgType)
         private
         returns (bool)

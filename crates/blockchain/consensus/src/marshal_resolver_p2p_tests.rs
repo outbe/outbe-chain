@@ -28,7 +28,7 @@
 //! node A's resolver serve-side answers with `(notarization, block)`; node B
 //! verifies the threshold notarization against the shared epoch-0
 //! `HybridScheme` verifier and delivers the block. The test asserts the
-//! delivered block's digest equals node A's block digest — proving the real
+//! delivered block's digest equals node A's block digest - proving the real
 //! `Recipients::One` resolver pull/serve path works end to end.
 
 use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
@@ -453,7 +453,7 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
 ///    `proposal` advertises round `7` and `D_bad`. Node A's serve-side
 ///    (`handle_produce` for `Key::Notarized { round }`) caches this notarization
 ///    by round, finds the `D_bad` block by the carried payload commitment, and
-///    genuinely serves `(forged_notarization, D_bad_block)` to node B — the same
+///    genuinely serves `(forged_notarization, D_bad_block)` to node B - the same
 ///    code path the control fetch exercised. Node B decodes the certificate
 ///    (codec config matches: identical participant count), passes the structural
 ///    checks (`notarization.round() == round`, `commitment(block) == payload`),
@@ -464,7 +464,7 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
 ///    block. Node B's subscription does NOT resolve.
 ///
 /// The only difference between the two fetches is the forged certificate, and
-/// only the forged fetch fails to deliver — so the timeout in phase 2 is caused
+/// only the forged fetch fails to deliver - so the timeout in phase 2 is caused
 /// by the forgery being rejected, not by node A failing to serve.
 ///
 /// Note on the chosen mismatch: a wrong-DKG / wrong-verifier forgery would NOT

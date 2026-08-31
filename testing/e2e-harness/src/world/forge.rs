@@ -1,6 +1,6 @@
 //! Running the project's own deploy scripts against a chain.
 //!
-//! Both venues a scenario can own — the committee's chain and a local target —
+//! Both venues a scenario can own - the committee's chain and a local target -
 //! are deployed by the same scripts with the same throwaway key, so the runner
 //! and its inputs live here rather than in either of them.
 

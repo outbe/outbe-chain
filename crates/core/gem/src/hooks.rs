@@ -152,6 +152,10 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+
+    // The Oracle begin-block hook finalizes that day earlier in this same block;
+    // a lagging watermark means the ordering broke - skip loudly instead of
+    // misreading an unfinalized day as empty.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
         tracing::warn!(target: "outbe::gem", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");

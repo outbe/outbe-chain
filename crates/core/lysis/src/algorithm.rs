@@ -14,11 +14,11 @@ pub(crate) const fn u256_from_u128(v: u128) -> U256 {
 }
 
 /// Policy parameters (fixed-point, denominator = 1000).
-/// a=0.2 → 200/1000, b=0.1 → 100/1000, c=0.2 → 200/1000
+/// a=0.2 -> 200/1000, b=0.1 -> 100/1000, c=0.2 -> 200/1000
 const POLICY_A_NUM: u32 = 1;
-const POLICY_A_DEN: u32 = 5; // a = 1/5 → x^(1/5)
+const POLICY_A_DEN: u32 = 5; // a = 1/5 -> x^(1/5)
 const POLICY_B_NUM: u32 = 1;
-const POLICY_B_DEN: u32 = 10; // b = 1/10 → x^(1/10)
+const POLICY_B_DEN: u32 = 10; // b = 1/10 -> x^(1/10)
 const POLICY_C: U256 = u256_from_u128(SCALE_U128 * 2 / 10); // 0.2 * SCALE
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
             PrecompileError::Revert("lysis: fp_root intermediate overflow".to_string())
         })?;
     }
-    // Search bound: a partial power above 2·target means `mid` is too big.
+    // Search bound: a partial power above 2*target means `mid` is too big.
     // In-use targets sit far inside U1024; saturate the search bound defensively.
     let target2 = target.saturating_mul(two);
 
@@ -77,7 +77,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
         }
     }
 
-    // The root is small (`≈ 10^6`); narrow it back with a checked conversion
+    // The root is small (`~= 10^6`); narrow it back with a checked conversion
     // rather than a silent truncation.
     let y: U256 = lo
         .uint_try_to()
@@ -135,7 +135,7 @@ fn policy_tau_fp(p: &[u64], nt: usize) -> Result<Vec<U256>> {
     Ok(tau)
 }
 
-/// Fallback tau weight `ng^(1/5) · nt^(1/10)` used when a group has zero
+/// Fallback tau weight `ng^(1/5) * nt^(1/10)` used when a group has zero
 /// population or a zero root divisor. Extracted so the two call sites share one
 /// implementation (both roots are computed via the overflow-safe [`fp_root`]).
 fn fallback_tau(ng: usize, nt: usize) -> Result<U256> {
@@ -177,8 +177,8 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
     // Ensure last = SCALE
     *y_cum.last_mut().unwrap() = SCALE;
 
-    // E[Y] and E[Y²]. Intermediates fit in U256: m, y_cum ≤ SCALE ≈ 2^60, so
-    // `m * y * y` ≤ 2^180 — well under U256::MAX.
+    // E[Y] and E[Y^2]. Intermediates fit in U256: m, y_cum <= SCALE ~= 2^60, so
+    // `m * y * y` <= 2^180 - well under U256::MAX.
     let mut ey = U256::ZERO;
     let mut ey2 = U256::ZERO;
     for i in 0..m.len() {
@@ -188,7 +188,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
         ey2 += mi * yi * yi / (SCALE * SCALE);
     }
 
-    // var_y = E[Y²] - E[Y]² / SCALE
+    // var_y = E[Y^2] - E[Y]^2 / SCALE
     let ey_sq = ey * ey / SCALE;
     let var_y = ey2.saturating_sub(ey_sq);
 
@@ -208,7 +208,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 ///
 /// # Parameters
 /// - `y_fp`: interest share per FI group in fixed-point (sum = SCALE, sorted ascending FI).
-///   Caller is responsible for normalization — integer-division truncation must
+///   Caller is responsible for normalization - integer-division truncation must
 ///   be absorbed before this call.
 /// - `p`: population counts per FI group
 /// - `nt`: total tribute count
@@ -219,7 +219,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// Fraction per FI group in fixed-point (SCALE-based).
 ///
 /// # Post-condition
-/// `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` — weighted expenditure never exceeds
+/// `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` - weighted expenditure never exceeds
 /// the target allocation. Fractions are scaled down monotonically if the raw
 /// algorithm output would overshoot; relative ratios between groups are preserved.
 ///
@@ -247,8 +247,8 @@ pub fn calc_fraction_distribution_fp(
     // beta = (f/fmax - E[Y]) / Var[Y]
     // f1[i] = fmax * sum_{j>=i} m[j] * (1 + beta * (Y[j] - E[Y]))
 
-    // signed I256 arithmetic throughout — no intermediate scale-down.
-    // All unsigned inputs are ≤ SCALE (10^6), far under I256::MAX (~5.8·10^76),
+    // signed I256 arithmetic throughout - no intermediate scale-down.
+    // All unsigned inputs are <= SCALE (10^6), far under I256::MAX (~5.8*10^76),
     // so try_from conversions cannot fail in practice; we still return a
     // structured Fatal instead of panicking per CLAUDE.md rules.
     let f_over_fmax = (f_fp * SCALE).checked_div(fmax_fp).unwrap_or(U256::ZERO);
@@ -271,13 +271,13 @@ pub fn calc_fraction_distribution_fp(
             } else {
                 I256::ZERO
             };
-            // factor = SCALE + beta_term (in SCALE units) — exact, no scale-down.
+            // factor = SCALE + beta_term (in SCALE units) - exact, no scale-down.
             let factor = scale_i + beta_term;
             let mj_i = u256_to_i256(moments.m[j])?;
             sum_i += mj_i * factor / scale_i;
         }
 
-        // f1[i] = fmax * sum / SCALE — exact; clamp negative to 0.
+        // f1[i] = fmax * sum / SCALE - exact; clamp negative to 0.
         let result = fmax_i * sum_i / scale_i;
         f1[i - 1] = if result <= I256::ZERO {
             U256::ZERO
@@ -371,8 +371,8 @@ mod tests {
         assert_eq!(fp_root(SCALE, 1, 5).unwrap(), SCALE);
     }
 
-    /// Reference `round(base^(1/q) · SCALE)` computed in `f64` (test-only per
-    /// CLAUDE.md §5.6). Used only to know the *magnitude* of the expected root;
+    /// Reference `round(base^(1/q) * SCALE)` computed in `f64` (test-only per
+    /// CLAUDE.md section 5.6). Used only to know the *magnitude* of the expected root;
     /// the exactness is pinned by [`test_fp_root_floor_identity`] in integers.
     fn ref_root_scaled(base: u128, q: u32) -> u128 {
         let root = (base as f64).powf(1.0 / q as f64);
@@ -380,13 +380,13 @@ mod tests {
     }
 
     /// Known-answer test: `fp_root` must land within a tiny tolerance of the
-    /// real fractional power at the in-use `q ∈ {5, 10}`. A scale-stacking wrap
-    /// (the OIP-00043 bug) makes `target` — and thus the root — garbage, off by
+    /// real fractional power at the in-use `q in {5, 10}`. A scale-stacking wrap
+    /// (the OIP-00043 bug) makes `target` - and thus the root - garbage, off by
     /// many orders of magnitude, so it fails this check while still satisfying
-    /// the loose `frac > 0` / `frac ≤ 2·fmax` bounds the distribution tests use.
+    /// the loose `frac > 0` / `frac <= 2*fmax` bounds the distribution tests use.
     #[test]
     fn test_fp_root_known_answers() {
-        // pi^(1/10) at q = 10 — the call site that overflows U256 hardest.
+        // pi^(1/10) at q = 10 - the call site that overflows U256 hardest.
         for &pi in &[2u128, 16, 1000, 1_000_000] {
             let got: u128 = fp_root(U256::from(pi) * SCALE, POLICY_B_NUM, POLICY_B_DEN)
                 .unwrap()
@@ -398,30 +398,30 @@ mod tests {
             // ULP for f64 rounding in the reference. A wrap is off by >> this.
             assert!(
                 diff <= 4_096,
-                "fp_root({pi}·SCALE, 1, 10) = {got}, expected ~{want} (diff {diff})"
+                "fp_root({pi}*SCALE, 1, 10) = {got}, expected ~{want} (diff {diff})"
             );
         }
 
-        // (i-0.5)^(1/5) at q = 5 for representative x_fp = x · SCALE.
+        // (i-0.5)^(1/5) at q = 5 for representative x_fp = x * SCALE.
         for &(num, den) in &[(1u128, 2u128), (3, 2), (5, 2), (99, 2)] {
             let x_fp = U256::from(num) * SCALE / U256::from(den);
             let got: u128 = fp_root(x_fp, POLICY_A_NUM, POLICY_A_DEN)
                 .unwrap()
                 .try_into()
                 .unwrap();
-            // reference: (num/den)^(1/5) · SCALE
+            // reference: (num/den)^(1/5) * SCALE
             let root = ((num as f64) / (den as f64)).powf(1.0 / 5.0);
             let want = (root * SCALE_U128 as f64).round() as u128;
             let diff = got.abs_diff(want);
             assert!(
                 diff <= 4_096,
-                "fp_root({num}/{den}·SCALE, 1, 5) = {got}, expected ~{want} (diff {diff})"
+                "fp_root({num}/{den}*SCALE, 1, 5) = {got}, expected ~{want} (diff {diff})"
             );
         }
     }
 
     /// Exact integer defining-identity: `fp_root` returns `floor(target^(1/q))`
-    /// where `target = x_fp · SCALE^(q-1)`. Verified as `y^q ≤ target < (y+1)^q`,
+    /// where `target = x_fp * SCALE^(q-1)`. Verified as `y^q <= target < (y+1)^q`,
     /// with `target` and the powers computed in the wide reference type so a
     /// U256 wrap cannot slip through. No `f64`; fully deterministic.
     #[test]
@@ -432,7 +432,7 @@ mod tests {
                 let x_fp = U256::from(pi) * SCALE;
                 let y = fp_root(x_fp, 1, q).unwrap();
 
-                // target = x_fp · SCALE^(q-1), exact in U1024.
+                // target = x_fp * SCALE^(q-1), exact in U1024.
                 let mut target = U1024::from(x_fp);
                 for _ in 0..(q - 1) {
                     target = target.checked_mul(scale_w).unwrap();
@@ -443,26 +443,26 @@ mod tests {
                 let y1_pow = pow_u1024(yw + U1024::from(1u64), q);
                 assert!(
                     y_pow <= target && target < y1_pow,
-                    "fp_root({pi}·SCALE,1,{q})={y}: floor identity broken"
+                    "fp_root({pi}*SCALE,1,{q})={y}: floor identity broken"
                 );
             }
         }
     }
 
     /// The largest in-use `x_fp` (a fidelity-group population up to the
-    /// OIP-00043 `pi ≤ 10^9` bound, at the hardest `q = 10`) must return `Ok`
-    /// with a correctly-bounded root — not a revert and not a wrap.
+    /// OIP-00043 `pi <= 10^9` bound, at the hardest `q = 10`) must return `Ok`
+    /// with a correctly-bounded root - not a revert and not a wrap.
     #[test]
     fn test_fp_root_no_overflow_at_q10() {
         let pi: u128 = 1_000_000_000; // 10^9
         let root = fp_root(U256::from(pi) * SCALE, POLICY_B_NUM, POLICY_B_DEN)
             .expect("fp_root must not overflow for in-use populations");
-        // 10^9^(1/10) = 10^0.9 ≈ 7.94, so root ≈ 7.94 · SCALE.
+        // 10^9^(1/10) = 10^0.9 ~= 7.94, so root ~= 7.94 * SCALE.
         let want = ref_root_scaled(pi, 10);
         let got: u128 = root.try_into().unwrap();
         assert!(
             got.abs_diff(want) <= 4_096,
-            "fp_root(10^9·SCALE,1,10) = {got}, expected ~{want}"
+            "fp_root(10^9*SCALE,1,10) = {got}, expected ~{want}"
         );
     }
 

@@ -1,4 +1,4 @@
-//! Simplex Reporter — forwards consensus activities to the FinalizationActor.
+//! Simplex Reporter - forwards consensus activities to the FinalizationActor.
 //!
 //! Implements [`commonware_consensus::Reporter`] to receive finalization events
 //! and other consensus activities from the Simplex engine.
@@ -6,12 +6,12 @@
 //! On finalization:
 //! 1. Builds the canonical finalized-parent certificate artifact from the
 //!    finalized proposal and its Hybrid certificate
-//! 2. Hashes BLS seed signature → VRF seed (B256) for on-chain randomness
-//! 3. Detects view gaps → missed proposer addresses via elector
+//! 2. Hashes BLS seed signature -> VRF seed (B256) for on-chain randomness
+//! 3. Detects view gaps -> missed proposer addresses via elector
 //! 4. Sends `Finalized` to the [`FinalizationActor`](crate::finalization::actor),
 //!    which durably writes the exact-parent certificate record consumed by the
 //!    proposer-side Phase 1 system transaction.
-//! 5. Uses an unbounded mailbox — the voter task can never block on this edge.
+//! 5. Uses an unbounded mailbox - the voter task can never block on this edge.
 //!    A closed mailbox is logged + counted but does not panic; the supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
@@ -66,7 +66,7 @@ pub struct OutbeReporter {
     /// FinalizationActor mailbox for sending finalization notifications.
     /// `unbounded_send` keeps this edge non-blocking from the voter task.
     finalization_mailbox: FinalizationMailbox,
-    /// Bridge — Half C-parlia step 11 removed the legacy
+    /// Bridge - Half C-parlia step 11 removed the legacy
     /// `refresh_pending_finalized_certificate` call; the field is kept
     /// for the surviving status / cache surface and for follow-up
     /// metrics emission.
@@ -88,7 +88,7 @@ pub struct OutbeReporter {
     finalize_verify_mailbox: FinalizeVerifyMailbox,
     /// Narrow, write-only capability onto the certified-parent proof store: the
     /// reporter records the `local_certification_witness` mark for each observed
-    /// `Activity::Certification`, but structurally cannot durably write — durable
+    /// `Activity::Certification`, but structurally cannot durably write - durable
     /// persistence goes off-thread through the FinalizationActor mailbox (see
     /// `handle_certification`), which stays the single durable writer.
     witness_sink: Arc<dyn CertificationWitnessSink>,
@@ -172,7 +172,7 @@ impl ReporterContinuity {
     }
 }
 
-/// Type alias for our Simplex activity type — uses HybridScheme<MinSig>.
+/// Type alias for our Simplex activity type - uses HybridScheme<MinSig>.
 type OutbeActivity = Activity<HybridScheme<MinSig>, Digest>;
 
 impl OutbeReporter {
@@ -297,7 +297,7 @@ impl OutbeReporter {
         // batcher reports `Activity::Finalize` BEFORE batch-verifying it
         // (monorepo batcher `round.rs::add_network`), so the vote here is
         // unverified and MUST be verified before it can feed the proposer's
-        // late-credit aggregate — but verifying `O(committee)` BLS pairings per
+        // late-credit aggregate - but verifying `O(committee)` BLS pairings per
         // view on the voter critical path inflated block time. Enqueue the raw
         // vote to the off-thread `FinalizeVerifyActor`, which verifies it and
         // admits only the verified votes to `late_sig_store`. The former
@@ -348,7 +348,7 @@ impl OutbeReporter {
     /// metric. The conflicting signed votes themselves are NOT accessible from
     /// the commonware evidence type (its inner votes are private), so the node
     /// signals the attributable facts (signer pubkey + epoch + view + class) and
-    /// the watcher — which observes the gossiped votes — packs the two
+    /// the watcher - which observes the gossiped votes - packs the two
     /// `EvidenceBlock`s and submits to the SlashIndicator
     /// `submitConflicting{Notarize,Finalize}Evidence` / `submitNullifyFinalizeEvidence`
     /// precompiles. The node does NOT auto-slash (no in-node tx injection), so
@@ -377,7 +377,7 @@ impl OutbeReporter {
                 signer_pubkey,
                 epoch = epoch.get(),
                 view = view.get(),
-                "BYZANTINE: consensus equivocation detected — slashable; external watcher should submit the two conflicting votes"
+                "BYZANTINE: consensus equivocation detected - slashable; external watcher should submit the two conflicting votes"
             );
             self.view_state.buffer_byzantine(addr);
             crate::metrics::record_byzantine_evidence(kind);
@@ -434,7 +434,7 @@ impl OutbeReporter {
         // verification guarantees recovery only runs over verified partials, so this is unreachable
         // in correct operation. If it ever fires, an unverifiable proof has
         // reached the finalized certificate and will fail the next height's
-        // mandatory V2 verify — surface it loudly rather than silently halting.
+        // mandatory V2 verify - surface it loudly rather than silently halting.
         if vrf_seed.is_none() {
             crate::metrics::record_finalized_cert_invalid_vrf_proof();
             error!(
@@ -470,9 +470,9 @@ impl OutbeReporter {
         let missed_proposers = self.detect_missed_proposers(view);
 
         // 4. Drain the per-finalization buffer of locally-attributed byzantine
-        // signers — operator observability ONLY, not a transport stage. On-chain
+        // signers - operator observability ONLY, not a transport stage. On-chain
         // slashing is carried by the external watcher (which observes the raw
-        // gossiped votes the node cannot reach — commonware hides the inner votes)
+        // gossiped votes the node cannot reach - commonware hides the inner votes)
         // submitting the two conflicting `EvidenceBlock`s to the SlashIndicator
         // `submitConflicting{Notarize,Finalize}` / `submitNullifyFinalize`
         // precompile, where both signatures are re-verified on-chain (reproducible
@@ -547,7 +547,7 @@ impl OutbeReporter {
     /// `proof_store_ingestion_verifies_certification_activity_before_write`.
     /// Failure modes are exhaustive and never panic; each is metered.
     fn handle_certification(&self, notarization: Notarization<HybridScheme<MinSig>, Digest>) {
-        // Step 1 — verify the notarization certificate against the active
+        // Step 1 - verify the notarization certificate against the active
         // committee verifier scheme. Simplex already verified before
         // emission, so this is defence in depth, but the
         // requires explicit re-verification before write.
@@ -566,7 +566,7 @@ impl OutbeReporter {
             return;
         }
 
-        // Step 2 — derive V2 canonical fields. `committee_set_hash_v2` and
+        // Step 2 - derive V2 canonical fields. `committee_set_hash_v2` and
         // `vrf_material_version` are populated here so 's V2 selector
         // can read them directly via `get_best_parent_proof` without
         // recomputing from the encoded blob.
@@ -631,10 +631,10 @@ impl OutbeReporter {
             stored_at_height: view,
         };
 
-        // Step 3 — enqueue the durable write to the FinalizationActor.
+        // Step 3 - enqueue the durable write to the FinalizationActor.
         // The synchronous MDBX commit moves off the Simplex voter task; the
         // record (including the parity-critical `committee_set_hash`) was built
-        // and verified above and is byte-identical to the inline-written one —
+        // and verified above and is byte-identical to the inline-written one -
         // only the write moves, and the actor remains the single durable writer
         // to `FinalizedParentCertStore`. The in-memory
         // `mark_local_certification_witness` above stays on-thread (a cheap
@@ -759,7 +759,7 @@ impl OutbeReporter {
                 dropped_count = dropped,
                 from = self.view_state.last_finalized_view() + 1,
                 to = current_view - 1,
-                "view gap — missed proposers detected"
+                "view gap - missed proposers detected"
             );
             if dropped > 0 {
                 warn!(
@@ -945,15 +945,15 @@ mod tests {
         );
         let finalize = Finalize::sign(&schemes[0], proposal).expect("finalize vote");
 
-        // Reporter enqueues (no inline verify on the voter task) …
+        // Reporter enqueues (no inline verify on the voter task) ...
         let _ = reporter.report(Activity::Finalize(finalize));
         assert_eq!(
             store.lock().unwrap().pending_vote_count(fb_hash),
             0,
-            "reporter must NOT admit on the voter task — admission is off-thread"
+            "reporter must NOT admit on the voter task - admission is off-thread"
         );
 
-        // … the verify actor verifies it off-thread and admits the verified vote.
+        // ... the verify actor verifies it off-thread and admits the verified vote.
         assert!(
             verify_actor.try_process_one(),
             "actor processes the queued vote"

@@ -4,8 +4,8 @@
 //!
 //! Deliberately kept OUT of [`crate::proof::committee`]: that module is pure
 //! committee data, reused by the EVM executor and full-node import paths. These
-//! helpers decode cryptographic keys and surface [`V2VerifyError`] — proof
-//! *verification* concerns — so they live on the verifier side of the `proof/`
+//! helpers decode cryptographic keys and surface [`V2VerifyError`] - proof
+//! *verification* concerns - so they live on the verifier side of the `proof/`
 //! seam, not in the pure-data module.
 
 use bytes::Bytes;

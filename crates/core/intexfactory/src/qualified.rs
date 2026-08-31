@@ -304,7 +304,7 @@ pub(crate) fn enqueue_notice(
 }
 
 /// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
-/// entries per firing. This is where every outbound mark leaves from — the scans
+/// entries per firing. This is where every outbound mark leaves from - the scans
 /// that queue them run in a block hook, which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
@@ -400,7 +400,7 @@ fn drain_called_run(
     Ok(index - at)
 }
 
-/// Send one Qualified notice. Called entries never reach here — the drain routes them through
+/// Send one Qualified notice. Called entries never reach here - the drain routes them through
 /// [`drain_called_run`] so a whole group leaves as one message.
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
     // Only the Qualified shape is readable here; anything else is a scoped key this cannot decode,
@@ -412,7 +412,7 @@ fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()>
         return Ok(());
     };
     // A group that has since been called is gone from the index, and a Called
-    // series would refuse the Qualified mark anyway — so an empty read is the
+    // series would refuse the Qualified mark anyway - so an empty read is the
     // answer, not an error.
     let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(scoped);
     let factory = IntexFactoryContract::new(storage.clone());

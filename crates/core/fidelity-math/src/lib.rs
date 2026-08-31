@@ -1,11 +1,11 @@
 //! Fixed-point time-decay math for the Retention Component of Fidelity Index.
 //!
 //! Pure integer arithmetic (`SCALE = 10^18`), no `f32/f64`, deterministic across
-//! nodes. Implements the spec curve `T_dec(T) = L · (1 − (1/2)^(T/H))` with
-//! half-life `H = 365 days` and saturation limit `L = H/ln2 ≈ 526.58 days`.
+//! nodes. Implements the spec curve `T_dec(T) = L * (1 - (1/2)^(T/H))` with
+//! half-life `H = 365 days` and saturation limit `L = H/ln2 ~= 526.58 days`.
 //!
 //! `(1/2)^x` is evaluated by binary decomposition of the fractional part of `x`:
-//! `(1/2)^x = (1/2)^k · ∏_i ((1/2)^(2^-i))^{b_i}` where `k` is the integer part
+//! `(1/2)^x = (1/2)^k * prod_i ((1/2)^(2^-i))^{b_i}` where `k` is the integer part
 //! and `b_i` the i-th fractional bit. The per-bit factors `(1/2)^(2^-i)` are the
 //! precomputed [`HALF_POW_TABLE`] constants; the integer part is a right shift.
 //! Validated against the PDF reference `decay.py` (errors ~1e-15 vs float64).
@@ -26,7 +26,7 @@ pub const DECIMALS: u8 = 18;
 pub(crate) const H_SEC: u64 = 365 * 86_400;
 
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
-/// (≈ 526.583690 days). `526583689924471619584 = round(365/ln2 · 10^18)`.
+/// (~= 526.583690 days). `526583689924471619584 = round(365/ln2 * 10^18)`.
 pub(crate) const L_FP: U256 = U256::from_limbs([10074855860604174336, 28, 0, 0]);
 /// Inclusive bounds of the Fidelity league scale. A valid league is always in
 /// `[MIN_LEAGUE, MAX_LEAGUE]`; the derivation from RCFI lives in
@@ -88,7 +88,7 @@ pub fn league_from_rcfi(rcfi: U256, maximum_rcfi: U256) -> Option<u16> {
     Some(MIN_LEAGUE + slot.min(U256::from(MAX_LEAGUE - 1)).to::<u16>())
 }
 
-/// `HALF_POW_TABLE[i] = round((1/2)^(2^-(i+1)) · 10^18)` for `i = 0..=62`,
+/// `HALF_POW_TABLE[i] = round((1/2)^(2^-(i+1)) * 10^18)` for `i = 0..=62`,
 /// i.e. the factor applied when the `2^-(i+1)` fractional bit of `x` is set.
 /// Computed offline with 60-digit precision (see `reference/decay.py`).
 pub(crate) const HALF_POW_TABLE: [U256; 63] = [
@@ -157,7 +157,7 @@ pub(crate) const HALF_POW_TABLE: [U256; 63] = [
     U256::from_limbs([1000000000000000000, 0, 0, 0]),
 ];
 
-/// Computes `(1/2)^x · SCALE` for `x = x_fp / SCALE` (`x ≥ 0`).
+/// Computes `(1/2)^x * SCALE` for `x = x_fp / SCALE` (`x >= 0`).
 ///
 /// Splits `x` into integer part `k` (a right shift) and fractional part, then
 /// folds in one [`HALF_POW_TABLE`] factor per set fractional bit, MSB-first.
@@ -182,7 +182,7 @@ pub(crate) fn pow_one_half_fp(x_fp: U256) -> U256 {
     result >> k.to::<u64>() as usize
 }
 
-/// Decayed time `T_dec(age) = L · (1 − (1/2)^(age/H))` in fixed-point
+/// Decayed time `T_dec(age) = L * (1 - (1/2)^(age/H))` in fixed-point
 /// decayed-days. `age_sec` is the elapsed time since the event in seconds;
 /// callers must clamp clock skew (`now < event_time`) to `0` before calling.
 pub fn t_dec(age_sec: u64) -> U256 {
@@ -191,7 +191,7 @@ pub fn t_dec(age_sec: u64) -> U256 {
     }
     let x_fp = U256::from(age_sec) * SCALE / U256::from(H_SEC);
     let half = pow_one_half_fp(x_fp);
-    // half ≤ SCALE always, so the subtraction never underflows.
+    // half <= SCALE always, so the subtraction never underflows.
     L_FP * (SCALE - half) / SCALE
 }
 
@@ -202,7 +202,7 @@ mod tests {
     const DAY: u64 = 86_400;
 
     fn days(fp: U256) -> f64 {
-        // fixed-point decayed-days → f64 for tolerance checks only.
+        // fixed-point decayed-days -> f64 for tolerance checks only.
         let scaled: u128 = (fp * U256::from(1_000_000u64) / SCALE).to::<u128>();
         scaled as f64 / 1_000_000.0
     }

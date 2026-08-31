@@ -8,7 +8,7 @@ use super::Storable;
 /// Fixed-size array stored in consecutive EVM storage slots.
 ///
 /// Storage layout: elements at `base_slot + index * T::SLOTS`.
-/// No length stored — size is known at compile time.
+/// No length stored - size is known at compile time.
 pub struct StorageArray<'storage, T, const N: usize> {
     base_slot: U256,
     address: Address,

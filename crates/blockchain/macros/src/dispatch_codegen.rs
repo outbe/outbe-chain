@@ -140,7 +140,7 @@ fn generate(mut input: ItemImpl) -> syn::Result<TokenStream2> {
 
     // With no payable method the whole contract refuses value up front. Once one
     // method is payable the boundary credits value to this address, so the
-    // contract refuses it for every selector it has not published instead —
+    // contract refuses it for every selector it has not published instead -
     // dropping the check would let every other selector silently accept value it
     // has no accounting for.
     let reject_value = if any_payable {
@@ -295,7 +295,7 @@ fn parse_signature(lit: &LitStr) -> syn::Result<ParsedSig> {
     let raw = raw.trim();
 
     let open = raw.find('(').ok_or_else(|| {
-        syn::Error::new_spanned(lit, "signature missing '(' — expected `name(types) ...`")
+        syn::Error::new_spanned(lit, "signature missing '(' - expected `name(types) ...`")
     })?;
     let name = raw[..open].trim().to_string();
     if name.is_empty() || !is_valid_sol_ident(&name) {

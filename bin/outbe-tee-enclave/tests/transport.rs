@@ -281,7 +281,7 @@ fn transport_throughput_offers_per_sec() {
     eprintln!("wall time            : {:.3} s", secs);
     eprintln!("throughput           : {offers_per_sec:.0} offers/sec");
     eprintln!("per-batch latency    : {per_batch_ms:.3} ms");
-    eprintln!("per-offer (amortized): {per_offer_us:.2} µs");
+    eprintln!("per-offer (amortized): {per_offer_us:.2} us");
     if endpoint.is_none() {
         eprintln!(
             "note: native; set OUTBE_TEE_BENCH_ENDPOINT + run under gramine-sgx for the SGX figure."

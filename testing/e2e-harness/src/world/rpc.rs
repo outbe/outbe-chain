@@ -4,7 +4,7 @@
 //!
 //! This is the typed replacement for the `cast`-based RPC readers and the
 //! scenario polling helpers used by the lifecycle and update flows.
-//! Reads return `Option` — `None` is the analogue of the shell
+//! Reads return `Option` - `None` is the analogue of the shell
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
@@ -1001,7 +1001,7 @@ impl Rpc {
         })
     }
 
-    /// OIP record (`IGovernance.getOip`) — `(status, author, text)`.
+    /// OIP record (`IGovernance.getOip`) - `(status, author, text)`.
     pub fn get_oip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,
@@ -1011,7 +1011,7 @@ impl Rpc {
         Some((r.status, r.author, r.text))
     }
 
-    /// GIP record (`IGovernance.getGip`) — `(status, author, text)`.
+    /// GIP record (`IGovernance.getGip`) - `(status, author, text)`.
     pub fn get_gip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,

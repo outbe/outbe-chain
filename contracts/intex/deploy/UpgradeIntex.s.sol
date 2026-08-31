@@ -16,10 +16,10 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 /// @author Outbe
 /// @notice Shared plumbing to upgrade the intex UUPS proxies in place: deploy a fresh
 ///         implementation and point the existing CREATE3 proxy at it via `upgradeToAndCall`.
-/// @dev The proxy keeps its storage (roles, peers, balances) — only the implementation pointer
+/// @dev The proxy keeps its storage (roles, peers, balances) - only the implementation pointer
 ///      changes. Proxies are located by their deterministic CREATE3 address (same `predictProxy`
 ///      as the deploy scripts), so no addresses need to be passed in. The broadcaster must hold
-///      each contract's upgrade authority (DEFAULT_ADMIN_ROLE) — the deployer does. `data` is empty
+///      each contract's upgrade authority (DEFAULT_ADMIN_ROLE) - the deployer does. `data` is empty
 ///      (logic-only upgrade);
 ///      pass `reinitializer` calldata here if a storage migration is ever needed.
 abstract contract UpgradeBase is BaseScript {

@@ -1,6 +1,6 @@
 //! UTC date and time helpers.
 //!
-//! All functions are pure integer arithmetic — no `chrono`, no float, no
+//! All functions are pure integer arithmetic - no `chrono`, no float, no
 //! locale, no DST. The yyyymmdd "date key" is a `u32` like `20251205`. UTC
 //! is the only calendar; `worldwide_day_from_timestamp` shifts by +14h
 //! (UTC+14) for Metadosis-internal "Worldwide Day" semantics.
@@ -29,7 +29,7 @@ pub const UTC_PLUS_14_OFFSET: u64 = 50_400;
 #[non_exhaustive]
 pub enum TimeError {
     /// `utc_day` is strictly before `genesis_utc_day`. Caller is expected
-    /// to translate this into a fatal protocol error — a finalized block
+    /// to translate this into a fatal protocol error - a finalized block
     /// predating genesis must not be processed.
     PreGenesis { utc_day: u32, genesis_utc_day: u32 },
 }
@@ -50,7 +50,7 @@ impl core::fmt::Display for TimeError {
 
 /// Converts a unix timestamp to a yyyymmdd date key in UTC.
 pub fn timestamp_to_date_key(timestamp: u64) -> u32 {
-    // `timestamp / SECONDS_PER_DAY` is at most `u64::MAX / 86_400` ≈ 2.1e14, far
+    // `timestamp / SECONDS_PER_DAY` is at most `u64::MAX / 86_400` ~= 2.1e14, far
     // below `i64::MAX`, so this never saturates; `try_from` (not `as`) keeps the
     // conversion non-narrowing and deterministic on the consensus date path.
     let days = i64::try_from(timestamp / SECONDS_PER_DAY).unwrap_or(i64::MAX);
@@ -80,7 +80,7 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// Returns the next calendar day key for a yyyymmdd date key.
 ///
 /// Walks forward 24h via integer timestamp arithmetic; this is the only
-/// correct way to advance across month/year boundaries — direct `u32`
+/// correct way to advance across month/year boundaries - direct `u32`
 /// arithmetic on `yyyymmdd` is wrong (e.g., `20251231 + 1 != 20260101`).
 pub fn next_date_key(date_key: u32) -> u32 {
     let ts = date_key_to_utc_timestamp(date_key).saturating_add(SECONDS_PER_DAY);
@@ -105,7 +105,7 @@ pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, Tim
         genesis_utc_day,
     })?;
     // Day count since genesis. `u32` covers ~11.7M years of days; saturating
-    // `try_from` (not `as`) keeps it non-narrowing and deterministic — an
+    // `try_from` (not `as`) keeps it non-narrowing and deterministic - an
     // unreachable overflow clamps rather than silently wrapping.
     Ok(u32::try_from(delta / SECONDS_PER_DAY).unwrap_or(u32::MAX))
 }
@@ -303,9 +303,9 @@ mod tests {
 
     #[test]
     fn day_number_between_walks_forward_across_year() {
-        // 2024 is leap → 366 days.
+        // 2024 is leap -> 366 days.
         assert_eq!(day_number_between(20240101, 20250101), Ok(366));
-        // 2023 is non-leap → 365 days.
+        // 2023 is non-leap -> 365 days.
         assert_eq!(day_number_between(20230101, 20240101), Ok(365));
     }
 

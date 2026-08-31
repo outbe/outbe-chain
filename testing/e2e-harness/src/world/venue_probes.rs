@@ -1,7 +1,7 @@
 //! Chain-state probes for the origin venue.
 //!
-//! Every one answers a question a failing step needs to explain itself — which
-//! stage the venue is in, what the router froze, what a parked delivery said —
+//! Every one answers a question a failing step needs to explain itself - which
+//! stage the venue is in, what the router froze, what a parked delivery said -
 //! and returns a human sentence rather than a value, so a panic message reads
 //! as a diagnosis instead of a mismatch.
 
@@ -71,8 +71,8 @@ sol! {
         function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
     }
 }
-/// Every probe below asks the same question of the chain — "what did this
-/// contract emit for this day?" — so the query shape lives here once.
+/// Every probe below asks the same question of the chain - "what did this
+/// contract emit for this day?" - so the query shape lives here once.
 #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
 fn logs_of(
     url: &str,

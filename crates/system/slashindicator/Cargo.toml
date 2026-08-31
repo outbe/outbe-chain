@@ -22,7 +22,7 @@ tracing.workspace = true
 metrics.workspace = true
 # the evidence verifier builds the committee-bound vote namespaces from the
 # ordered committee `Set<bls12381::PublicKey>`, sharing the single derivation in
-# `outbe_consensus::proof` — so these are runtime (not just test) dependencies.
+# `outbe_consensus::proof` - so these are runtime (not just test) dependencies.
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true

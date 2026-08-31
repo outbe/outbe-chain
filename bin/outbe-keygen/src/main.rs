@@ -660,7 +660,7 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     let mut ecdsa_bytes = [0u8; 32];
     rand_core::OsRng.fill_bytes(&mut ecdsa_bytes);
     if ecdsa_bytes.iter().all(|&b| b == 0) {
-        eyre::bail!("generated zero ECDSA key — extremely unlikely, try again");
+        eyre::bail!("generated zero ECDSA key - extremely unlikely, try again");
     }
 
     let ecdsa_key_path = output_dir.join("evm-key.hex");

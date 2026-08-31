@@ -170,7 +170,7 @@ def main() -> None:
     # 1. offer key from the TeeRegistry
     reg = w3.eth.contract(address=TEE_REGISTRY_ADDR, abi=TEE_REGISTRY_ABI)
     if not reg.functions.isBootstrapped().call():
-        sys.exit("TeeRegistry is not bootstrapped — no offer key to encrypt to")
+        sys.exit("TeeRegistry is not bootstrapped - no offer key to encrypt to")
     offer_pub_u256 = reg.functions.tributeOfferPublicKey().call()
     offer_pub = int(offer_pub_u256).to_bytes(32, "big")
     print(f"offer key (DKG-derived): 0x{offer_pub.hex()}")
@@ -179,7 +179,7 @@ def main() -> None:
     day = args.day if args.day is not None else pick_offering_day(w3)
     print(f"worldwide_day: {day}")
 
-    # 3. plaintext payload — draft id + su hash must be unique per offer.
+    # 3. plaintext payload - draft id + su hash must be unique per offer.
     #    worldwide_day + currency travel as cleartext ABI args, not in here.
     payload = {
         "creator": creator,
@@ -230,7 +230,7 @@ def main() -> None:
     rcpt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
     print(f"status: {rcpt.status} (block {rcpt.blockNumber}, gas {rcpt.gasUsed})")
     if rcpt.status != 1:
-        sys.exit("offer reverted — inspect the revert reason via the node")
+        sys.exit("offer reverted - inspect the revert reason via the node")
 
     time.sleep(1)
     tribute = w3.eth.contract(address=TRIBUTE_ADDR, abi=TRIBUTE_ABI)

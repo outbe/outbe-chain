@@ -69,7 +69,7 @@ async function main() {
   let value = 0n;
 
   if (isSameChain) {
-    console.log(`\n  Same-chain order — no LZ fee\n`);
+    console.log(`\n  Same-chain order - no LZ fee\n`);
   } else {
     const fee = await calculateRefundFee(destRouter, origin.chainId, [orderId]);
     value = fee;

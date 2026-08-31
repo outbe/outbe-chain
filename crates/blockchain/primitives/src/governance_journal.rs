@@ -8,7 +8,7 @@
 //!
 //! ## Best-effort semantics
 //!
-//! The journal is **best-effort** observability — writes that fail (disk
+//! The journal is **best-effort** observability - writes that fail (disk
 //! full, permission error, file unwritable) emit a `tracing::warn!` and
 //! are dropped. They never block the consensus / state-transition path
 //! that produced them. Determinism is unaffected: the journal is a side
@@ -256,7 +256,7 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
 
 /// Append `record` to the journal. If [`init`] has not been called, this
 /// is a no-op (test-friendly). Write errors are logged at WARN and
-/// swallowed — never blocks the caller's state-transition path.
+/// swallowed - never blocks the caller's state-transition path.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;

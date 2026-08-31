@@ -3,7 +3,7 @@
 //! Each validator's `bls_seed_partial` is a BLS threshold partial signature,
 //! recoverable into the group VRF proof. By itself it carries no binding to the
 //! validator's identity key, so "validator i emitted THIS partial" is forgeable
-//! by any relay and not reproducible from chain state — making it unslashable.
+//! by any relay and not reproducible from chain state - making it unslashable.
 //!
 //! To make it attributable, each `HybridSignature` additionally carries a MinPk
 //! identity signature over a domain-separated message binding
@@ -111,7 +111,7 @@ pub fn verify_seed_partial_attest_bytes(
 /// The single plain-pairing core for threshold-VRF seed signatures.
 ///
 /// Returns `true` iff `signature` is a valid MinSig signature by `pk` over
-/// `seed_message` under [`hybrid_seed_namespace`]. No RNG — a deterministic
+/// `seed_message` under [`hybrid_seed_namespace`]. No RNG - a deterministic
 /// pairing check, so every node reaches the same verdict, which is required on
 /// the slashing path ([`verify_seed_partial_against_commitment`], `pk` = the
 /// signer's `PK_i`) and the next-height execution gate (`crate::proof::verifier`,
@@ -129,7 +129,7 @@ pub fn verify_seed_signature_plain(
 /// committee's constant-term BLS public, as stored on-chain). Returns `true` iff
 /// `sig_bytes` is a valid MinSig group signature by `group_pub_bytes` over
 /// `message` under `namespace`. Deterministic plain pairing (no RNG) so every
-/// validator reaches the same verdict — used by the begin-zone reshare endorsement
+/// validator reaches the same verdict - used by the begin-zone reshare endorsement
 /// gate. Malformed/empty public-key or signature bytes verify as `false`.
 pub fn verify_group_signature(
     group_pub_bytes: &[u8],
@@ -154,18 +154,18 @@ pub fn verify_group_signature(
 ///
 /// Used by SlashIndicator to slash an *invalid* partial: it must confirm the
 /// partial does NOT verify before applying a penalty. Returns:
-/// - `Some(true)`  — the partial verifies (the validator behaved correctly; NOT
+/// - `Some(true)`  - the partial verifies (the validator behaved correctly; NOT
 ///   slashable),
-/// - `Some(false)` — the partial does not verify (slashable),
-/// - `None`        — malformed input (undecodable commitment, signer index out
-///   of range, or undecodable partial) — the caller must reject, not slash.
+/// - `Some(false)` - the partial does not verify (slashable),
+/// - `None`        - malformed input (undecodable commitment, signer index out
+///   of range, or undecodable partial) - the caller must reject, not slash.
 ///
-/// `commitment_bytes` is `commonware_codec::Encode(Sharing<MinSig>)` — the same
+/// `commitment_bytes` is `commonware_codec::Encode(Sharing<MinSig>)` - the same
 /// bytes whose keccak256 is committed in the committee snapshot
 /// (`vrf_public_polynomial_hash`); the caller MUST check that hash first so the
 /// commitment is authentic. Verification is a single deterministic pairing
 /// check (the BLS-batch path with random scalar weights is intentionally
-/// avoided), so every node reaches the same verdict — required because the
+/// avoided), so every node reaches the same verdict - required because the
 /// result drives slashing.
 pub fn verify_seed_partial_against_commitment(
     commitment_bytes: &[u8],

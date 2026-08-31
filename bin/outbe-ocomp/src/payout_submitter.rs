@@ -930,8 +930,8 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         self.skip_log.insert(worldwide_day, reason.to_owned());
     }
 
-    /// Any mismatch with the certified values — missing file, wrong size,
-    /// different root or total — disqualifies this validator for the day.
+    /// Any mismatch with the certified values - missing file, wrong size,
+    /// different root or total - disqualifies this validator for the day.
     fn load_verified_day(
         &mut self,
         worldwide_day: u32,

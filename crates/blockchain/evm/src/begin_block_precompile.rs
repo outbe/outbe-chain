@@ -673,7 +673,7 @@ pub(crate) fn run_boundary_outcome(
         }
     }
     // Record the TEE recipient X25519 pubkeys announced through this boundary
-    // (the `BoundaryOutcome` key-delivery channel — README "Consensus Artifact
+    // (the `BoundaryOutcome` key-delivery channel - README "Consensus Artifact
     // Transport"). These ride in `header.extra_data` and are part of the
     // hash-committed `OutbeBlockArtifacts`, so every validator records the same
     // ordered set deterministically. Empty for boundaries that announce none.
@@ -820,7 +820,7 @@ pub(crate) fn authenticate_late_credit(
 /// LateFinalizeCredits system tx: record the verified
 /// late-finalize voters of each in-window batch at their inclusion distance
 /// `k`, then close the window that just matured (`settle_matured` for block
-/// `N − K`). The escrow residue is burned for mint/burn parity inside
+/// `N - K`). The escrow residue is burned for mint/burn parity inside
 /// `settle_window`; here we additionally route that same residue to terminal
 /// Metadosis emission headroom (`emission_sink::apply`), recycling unpaid fees
 /// instead of permanently destroying them.
@@ -829,7 +829,7 @@ pub(crate) fn authenticate_late_credit(
 /// executor's pre-exec preflight (`verify_late_finalize_credits_in_preexec`),
 /// proposer and validator alike. This body re-resolves the committee snapshot
 /// only to map the verified signer indices to addresses; the re-`verify`
-/// is the single source of truth for the bitmap→index decoding and yields the
+/// is the single source of truth for the bitmap->index decoding and yields the
 /// same indices on every node. Empty artifacts (no gathered credits) reduce to
 /// the window-close `settle_matured`, which is a no-op until block `K+1`.
 pub(crate) fn run_late_finalize_credits(
@@ -842,9 +842,9 @@ pub(crate) fn run_late_finalize_credits(
     let block_number = ctx.block.block_number;
 
     for credit in &artifact.batches {
-        // Inclusion distance k = block_number − fb_number, range-checked
-        // `1 ≤ k ≤ K` on the *executed body* artifact (the pre-exec preflight
-        // range-checks the header; the stateless validator binds header↔body —
+        // Inclusion distance k = block_number - fb_number, range-checked
+        // `1 <= k <= K` on the *executed body* artifact (the pre-exec preflight
+        // range-checks the header; the stateless validator binds header<->body -
         // but this path must stand on its own: a credit outside the window must
         // never be recorded). Checked FIRST, before the expensive snapshot read
         // + BLS verify, so an out-of-window credit is rejected cheaply.
@@ -870,13 +870,13 @@ pub(crate) fn run_late_finalize_credits(
         // bind the proposer-supplied
         // fb_number/epoch/committee_set_hash to the escrowed canonical binding for
         // this finalized block before recording. The BLS proof binds only fb_hash,
-        // so without this a proposer could spoof fb_number (shrink k → inflate
+        // so without this a proposer could spoof fb_number (shrink k -> inflate
         // weight) or reference a wrong committee.
         authenticate_late_credit(&ctx.storage, credit)?;
 
         // Re-resolve the epoch committee the proof was produced for, to map
-        // verified signer indices → addresses, and re-verify the BLS aggregate
-        // (FATAL on failure — never a soft receipt). The snapshot must exist (the
+        // verified signer indices -> addresses, and re-verify the BLS aggregate
+        // (FATAL on failure - never a soft receipt). The snapshot must exist (the
         // pre-exec preflight already read and verified against it).
         let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
         let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or_else(
@@ -915,7 +915,7 @@ pub(crate) fn run_late_finalize_credits(
     // `late_voter_*` credited set.
     record_window_close_absentees(ctx, block_number)?;
 
-    // Window close: settle block N − K (the window that just matured). No-op
+    // Window close: settle block N - K (the window that just matured). No-op
     // before block K+1 or when nothing was escrowed at that number. The residue
     // burn + terminal-Metadosis recycle and the per-window state cleanup happen
     // inside `settle_window`; nothing further is needed here.
@@ -925,8 +925,8 @@ pub(crate) fn run_late_finalize_credits(
 }
 
 /// Window-close miss & slashing pass. For the
-/// window maturing at this block (`fb_number = block_number − K`), every committee
-/// member that never voted within `K` — `committee(fb_number) \ credited` — has its
+/// window maturing at this block (`fb_number = block_number - K`), every committee
+/// member that never voted within `K` - `committee(fb_number) \ credited` - has its
 /// finalized-participation miss recorded and `slash_voter` applied (force-exit +
 /// stake slash once the felony threshold is crossed).
 ///
@@ -2019,7 +2019,7 @@ mod tests {
     }
 
     /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
-    /// matured window — pays the escrowed voters, marks `fee_settled`, and routes
+    /// matured window - pays the escrowed voters, marks `fee_settled`, and routes
     /// the unpaid residue through the active-profile carry-over sink.
     /// Uses an empty credit artifact so the assertion isolates the
     /// `settle_matured` + residue-recycle wiring (the BLS batch path is covered
@@ -2073,7 +2073,7 @@ mod tests {
                 U256::ZERO,
                 "absent voter earns nothing"
             );
-            // distributed (3·each) left REWARDS; residue (each) burned for parity.
+            // distributed (3*each) left REWARDS; residue (each) burned for parity.
             assert_eq!(
                 ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
                 U256::ZERO,
@@ -2203,7 +2203,7 @@ mod tests {
 
     /// Determinism: the window-close absentee pass is computed purely from committed
     /// chain state (committee snapshot + `late_voter_*`) in committee order, with no
-    /// proposer-chosen input — so two independent executions of the same closed
+    /// proposer-chosen input - so two independent executions of the same closed
     /// window reach byte-identical slashing state (the proposer/validator guarantee).
     /// Multiple absentees exercise ordering.
     #[test]
@@ -2292,7 +2292,7 @@ mod tests {
             first, second,
             "window-close absentee pass must be deterministic across executions"
         );
-        // C0, C2 credited → no miss; C1, C3 absent → miss in both counters.
+        // C0, C2 credited -> no miss; C1, C3 absent -> miss in both counters.
         assert_eq!(
             first,
             vec![(0, 0), (1, 1), (0, 0), (1, 1)],
@@ -2374,14 +2374,14 @@ mod tests {
             }
 
             // Real begin-zone order for a block that actually carries the
-            // certified boundary: boundary-conditioned pre-block reset first…
+            // certified boundary: boundary-conditioned pre-block reset first...
             crate::executor::prepare_boundary_epoch_counters(
                 ctx.storage.clone(),
                 &boundary_noop(),
                 ctx.block.block_number,
             )
             .unwrap();
-            // …then the begin-zone window-close increments.
+            // ...then the begin-zone window-close increments.
             run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 
             let si = outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone());
@@ -2431,7 +2431,7 @@ mod tests {
     }
 
     /// bad/unverifiable proof: an in-window, escrow-authenticated credit whose
-    /// committee snapshot does not exist is FATAL (the block aborts — never a soft
+    /// committee snapshot does not exist is FATAL (the block aborts - never a soft
     /// receipt). distance = 13 - 11 = 2 (in window); the escrow binding matches so
     /// authentication passes and the snapshot lookup is reached and fails.
     #[test]
@@ -2487,7 +2487,7 @@ mod tests {
     }
 
     /// Seed an escrow binding `(11 -> fb_hash 0xCD, epoch 7, csh 0xEF)` and run a
-    /// credit that mismatches one field — each must be FATAL.
+    /// credit that mismatches one field - each must be FATAL.
     fn assert_auth_mismatch_fatal(
         mut mutate: impl FnMut(&mut outbe_primitives::reshare_artifact::PerBlockCredit),
         needle: &str,
@@ -2559,7 +2559,7 @@ mod tests {
     }
 
     /// Review #1b (full binding): a credit with correct fb_number/fb_hash/epoch/
-    /// committee_set_hash but a non-canonical `view` is rejected at body auth —
+    /// committee_set_hash but a non-canonical `view` is rejected at body auth -
     /// closing the cross-view equivocation credit the pre-exec BLS verify (which
     /// only ties the credit's view to its signatures) would otherwise let through.
     #[test]

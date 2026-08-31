@@ -1,6 +1,6 @@
-//! — `CertifiedParentProofStore` restart-replay & retention tests.
+//! - `CertifiedParentProofStore` restart-replay & retention tests.
 //!
-//! Black-box scenarios that exercise the full `OutbeReporter` →
+//! Black-box scenarios that exercise the full `OutbeReporter` ->
 //! [`CertifiedParentProofStore`] write path against an MDBX-backed store
 //! opened at a `tempfile::tempdir()`, then drop the store handle and reopen
 //! it from disk. The reopened store must hold the byte-identical record
@@ -53,7 +53,7 @@ static SEED_NONCE: AtomicU64 = AtomicU64::new(0);
 
 fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
     // Each call uses a fresh seed offset so independent test fixtures don't
-    // share BLS keys — a shared keyset across DKGs in the same process would
+    // share BLS keys - a shared keyset across DKGs in the same process would
     // make the verifier from one DKG accept attestations from another and
     // mask real verification bugs.
     let nonce = SEED_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -185,7 +185,7 @@ fn build_reporter(
 async fn proof_store_persists_full_notarization_blob_before_simplex_journal_pruning() {
     // ingest a real Activity::Certification through the reporter into a
     // durable MDBX-backed store. Drop the handle (simulating node shutdown).
-    // Reopen the store and assert the record is byte-equal —
+    // Reopen the store and assert the record is byte-equal -
     // all preserved across restart, including the encoded_proof blob.
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("certified_parent_proof_records");
@@ -199,7 +199,7 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
         let store = FinalizedParentCertStore::open(&dir).unwrap();
         let (mut reporter, mut rx) = build_reporter(&fx, store.clone());
         let _ = reporter.report(Activity::Certification(notarization));
-        // the durable write is now off the voter task — the reporter
+        // the durable write is now off the voter task - the reporter
         // built + verified the record inline and enqueued it. Drain the mailbox
         // and apply the write exactly as the FinalizationActor would, then
         // assert on the store.
@@ -358,8 +358,8 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
     // Const invariant: the parent-cert keep depth must be at least as deep
     // as the block cache keep depth. If the proof store pruned faster than
     // the block cache, a Phase 1 build path could find a cached parent
-    // block but no proof record to embed — a hard liveness regression. The
-    // assertion is intentional even though both are consts — it fails the
+    // block but no proof record to embed - a hard liveness regression. The
+    // assertion is intentional even though both are consts - it fails the
     // build the moment someone shrinks PARENT_CERT_KEEP_DEPTH below the
     // block-cache window.
     const _: () = assert!(PARENT_CERT_KEEP_DEPTH >= BLOCK_CACHE_KEEP_DEPTH);

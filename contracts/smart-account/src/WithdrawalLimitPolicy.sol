@@ -160,7 +160,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
         // Fail-closed for BATCH. This policy meters cumulative amounts only on the SINGLE transfer
         // path (below) and cannot meter a batch atomically, so a batch that moves the configured token
-        // must not slip past unmetered — revert if any sub-call targets cfg.token. A batch that touches
+        // must not slip past unmetered - revert if any sub-call targets cfg.token. A batch that touches
         // no configured token is genuinely unrelated and passes through. (In this deployment
         // BundleWithdrawHook already blocks non-SINGLE on every CCA permission, but the policy must be
         // self-contained if reused without that hook.) A batch too short to be a valid Execution[]
@@ -172,7 +172,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
                 (address batchTarget,,) = LibERC7579.getExecution(pointers, i);
                 if (batchTarget == cfg.token) revert BatchTargetsConfiguredToken(cfg.token);
             }
-            return 0; // batch touches no configured token → unrelated
+            return 0; // batch touches no configured token -> unrelated
         }
 
         // SINGLE path: decodeSingle requires at least 52 bytes (target + value)
@@ -203,7 +203,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
         // TODO: NB The debit is committed here in the ERC-4337 validation phase, on purpose. The
         // EntryPoint validates every op in a bundle before executing any, so committing at validation
         // is what prevents two bundled ops from each passing a stale-headroom check and together
-        // over-spending the daily limit — the exact protection this limit exists to give the owner
+        // over-spending the daily limit - the exact protection this limit exists to give the owner
         // against a compromised CCA. The accepted trade-off is over-restriction: if the execution
         // later reverts, the debit still stands until the window resets (a misbehaving CCA can waste
         // its own daily headroom). Moving this to a post-execution commit would reopen the

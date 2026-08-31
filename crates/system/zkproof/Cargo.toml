@@ -17,7 +17,7 @@ ark-bn254.workspace = true
 ark-ff.workspace = true
 
 # ZK proof verification (UltraHonkKeccak via vendored Barretenberg FFI).
-# Mandatory dependency — `cmake` + `clang` C++17 toolchain required at
+# Mandatory dependency - `cmake` + `clang` C++17 toolchain required at
 # build time.
 # `outbe-zk-canonical` is the canonical circuit registry.
 # `outbe-zk-backend` is the barretenberg prover/verifier.

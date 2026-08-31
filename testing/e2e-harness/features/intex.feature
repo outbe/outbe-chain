@@ -2,7 +2,7 @@
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
-  # it exists — qualifying, being settled by its holder, and burning into Promis.
+  # it exists - qualifying, being settled by its holder, and burning into Promis.
 
   # Applying the day's OCOMP result hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
@@ -16,7 +16,7 @@ Feature: Intex from auction to Promis
   # open an auction.
   #
   # The venue is deployed before the day settles because the dispatch is a plain
-  # contract call — with no code at the address the node was built against, the
+  # contract call - with no code at the address the node was built against, the
   # start is lost rather than retried into existence.
   #
   # The feeder publishes a live quote first: the auction's entry price is the last
@@ -53,7 +53,7 @@ Feature: Intex from auction to Promis
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
-  # OCOMP never formed is a fatal MissedOffering — forming one costs the whole
+  # OCOMP never formed is a fatal MissedOffering - forming one costs the whole
   # tribute path this scenario exists to avoid. So the days the Called sweep
   # reads are filled in and issuance is stamped behind them, exactly as this
   # module's own unit tests do. The sweep still walks its index, checks the

@@ -157,7 +157,7 @@ fn qualify_respects_state_and_floor() {
         let mut gem = GemContract::new(storage.clone());
         let floor = U256::from(540_000u64);
 
-        // Rate equals floor (strict `>`) — must NOT qualify.
+        // Rate equals floor (strict `>`) - must NOT qualify.
         assert!(!gem.qualify(gem_id, T_NOW, 840, floor).unwrap());
 
         // Rate below floor.
@@ -165,7 +165,7 @@ fn qualify_respects_state_and_floor() {
             .qualify(gem_id, T_NOW, 840, floor - U256::from(1u64))
             .unwrap());
 
-        // Rate strictly above floor — qualifies.
+        // Rate strictly above floor - qualifies.
         assert!(gem
             .qualify(gem_id, T_NOW, 840, floor + U256::from(1u64))
             .unwrap());
@@ -609,7 +609,7 @@ fn precompile_balance_and_owner_views() {
 /// Pins the flat `GemContract` storage layout that `scripts/seed_genesis.py`
 /// (`seed_gems`) depends on to genesis-seed a Settled gem. If the schema field
 /// order or `GemData` field count changes, these slots shift and the Python
-/// seeder must be updated in lockstep — this test is the tripwire.
+/// seeder must be updated in lockstep - this test is the tripwire.
 #[test]
 fn gem_storage_layout_matches_genesis_seeder() {
     use outbe_primitives::storage::dsl::StorageRecord;
@@ -852,7 +852,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     });
 }
 
-/// A settled gem leaves the queue, so the forfeit arm can never reach it — its
+/// A settled gem leaves the queue, so the forfeit arm can never reach it - its
 /// holder paid the strike and the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {

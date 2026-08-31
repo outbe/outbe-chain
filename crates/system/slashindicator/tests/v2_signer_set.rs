@@ -1,7 +1,7 @@
 //! SlashIndicator V2 invariants for the V2-Certified-Parent
 //! Accounting epic.
 //!
-//! - `slash_voter` is proof-kind agnostic — absent
+//! - `slash_voter` is proof-kind agnostic - absent
 //!   signers from a `Finalization` certificate slash to the exact same
 //!   on-chain state as absent signers from a `CertifiedNotarization`
 //!   certificate. The slash hook itself takes only `(fb_hash,
@@ -41,7 +41,7 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     // Per-fb_hash isolation is the contract: two distinct fb_hashes
     // representing two proof types each increment the validator's
     // counter by exactly one. The counter is therefore +2 after both
-    // proof kinds have been processed — the SAME outcome you'd get if
+    // proof kinds have been processed - the SAME outcome you'd get if
     // both kinds were Finalization, or both were CertifiedNotarization.
     let final_count = with_storage(|storage| {
         hooks::slash_window_voters(storage.clone(), FB_HASH_FINAL, &[ABSENT_VAL]).unwrap();
@@ -68,12 +68,12 @@ fn certified_notarization_and_finalization_slash_absent_signers_identically() {
     );
     assert_eq!(
         final_count, homogeneous_count,
-        "slash_voter is proof-kind agnostic — heterogeneous proof types produce the \
+        "slash_voter is proof-kind agnostic - heterogeneous proof types produce the \
          same state change as homogeneous ones"
     );
 
     // Per-fb_hash dedup is also unchanged. A duplicate hook for the
-    // same `(fb_hash, validator)` is a no-op — proves the guard runs
+    // same `(fb_hash, validator)` is a no-op - proves the guard runs
     // regardless of how the absent address was discovered (which
     // certificate type produced it).
     let dedup_count = with_storage(|storage| {

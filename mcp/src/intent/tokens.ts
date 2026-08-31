@@ -10,7 +10,7 @@ import { type Address, getAddress, zeroAddress } from "viem";
  * A raw 0x address is always accepted too. Decimals are read on-chain elsewhere.
  */
 
-/** Symbol → { chainId → address }. Chain ids match the NETWORKS table. */
+/** Symbol -> { chainId -> address }. Chain ids match the NETWORKS table. */
 const TOKENS: Record<string, Record<number, Address>> = {
   USD: {
     54322345: getAddress("0x1a5FF18C7A3B9D6f9F2640d9e6CF074ee80d71fa"), // USDT0 OFT (outbe testnet)
@@ -23,7 +23,7 @@ const TOKENS: Record<string, Record<number, Address>> = {
 };
 
 /**
- * Real ticker → logical symbol. Unlike network names (which the model normalizes
+ * Real ticker -> logical symbol. Unlike network names (which the model normalizes
  * itself), token tickers need this map: the model knows "USDT"/"USDT0"/"wCOEN"
  * but not that they share one logical entry per asset across networks.
  */

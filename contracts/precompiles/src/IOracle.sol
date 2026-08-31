@@ -4,14 +4,14 @@ pragma solidity ^0.8.30;
 /// @title IOracle
 /// @notice Oracle precompile at 0x000000000000000000000000000000000000EE05
 interface IOracle {
-    // Events — precompile dispatch (appear in transaction receipts)
+    // Events - precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);
     event FeederDelegated(address indexed validator, address indexed feeder);
     event VoteTargetDeactivated(address indexed base, address indexed quote);
     event VoteTargetActivated(address indexed base, address indexed quote);
     event ExchangeRateSet(address indexed base, address indexed quote, uint256 rate);
 
-    // Events — block hooks (emitted during tally/slash/S-curve processing)
+    // Events - block hooks (emitted during tally/slash/S-curve processing)
     event ExchangeRateUpdated(address indexed base, address indexed quote, uint256 rate, uint64 blockNumber);
     event TallyCompleted(uint64 blockNumber, uint32 pairsUpdated);
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
@@ -42,7 +42,7 @@ interface IOracle {
     ///      `1e12 / rate` for COEN/ISO and `1e36 / rate` for generic pairs. An
     ///      unpublished rate is `0` from either side. Reverts
     ///      if the market is not registered. Unlike the other pair-scoped reads,
-    ///      this one accepts either direction — a spot rate is the only value
+    ///      this one accepts either direction - a spot rate is the only value
     ///      here that has a well-defined inverse.
     function getExchangeRate(address base, address quote) external view returns (uint256 rate);
 

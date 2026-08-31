@@ -1,7 +1,7 @@
 //! Hybrid signing scheme: BLS12-381 individual attribution + decoupled threshold VRF.
 //!
-//! Combines BLS individual signatures (MinPk — attributable, aggregatable) with
-//! BLS12-381 threshold signatures (MinSig — VRF for unpredictable leader election).
+//! Combines BLS individual signatures (MinPk - attributable, aggregatable) with
+//! BLS12-381 threshold signatures (MinSig - VRF for unpredictable leader election).
 //!
 //! Each validator produces a BLS individual vote signature and, when VRF
 //! material is available, a BLS threshold seed partial. The consensus
@@ -10,8 +10,8 @@
 //! optional sidecar and is not required for finality verification.
 //!
 //! Properties:
-//! - `is_attributable() = true` — signer bitmap provides per-validator evidence
-//! - `is_batchable() = false` — current Outbe path verifies attestations sequentially
+//! - `is_attributable() = true` - signer bitmap provides per-validator evidence
+//! - `is_batchable() = false` - current Outbe path verifies attestations sequentially
 //! - VRF seed extractable from verified certificate sidecars for randomness
 //! - Certificate size: ~162 bytes for any number of validators (vs ~9,300 for ed25519 variant)
 //!
@@ -21,7 +21,7 @@
 //! efficiency. Votes are queued and batch-verified periodically via `verify_notarizes()`.
 //! Invalid signers are blocked after batch verification completes. This creates a
 //! bounded timing window where a malicious vote temporarily occupies a slot in
-//! `pending_votes` — mitigated by fast batch cycles and immediate peer blocking
+//! `pending_votes` - mitigated by fast batch cycles and immediate peer blocking
 //! on verification failure. This is Commonware's intentional design choice for
 //! throughput optimization.
 
@@ -142,7 +142,7 @@ pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
 
 /// The committee binding shared by both roles: the ordered participant set, the
 /// versioned VRF threshold material, and the pre-computed committee-bound
-/// namespaces. These three always travel together — embedding them as one value
+/// namespaces. These three always travel together - embedding them as one value
 /// makes that invariant structural (a `Signer` cannot carry a different
 /// shared-field shape than a `Verifier`) instead of re-stating it at every match
 /// site. The signer-only capability fields (`individual_key`, `index`) stay on
@@ -353,7 +353,7 @@ impl<V: Variant> HybridScheme<V> {
         }
     }
 
-    /// The committee binding for this scheme, regardless of role — the single
+    /// The committee binding for this scheme, regardless of role - the single
     /// owner of the `Signer`/`Verifier` discrimination for shared-field access.
     fn fields(&self) -> &RoleFields<V> {
         match &self.role {
@@ -448,7 +448,7 @@ impl<V: Variant> HybridScheme<V> {
     /// `(round, vrf_material_version, bls_seed_partial)`.
     ///
     /// Deterministic (plain MinPk verify, no batch RNG), so every honest node
-    /// reaches the same verdict — required because this drives slashing
+    /// reaches the same verdict - required because this drives slashing
     /// attribution. A `true` result proves the signer deliberately emitted this
     /// partial (not a relay forgery); it does NOT assert the partial is valid.
     pub fn verify_seed_partial_identity_sig<D: Digest>(
@@ -508,7 +508,7 @@ impl<V: Variant> HybridScheme<V> {
                 crate::metrics::record_invalid_vrf_partial();
                 // Emit the attributable facts for an external slashing watcher to
                 // pack into a SlashIndicator evidence transaction (see README
-                // "Slashing"). The node reports facts, not packed wire — keeping
+                // "Slashing"). The node reports facts, not packed wire - keeping
                 // the consensus crate independent of the evidence codec. The
                 // identity signature makes "this signer emitted this partial"
                 // non-repudiable and re-verifiable on chain from the committee
@@ -529,7 +529,7 @@ impl<V: Variant> HybridScheme<V> {
                     vrf_material_version = signature.vrf_material_version,
                     partial = hex::encode(signature.bls_seed_partial.encode()),
                     identity_sig = hex::encode(signature.seed_partial_identity_sig.encode()),
-                    "attributable invalid VRF seed partial — slashable; external watcher should submit evidence"
+                    "attributable invalid VRF seed partial - slashable; external watcher should submit evidence"
                 );
             }
             SeedPartialVerdict::Unattributable => {
@@ -576,14 +576,14 @@ impl<V: Variant> HybridScheme<V> {
 pub enum SeedPartialVerdict {
     /// Active-version partial that verifies against the committee polynomial.
     Valid,
-    /// Partial tagged with a non-active material version — legitimately stale
+    /// Partial tagged with a non-active material version - legitimately stale
     /// after a reshare; excluded from recovery, not byzantine.
     StaleVersion,
     /// Active-version partial that fails verification, with a valid rider
-    /// identity signature proving the signer authored it — slashable byzantine.
+    /// identity signature proving the signer authored it - slashable byzantine.
     AttributableInvalid,
     /// Active-version partial that fails verification but whose rider identity
-    /// signature does not verify — probable relay forgery; drop, do not attribute.
+    /// signature does not verify - probable relay forgery; drop, do not attribute.
     Unattributable,
 }
 
@@ -612,7 +612,7 @@ fn round_from_subject<D: Digest>(subject: &Subject<'_, D>) -> Round {
 /// The VRF seed message for a Subject: the canonical `Round::encode()` bytes of the
 /// round the seed partial commits to. Derived from [`round_from_subject`], so it
 /// stays byte-identical to the proof-side recipe
-/// (`proof::constants::seed_namespace_and_message`) — pinned by
+/// (`proof::constants::seed_namespace_and_message`) - pinned by
 /// `seed_message_matches_proof_side_recipe`.
 fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Bytes {
     round_from_subject(subject).encode()
@@ -1208,7 +1208,7 @@ mod tests {
 
         let attestation = scheme0.sign::<Sha256Digest>(subject).unwrap();
 
-        // Tamper with the BLS individual vote — use a different key to produce wrong sig
+        // Tamper with the BLS individual vote - use a different key to produce wrong sig
         let wrong_key = bls12381::PrivateKey::from_seed(99);
         let wrong_sig = wrong_key.sign(b"wrong", b"wrong");
         let mut tampered_sig = attestation.signature.get().cloned().unwrap();
@@ -1532,7 +1532,7 @@ mod tests {
     /// is the byzantine partial of the C-02 attack: a well-formed value that
     /// does not verify at this index. `replacement` must be a partial over a
     /// *different* seed message (e.g. a different round) so the grafted value is
-    /// distinct from every honest partial — recovery dedups by index but not by
+    /// distinct from every honest partial - recovery dedups by index but not by
     /// value, and a value equal to a sibling's would be a no-op at this index.
     fn corrupt_seed_partial(
         attestation: &mut Attestation<TestScheme>,
@@ -1583,7 +1583,7 @@ mod tests {
         let mut rng = bls_batch_verification_rng();
 
         // Control: assembling directly from the corrupted attestations (without
-        // admission verification) yields a certificate whose proof does NOT verify — the
+        // admission verification) yields a certificate whose proof does NOT verify - the
         // poison the attack relied on.
         let poisoned = verifier
             .assemble::<_, N3f1>(corrupted.clone(), &Sequential)
@@ -1622,7 +1622,7 @@ mod tests {
             verifier
                 .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
                 .is_some(),
-            "the recovered proof must verify against the group key — no halt at N+1"
+            "the recovered proof must verify against the group key - no halt at N+1"
         );
         assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
             &mut rng,
@@ -1648,7 +1648,7 @@ mod tests {
             .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
             .collect();
 
-        // Corrupt two partials → only two honest remain (< required = 3).
+        // Corrupt two partials -> only two honest remain (< required = 3).
         let mut corrupted = honest.clone();
         corrupt_seed_partial(&mut corrupted[1], &foreign_round_attestation(&schemes[1]));
         corrupt_seed_partial(&mut corrupted[2], &foreign_round_attestation(&schemes[2]));
@@ -1788,7 +1788,7 @@ mod tests {
     #[test]
     fn test_garbage_identity_sig_does_not_censor_the_vote() {
         // A relay that strips/corrupts seed_partial_identity_sig must NOT get the
-        // vote rejected — verify_attestation only gates on the MinPk vote.
+        // vote rejected - verify_attestation only gates on the MinPk vote.
         let (schemes, verifier) = signers_and_verifier(3);
         let proposal = sample_proposal(Epoch::new(1), View::new(2), 11);
         let subject = Subject::Finalize {
@@ -2066,7 +2066,7 @@ mod tests {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(4).unwrap(); // 4-validator polynomial
 
-        // 3 participants but 4-validator polynomial → mismatch → None
+        // 3 participants but 4-validator polynomial -> mismatch -> None
         let result = HybridScheme::<MinSig>::signer(
             NAMESPACE,
             participants.clone(),
@@ -2085,7 +2085,7 @@ mod tests {
         let (_, participants) = test_participants(3);
         let dkg = bootstrap_dkg(4).unwrap(); // 4-validator polynomial
 
-        // 3 participants but 4-validator polynomial → mismatch → None
+        // 3 participants but 4-validator polynomial -> mismatch -> None
         let result = HybridScheme::<MinSig>::verifier(
             NAMESPACE,
             participants.clone(),
@@ -2121,7 +2121,7 @@ mod tests {
     fn test_signer_returns_none_on_share_public_mismatch() {
         let (keys, participants) = test_participants(3);
 
-        // Create two different DKG outputs — shares from dkg2 won't match
+        // Create two different DKG outputs - shares from dkg2 won't match
         // polynomial from dkg1.
         let dkg1 = bootstrap_dkg(3).unwrap();
         let dkg2 = bootstrap_dkg(3).unwrap();
@@ -2134,7 +2134,7 @@ mod tests {
             participants.clone(),
             keys[0].clone(),
             dkg1.polynomial.clone(),
-            dkg2.shares[0].clone(), // share from different DKG → public mismatch
+            dkg2.shares[0].clone(), // share from different DKG -> public mismatch
         );
         assert!(
             result.is_none(),
@@ -2226,7 +2226,7 @@ mod tests {
             crate::proof::constants::seed_namespace_and_message(epoch.get(), view.get());
 
         assert_eq!(hybrid_seed_message.as_ref(), proof_seed_message.as_slice());
-        // The seed message is exactly the round's canonical bytes — no path can make
+        // The seed message is exactly the round's canonical bytes - no path can make
         // the round and its seed message diverge now that one derives from the other.
         assert_eq!(hybrid_seed_message, round_from_subject(&subject).encode());
     }

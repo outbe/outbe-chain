@@ -223,7 +223,7 @@ pub struct SyncStatusInfo {
 /// reconstructs the marshal delivery as the decoded `finalizationHex` followed
 /// by the decoded `blockHex`, then verifies the certificate against the epoch
 /// committee. Hex (0x-prefixed) keeps the wire JSON-friendly; the bytes are NOT
-/// trusted by the caller — verification happens against the committee, not this
+/// trusted by the caller - verification happens against the committee, not this
 /// RPC.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -314,7 +314,7 @@ pub struct RadicleRepositoryInfo {
 ///
 /// The enclave derives the account's keys and seals them to the requester's
 /// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
-/// view_key ‖ modify_key)`. The client recovers `view_key || modify_key` with its
+/// view_key || modify_key)`. The client recovers `view_key || modify_key` with its
 /// ephemeral secret + `enclaveEphemeralPubkey`. Opaque to the node.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -350,13 +350,13 @@ pub trait OutbeApi {
 
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`
     /// or `Promis`) inside the enclave and return them sealed to `ephemeralPubkey`
-    /// (a client X25519 public key). Off-chain key delivery — it never touches
+    /// (a client X25519 public key). Off-chain key delivery - it never touches
     /// consensus state.
     ///
     /// The caller MUST prove control of `account`: `signature` is an EIP-191
-    /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" ‖ account ‖
+    /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account ||
     /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
-    /// matching signature the enclave is never asked — otherwise anyone could obtain
+    /// matching signature the enclave is never asked - otherwise anyone could obtain
     /// any account's modify key.
     #[method(name = "deriveKeys")]
     async fn derive_keys(
@@ -367,7 +367,7 @@ pub trait OutbeApi {
         signature: alloy_primitives::Bytes,
     ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
 
-    /// Deprecated alias for `deriveKeys(Gratis, …)`, kept for existing Gratis
+    /// Deprecated alias for `deriveKeys(Gratis, ...)`, kept for existing Gratis
     /// clients.
     #[method(name = "deriveGratisKeys")]
     async fn derive_gratis_keys(
@@ -451,7 +451,7 @@ pub trait OutbeApi {
     /// `--upstream` followers to backfill and verify. Served only by nodes
     /// running consensus (validators) or a follower that has itself synced the
     /// height; otherwise errors. The caller verifies the certificate against the
-    /// epoch committee — this RPC is a bytes transport, not a trust root.
+    /// epoch committee - this RPC is a bytes transport, not a trust root.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 }

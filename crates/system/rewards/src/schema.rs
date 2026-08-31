@@ -16,49 +16,49 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// in gems, not a claimable native balance).
 ///
 /// Storage slots:
-///   0:  genesis_utc_day                    — uint32 (yyyymmdd of block 0; 0 = uninit)
-///   1:  participation_counted_for_block    — mapping(B256 => mapping(address => bool))
-///   2:  daily_fee_sum_raw                  — mapping(uint32 => uint256)
-///   3:  daily_fees_paid                    — mapping(uint32 => uint256)
-///   4:  daily_fee_dust                     — mapping(uint32 => uint256)
-///   5:  daily_participation                — mapping(uint32 => mapping(address => uint64))
-///   6:  daily_total_participation          — mapping(uint32 => uint64)
-///   7:  daily_voter_count                  — mapping(uint32 => uint32)
-///   8:  daily_voter_at                     — mapping(uint32 => mapping(uint32 => address))
-///   9:  daily_settled                      — mapping(uint32 => bool)
-///  10:  max_observed_finalized_day         — uint32 (yyyymmdd; 0 = uninit)
-///  11:  last_settled_utc_day               — uint32 (yyyymmdd; 0 = uninit)
-///  12:  block_metadata_counted             — mapping(B256 => bool)
-///  13:  metadata_fingerprint_for_block     — mapping(B256 => B256)
-///  14:  fee_dust_counted_for_block         — mapping(B256 => bool)
-///  15:  daily_topup_settled                — mapping(uint32 => bool)
-///  16:  pending_fees                       — mapping(B256 => uint256)
-///  17:  fee_settled                        — mapping(B256 => bool)
-///  18:  late_voter_k_plus1                 — mapping(B256 => mapping(address => uint8))
-///  19:  late_voter_count                   — mapping(B256 => uint32)
-///  20:  late_voter_at                      — mapping(B256 => mapping(uint32 => address))
-///  21:  pending_fb_hash_at                 — mapping(uint64 => B256)    (number -> fb_hash)
-///  22:  pending_committee_size_at          — mapping(uint64 => uint32)
-///  23:  pending_epoch_at                   — mapping(uint64 => uint64)
-///  24:  pending_committee_set_hash_at      — mapping(uint64 => B256)
-///  25:  pending_view_at                    — mapping(uint64 => uint64)
-///  26:  pending_parent_view_at             — mapping(uint64 => uint64)
-/// 27: block_guard_ring — mapping(uint64 => B256) (prune ring of fb_hash)
-/// 28: block_guard_ring_seq — uint64 (ring write cursor)
-/// 29: reward_gem_queue_head — uint64 (inclusive FIFO sequence)
-/// 30: reward_gem_queue_tail — uint64 (exclusive FIFO sequence)
-/// 31: reward_gem_utc_day_by_sequence — mapping(uint64 => uint32)
-/// 32: reward_gem_queue_sequence_plus_one — mapping(uint32 => uint64)
-/// 33: daily_topup_prepared — mapping(uint32 => bool)
-/// 34: reward_gem_batch_digest — mapping(uint32 => B256)
-/// 35: reward_gem_planned_load_amount — mapping(uint32 => uint256)
-/// 36: reward_gem_recipient_count — mapping(uint32 => uint32)
-/// 37: reward_gem_owner_at — mapping(uint32 => mapping(uint32 => address))
-/// 38: reward_gem_load_at — mapping(uint32 => mapping(uint32 => uint256))
-/// 39: reward_gem_type — mapping(uint32 => uint8)
-/// 40: reward_gem_issuance_currency — mapping(uint32 => uint16)
-/// 41: reward_gem_reference_currency — mapping(uint32 => uint16)
-/// 42: reward_gem_pending_batch_count — uint64
+///   0:  genesis_utc_day                    - uint32 (yyyymmdd of block 0; 0 = uninit)
+///   1:  participation_counted_for_block    - mapping(B256 => mapping(address => bool))
+///   2:  daily_fee_sum_raw                  - mapping(uint32 => uint256)
+///   3:  daily_fees_paid                    - mapping(uint32 => uint256)
+///   4:  daily_fee_dust                     - mapping(uint32 => uint256)
+///   5:  daily_participation                - mapping(uint32 => mapping(address => uint64))
+///   6:  daily_total_participation          - mapping(uint32 => uint64)
+///   7:  daily_voter_count                  - mapping(uint32 => uint32)
+///   8:  daily_voter_at                     - mapping(uint32 => mapping(uint32 => address))
+///   9:  daily_settled                      - mapping(uint32 => bool)
+///  10:  max_observed_finalized_day         - uint32 (yyyymmdd; 0 = uninit)
+///  11:  last_settled_utc_day               - uint32 (yyyymmdd; 0 = uninit)
+///  12:  block_metadata_counted             - mapping(B256 => bool)
+///  13:  metadata_fingerprint_for_block     - mapping(B256 => B256)
+///  14:  fee_dust_counted_for_block         - mapping(B256 => bool)
+///  15:  daily_topup_settled                - mapping(uint32 => bool)
+///  16:  pending_fees                       - mapping(B256 => uint256)
+///  17:  fee_settled                        - mapping(B256 => bool)
+///  18:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
+///  19:  late_voter_count                   - mapping(B256 => uint32)
+///  20:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
+///  21:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
+///  22:  pending_committee_size_at          - mapping(uint64 => uint32)
+///  23:  pending_epoch_at                   - mapping(uint64 => uint64)
+///  24:  pending_committee_set_hash_at      - mapping(uint64 => B256)
+///  25:  pending_view_at                    - mapping(uint64 => uint64)
+///  26:  pending_parent_view_at             - mapping(uint64 => uint64)
+/// 27: block_guard_ring - mapping(uint64 => B256) (prune ring of fb_hash)
+/// 28: block_guard_ring_seq - uint64 (ring write cursor)
+/// 29: reward_gem_queue_head - uint64 (inclusive FIFO sequence)
+/// 30: reward_gem_queue_tail - uint64 (exclusive FIFO sequence)
+/// 31: reward_gem_utc_day_by_sequence - mapping(uint64 => uint32)
+/// 32: reward_gem_queue_sequence_plus_one - mapping(uint32 => uint64)
+/// 33: daily_topup_prepared - mapping(uint32 => bool)
+/// 34: reward_gem_batch_digest - mapping(uint32 => B256)
+/// 35: reward_gem_planned_load_amount - mapping(uint32 => uint256)
+/// 36: reward_gem_recipient_count - mapping(uint32 => uint32)
+/// 37: reward_gem_owner_at - mapping(uint32 => mapping(uint32 => address))
+/// 38: reward_gem_load_at - mapping(uint32 => mapping(uint32 => uint256))
+/// 39: reward_gem_type - mapping(uint32 => uint8)
+/// 40: reward_gem_issuance_currency - mapping(uint32 => uint16)
+/// 41: reward_gem_reference_currency - mapping(uint32 => uint16)
+/// 42: reward_gem_pending_batch_count - uint64
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -71,7 +71,7 @@ pub struct Rewards {
     /// Tamper-resistance: a node that boots with a different
     /// `genesis.json` timestamp will lock in a different `genesis_utc_day`
     /// here, causing all subsequent day-settle math to diverge from the
-    /// quorum's state root → fall out of consensus on the first settle.
+    /// quorum's state root -> fall out of consensus on the first settle.
     /// Reth's startup hash check is a complementary defense, not the only
     /// one.
     pub genesis_utc_day: Slot<u32>,
@@ -107,7 +107,7 @@ pub struct Rewards {
     /// iterating the inner mapping (Mapping has no native iteration).
     pub daily_total_participation: Mapping<u32, u64>,
 
-    /// Per-day count of distinct voters seen — upper bound for index
+    /// Per-day count of distinct voters seen - upper bound for index
     /// iteration over `daily_voter_at`.
     pub daily_voter_count: Mapping<u32, u32>,
 
@@ -161,7 +161,7 @@ pub struct Rewards {
     /// only when the entire FIFO batch has minted atomically.
     pub daily_topup_settled: Mapping<u32, bool>,
 
-    // ── per-block fee escrow + inclusion-window credits ──────────
+    // -- per-block fee escrow + inclusion-window credits ----------
     /// Escrowed fees of a finalized block (key `fb_hash`), recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
     /// set with a decay-weighted, fixed-denominator payout; residue burns.
@@ -175,7 +175,7 @@ pub struct Rewards {
     /// a later re-inclusion at `k>=1` is a no-op.
     pub late_voter_k_plus1: Mapping<B256, Mapping<Address, u8>>,
 
-    /// Per-fb_hash count of distinct credited voters — bound for index iteration
+    /// Per-fb_hash count of distinct credited voters - bound for index iteration
     /// over `late_voter_at` at settle time.
     pub late_voter_count: Mapping<B256, u32>,
 
@@ -188,7 +188,7 @@ pub struct Rewards {
     /// by number (the mandatory window-close side effect). `B256::ZERO` = absent.
     pub pending_fb_hash_at: Mapping<u64, B256>,
 
-    /// Finalized block number -> committee size at its epoch — the fixed
+    /// Finalized block number -> committee size at its epoch - the fixed
     /// denominator basis (`D = committee_size * w_max`) for its settlement.
     pub pending_committee_size_at: Mapping<u64, u32>,
 
@@ -216,7 +216,7 @@ pub struct Rewards {
     /// authentication; see `pending_view_at`).
     pub pending_parent_view_at: Mapping<u64, u64>,
 
-    // ── prune ring for the per-finalized-block guard maps ──────────
+    // -- prune ring for the per-finalized-block guard maps ----------
     /// Bounds the per-`fb_hash` guard maps (`block_metadata_counted`,
     /// `metadata_fingerprint_for_block`, `fee_dust_counted_for_block`,
     /// `fee_settled`) to the last [`BLOCK_GUARD_RETAIN`](crate::finalized_metadata_hook::BLOCK_GUARD_RETAIN)
@@ -233,7 +233,7 @@ pub struct Rewards {
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
 
-    // ── deferred validator reward Gem delivery ───────────────────
+    // -- deferred validator reward Gem delivery -------------------
     /// Inclusive sequence of the oldest pending validator reward Gem batch.
     pub reward_gem_queue_head: Slot<u64>,
 

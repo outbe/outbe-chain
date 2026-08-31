@@ -135,7 +135,7 @@ fn mine_rejects_replayed_op_nonce() {
         let amount = U256::from(100u64);
         let a = auth(GratisOp::Mint, alice(), amount, 0);
         api::mint(storage.clone(), alice(), amount, a.clone()).unwrap();
-        // Replaying the same (amount, nonce=0, mac) must fail — nonce advanced to 1.
+        // Replaying the same (amount, nonce=0, mac) must fail - nonce advanced to 1.
         assert!(api::mint(storage.clone(), alice(), amount, a).is_err());
     });
 }
@@ -204,7 +204,7 @@ fn pledge_consume_and_settle_flow() {
         let sk = test_enclave::state_key();
         // Mine + pledge: the pledger asks for `stables` of credit, the gratis it costs
         // is drained from the balance and parked in the ticket (pledged_ct still 0),
-        // and pledged_total — a GRATIS aggregate — counts the gratis, not the stables.
+        // and pledged_total - a GRATIS aggregate - counts the gratis, not the stables.
         api::mint(
             storage.clone(),
             alice(),
@@ -261,7 +261,7 @@ fn pledge_consume_and_settle_flow() {
             api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
-        // A further release rejected — pledged ledger is empty.
+        // A further release rejected - pledged ledger is empty.
         assert!(api::release_to_eoa(storage.clone(), alice(), per).is_err());
     });
 }
@@ -334,7 +334,7 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         )
         .unwrap();
 
-        // Credis rejected → direct unpledge is quoted in the same unit as the pledge
+        // Credis rejected -> direct unpledge is quoted in the same unit as the pledge
         // (stables in) and returns the whole gratis collateral.
         let returned = api::unpledge(
             storage.clone(),
@@ -426,7 +426,7 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
         let amount = U256::from(1_000u64);
         // A folded mint whose fidelity section carries an UNDECRYPTABLE cohort
         // blob. The gratis mint half would succeed, but the enclave rejects the
-        // WHOLE op when the section fails — so nothing is committed.
+        // WHOLE op when the section fails - so nothing is committed.
         let bad_section = FidelityOpSection {
             op: FidelityCohortOp::In,
             timestamp: 1_000_000,

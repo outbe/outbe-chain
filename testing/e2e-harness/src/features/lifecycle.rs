@@ -14,7 +14,7 @@ use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 use crate::world::rpc::Rpc;
 use crate::world::World;
 
-/// Lockstep probe (script's `LOCK` loop): 5×10s, joiner within 3 of committee and
+/// Lockstep probe (script's `LOCK` loop): 5x10s, joiner within 3 of committee and
 /// strictly advancing each round.
 fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
     let mut prev = 0u64;
@@ -40,7 +40,7 @@ fn wait_validator_status(rpc: &Rpc, port: u16, address: &str, wanted: u64) -> bo
     rpc.validator_status(port, address) == Some(wanted)
 }
 
-/// S1 — submit a tribute offer from the operator.
+/// S1 - submit a tribute offer from the operator.
 #[when(expr = "operator {string} submits a tribute offer")]
 fn submit_offer(world: &mut World, name: String) {
     let primary = world.validators.primary_port();
@@ -63,7 +63,7 @@ fn submit_offer(world: &mut World, name: String) {
     );
 }
 
-/// S1 — supply reached 1 and the canonical Tribute was projected. WWD phase
+/// S1 - supply reached 1 and the canonical Tribute was projected. WWD phase
 /// transitions are independently time-driven and may legitimately occur while
 /// a real-SGX offer waits for inclusion, so this step does not compare phase
 /// snapshots taken on opposite sides of a configured boundary.
@@ -84,7 +84,7 @@ fn offer_processed_and_projected(world: &mut World) {
         .expect("initial Tribute and both indexes must match on every committee validator");
 }
 
-/// S1 — launch a true non-validator process and sync its durable Reth data to tip.
+/// S1 - launch a true non-validator process and sync its durable Reth data to tip.
 #[when("a full node joins and syncs to the committee tip")]
 fn full_node_syncs(world: &mut World) {
     let idx = world.validators.joiner_index();
@@ -97,7 +97,7 @@ fn full_node_syncs(world: &mut World) {
     assert!(h >= 20, "full node did not catch up to tip (head {h})");
 }
 
-/// S1 — the full node has supply + state-root parity and is NOT a participant.
+/// S1 - the full node has supply + state-root parity and is NOT a participant.
 #[then("the full node matches committee supply and state root and is not a participant")]
 fn full_node_parity(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -124,7 +124,7 @@ fn full_node_parity(world: &mut World) {
     );
 }
 
-/// S2 — register while the FullNode remains live, finalize that admission, then
+/// S2 - register while the FullNode remains live, finalize that admission, then
 /// restart the exact same datadir in shareless validator mode.
 #[when("the synced full node restarts as a registered shareless validator")]
 fn full_node_restarts_as_shareless_validator(world: &mut World) {
@@ -187,7 +187,7 @@ fn full_node_restarts_as_shareless_validator(world: &mut World) {
     );
 }
 
-/// S2 — prove the promoted process remains a non-voting shareless verifier
+/// S2 - prove the promoted process remains a non-voting shareless verifier
 /// while it follows consensus finality, before any stake is submitted.
 #[then("it keeps finalizing without stake, a share, or consensus participation")]
 fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
@@ -233,7 +233,7 @@ fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
     );
 }
 
-/// S2 — only after validator-mode synchronization has been proven, stake and
+/// S2 - only after validator-mode synchronization has been proven, stake and
 /// confirm readiness for the next DKG target.
 #[when("the shareless validator stakes and confirms readiness")]
 fn shareless_validator_stakes_confirms(world: &mut World) {
@@ -253,7 +253,7 @@ fn shareless_validator_stakes_confirms(world: &mut World) {
     world.rpc.confirm_ready(&key).expect("confirm ready");
 }
 
-/// S2 + S6 — the joiner activates via reshare while an in-flight offer lands once.
+/// S2 + S6 - the joiner activates via reshare while an in-flight offer lands once.
 #[then("it activates through DKG in the same process and the in-flight offer lands once")]
 fn promoted_with_inflight_offer(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -400,7 +400,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
     );
 }
 
-/// S3 — the promoted validator self-deactivates (ACTIVE -> EXITING, stays a
+/// S3 - the promoted validator self-deactivates (ACTIVE -> EXITING, stays a
 /// participant with its share until the exclusion reshare).
 #[when("the promoted validator deactivates")]
 fn promoted_deactivates(world: &mut World) {
@@ -480,7 +480,7 @@ fn promoted_deactivates(world: &mut World) {
     assert_eq!(world.rpc.total_staked_on(primary), Some(total));
 }
 
-/// S3 — the exclusion reshare shrinks the set to 4, the exited validator becomes
+/// S3 - the exclusion reshare shrinks the set to 4, the exited validator becomes
 /// UNBONDING, and its node DEMOTES to a verifier-follower that keeps following.
 #[then("it exits, the committee reshares down, and the node demotes to a follower")]
 fn exits_and_demotes(world: &mut World) {
@@ -546,7 +546,7 @@ fn exits_and_demotes(world: &mut World) {
     assert!(
         world.localnet.log_has(
             idx,
-            "no threshold share for this epoch — running consensus engine in VERIFIER mode"
+            "no threshold share for this epoch - running consensus engine in VERIFIER mode"
         ),
         "node did not demote to a verifier-follower"
     );

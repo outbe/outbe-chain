@@ -13,7 +13,7 @@
 //! `proof::verifier`). Hand-replicating the prelude at four sites risked drift;
 //! it also let one site (`fetch_parent_proof`) skip the
 //! `vrf_group_public_key_hash` computation, leaving `B256::ZERO` on records that
-//! `to_v2_metadata` promotes into Phase 1 — which Rule 6 then rejects. Sharing
+//! `to_v2_metadata` promotes into Phase 1 - which Rule 6 then rejects. Sharing
 //! one builder removes the drift risk and guarantees the hash is populated on
 //! every write.
 //!

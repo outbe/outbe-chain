@@ -2,27 +2,27 @@
 //!
 //! Two entry points:
 //!
-//! 1. [`classify_sponsorship`] — stateless envelope check used by both the
+//! 1. [`classify_sponsorship`] - stateless envelope check used by both the
 //!    txpool admission policy and the executor pre-fee site. Returns Ok
 //!    when the transaction shape is eligible for the sponsored path
 //!    (gas/calldata caps, fee shape, contract creation forbidden,
 //!    target in the protocol whitelist). Hard limits live here so both
 //!    callers cannot drift.
 //!
-//! 2. [`authorize_sponsorship`] — stateful check executed by the
+//! 2. [`authorize_sponsorship`] - stateful check executed by the
 //!    executor against the block storage handle. Enforces the daily quota
 //!    (`effective_count < FREE_TX_DAILY_LIMIT`). Returns the
 //!    `current_day` and effective count on success so the caller can
 //!    record the use atomically.
 //!
-//! 3. [`precheck_sponsorship`] — the stateless subset of (2) the
+//! 3. [`precheck_sponsorship`] - the stateless subset of (2) the
 //!    txpool runs at admission time. Covers self-sponsorship but
 //!    deliberately omits the quota check so a
 //!    9th-of-day sponsored tx still lands in the block with a
 //!    soft-failure receipt (code 110).
 //!
 //! Self-sponsorship and EIP-7702 designator detection are enforced by the
-//! caller — `signer != ZEROFEE_ADDRESS` and the `0xef0100 ++ ZEROFEE_ADDRESS`
+//! caller - `signer != ZEROFEE_ADDRESS` and the `0xef0100 ++ ZEROFEE_ADDRESS`
 //! code pattern are observable on the caller side without any storage I/O.
 
 use alloy_eips::eip7702::SignedAuthorization;
@@ -148,7 +148,7 @@ pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAcco
 ///   trait-registry hooks (oracle hook should match first so validator
 ///   votes do not burn the validator's daily quota).
 ///
-/// The target whitelist is intentionally **not** a parameter — the
+/// The target whitelist is intentionally **not** a parameter - the
 /// policy reads [`outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST`]
 /// directly so a future caller cannot drift the policy by passing a
 /// broader list.
@@ -307,7 +307,7 @@ mod tests {
     };
 
     const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
-    /// Block timestamp parked safely inside `2026-04-01 00:00:00 UTC` →
+    /// Block timestamp parked safely inside `2026-04-01 00:00:00 UTC` ->
     /// `date_key = 20260401`. The exact value is not important for the
     /// tests; only the day-key derived from it.
     const BLOCK_TS: u64 = 1_775_001_600;
@@ -543,7 +543,7 @@ mod tests {
     }
 
     fn sponsored_target() -> Address {
-        // First whitelisted address — value is incidental, only being
+        // First whitelisted address - value is incidental, only being
         // a member of `SPONSORED_TARGET_WHITELIST` matters here.
         outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST[0]
     }
@@ -583,7 +583,11 @@ mod tests {
         let mut tx = ok_envelope(&[]);
         tx.max_priority_fee_per_gas = Some(1);
         let err = classify_sponsorship(&tx).unwrap_err();
-        assert_eq!(err.code(), 105, "non-zero priority fee → FeeCapTooLow code");
+        assert_eq!(
+            err.code(),
+            105,
+            "non-zero priority fee -> FeeCapTooLow code"
+        );
     }
 
     #[test]
@@ -599,7 +603,7 @@ mod tests {
         let mut tx = ok_envelope(&[]);
         tx.gas_limit = crate::FREE_TX_DAILY_GAS_LIMIT + 1;
         let err = classify_sponsorship(&tx).unwrap_err();
-        assert_eq!(err.code(), 114, "free-tx gas overflow → code 114");
+        assert_eq!(err.code(), 114, "free-tx gas overflow -> code 114");
     }
 
     #[test]
@@ -631,7 +635,7 @@ mod tests {
         let big = vec![0u8; crate::FREE_TX_DAILY_CALLDATA_BYTES + 1];
         let tx = ok_envelope(&big);
         let err = classify_sponsorship(&tx).unwrap_err();
-        assert_eq!(err.code(), 115, "free-tx calldata overflow → code 115");
+        assert_eq!(err.code(), 115, "free-tx calldata overflow -> code 115");
     }
 
     #[test]
@@ -649,7 +653,7 @@ mod tests {
         // so it doubles as a guaranteed-rejected target for this test.
         tx.to = Some(ZEROFEE_ADDRESS);
         let err = classify_sponsorship(&tx).unwrap_err();
-        assert_eq!(err.code(), 116, "non-whitelisted target → code 116");
+        assert_eq!(err.code(), 116, "non-whitelisted target -> code 116");
     }
 
     // ----- authorize_sponsorship -----
@@ -716,7 +720,7 @@ mod tests {
     #[test]
     fn authorize_applies_lazy_reset_on_new_day() {
         with_storage(|storage| {
-            // Yesterday's count was 8 — should be treated as 0 today.
+            // Yesterday's count was 8 - should be treated as 0 today.
             {
                 let zerofee = ZeroFeeContract::new(storage.clone());
                 zerofee
@@ -753,7 +757,7 @@ mod tests {
 
     #[test]
     fn utc_midnight_boundary_is_inclusive_on_the_new_day() {
-        // timestamp exactly at midnight `2026-04-01 00:00:00 UTC` →
+        // timestamp exactly at midnight `2026-04-01 00:00:00 UTC` ->
         // belongs to day 20260401, not the previous day. This guards
         // against `>` vs `>=` confusion in the day-key arithmetic.
         with_storage(|storage| {
@@ -802,7 +806,7 @@ mod tests {
     // surface failures is consensus-visible: it lands in
     // `OutbeFailure(code, reason)` logs at `ZERO_FEE_POLICY_LOG_ADDRESS`.
     // Off-chain UX builds on that code, and a future refactor that
-    // reorders checks would silently change the receipt — pin it.
+    // reorders checks would silently change the receipt - pin it.
 
     #[test]
     fn classify_precedence_non_zero_value_beats_contract_creation() {
@@ -824,7 +828,7 @@ mod tests {
         // Non-zero priority fee on an otherwise-correct envelope to a
         // non-whitelisted target. FeeCapTooLow (105) wins over
         // TargetNotWhitelisted (116) because the fee shape is checked
-        // earlier — keeps the receipt deterministic.
+        // earlier - keeps the receipt deterministic.
         let mut tx = ok_envelope(&[]);
         tx.max_priority_fee_per_gas = Some(1);
         tx.to = Some(ZEROFEE_ADDRESS);
@@ -862,7 +866,7 @@ mod tests {
     #[test]
     fn precheck_does_not_perform_quota_check() {
         // The pool MUST admit a sponsored tx even if the signer has
-        // already burned all 8 slots for today — the executor produces
+        // already burned all 8 slots for today - the executor produces
         // the soft-failure receipt code 110. `precheck` deliberately
         // does no quota check; this test pins that contract.
         assert!(precheck_sponsorship(SIGNER).is_ok());

@@ -10,11 +10,11 @@ import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IInte
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
-///      mid-`receiveMessage` (via `token.crosschainMint` → `_mint`), re-enters the adapter's
+///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `send` entrypoint. With both `receiveMessage` and `send` carrying `nonReentrant`, the
 ///      inner call reverts with `ReentrancyGuardReentrantCall` at the modifier check (before the
 ///      zero-`to` validation), and we capture the selector. Without the guards, the inner call
-///      would revert with `InvalidReceiver` instead — distinguishing the two cases.
+///      would revert with `InvalidReceiver` instead - distinguishing the two cases.
 contract ReentrantSendProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -61,9 +61,9 @@ contract ReentrantSendProbe is IERC1155Receiver {
 /// @title IntexNFT1155BridgeSingleReentrancyTest
 /// @notice Behavioral test that `receiveMessage` and `send` are mutually `nonReentrant`-guarded.
 /// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain (B). On B,
-///      `receiveMessage` → `_dispatch` → `token.crosschainMint` → `_mint` invokes the probe's `onERC1155Received`,
+///      `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the probe's `onERC1155Received`,
 ///      which attempts to re-enter `adapterB.send`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` — proving the guard is held by `receiveMessage` AND that `send` carries the
+///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that `send` carries the
 ///      modifier.
 contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;
