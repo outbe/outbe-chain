@@ -56,14 +56,9 @@ pub fn deployer_address() -> alloy_primitives::Address {
         .expect("deployer address is canonical")
 }
 
-/// `remote_chain_ids` peers this chain's bridge with the chains named there. Empty
-/// leaves the deploy exactly as it was: the configure step is a no-op without it.
-pub fn deploy(
-    repo: &Path,
-    url: &str,
-    chain_id: u64,
-    remote_chain_ids: &[u64],
-) -> Result<OriginContracts> {
+/// `targets` is the whole set of chains the day may issue to. The local chain
+/// among them is the loopback route; the rest are peered as real remotes.
+pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<OriginContracts> {
     let crosschain: PathBuf = repo.join("contracts/crosschain");
     let intex: PathBuf = repo.join("contracts/intex");
     let chain = chain_id.to_string();
@@ -101,8 +96,11 @@ pub fn deploy(
         &[
             (
                 "REMOTE_CHAIN_IDS",
-                remote_chain_ids
+                // The hub peers with the chains that are genuinely elsewhere; the
+                // local chain among the targets is the loopback route, not a peer.
+                targets
                     .iter()
+                    .filter(|id| **id != chain_id)
                     .map(u64::to_string)
                     .collect::<Vec<_>>()
                     .join(","),
@@ -145,8 +143,9 @@ pub fn deploy(
                 // The script sets each target's peer before registering it, and the
                 // peer sits at the same CREATE3 address everywhere — so naming the
                 // chains here is all a second target needs.
-                std::iter::once(chain.clone())
-                    .chain(remote_chain_ids.iter().map(u64::to_string))
+                targets
+                    .iter()
+                    .map(u64::to_string)
                     .collect::<Vec<_>>()
                     .join(","),
             ),

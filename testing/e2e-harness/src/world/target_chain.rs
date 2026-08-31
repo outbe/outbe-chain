@@ -30,6 +30,10 @@ pub const TARGET_CHAIN_ID: u64 = 31338;
 const READY_TRIES: u32 = 60;
 
 /// Addresses one target-chain deploy produced.
+/// Native float the router holds to pay dispatch fees, as the deploy tops it up
+/// on a real target. A user pays for their own NFT hop, so the bridge needs none.
+const BRIDGE_FLOAT_WEI: u64 = 1_000_000_000_000_000_000;
+
 #[derive(Clone, Debug)]
 pub struct TargetContracts {
     pub create_x: Address,
@@ -40,9 +44,15 @@ pub struct TargetContracts {
     pub auction: Address,
     pub nft_bridge: Address,
     pub target_router: Address,
+    pub payment_token: Address,
+    pub compact: Address,
 }
 
 sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IEscrowWire {
+        function wire(address intexAuction, address compact, address paymentToken) external;
+    }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITargetRouterWire {
         function wire(address auction, address intex, address escrowAdapter) external;
@@ -194,8 +204,32 @@ impl TargetChain {
                 ("ORIGIN_CHAIN_ID", origin_chain_id.to_string()),
                 ("TARGET_CHAIN_IDS", chain_id.clone()),
                 ("SALT_VERSION", SALT_VERSION.to_owned()),
+                // Without a proceeds route the escrow refuses to finalise a day,
+                // exactly as it would on the committee-side venue.
+                ("WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
             ],
             &url,
+        )?;
+
+        // Bids are bonded and paid here, so the venue needs a real ERC-20 and the
+        // compact lock behind it, exactly as the committee-side venue does.
+        let payment_token = address_from(
+            &forge::run(
+                &intex,
+                &["create", "test/mocks/MockWCOEN.sol:MockWCOEN"],
+                &[],
+                &url,
+            )?,
+            "Deployed to:",
+        )?;
+        let compact = address_from(
+            &forge::run(
+                &intex,
+                &["create", "test/mocks/MockTheCompact.sol:MockTheCompact"],
+                &[],
+                &url,
+            )?,
+            "Deployed to:",
         )?;
 
         Ok(TargetContracts {
@@ -207,11 +241,30 @@ impl TargetChain {
             auction: address_from(&venue, "IntexAuction:")?,
             nft_bridge: address_from(&venue, "IntexNFT1155Bridge:")?,
             target_router: address_from(&venue, "TargetRouter:")?,
+            payment_token,
+            compact,
         })
     }
 
     /// Point the freshly deployed contracts at each other and let the router act.
     ///
+    /// The auction's windows are stamped in committee time, but this chain keeps
+    /// its own wall clock and would sit in the commit stage forever. Carrying the
+    /// committee's clock over is what a chain with a real block cadence gets for
+    /// free.
+    pub fn sync_clock_to(&self, timestamp: u64) -> Result<()> {
+        let url = self
+            .rpc_url()
+            .ok_or_else(|| eyre!("syncing the clock needs a running target chain"))?;
+        crate::internal::eth::raw_json_with_params(
+            &url,
+            "anvil_setTime",
+            serde_json::json!([format!("0x{timestamp:x}")]),
+        );
+        crate::internal::eth::raw_json_with_params(&url, "evm_mine", serde_json::json!([]));
+        Ok(())
+    }
+
     /// The deploy scripts stop at standing contracts on purpose — wiring is a
     /// separate step in production too. Without it the router holds no references
     /// and may not mint, so an inbound message would arrive and do nothing.
@@ -240,10 +293,29 @@ impl TargetChain {
         // The router is what an inbound message becomes, so it is the account
         // allowed to create series and mint. The bridge needs the same right on the
         // collection to burn a holder's units here and mint them at home.
+        // A router pays the bridge fee out of its own native float and reverts
+        // `NotEnoughNative` when it holds none; production tops it up, and so
+        // must a chain that is expected to send anything home.
+        crate::internal::eth::send_value(
+            &url,
+            contracts.target_router,
+            DEPLOYER_KEY,
+            alloy_primitives::U256::from(BRIDGE_FLOAT_WEI),
+        )?;
+        self.send(
+            &url,
+            contracts.escrow,
+            &IEscrowWire::wireCall {
+                intexAuction: contracts.auction,
+                compact: contracts.compact,
+                paymentToken: contracts.payment_token,
+            },
+        )?;
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
         for (holder, role, account) in [
             (contracts.intex_nft, relayer, contracts.target_router),
             (contracts.auction, relayer, contracts.target_router),
+            (contracts.escrow, relayer, contracts.target_router),
             (contracts.intex_nft, relayer, contracts.nft_bridge),
         ] {
             self.send(&url, holder, &IVenueRoles::grantRoleCall { role, account })?;

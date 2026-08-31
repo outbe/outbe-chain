@@ -55,6 +55,8 @@ sol! {
         function flushPendingBidsRelay(uint256 idx) external;
         function parkedSend(uint256 idx) external view returns (ParkedSend memory);
         function flushPendingSend(uint256 idx) external;
+        function nextParkedIdx() external view returns (uint256);
+        function retryDelivery(uint256 idx) external;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -176,9 +178,14 @@ pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> S
 /// Both sides swallow a failed send by parking it, so the parked entry is the
 /// only trace of work that never left.
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
+pub(crate) fn parked_work(
+    url: &str,
+    venue_url: &str,
+    router: Address,
+    venue_router: Address,
+) -> String {
     let relays = eth::read_call(
-        url,
+        venue_url,
         venue_router,
         &IParkedWork::nextPendingBidsRelayIdxCall {},
     );
@@ -214,7 +221,7 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
             // Retrying a parked relay is permissionless, and its revert carries
             // the reason the venue swallowed when it parked.
             let flush = eth::send_call(
-                url,
+                venue_url,
                 venue_router,
                 crate::world::forge::DEPLOYER_KEY,
                 &IParkedWork::flushPendingBidsRelayCall { idx: U256::ZERO },
@@ -232,6 +239,148 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
 /// The venue emits this at the end of every inbound stage handler, so its
 /// absence separates a message that never arrived from one that did nothing.
 #[cfg(feature = "ocomp-integration")]
+/// Split the relay in two: what left the venue, and what the origin took in.
+/// A gap between them is the transport losing the message, not either side
+/// refusing it.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn bid_relay_traffic(
+    url: &str,
+    venue_url: &str,
+    router: Address,
+    venue_router: Address,
+    worldwide_day: u32,
+) -> String {
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let count = |at: &str, address: Address, signature: &[u8], day_topic_index: usize| -> String {
+        let topic0 = alloy_primitives::keccak256(signature);
+        let mut topics = vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::Value::Null,
+        ];
+        if day_topic_index == 2 {
+            topics.push(serde_json::json!(day_topic.clone()));
+        }
+        match logs_of(at, address, topics) {
+            Some(entries) => entries.len().to_string(),
+            None => "unreadable".to_owned(),
+        }
+    };
+    let sent_batches = count(
+        venue_url,
+        venue_router,
+        b"BidsBatchSent(bytes32,uint32,uint256)".as_slice(),
+        2,
+    );
+    let sent_done = count(
+        venue_url,
+        venue_router,
+        b"BidsDoneSent(bytes32,uint32,uint16,uint32)".as_slice(),
+        2,
+    );
+    let got_batches = count(
+        url,
+        router,
+        b"BidsBatchReceived(uint32,uint32,uint256)".as_slice(),
+        2,
+    );
+    format!(
+        "the venue sent {sent_batches} bid batches and {sent_done} done markers, \
+         the origin took in {got_batches} batches"
+    )
+}
+/// Desis drops inbound work of its own, with its own reason codes, and those
+/// never appear in either router's ignore log.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn ignored_by_desis(url: &str, worldwide_day: u32) -> String {
+    let desis: Address = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    let topic0 = alloy_primitives::keccak256(b"InboundIgnored(uint32,uint32,uint8)".as_slice());
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let logs = logs_of(
+        url,
+        desis,
+        vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::json!(day_topic),
+        ],
+    );
+    let entries = match logs.as_ref() {
+        Some(entries) if entries.is_empty() => return "Desis ignored no inbound work".to_owned(),
+        Some(entries) => entries,
+        None => return "Desis ignore log is unreadable".to_owned(),
+    };
+    let described: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let reason = entry["data"]
+                .as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+            match reason {
+                Some(2) => "obsolete".to_owned(),
+                Some(3) => "conflict".to_owned(),
+                Some(4) => "not found".to_owned(),
+                Some(other) => format!("reason {other}"),
+                None => "unnamed reason".to_owned(),
+            }
+        })
+        .collect();
+    format!("Desis ignored inbound work as {}", described.join(", "))
+}
+/// A router may accept a message and drop it on purpose, naming a reason. That
+/// reason is the only record of work that arrived and did nothing.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String {
+    let topic0 = alloy_primitives::keccak256(
+        b"InboundMessageIgnored(uint32,uint8,bytes32,uint8)".as_slice(),
+    );
+    let logs = logs_of(url, router, vec![serde_json::json!(format!("{topic0:?}"))]);
+    let entries = match logs.as_ref() {
+        Some(entries) if entries.is_empty() => {
+            return format!("{side} ignored no inbound message");
+        }
+        Some(entries) => entries,
+        None => return format!("{side} ignore log is unreadable"),
+    };
+    let described: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let topic = |i: usize| {
+                entry["topics"][i]
+                    .as_str()
+                    .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            };
+            let msg_type = match topic(2) {
+                Some(1) => "bids batch".to_owned(),
+                Some(2) => "bids done".to_owned(),
+                Some(3) => "auction stage start".to_owned(),
+                Some(4) => "auction stage clearing".to_owned(),
+                Some(5) => "auction result".to_owned(),
+                Some(6) => "issuance instructions".to_owned(),
+                Some(7) => "refund instructions".to_owned(),
+                Some(8) => "mark called".to_owned(),
+                Some(9) => "mark qualified".to_owned(),
+                Some(other) => format!("message type {other}"),
+                None => "unreadable message type".to_owned(),
+            };
+            let reason = entry["data"]
+                .as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+            let reason = match reason {
+                Some(1) => "duplicate",
+                Some(2) => "obsolete",
+                Some(3) => "conflict",
+                Some(4) => "not found",
+                Some(5) => "late",
+                Some(6) => "invalid",
+                Some(7) => "deferred",
+                _ => "unnamed reason",
+            };
+            format!("{msg_type} as {reason}")
+        })
+        .collect();
+    format!("{side} ignored {}", described.join(", "))
+}
 pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());

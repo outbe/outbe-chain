@@ -272,7 +272,7 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         }
         ProgramErrorV1::Arithmetic { .. } => ("ARITHMETIC", None, None),
         ProgramErrorV1::ZeroGratisLoad { ordinal } => ("ZERO_GRATIS_LOAD", Some(ordinal), None),
-        ProgramErrorV1::ZeroCost { ordinal } => ("ZERO_COST", Some(ordinal), None),
+        ProgramErrorV1::ZeroCost { ordinal, .. } => ("ZERO_COST", Some(ordinal), None),
         ProgramErrorV1::GratisLoadExceedsRemaining { ordinal } => {
             ("GRATIS_LOAD_EXCEEDS_REMAINING", Some(ordinal), None)
         }
