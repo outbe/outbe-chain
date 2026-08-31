@@ -48,10 +48,10 @@ fn add_vwap_aggregate(
     Ok(())
 }
 
-/// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
+/// `(exists, bases, quotes, rates, volumes)` - pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
 
-/// `(snapshot_ids, timestamps, bases, quotes, rates, volumes)` — flattened history.
+/// `(snapshot_ids, timestamps, bases, quotes, rates, volumes)` - flattened history.
 type SnapshotHistory = (
     Vec<u64>,
     Vec<u64>,
@@ -61,7 +61,7 @@ type SnapshotHistory = (
     Vec<U256>,
 );
 
-/// `(start_time, end_time, bases, quotes, vwaps, lookbacks)` — stored WWD VWAP snapshot.
+/// `(start_time, end_time, bases, quotes, vwaps, lookbacks)` - stored WWD VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>);
 
 /// The reciprocal of a rate, in that market's canonical price scale.
@@ -117,7 +117,7 @@ impl OracleContract<'_> {
     ///
     /// Reads back as the zero pair for an index that was never written, which is
     /// why membership is decided by [`Self::pair_index_of`] and never by a zero
-    /// check — the zero address is a legitimate asset (native COEN). Callers
+    /// check - the zero address is a legitimate asset (native COEN). Callers
     /// iterating `1..=pair_count` have already established the bound; anything
     /// taking an index from outside goes through [`Self::require_pair_at`].
     pub fn pair_at(&self, index: PairIndex) -> Result<AddressPair> {
@@ -189,8 +189,8 @@ impl OracleContract<'_> {
 
     /// Resolves an ABI-quoted pair that has to be quoted the way it is stored.
     ///
-    /// The registry only ever holds canonical pairs — [`Self::register_pair`]
-    /// rejects anything else — so a non-canonical quote names a direction no
+    /// The registry only ever holds canonical pairs - [`Self::register_pair`]
+    /// rejects anything else - so a non-canonical quote names a direction no
     /// storage column is keyed for. Every value read through this resolver is a
     /// bare scalar with no direction of its own (a VWAP, an S-curve peak, a
     /// median input), and none of them is its own reciprocal, so a flipped quote

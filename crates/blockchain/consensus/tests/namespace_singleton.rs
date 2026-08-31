@@ -7,7 +7,7 @@
 //! sub-namespaces (notarize/nullify/finalize) are committee-bound and supplied
 //! per-scheme (`HybridScheme` overrides them via
 //! `crate::proof::constants::*_namespace(participants)`), so the singleton no
-//! longer drives live votes — only its chain-only SEED is shared with `elect`.
+//! longer drives live votes - only its chain-only SEED is shared with `elect`.
 
 use commonware_cryptography::bls12381;
 use commonware_cryptography::Signer as _;
@@ -23,7 +23,7 @@ fn committee() -> Set<bls12381::PublicKey> {
 
 #[test]
 fn simplex_namespace_base_is_chain_bound() {
-    // b"outbe" (5) || chain_id_be (8) — no longer the bare, chain-independent
+    // b"outbe" (5) || chain_id_be (8) - no longer the bare, chain-independent
     // b"outbe".
     let base = outbe_app_namespace();
     assert!(base.starts_with(b"outbe"));
@@ -45,7 +45,7 @@ fn simplex_namespace_returns_same_singleton_pointer() {
 fn singleton_seed_matches_accessor_and_votes_are_committee_bound() {
     let ns = simplex_namespace();
     // The seed namespace is chain-only and shared by the signer's `elect` path
-    // and the verifier — it MUST match, byte-for-byte.
+    // and the verifier - it MUST match, byte-for-byte.
     assert_eq!(
         ns.seed.as_slice(),
         hybrid_seed_namespace().as_slice(),
@@ -54,7 +54,7 @@ fn singleton_seed_matches_accessor_and_votes_are_committee_bound() {
 
     // the live vote namespaces are committee-bound and supplied per-scheme,
     // so they differ from the singleton's chain-only vote fields. (Per-scheme
-    // signer↔verifier vote parity is exercised by the m28 fingerprint test and
+    // signer<->verifier vote parity is exercised by the m28 fingerprint test and
     // the 4-node localnet lockstep.)
     let committee = committee();
     assert_ne!(

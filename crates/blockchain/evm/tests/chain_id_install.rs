@@ -8,11 +8,11 @@
 //! `new_with_provider_only` (via `OutbeExecutorBuilder::build_evm`). Those built
 //! `Self {}` inline and skipped the install, so `consensus_chain_id()` stayed at
 //! its default `0` and the consensus namespace collapsed to `b"outbe" || 0` on
-//! every chain — silently disabling the cross-chain-replay
+//! every chain - silently disabling the cross-chain-replay
 //! binding while every test/localnet (all at one chain id) stayed lockstep.
 //!
 //! This lives in its own test binary so the process-global `OnceLock` chain id is
-//! pristine — no sibling unit test can install a different id first.
+//! pristine - no sibling unit test can install a different id first.
 
 use std::sync::Arc;
 

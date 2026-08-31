@@ -122,7 +122,7 @@ contract MockTheCompact {
         balanceOf[recipient][id] += msg.value;
     }
 
-    // ============ Escrow-style deposits (with registration — kept for Router tests) ============
+    // ============ Escrow-style deposits (with registration - kept for Router tests) ============
 
     function depositERC20AndRegisterFor(
         address recipient,
@@ -155,7 +155,7 @@ contract MockTheCompact {
         return (id, bytes32(0));
     }
 
-    // ============ Claim (escrow withdrawal — kept for Router tests) ============
+    // ============ Claim (escrow withdrawal - kept for Router tests) ============
 
     function claim(Claim calldata claimPayload) external returns (bytes32) {
         require(!nonceConsumed[claimPayload.nonce], "MockTheCompact: nonce already consumed");

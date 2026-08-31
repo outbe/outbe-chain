@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, U256};
 
-/// Native COEN as an asset address — the base of every settlement pair.
+/// Native COEN as an asset address - the base of every settlement pair.
 pub const COEN_ASSET: Address = Address::ZERO;
 
 /// Represents an asset type supported by the Oracle.
@@ -23,7 +23,7 @@ pub enum AssetType {
 
 impl From<AssetType> for Address {
     /// A currency code is packed as BCD behind the [`ISO_MARKER`] nibbles, so
-    /// ISO 840 becomes `0x0000…0cc840`. `ERC20` addresses inside that reserved
+    /// ISO 840 becomes `0x0000...0cc840`. `ERC20` addresses inside that reserved
     /// range decode back as `IsoCurrency`.
     fn from(value: AssetType) -> Self {
         match value {

@@ -26,18 +26,18 @@ pub enum MonitorCmd {
         #[arg(long, default_value = "10")]
         interval: u64,
     },
-    /// Health check — exits with code 0 if the node is healthy, 1 otherwise.
+    /// Health check - exits with code 0 if the node is healthy, 1 otherwise.
     ///
     /// Checks: RPC reachable, block number advancing, consensus active.
     /// Suitable for k8s liveness probes and systemd health checks.
     Health,
-    /// Readiness check — validates that a validator node is ready to participate.
+    /// Readiness check - validates that a validator node is ready to participate.
     ///
     /// Checks: node synced, consensus active, threshold shares present,
     /// connected peers > 0, validator registered in active set.
     /// Suitable for k8s readiness probes and pre-flight checks.
     Readiness {
-        /// Validator address to check (optional — if omitted, checks node-level readiness only).
+        /// Validator address to check (optional - if omitted, checks node-level readiness only).
         #[arg(long)]
         address: Option<alloy_primitives::Address>,
     },
@@ -74,7 +74,7 @@ async fn run_watch(client: &(impl Rpc + Sync), interval: u64) -> Result<()> {
     }
 }
 
-/// Single dashboard tick — extracted from loop for testability.
+/// Single dashboard tick - extracted from loop for testability.
 async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     let block = client.eth_block_number().await?;
 
@@ -157,7 +157,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-/// Health check — exit code 0 if healthy, non-zero otherwise.
+/// Health check - exit code 0 if healthy, non-zero otherwise.
 async fn run_health(client: &(impl Rpc + Sync)) -> Result<()> {
     let mut healthy = true;
 
@@ -204,7 +204,7 @@ async fn run_health(client: &(impl Rpc + Sync)) -> Result<()> {
     }
 }
 
-/// Readiness check — validates validator node is ready to participate.
+/// Readiness check - validates validator node is ready to participate.
 async fn run_readiness(
     client: &(impl Rpc + Sync),
     address: Option<alloy_primitives::Address>,
@@ -476,7 +476,7 @@ mod tests {
     #[tokio::test]
     #[should_panic(expected = "exit(1)")]
     async fn test_run_health_unhealthy_exits() {
-        let mock = MockRpc::default(); // block_number Err → unhealthy
+        let mock = MockRpc::default(); // block_number Err -> unhealthy
         let _ = run_health(&mock).await;
     }
 
@@ -519,7 +519,7 @@ mod tests {
     }
 
     /// An `enclave` object absent from `outbe_consensusStatus` (older node) is
-    /// a warning, never a readiness failure — the happy test above covers it.
+    /// a warning, never a readiness failure - the happy test above covers it.
     /// A ready canary keeps READY; degraded/unavailable flips to NOT READY.
     #[tokio::test]
     async fn test_run_readiness_enclave_ready_happy() {

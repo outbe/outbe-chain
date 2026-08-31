@@ -13,7 +13,7 @@ scrape_configs:
       - targets:
           # run-testnet.sh / prepare_network.py expose `--metrics 0.0.0.0:9101+i`
           # (add :9102..:910N for more validators). Production units choose their
-          # own port — keep this target in sync with the unit's `--metrics` flag.
+          # own port - keep this target in sync with the unit's `--metrics` flag.
           - 'localhost:9101'
         labels:
           chain: 'outbe'

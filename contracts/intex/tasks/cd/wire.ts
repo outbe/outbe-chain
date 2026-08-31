@@ -100,16 +100,16 @@ const auctionWireAction = async (args: AuctionWireArgs, hre: unknown) => {
 
   if (currentEscrow !== "0x0000000000000000000000000000000000000000") {
     if (currentEscrow.toLowerCase() === args.escrowContract.toLowerCase()) {
-      console.log(`✅ Auction already wired to this Escrow`);
+      console.log(`[OK] Auction already wired to this Escrow`);
       return;
     }
-    console.log(`🔄 Rewiring Auction (current: ${currentEscrow})`);
+    console.log(`[sync] Rewiring Auction (current: ${currentEscrow})`);
   }
 
   const txHash = await sendAndWait(viem, () =>
     auction.write.wire([args.escrowContract as `0x${string}`]),
   );
-  console.log(`✅ Auction wired. Tx: ${txHash}`);
+  console.log(`[OK] Auction wired. Tx: ${txHash}`);
 };
 
 const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter")
@@ -164,7 +164,7 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     currentStable.toLowerCase() === args.paymentToken.toLowerCase();
 
   if (allMatch) {
-    console.log(`✅ EscrowAdapter already wired to these contracts`);
+    console.log(`[OK] EscrowAdapter already wired to these contracts`);
     return;
   }
 
@@ -174,7 +174,7 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
       currentCompact.toLowerCase() !== args.compactContract.toLowerCase() && "compact",
       currentStable.toLowerCase() !== args.paymentToken.toLowerCase() && "paymentToken",
     ].filter(Boolean);
-    console.log(`🔄 Rewiring EscrowAdapter (changed: ${changed.join(", ")})`);
+    console.log(`[sync] Rewiring EscrowAdapter (changed: ${changed.join(", ")})`);
   }
 
   const txHash = await sendAndWait(viem, () =>
@@ -184,7 +184,7 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
       args.paymentToken as `0x${string}`,
     ]),
   );
-  console.log(`✅ EscrowAdapter wired. Tx: ${txHash}`);
+  console.log(`[OK] EscrowAdapter wired. Tx: ${txHash}`);
 };
 
 const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and external contracts")
@@ -264,7 +264,7 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
     currentEscrow.toLowerCase() === escrow.toLowerCase();
 
   if (allMatch) {
-    console.log(`✅ TargetRouter already wired to these contracts`);
+    console.log(`[OK] TargetRouter already wired to these contracts`);
     return;
   }
 
@@ -274,7 +274,7 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
       currentIntex.toLowerCase() !== intex.toLowerCase() && "intex",
       currentEscrow.toLowerCase() !== escrow.toLowerCase() && "escrow",
     ].filter(Boolean);
-    console.log(`🔄 Rewiring TargetRouter (changed: ${changed.join(", ")})`);
+    console.log(`[sync] Rewiring TargetRouter (changed: ${changed.join(", ")})`);
   }
 
   const txHash = await sendAndWait(viem, () =>
@@ -284,7 +284,7 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
       escrow as `0x${string}`,
     ]),
   );
-  console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
+  console.log(`[OK] TargetRouter wired. Tx: ${txHash}`);
 };
 
 const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, and EscrowAdapter")
@@ -345,12 +345,12 @@ const originBridgeWireAction = async (args: OriginBridgeWireArgs, hre: unknown) 
   const intexFactoryMatch = currentIntexFactory.toLowerCase() === args.intexFactoryContract.toLowerCase();
 
   if (desisMatch && intexFactoryMatch) {
-    console.log(`✅ OriginRouter already wired to this Desis + IntexFactory`);
+    console.log(`[OK] OriginRouter already wired to this Desis + IntexFactory`);
     return;
   }
 
   if (currentDesis !== ZERO) {
-    console.log(`🔄 Rewiring OriginRouter`);
+    console.log(`[sync] Rewiring OriginRouter`);
     if (!desisMatch) console.log(`   desis: ${currentDesis} -> ${args.desisContract}`);
     if (!intexFactoryMatch) console.log(`   intexFactory: ${currentIntexFactory} -> ${args.intexFactoryContract}`);
   }
@@ -361,7 +361,7 @@ const originBridgeWireAction = async (args: OriginBridgeWireArgs, hre: unknown) 
       args.intexFactoryContract as `0x${string}`,
     ]),
   );
-  console.log(`✅ OriginRouter wired. Tx: ${txHash}`);
+  console.log(`[OK] OriginRouter wired. Tx: ${txHash}`);
 };
 
 const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
@@ -419,7 +419,7 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
     args.settlementContract as `0x${string}`,
   ]);
   if (hasIntexRole) {
-    console.log(`✅ IntexNFT1155: IntexFactory already has SETTLEMENT_ROLE`);
+    console.log(`[OK] IntexNFT1155: IntexFactory already has SETTLEMENT_ROLE`);
   } else {
     const tx1 = await sendAndWait(viem, () =>
       intex.write.grantRole([
@@ -427,7 +427,7 @@ const settlementGrantRolesAction = async (args: SettlementGrantRolesArgs, hre: u
         args.settlementContract as `0x${string}`,
       ]),
     );
-    console.log(`✅ IntexNFT1155: SETTLEMENT_ROLE granted to IntexFactory. Tx: ${tx1}`);
+    console.log(`[OK] IntexNFT1155: SETTLEMENT_ROLE granted to IntexFactory. Tx: ${tx1}`);
   }
 };
 
@@ -480,12 +480,12 @@ const promisWireAction = async (args: PromisWireArgs, hre: unknown) => {
   const role = await intex.read.PROMIS_ROLE();
   const hasPromisRole = await intex.read.hasRole([role, args.settlementContract as `0x${string}`]);
   if (hasPromisRole) {
-    console.log(`✅ IntexNFT1155: IntexFactory already has PROMIS_ROLE`);
+    console.log(`[OK] IntexNFT1155: IntexFactory already has PROMIS_ROLE`);
   } else {
     const tx = await sendAndWait(viem, () =>
       intex.write.grantRole([role, args.settlementContract as `0x${string}`]),
     );
-    console.log(`✅ IntexNFT1155: PROMIS_ROLE granted to IntexFactory. Tx: ${tx}`);
+    console.log(`[OK] IntexNFT1155: PROMIS_ROLE granted to IntexFactory. Tx: ${tx}`);
   }
 };
 
@@ -538,12 +538,12 @@ const gemWireAction = async (args: GemWireArgs, hre: unknown) => {
   const role = await intex.read.GEM_ROLE();
   const hasGemRole = await intex.read.hasRole([role, args.gemFactory as `0x${string}`]);
   if (hasGemRole) {
-    console.log(`✅ IntexNFT1155: GemFactory already has GEM_ROLE`);
+    console.log(`[OK] IntexNFT1155: GemFactory already has GEM_ROLE`);
   } else {
     const tx = await sendAndWait(viem, () =>
       intex.write.grantRole([role, args.gemFactory as `0x${string}`]),
     );
-    console.log(`✅ IntexNFT1155: GEM_ROLE granted to GemFactory. Tx: ${tx}`);
+    console.log(`[OK] IntexNFT1155: GEM_ROLE granted to GemFactory. Tx: ${tx}`);
   }
 };
 
@@ -564,7 +564,7 @@ const gemWire = task(
   .setAction(lazy(gemWireAction));
 
 // ============================================================================
-// Precompile-caller Wire — grant roles to the EVM frames that initiate the
+// Precompile-caller Wire - grant roles to the EVM frames that initiate the
 // gated calls: the begin-block system caller (auction stage sends + qualify/call
 // mark sends) and the Desis precompile (clearing tick, where
 // createSeries + issuance-instructions run in-process).
@@ -630,19 +630,19 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
 
   const grantOnRouter = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
     if (await router.read.hasRole([role, addr])) {
-      console.log(`✅ OriginRouter: ${addr} already has ${label}`);
+      console.log(`[OK] OriginRouter: ${addr} already has ${label}`);
     } else {
       const tx = await sendAndWait(viem, () => router.write.grantRole([role, addr]));
-      console.log(`✅ OriginRouter: ${label} -> ${addr}. Tx: ${tx}`);
+      console.log(`[OK] OriginRouter: ${label} -> ${addr}. Tx: ${tx}`);
     }
   };
 
   const grantOnIntex = async (label: string, role: `0x${string}`, addr: `0x${string}`) => {
     if (await intex.read.hasRole([role, addr])) {
-      console.log(`✅ IntexNFT1155: ${addr} already has ${label}`);
+      console.log(`[OK] IntexNFT1155: ${addr} already has ${label}`);
     } else {
       const tx = await sendAndWait(viem, () => intex.write.grantRole([role, addr]));
-      console.log(`✅ IntexNFT1155: ${label} -> ${addr}. Tx: ${tx}`);
+      console.log(`[OK] IntexNFT1155: ${label} -> ${addr}. Tx: ${tx}`);
     }
   };
 
@@ -652,7 +652,7 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
 
   // Begin-block caller: auction stage sends (DESIS_ROLE), qualify/call mark
   // sends to BNB (INTEX_FACTORY_ROLE on OriginRouter), and the local NFT
-  // markQualified / markCalled (RELAYER_ROLE) — all run from begin-block.
+  // markQualified / markCalled (RELAYER_ROLE) - all run from begin-block.
   await grantOnRouter("DESIS_ROLE", desisRole, systemAddress);
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
@@ -743,7 +743,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
     }
   }
 
-  console.log(`✅ Desis precompile and system caller hold RELAYER_ROLE on IntexNFT1155`);
+  console.log(`[OK] Desis precompile and system caller hold RELAYER_ROLE on IntexNFT1155`);
 };
 
 const intexFactoryAssertRelayerRole = task(
@@ -783,12 +783,12 @@ const grantRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) 
 
   const role = await token.read.RELAYER_ROLE();
   if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
-    console.log("✅ RELAYER_ROLE already granted");
+    console.log("[OK] RELAYER_ROLE already granted");
     return;
   }
 
   const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
-  console.log(`✅ RELAYER_ROLE granted. Tx: ${txHash}`);
+  console.log(`[OK] RELAYER_ROLE granted. Tx: ${txHash}`);
 };
 
 const grantRelayerRole = task(

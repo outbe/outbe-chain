@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 /**
- * @title ResetPeriod — Forced Withdrawal Reset Period
+ * @title ResetPeriod - Forced Withdrawal Reset Period
  * @notice Reset period enum for The Compact resource locks.
  * @dev Compatible with Uniswap The Compact. Full source:
  *      https://github.com/Uniswap/the-compact/blob/main/src/types/ResetPeriod.sol

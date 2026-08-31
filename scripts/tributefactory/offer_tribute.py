@@ -106,7 +106,7 @@ def load_hex_env(name: str, expected_len: int) -> bytes:
     return data
 
 
-# Fixed, public HKDF salt for the tribute offer encryption key — the canonical
+# Fixed, public HKDF salt for the tribute offer encryption key - the canonical
 # protocol constant `outbe_tee::OFFER_HKDF_SALT` (ASCII "outbe/tribute/offer-salt/v1",
 # zero-padded to 32 bytes). It is the same for every enclave and client (an HKDF
 # salt is not secret); clients use this exact value, so TEE_SALT is optional and

@@ -1,4 +1,4 @@
-//! Encode→decode→encode round-trip for `HybridCertificate` and `VrfProof`.
+//! Encode->decode->encode round-trip for `HybridCertificate` and `VrfProof`.
 //!
 //! Asserts the wire codec is byte-stable: re-encoding a decoded certificate
 //! produces the same bytes. This is the determinism invariant that block hash

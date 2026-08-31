@@ -142,7 +142,7 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
         Err(_) => {
             println!();
             println!("=== Consensus ===");
-            println!("(unavailable — non-validator node or consensus not started)");
+            println!("(unavailable - non-validator node or consensus not started)");
         }
     }
 
@@ -281,7 +281,7 @@ async fn vrf_seed(client: &(impl Rpc + Sync)) -> Result<()> {
     let seed = client.outbe_get_vrf_seed().await?;
 
     if seed.is_null() {
-        println!("VRF Seed: (none — no finalized block with VRF yet)");
+        println!("VRF Seed: (none - no finalized block with VRF yet)");
     } else if let Some(s) = seed.as_str() {
         println!("VRF Seed: {s}");
     } else {

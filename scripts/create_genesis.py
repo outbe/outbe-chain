@@ -2,8 +2,8 @@
 """Create a complete Outbe genesis.json from one network.yaml.
 
 The yaml carries the minimum: which machines run the founding validators and
-where their key material lives. Everything else — public keys, Radicle node
-ids, OCOMP registrations, precompile storage, the OCOMP and TEE manifests —
+where their key material lives. Everything else - public keys, Radicle node
+ids, OCOMP registrations, precompile storage, the OCOMP and TEE manifests -
 is derived from the key directory and written into the genesis in one run.
 
     python3 scripts/create_genesis.py network.yaml
@@ -56,7 +56,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import launch_bundle  # noqa: E402  (sibling module, path set just above)
 
 # Canonical production baseline: every protocol parameter a network.yaml does not set comes
-# from this file, so the defaults have exactly one home — and it is the same
+# from this file, so the defaults have exactly one home - and it is the same
 # yaml format, readable and runnable on its own.
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
@@ -611,7 +611,7 @@ def discover_validators(
 
 # A genesis carries a TEE lease that starts counting at its own timestamp. Boot
 # a chain from a genesis stamped far in the past and block 1 dies on
-# `requested lease is already expired` — a runtime revert that says nothing
+# `requested lease is already expired` - a runtime revert that says nothing
 # about the real cause. Refuse to build one instead.
 MAX_GENESIS_AGE_SECONDS = 6 * 60 * 60
 
@@ -627,8 +627,8 @@ def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
             f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
         )
     # An explicit genesisTime pins the ValidatorSet epoch start; without it the
-    # seeder falls back to the wall clock and the genesis hash — which the
-    # OCOMP registrations sign — changes on every run.
+    # seeder falls back to the wall clock and the genesis hash - which the
+    # OCOMP registrations sign - changes on every run.
     genesis_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
@@ -732,7 +732,7 @@ def run_seed_stage(
     # The seeded OFFERING worldwide-day must track the genesis date, or the
     # runtime derives a different active day and metadosis wedges. An explicit
     # value always wins, including alongside fresh_metadosis: the two do
-    # different things — the day retargets the S-curve peak and NOD references,
+    # different things - the day retargets the S-curve peak and NOD references,
     # fresh_metadosis drops the pre-seeded OFFERING day itself.
     if "worldwide_day" in config:
         # Present-but-None means the caller decided there is no retarget, which
@@ -781,8 +781,8 @@ def seed_genesis_from_config(
 ) -> dict[str, Any]:
     """Seed one genesis from an explicit profile, without the OCOMP/TEE stages.
 
-    This is the entry point `seed_genesis.py` uses so its CLI — the one the e2e
-    harness and the localnet scripts call — creates its genesis through exactly
+    This is the entry point `seed_genesis.py` uses so its CLI - the one the e2e
+    harness and the localnet scripts call - creates its genesis through exactly
     the same code path as a yaml-driven deployment. The profile is used as
     given: callers that want the baseline merged do that themselves, so a
     partial profile never silently gains sections it did not ask for.
@@ -975,7 +975,7 @@ def run_ocomp_stage(
             raise SystemExit(
                 f"{message}\n\n"
                 f"An OCOMP registration signs one exact genesis hash. This run "
-                f"seeds a different one — most often because `timestamp:` is not "
+                f"seeds a different one - most often because `timestamp:` is not "
                 f"pinned in the yaml, so each run stamps the current time.\n"
                 f"Pin the timestamp the registrations were minted for, or delete "
                 f"ocomp-registration-v1.ocb1 and ocomp-key-v1.hex under "

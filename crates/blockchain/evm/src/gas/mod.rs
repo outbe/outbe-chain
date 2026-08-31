@@ -10,8 +10,8 @@
 //! can:
 //! 1. enforce the EIP-150 forward-cap independently of the outer interpreter's
 //!    [`Gas`](revm::interpreter::Gas);
-//! 2. capture the settlement triple (Success → erase_cost + record_refund +
-//!    add_state_gas_spent; Revert → erase_cost only; Halt → outer unchanged)
+//! 2. capture the settlement triple (Success -> erase_cost + record_refund +
+//!    add_state_gas_spent; Revert -> erase_cost only; Halt -> outer unchanged)
 //! 3. propagate `reservoir` / `state_gas_spent` back to the outer meter via
 //!    `handle_reservoir_remaining_gas`.
 //!

@@ -1,6 +1,6 @@
 //! Code-defined trigger registry.
 //!
-//! Triggers are declared as `const` data — there is no on-chain
+//! Triggers are declared as `const` data - there is no on-chain
 //! registration path. Adding, removing, or re-parameterizing a trigger
 //! is a hard-fork-coordinated code change. The dispatcher in
 //! [`crate::runtime`] iterates this slice on every block and fires any
@@ -10,7 +10,7 @@ use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Stable on-chain identifier for each trigger. The numeric values
-/// must remain byte-equal forever — they are emitted as the indexed
+/// must remain byte-equal forever - they are emitted as the indexed
 /// `id` in [`crate::ICycle::CycleTriggerExecuted`] and persisted in
 /// the [`crate::schema::Cycle`] mappings. New triggers append; never
 /// renumber existing ones.
@@ -50,8 +50,8 @@ pub struct TriggerSpec {
     pub start_offset_seconds: u64,
     /// when `true`, the dispatcher must additionally verify
     /// that V2 Phase 1 (`CertifiedParentAccounting`) has committed
-    /// progress for the parent block — i.e.,
-    /// `last_accounted_block_number >= window.end_inclusive` — before
+    /// progress for the parent block - i.e.,
+    /// `last_accounted_block_number >= window.end_inclusive` - before
     /// firing the handler. When `false` (e.g., a job that does NOT depend
     /// on parent accounting state) the handler runs on its own schedule
     /// without consulting [`outbe_primitives::accounting_progress::AccountingProgressView`].
@@ -118,7 +118,7 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 #[cfg(feature = "e2e-test")]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
-/// Active trigger table. Order is informational only — the dispatcher
+/// Active trigger table. Order is informational only - the dispatcher
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.

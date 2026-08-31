@@ -19,7 +19,7 @@ impl Staking<'_> {
             return Err(PrecompileError::Revert("amount must be non-zero".into()));
         }
 
-        // Enforce self-stake only — no third-party delegation.
+        // Enforce self-stake only - no third-party delegation.
         // Without full delegation accounting, a delegator's funds would be
         // locked with no protocol-level withdrawal mechanism.
         if caller != validator {
@@ -69,7 +69,7 @@ impl Staking<'_> {
         // PoS staking: when a REGISTERED validator reaches min_stake it becomes
         // PENDING (admitted to the validator set, syncing, not yet voting). The next
         // DKG reshare grants it a share and activate_reshared_set promotes
-        // PENDING→ACTIVE. The ValidatorSet facade also mirrors the authoritative
+        // PENDING->ACTIVE. The ValidatorSet facade also mirrors the authoritative
         // bonded value and raises pending_set_change when the threshold is crossed.
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
@@ -184,11 +184,11 @@ impl Staking<'_> {
     }
 
     /// Unjails the caller's JAILED validator back to PENDING. Requires the
-    /// caller's bonded stake to be ≥ min_stake (top up via `stake` first if a
-    /// felony slash dropped it below). The JAILED→PENDING transition, the unjail
+    /// caller's bonded stake to be >= min_stake (top up via `stake` first if a
+    /// felony slash dropped it below). The JAILED->PENDING transition, the unjail
     /// cooldown, the readiness reset, and the reshare signal live in ValidatorSet
     /// (`unjail_after_stake_check`); afterwards the validator re-confirms readiness
-    /// and is promoted PENDING→ACTIVE by the next DKG reshare. Self-only: `caller`
+    /// and is promoted PENDING->ACTIVE by the next DKG reshare. Self-only: `caller`
     /// is the validator (the precompile passes the tx sender).
     pub fn unjail_validator(&mut self, caller: Address) -> Result<()> {
         let stake = self.stake_amount.read(&caller)?;
@@ -222,7 +222,7 @@ impl Staking<'_> {
             let complete_time = self.unbonding_complete_time.read(&idx)?;
 
             if timestamp >= complete_time {
-                // Mature — claim it
+                // Mature - claim it
                 let amount = self.unbonding_amount.read(&idx)?;
                 total_claimable += amount;
                 // Zero out entry (for tail-trim compaction by process_unbonding)
@@ -231,7 +231,7 @@ impl Staking<'_> {
                 self.unbonding_complete_time.write(&idx, 0)?;
                 self.unbonding_next.write(&idx, 0)?;
             } else {
-                // Not mature — keep in list
+                // Not mature - keep in list
                 if new_head_stored == 0 {
                     new_head_stored = current_stored;
                 } else {
@@ -270,7 +270,7 @@ impl Staking<'_> {
     /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Updates val_stake in ValidatorSet.
     /// - Returns the total slashed amount (for evidence reward calculation).
-    /// - Does NOT change validator status — severe faults are handled by
+    /// - Does NOT change validator status - severe faults are handled by
     ///   `SlashIndicator::slash_proposer()` via `force_exit_validator()`.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
         if percent > 100 {
@@ -342,7 +342,7 @@ impl Staking<'_> {
 
     /// Processes validator lifecycle transitions and trims zeroed tail entries.
     ///
-    /// Called each block in pre-execution. Does NOT zero out mature entries —
+    /// Called each block in pre-execution. Does NOT zero out mature entries -
     /// that is done by [`claim_unbonded`] when the validator claims their funds.
     /// This function only trims zeroed tail entries to reclaim queue space.
     ///

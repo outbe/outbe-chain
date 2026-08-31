@@ -9,13 +9,13 @@
 //!
 //! Two sources are needed by the marshal's gap-repair resolver:
 //!
-//! * [`FinalizedSource`] — serves `Request::Finalized { height }` from the
+//! * [`FinalizedSource`] - serves `Request::Finalized { height }` from the
 //!   upstream: returns the finalization certificate plus the finalized block
 //!   for a height. The marshal verifies the certificate itself via its
 //!   per-epoch verifier provider (the [`CommitteeChain`](super::CommitteeChain)
 //!   provider), so this transport is trusted only to *deliver bytes*, never to
 //!   assert finality.
-//! * [`LocalBlockSource`] — serves `Request::Block { digest }` from the local
+//! * [`LocalBlockSource`] - serves `Request::Block { digest }` from the local
 //!   execution layer (a block the follower already imported). No certificate is
 //!   involved; the marshal validates the response by commitment.
 //!

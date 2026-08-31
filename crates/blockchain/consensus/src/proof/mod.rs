@@ -2,7 +2,7 @@
 //!
 //! Single source of truth for:
 //! * Hybrid certificate wire codec (`HybridCertificate`, `VrfProof`)
-//! * V2 self-contained verifier (`verify_v2_proof`) — BLS aggregate vote + mandatory
+//! * V2 self-contained verifier (`verify_v2_proof`) - BLS aggregate vote + mandatory
 //!   threshold VRF proof, no validator runtime required
 //! * Canonical fingerprint helpers used by Rewards, the certified-parent proof store,
 //!   and slashing evidence (`committee_set_hash_v2`, `canonical_signer_set_hash`,

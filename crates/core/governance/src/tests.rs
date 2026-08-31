@@ -243,7 +243,7 @@ fn proposal_rejects_empty_and_oversize_text() {
 
 /// Pins the contract's slot layout, which `scripts/seed_genesis.py`
 /// (`seed_governance`) hardcodes. If a field is reordered/inserted, this test
-/// fails — a signal that the seeder must be updated in lockstep.
+/// fails - a signal that the seeder must be updated in lockstep.
 #[test]
 fn storage_layout_matches_seeder() {
     with_governance(|gov| {
@@ -277,9 +277,9 @@ fn storage_layout_matches_seeder() {
 /// End-to-end proof that `scripts/seed_genesis.py::seed_governance` and the Rust
 /// contract agree on the storage layout: these `(slot, value)` pairs are the
 /// verbatim output of the Python seeder for canon="gain takes time",
-/// meta="meta rules", authority=0xaaaa…0001. We load them raw and read them back
+/// meta="meta rules", authority=0xaaaa...0001. We load them raw and read them back
 /// through `GovernanceContract`. Python computed the slots (keccak/StorageBytes);
-/// Rust resolves them independently — agreement proves the seam.
+/// Rust resolves them independently - agreement proves the seam.
 #[test]
 fn reads_python_seeder_output() {
     use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
@@ -378,7 +378,7 @@ fn author_index_lists_own_proposals() {
         assert_eq!(theirs.len(), 1);
         assert_eq!(theirs[0].id, U256::from(3));
 
-        // unknown author → empty
+        // unknown author -> empty
         assert!(gov
             .oips_by_author(AUTH, U256::ZERO, U256::from(1000))
             .unwrap()
@@ -433,7 +433,7 @@ fn status_move_relocates_id_between_buckets() {
         assert_eq!(all(gov, status::IMPLEMENTED), vec![a]);
         assert_eq!(all(gov, status::REJECTED), vec![b]);
 
-        // counts, and the invariant Σ = total
+        // counts, and the invariant sum = total
         assert_eq!(gov.oip_count_by_status(status::DRAFT).unwrap(), 1);
         assert_eq!(gov.oip_count_by_status(status::IMPLEMENTED).unwrap(), 1);
         assert_eq!(gov.oip_count_by_status(status::REJECTED).unwrap(), 1);
@@ -516,7 +516,7 @@ fn author_listing_is_paginated() {
             vec![U256::from(5)]
         );
 
-        // offset past the end → empty
+        // offset past the end -> empty
         assert!(gov
             .oips_by_author(AUTHOR, U256::from(99), U256::from(2))
             .unwrap()

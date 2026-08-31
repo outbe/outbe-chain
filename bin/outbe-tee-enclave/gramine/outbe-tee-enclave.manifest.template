@@ -25,12 +25,12 @@ fs.mounts = [
   { uri = "file:{{ entrypoint }}", path = "{{ entrypoint }}" },
   # Writable tee dir for the sealed offer-key blob (--tee-dir). The blob is
   # AES-GCM sealed by the enclave (EGETKEY), so it lives in an UNTRUSTED allowed
-  # file — the enclave's own AEAD provides confidentiality + integrity + the
+  # file - the enclave's own AEAD provides confidentiality + integrity + the
   # chain_id/isv_svn binding. `tee_dir` is rendered by the launcher.
   { uri = "file:{{ tee_dir }}/", path = "{{ tee_dir }}/" },
 ]
 # The node reaches the enclave over TCP (`--socket host:port`), which Gramine
-# passes through to the host network — no host<->enclave Unix socket mount needed.
+# passes through to the host network - no host<->enclave Unix socket mount needed.
 
 # --- gramine-sgx only (ignored by gramine-direct) ---
 sgx.debug = true
@@ -64,7 +64,7 @@ sgx.trusted_files = [
 ]
 
 # Read-write passthrough for the sealed-blob dir (no integrity check at the
-# Gramine layer — the enclave's AES-GCM sealing is the integrity/confidentiality
+# Gramine layer - the enclave's AES-GCM sealing is the integrity/confidentiality
 # boundary). Lets the restart fast-path persist/restore `sealed_root.bin`.
 sgx.allowed_files = [
   "file:{{ tee_dir }}/",

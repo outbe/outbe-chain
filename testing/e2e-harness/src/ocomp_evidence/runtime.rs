@@ -145,7 +145,7 @@ impl fmt::Display for CorrelationError {
 
 impl Error for CorrelationError {}
 
-/// Ordered builder enforcing the public ingress → pinned sources → JobIntent path.
+/// Ordered builder enforcing the public ingress -> pinned sources -> JobIntent path.
 #[derive(Clone, Debug)]
 pub struct TributeCorrelationBuilder {
     expected_validator_count: usize,

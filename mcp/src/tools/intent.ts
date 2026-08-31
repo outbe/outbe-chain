@@ -92,7 +92,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
 
   function requireAccount(): Account {
     if (!ctx.account) {
-      throw new Error("signing requires a key — set OUTBE_PRIVATE_KEY in the MCP server env");
+      throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
     }
     return ctx.account;
   }
@@ -141,7 +141,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       try {
         candidates.push(await resolveNetwork(def.name));
       } catch {
-        /* network unreachable — probe what we have */
+        /* network unreachable - probe what we have */
       }
     }
     const seen = new Set<number>();
@@ -163,7 +163,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   }
 
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
-  const tokenArg = z.string().describe("token: symbol (USD, COEN, …) or a 0x address");
+  const tokenArg = z.string().describe("token: symbol (USD, COEN, ...) or a 0x address");
 
   // --- create order ----------------------------------------------------------
   server.tool(
@@ -271,7 +271,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intent_order_track",
     "Where an order is in its cross-chain lifecycle, as a deterministic snapshot (no event scan). " +
-      "Reads origin/destination status and derives a coarse `phase` (OPENED → CLAIMED → FILLED → SETTLED, " +
+      "Reads origin/destination status and derives a coarse `phase` (OPENED -> CLAIMED -> FILLED -> SETTLED, " +
       "plus REFUNDED/EXPIRED) with a `next` hint. Poll it (e.g. via /loop) to follow progress.",
     {
       order_id: z.string().describe("0x-prefixed bytes32 order id"),
@@ -285,7 +285,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       try {
         destResolved = await resolveNetwork(String(order.destinationDomain));
       } catch {
-        /* destination chain not in NETWORKS — fall back to origin for the read */
+        /* destination chain not in NETWORKS - fall back to origin for the read */
       }
       const destNet = destResolved ?? origin;
 
@@ -308,13 +308,13 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       let next: string;
       if (originStatus === "SETTLED") {
         phase = "SETTLED";
-        next = "done — solver paid on origin";
+        next = "done - solver paid on origin";
       } else if (originStatus === "REFUNDED") {
         phase = "REFUNDED";
-        next = "done — input returned to user";
+        next = "done - input returned to user";
       } else if (destinationStatus === "FILLED") {
         phase = "FILLED";
-        next = "awaiting settle message to origin → SETTLED";
+        next = "awaiting settle message to origin -> SETTLED";
       } else if (destinationStatus === "CLAIMED") {
         phase = "CLAIMED";
         next = "winner is filling on destination";
@@ -323,10 +323,10 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         next = "refundable via intent_order_refund";
       } else if (originStatus === "OPENED") {
         phase = "OPENED";
-        next = "auction running on destination — waiting for a solver to claim & fill";
+        next = "auction running on destination - waiting for a solver to claim & fill";
       } else {
         phase = originStatus;
-        next = "—";
+        next = "-";
       }
 
       return ok({

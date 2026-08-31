@@ -662,7 +662,7 @@ where
         }
     }
 
-    /// Validates that the sender’s account has valid or no bytecode.
+    /// Validates that the sender's account has valid or no bytecode.
     pub fn validate_sender_bytecode(
         &self,
         transaction: &Tx,

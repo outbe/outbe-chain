@@ -59,7 +59,7 @@ async function main() {
   let value = 0n;
 
   if (isSameChain) {
-    console.log(`  Same-chain order — no LZ fee\n`);
+    console.log(`  Same-chain order - no LZ fee\n`);
   } else {
     const fee = await calculateSettleFee(destRouter, origin.chainId, [orderId], [fillerData]);
     value = fee;

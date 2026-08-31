@@ -1,4 +1,4 @@
-//! Step definitions — the code behind the Gherkin fixtures in `features/`.
+//! Step definitions - the code behind the Gherkin fixtures in `features/`.
 //!
 //! Steps are registered with cucumber's `#[given]`/`#[when]`/`#[then]` macros
 //! (collected via `inventory`), so simply compiling these modules wires them

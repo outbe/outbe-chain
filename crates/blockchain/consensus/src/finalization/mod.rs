@@ -1,7 +1,7 @@
 //! Finalization actor (Half B of the validator-rewards refactor).
 //!
 //! `FinalizationActor` owns the per-finalization side effects that used
-//! to live inside `application::handler` — bridge updates, DKG header
+//! to live inside `application::handler` - bridge updates, DKG header
 //! artifact recording, replay classification, VRF seed propagation,
 //! and (post-step-21) the block-cache eviction. It runs in a separate
 //! tokio task with its own unbounded mailbox so that slow consumers

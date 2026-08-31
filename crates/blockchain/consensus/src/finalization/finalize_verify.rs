@@ -4,7 +4,7 @@
 //! it batch-verifies the vote: in the monorepo batcher `round.rs::add_network`
 //! calls `reporter.report(Activity::Finalize(..))` and only then
 //! `verifier.add(.., /*verified=*/ false)`. The reporter therefore cannot trust
-//! those votes — it must verify each one before admitting it to the
+//! those votes - it must verify each one before admitting it to the
 //! process-local [`SharedLateFinalizeStore`], or a single forged vote would
 //! poison the proposer's late-credit aggregate and get the proposer's own block
 //! rejected pre-exec (validators re-verify the aggregate). Dropping the
@@ -19,7 +19,7 @@
 //! `unbounded_send`) and this actor verifies them against the epoch's committee
 //! scheme and admits only the verified ones. The store/buffer therefore still
 //! only ever holds signature-verified votes; the only observable change is that
-//! admission happens slightly later (best-effort, process-local — never
+//! admission happens slightly later (best-effort, process-local - never
 //! consensus state).
 
 use std::collections::BTreeMap;
@@ -64,7 +64,7 @@ impl FinalizeVerifyMailbox {
         let _ = self.tx.unbounded_send((epoch, finalize));
     }
 
-    /// A mailbox whose receiver is already dropped — every `verify` is a no-op.
+    /// A mailbox whose receiver is already dropped - every `verify` is a no-op.
     /// For unit tests that exercise the reporter without a running actor.
     #[cfg(test)]
     pub fn disconnected() -> Self {
@@ -116,7 +116,7 @@ impl FinalizeVerifyActor {
     /// record it in the late-finalize store (so the proposer can credit it) and
     /// buffer it for equivocation detection. A vote whose epoch scheme is no
     /// longer registered (epoch already rotated out) or whose signature fails to
-    /// verify is dropped — never admitted.
+    /// verify is dropped - never admitted.
     ///
     /// `pub(crate)` so the reporter's test harness (which can build a real
     /// committee + verifiable finalize) can drive admission directly.
@@ -161,7 +161,7 @@ impl FinalizeVerifyActor {
         self.observed_finalizes.retain(|v, _| *v >= min_view);
     }
 
-    /// Number of buffered (verified) votes for `view` — test-only introspection
+    /// Number of buffered (verified) votes for `view` - test-only introspection
     /// of `observed_finalizes`.
     #[cfg(test)]
     pub(crate) fn observed_len(&self, view: u64) -> usize {
@@ -169,7 +169,7 @@ impl FinalizeVerifyActor {
     }
 
     /// Synchronously process one queued vote if present (test-only), so a test
-    /// can exercise the full reporter → mailbox → actor path without spawning
+    /// can exercise the full reporter -> mailbox -> actor path without spawning
     /// the async `run` loop. Returns `true` if a job was processed.
     #[cfg(test)]
     pub(crate) fn try_process_one(&mut self) -> bool {

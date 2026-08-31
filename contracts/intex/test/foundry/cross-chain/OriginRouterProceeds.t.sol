@@ -72,7 +72,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         from = _interop(BNB_CHAIN_ID, targetRouter);
 
         // Register BNB and seed the day's target snapshot: proceeds authenticate the source against it.
-        // No float needed — the mock bridge fee defaults to 0, so the seed STAGE_START costs nothing.
+        // No float needed - the mock bridge fee defaults to 0, so the seed STAGE_START costs nothing.
         origin.addTarget(BNB_CHAIN_ID);
         _seedDaySnapshot(WORLDWIDE_DAY);
     }

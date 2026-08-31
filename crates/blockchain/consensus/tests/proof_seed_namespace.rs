@@ -80,7 +80,7 @@ fn vote_namespaces_bind_chain_and_committee() {
 
 #[test]
 fn vote_namespace_changes_with_committee() {
-    // a vote signed for committee A cannot verify under committee B — the
+    // a vote signed for committee A cannot verify under committee B - the
     // namespace differs, so the BLS verification fails on the wrong committee.
     let a = committee_from(&[1, 2, 3]);
     let b = committee_from(&[1, 2, 4]);
@@ -91,7 +91,7 @@ fn vote_namespace_changes_with_committee() {
     assert_ne!(notarize_namespace(&a), notarize_namespace(&b));
     assert_ne!(finalize_namespace(&a), finalize_namespace(&b));
     assert_ne!(nullify_namespace(&a), nullify_namespace(&b));
-    // Same committee, different input order → identical (Set canonicalizes).
+    // Same committee, different input order -> identical (Set canonicalizes).
     let a2 = committee_from(&[3, 1, 2]);
     assert_eq!(notarize_namespace(&a), notarize_namespace(&a2));
 }

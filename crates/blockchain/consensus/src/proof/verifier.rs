@@ -70,7 +70,7 @@ pub struct VerifiedProof {
     /// Encoded signer bitmap (`1` = signed, `0` = absent), one byte per
     /// participant, in the same order as `snapshot.ordered_committee`.
     pub signer_bitmap: Vec<u8>,
-    /// `keccak256(VrfProof::encode())` — canonical fingerprint of the VRF
+    /// `keccak256(VrfProof::encode())` - canonical fingerprint of the VRF
     /// proof carried in this certificate. See
     /// [`crate::canonical_vrf_proof_hash_v2`].
     pub vrf_proof_hash: B256,
@@ -103,7 +103,7 @@ pub enum VoteSubject {
 #[derive(Debug, Clone, Copy)]
 pub struct CommitteeSnapshotView<'a> {
     /// Per-participant BLS MinPk identity keys, in the same order as the
-    /// committee bitmap (`signer_bitmap[i] == 1` ↔ `participants[i]` signed).
+    /// committee bitmap (`signer_bitmap[i] == 1` <-> `participants[i]` signed).
     pub participants: &'a [bls12381::PublicKey],
     /// Active VRF group public key (BLS MinSig variant). Threshold partial
     /// signatures recover to a signature under this key.
@@ -120,7 +120,7 @@ pub struct CommitteeSnapshotView<'a> {
 /// and the namespace is `notarize_namespace(b"outbe")` /
 /// `finalize_namespace(b"outbe")` depending on `subject`. The caller (the V2
 /// executor or full-node import path) is responsible for producing the exact
-/// bytes — this avoids dragging Simplex's `Subject<D>` enum into the
+/// bytes - this avoids dragging Simplex's `Subject<D>` enum into the
 /// low-level crate.
 #[derive(Debug, Clone, Copy)]
 pub struct VoteBinding<'a> {
@@ -139,7 +139,7 @@ pub struct VoteBinding<'a> {
 /// Used internally by [`verify_v2_proof`] and retained for the
 /// smoke-test fixture that drives the BLS+VRF rules in isolation. Callers
 /// implementing the V2 protocol should use the metadata-bound
-/// [`verify_v2_proof`] instead — it adds the A4 binding rules
+/// [`verify_v2_proof`] instead - it adds the A4 binding rules
 /// (missed_proposers, exact-parent, committee_set_hash, signer-bitmap
 /// reconciliation, VRF material/group-key binding) on top of the structural
 /// + crypto checks performed here.
@@ -302,7 +302,7 @@ fn verify_threshold_vrf_proof(
 ///
 /// `verify_v2_proof` is a synchronous pure function. It does not read
 /// wall-clock time, OS entropy, network state, or any process-local mutable
-/// state — same inputs produce the same `Result`, byte-deterministically
+/// state - same inputs produce the same `Result`, byte-deterministically
 /// (proptest `verifier_outcome_deterministic_from_parent_state_and_body`).
 pub fn verify_v2_proof(
     metadata: &CertifiedParentAccountingMetadata,
@@ -310,7 +310,7 @@ pub fn verify_v2_proof(
     proof_bytes: &[u8],
     header_parent_hash: B256,
 ) -> Result<VerifiedProof, V2VerifyError> {
-    // Rule 1 — missed_proposers MUST be empty in V2, ALWAYS, BEFORE any
+    // Rule 1 - missed_proposers MUST be empty in V2, ALWAYS, BEFORE any
     // other check. This rejects pre-mutation, applies to both proof kinds.
     if !metadata.missed_proposers.is_empty() {
         return Err(V2VerifyError::NonEmptyMissedProposers {
@@ -318,7 +318,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 2 — exact-parent binding. The metadata MUST target the
+    // Rule 2 - exact-parent binding. The metadata MUST target the
     // immediate parent of the block under verification.
     if metadata.finalized_block_hash != header_parent_hash {
         return Err(V2VerifyError::WrongAccountedHash {
@@ -327,7 +327,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 3 — committee shape: metadata vs snapshot must agree on size
+    // Rule 3 - committee shape: metadata vs snapshot must agree on size
     // AND per-position address. Disagreement is either a snapshot lookup error
     // by the caller or a malicious metadata.
     if snapshot.committee.is_empty() {
@@ -345,8 +345,8 @@ pub fn verify_v2_proof(
         .enumerate()
     {
         if *meta_addr != snap_entry.address {
-            // Mismatch at position `i` — log via Display only; the variant is
-            // structural ("metadata cannot override consensus pubkeys" — the
+            // Mismatch at position `i` - log via Display only; the variant is
+            // structural ("metadata cannot override consensus pubkeys" - the
             // test `metadata_cannot_override_consensus_pubkeys` pins this).
             let _ = i;
             return Err(V2VerifyError::BitmapMismatch {
@@ -355,14 +355,14 @@ pub fn verify_v2_proof(
         }
     }
 
-    // Rule 4 — bitmap shape: length must match committee.
+    // Rule 4 - bitmap shape: length must match committee.
     if metadata.signer_bitmap.len() != metadata.ordered_committee.len() {
         return Err(V2VerifyError::BitmapMismatch {
             reason: "metadata.signer_bitmap length differs from ordered_committee length",
         });
     }
 
-    // Rule 5 — VRF material version binding (metadata == snapshot).
+    // Rule 5 - VRF material version binding (metadata == snapshot).
     if metadata.vrf_material_version != snapshot.vrf_material_version {
         return Err(V2VerifyError::WrongVrfMaterialVersion {
             expected: snapshot.vrf_material_version,
@@ -370,7 +370,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 6 — VRF group public key hash binding.
+    // Rule 6 - VRF group public key hash binding.
     let snapshot_group_pk_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
     if metadata.vrf_group_public_key_hash != snapshot_group_pk_hash {
         return Err(V2VerifyError::WrongVrfGroupKeyHash {
@@ -379,7 +379,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 7 — canonical committee_set_hash fingerprint binding.
+    // Rule 7 - canonical committee_set_hash fingerprint binding.
     let canonical_committee_set_hash = committee_set_hash_v2(metadata.finalized_epoch, snapshot);
     if metadata.committee_set_hash != canonical_committee_set_hash {
         return Err(V2VerifyError::CommitteeSetHashMismatch {
@@ -388,7 +388,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 8 — proof bytes equal metadata.proof byte-identically.
+    // Rule 8 - proof bytes equal metadata.proof byte-identically.
     if proof_bytes != metadata.proof.as_ref() {
         return Err(V2VerifyError::WrongProofDomain {
             expected: metadata.finalized_block_hash,
@@ -459,7 +459,7 @@ pub fn verify_v2_proof(
         seed_message: &seed_message,
     };
 
-    // Rule 9 — delegate to the low-level structural + crypto verifier.
+    // Rule 9 - delegate to the low-level structural + crypto verifier.
     let inner = verify_v2_certificate_low_level(&view, &binding, &cert)?;
 
     // Rule 5 cross-check: cert's VRF material version must also equal the
@@ -471,7 +471,7 @@ pub fn verify_v2_proof(
         });
     }
 
-    // Rule 8 cross-check: bitmap reconciliation — metadata's bitmap must
+    // Rule 8 cross-check: bitmap reconciliation - metadata's bitmap must
     // exactly equal the reconstructed bitmap from the certificate.
     if inner.signer_bitmap != metadata.signer_bitmap {
         return Err(V2VerifyError::BitmapMismatch {

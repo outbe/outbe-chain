@@ -64,7 +64,7 @@ interface IEscrowAdapter {
 
     /// @notice Commit-entry bond taken at `commitBid` and held until reveal/cancel/claim.
     /// @dev Existence sentinel is `amount > 0`; the record is deleted on release so a
-    ///      commit→cancel→commit cycle can re-lock within the same series.
+    ///      commit->cancel->commit cycle can re-lock within the same series.
     struct CommitBond {
         /// @notice Amount of payment-token bonded.
         uint128 amount;
@@ -301,8 +301,8 @@ interface IEscrowAdapter {
 
     /// @notice Permissionless refund: full principal when the relayer never finalizes
     ///         (`UNFINALIZED_REFUND_DELAY`) or once `NO_SPLIT_REFUND_DELAY` elapses for an
-    ///         omitted/mismatched `Locked` bidder; the recorded refund portion — with the
-    ///         remainder burned — for a failed bidder with a validated split
+    ///         omitted/mismatched `Locked` bidder; the recorded refund portion - with the
+    ///         remainder burned - for a failed bidder with a validated split
     ///         (`POST_FINALIZE_REFUND_DELAY`). Pays the stored `bidder`, not `msg.sender`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
@@ -318,7 +318,7 @@ interface IEscrowAdapter {
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
-    ///         bond was live). Time-based only — never consults the auction — and pays the stored
+    ///         bond was live). Time-based only - never consults the auction - and pays the stored
     ///         `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.

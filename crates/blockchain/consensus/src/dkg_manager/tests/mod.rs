@@ -24,7 +24,7 @@ use super::*;
 
 /// PHASE 0 de-risk spike: a node that NEVER ran DKG can rebuild an epoch's
 /// finalization verifier from the boundary outcome carried in the block
-/// (`extra_data`) — using only public data — and verify a real finalization
+/// (`extra_data`) - using only public data - and verify a real finalization
 /// certificate signed by that epoch's committee. This is the load-bearing
 /// assumption of the `--upstream` follower (committee-chaining trust model).
 #[test]
@@ -39,7 +39,7 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
     use commonware_utils::ordered::{Quorum as _, Set as OrderedSet};
     use std::num::NonZeroU32;
 
-    // A committee (4 → N3f1 quorum 3) runs the DKG. We keep the secret shares
+    // A committee (4 -> N3f1 quorum 3) runs the DKG. We keep the secret shares
     // (to sign) AND the full public Output (to put on-chain in the boundary).
     let mut keys: Vec<bls12381::PrivateKey> = (0..4u8)
         .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
@@ -458,7 +458,7 @@ async fn pending_boundary_rejects_reordered_missing_or_altered_expiry_exclusions
 fn assert_canonical_output_accepts_equal_and_rejects_divergent() {
     let (_keys, _participants, output, _polynomial, _log) = run_test_dkg_complete();
 
-    // Equal local/canonical outputs pass — the activation/recovery happy path.
+    // Equal local/canonical outputs pass - the activation/recovery happy path.
     assert_canonical_output(&output, &output, "equal").expect("equal outputs must match");
 
     // A genuinely different output is rejected, and the error carries both
@@ -761,7 +761,7 @@ fn chain_finalized_replay_rejects_non_committee_dealer() {
 /// reconstruction is frozen once it first succeeds, and a duplicate finalized
 /// log is idempotent. (Cross-order is intentionally NOT asserted: DKG completes
 /// on threshold participation, so a different freeze-time subset is a different
-/// group key — determinism comes from canonical chain order.)
+/// group key - determinism comes from canonical chain order.)
 #[test]
 fn canonical_reconstruction_is_replay_deterministic_and_frozen() {
     let mut keys: Vec<bls12381::PrivateKey> = (0..4)
@@ -789,7 +789,7 @@ fn canonical_reconstruction_is_replay_deterministic_and_frozen() {
         manager.canonical_output(Epoch::new(0))
     };
 
-    // Same-order replay → identical canonical output (deterministic rebuild).
+    // Same-order replay -> identical canonical output (deterministic rebuild).
     let out_a = feed(&order).expect("reconstructed from full set");
     let out_b = feed(&order).expect("reconstructed on replay");
     assert_eq!(out_a, out_b);
@@ -910,7 +910,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
 async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
     // The producer-side gate for Path A: a committee pre-announce is accepted only
     // if its carried outcome byte-matches THIS node's own reconstructed DKG output
-    // for the incoming epoch — and is fail-closed when no pending boundary exists.
+    // for the incoming epoch - and is fail-closed when no pending boundary exists.
     let (keys, _participants, output, _polynomial, _local_log) = run_test_dkg_complete();
     let validator_set = ValidatorSet {
         public_keys: keys.iter().map(|k| k.public_key()).collect(),
@@ -1222,7 +1222,7 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
         public_polynomial_hash(all_output.public()),
         "executor outcome-derived poly hash must equal the proposer's"
     );
-    // Distinct polynomials → distinct hashes (no collision).
+    // Distinct polynomials -> distinct hashes (no collision).
     assert_ne!(
         boundary_outcome_polynomial_hash(all_artifact.outcome.as_ref()),
         boundary_outcome_polynomial_hash(subset_artifact.outcome.as_ref()),

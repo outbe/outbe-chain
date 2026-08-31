@@ -4,7 +4,7 @@
 //! binaries are thin shims over [`run`]; the only difference is the [`RunOpts`]
 //! they pass. Keeping the orchestration here (arg parsing, key init, boot config,
 //! listener selection, serve dispatch) guarantees the two binaries share one code
-//! path — the node always talks to *an* enclave over the same Noise-IK channel.
+//! path - the node always talks to *an* enclave over the same Noise-IK channel.
 //!
 //! `run` returns a process exit code instead of calling `std::process::exit`
 //! directly, so the shims own the single exit point and the body stays testable.
@@ -81,7 +81,7 @@ pub fn run(opts: RunOpts) -> i32 {
     #[cfg(feature = "mock")]
     if opts.is_mock() {
         eprintln!(
-            "outbe-tee-enclave-mock: MOCK ENCLAVE — deterministic quote + stable sealing key, \
+            "outbe-tee-enclave-mock: MOCK ENCLAVE - deterministic quote + stable sealing key, \
              NOT confidential (dev/CI only, never production)"
         );
     }
@@ -91,21 +91,21 @@ pub fn run(opts: RunOpts) -> i32 {
     let attest = crate::gramine::attestation_type();
     if attest.is_hardware() {
         eprintln!(
-            "outbe-tee-enclave: MODE = gramine-sgx — hardware attestation ENABLED ({})",
+            "outbe-tee-enclave: MODE = gramine-sgx - hardware attestation ENABLED ({})",
             attest.label()
         );
     } else if attest.sgx_present() {
         // Real SGX, but remote attestation not configured: EGETKEY sealing works
         // (confidential at rest), yet no DCAP quote can be produced. Not "no SGX".
         eprintln!(
-            "outbe-tee-enclave: MODE = gramine-sgx — remote attestation DISABLED ({}); \
+            "outbe-tee-enclave: MODE = gramine-sgx - remote attestation DISABLED ({}); \
              EGETKEY sealing available, NOT remote-attested (configure \
              sgx.remote_attestation = \"dcap\" for production)",
             attest.label()
         );
     } else {
         eprintln!(
-            "outbe-tee-enclave: MODE = {} — attestation DISABLED, NOT confidential \
+            "outbe-tee-enclave: MODE = {} - attestation DISABLED, NOT confidential \
              (no SGX hardware; use gramine-sgx for production)",
             attest.label()
         );
@@ -234,7 +234,7 @@ pub fn run(opts: RunOpts) -> i32 {
         // The TCP carrier is loopback-only. It exists solely because Gramine
         // pathname UDS are process-internal (unreachable from the host); it must
         // never expose the enclave off-host. Reject any non-loopback bind. (Noise-IK
-        // still authenticates + encrypts every byte regardless of carrier — this
+        // still authenticates + encrypts every byte regardless of carrier - this
         // guard is defense-in-depth so a misconfigured `--socket 0.0.0.0:port`
         // cannot accidentally publish the enclave.)
         if !is_loopback_endpoint(&socket) {
@@ -257,7 +257,7 @@ pub fn run(opts: RunOpts) -> i32 {
         );
         serve_tcp(&listener, keys, boot, offer_key, initialization, chain_id)
     } else {
-        // Fresh socket; UDS mode 0600 (owner-only), per plan §"Transport".
+        // Fresh socket; UDS mode 0600 (owner-only), per plan section "Transport".
         let _ = std::fs::remove_file(&socket);
         let listener = match UnixListener::bind(&socket) {
             Ok(listener) => listener,
@@ -266,7 +266,7 @@ pub fn run(opts: RunOpts) -> i32 {
                 return 1;
             }
         };
-        // Best-effort 0600 (non-fatal under Gramine — the bound UDS is an
+        // Best-effort 0600 (non-fatal under Gramine - the bound UDS is an
         // emulated socket object, not a chmod-able host file).
         if let Err(err) = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
         {
@@ -475,7 +475,7 @@ fn parse_hex32(value: &str) -> Option<[u8; 32]> {
 
 /// True iff `endpoint` is an `ip:port` whose IP is loopback (`127.0.0.0/8` or
 /// `::1`). A non-IP host (e.g. `example.com:7000`) does not parse as a
-/// `SocketAddr` and is rejected — the TCP carrier must never bind a routable
+/// `SocketAddr` and is rejected - the TCP carrier must never bind a routable
 /// address.
 fn is_loopback_endpoint(endpoint: &str) -> bool {
     endpoint
@@ -505,11 +505,11 @@ mod tests {
         assert!(is_loopback_endpoint("127.0.0.1:7000"));
         assert!(is_loopback_endpoint("127.0.0.5:7000"));
         assert!(is_loopback_endpoint("[::1]:7000"));
-        // Non-loopback / routable → reject.
+        // Non-loopback / routable -> reject.
         assert!(!is_loopback_endpoint("0.0.0.0:7000"));
         assert!(!is_loopback_endpoint("10.0.0.5:7000"));
         assert!(!is_loopback_endpoint("192.168.1.2:7000"));
-        // Non-IP host → reject (cannot prove loopback).
+        // Non-IP host -> reject (cannot prove loopback).
         assert!(!is_loopback_endpoint("example.com:7000"));
         assert!(!is_loopback_endpoint("localhost:7000"));
     }

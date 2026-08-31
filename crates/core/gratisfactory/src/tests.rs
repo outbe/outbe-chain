@@ -52,7 +52,7 @@ fn oracle_rate() -> U256 {
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
-/// costs exactly [`pledge_cost`] gratis, so the collateral numbers stay round — and
+/// costs exactly [`pledge_cost`] gratis, so the collateral numbers stay round - and
 /// stables and gratis stay visibly different, which is what catches a unit mix-up.
 fn pledge_stables() -> U256 {
     U256::from(2_000_000u64)
@@ -201,7 +201,7 @@ fn pledge_call(a: ModifyAuth, amount_stables: U256, max_gratis: U256) -> Bytes {
 }
 
 /// The pledger names the CREDIT they want; the gratis it costs is derived from the
-/// oracle rate, and that — not the stables figure — is what leaves the balance.
+/// oracle rate, and that - not the stables figure - is what leaves the balance.
 #[test]
 fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
     with_env(|storage| {
@@ -231,8 +231,8 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
         assert_ne!(handle, B256::ZERO, "a pledge handle is returned");
 
         // `pledge_cost()` gratis left the balance and is parked in the pending ticket
-        // (NOT yet in the per-account pledged ledger); the aggregate — gratis, not
-        // stables — counts it.
+        // (NOT yet in the per-account pledged ledger); the aggregate - gratis, not
+        // stables - counts it.
         assert_eq!(view_balance(&storage, alice()), seed - pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
@@ -475,7 +475,7 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             amount
         );
 
-        // The acquisition cohort was recorded: sole holder, no sales → top league.
+        // The acquisition cohort was recorded: sole holder, no sales -> top league.
         let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_after, MAX_LEAGUE);
     });
@@ -540,7 +540,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         );
         assert_eq!(storage.balance(alice()).unwrap(), amount);
 
-        // Fully sold → efficiency 0 → league drops to the floor.
+        // Fully sold -> efficiency 0 -> league drops to the floor.
         let league_after = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
         assert_eq!(league_after, MIN_LEAGUE);
     });
@@ -584,7 +584,7 @@ fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
     with_env(|storage| {
         let amount = U256::from(1_000u64);
 
-        // Seed only (confidential) promis to convert — no Fidelity cohort yet.
+        // Seed only (confidential) promis to convert - no Fidelity cohort yet.
         // Promis is fidelity-neutral, so the aged RCFI a year out is zero up front;
         // the post-conversion `> 0` check then proves the conversion recorded a
         // fresh gratis cohort (rather than it having pre-existed).
@@ -630,7 +630,7 @@ fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         );
 
         // A fresh gratis acquisition cohort was recorded at conversion time
-        // (CREATED_AT): sole holder, no sales → top league a year later. If
+        // (CREATED_AT): sole holder, no sales -> top league a year later. If
         // `mine_from_promis` stopped recording the cohort, this would stay at the
         // floor.
         let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();

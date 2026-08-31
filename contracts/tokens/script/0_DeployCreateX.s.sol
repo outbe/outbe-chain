@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 /// @dev Minimal CREATE3 factory. Deployed address depends only on (factory, salt), not on the contract's bytecode or
-///      constructor arguments — which is what lets one address hold the canonical token on one chain and the ERC-7802
+///      constructor arguments - which is what lets one address hold the canonical token on one chain and the ERC-7802
 ///      synthetic on another.
 /// @notice CREATE3 = CREATE2(fixed proxy) + CREATE(nonce=1) from that proxy.
 ///         Byte-identical to intent/script/0_DeployCreateX.s.sol and crosschain/script/0_DeployCreateX.s.sol so that,
@@ -50,8 +50,8 @@ contract CreateX {
 /// @dev Deploys the CreateX factory at a deterministic address using CREATE2.
 ///
 /// Required env vars:
-///   DEPLOYER_PK    — deployer private key
-///   CONTRACT_SALT  — salt string for deterministic deployment
+///   DEPLOYER_PK    - deployer private key
+///   CONTRACT_SALT  - salt string for deterministic deployment
 contract DeployCreateXDeterministic is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");

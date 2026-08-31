@@ -1,4 +1,4 @@
-//! — Phase 1 pre-execution reorder invariants.
+//! - Phase 1 pre-execution reorder invariants.
 //!
 //! Tests in this file pin the public-API surface of `SystemTxPhase` and
 //! `expected_begin_block_kinds` that drive the begin-zone phase routing.
@@ -47,13 +47,13 @@ fn phase1_receipt_index_0_before_cycle_tick() {
     assert_eq!(late, SystemTxPhase::LateFinalizeCredits { body_index: 1 });
     let cycle = late.advance_after_commit(false, false);
     assert_eq!(cycle, SystemTxPhase::CycleTick { body_index: 2 });
-    // CycleTick body_index is exactly 2 — after Phase 1 (0) and LateFinalize (1).
+    // CycleTick body_index is exactly 2 - after Phase 1 (0) and LateFinalize (1).
     assert_eq!(cycle.body_index(), Some(2));
 }
 
-/// Block `n>=2` body-index map: Phase 1 → LateFinalizeCredits → CycleTick →
-/// RewardsGemDelivery → (optional BoundaryOutcome) → OracleSlashWindow →
-/// HookEvents → UserTxs. Reorder must preserve the ordering relative to the
+/// Block `n>=2` body-index map: Phase 1 -> LateFinalizeCredits -> CycleTick ->
+/// RewardsGemDelivery -> (optional BoundaryOutcome) -> OracleSlashWindow ->
+/// HookEvents -> UserTxs. Reorder must preserve the ordering relative to the
 /// body receipt slots.
 #[test]
 fn phase1_reordering_preserves_body_receipt_order() {

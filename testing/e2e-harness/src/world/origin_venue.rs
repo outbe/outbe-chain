@@ -141,7 +141,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
             (
                 "TARGET_CHAIN_IDS",
                 // The script sets each target's peer before registering it, and the
-                // peer sits at the same CREATE3 address everywhere — so naming the
+                // peer sits at the same CREATE3 address everywhere - so naming the
                 // chains here is all a second target needs.
                 targets
                     .iter()

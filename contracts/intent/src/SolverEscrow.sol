@@ -183,7 +183,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         IERC6909(address(COMPACT)).transferFrom(msg.sender, address(this), id, withdrawAmount);
 
         // Step 2: Release underlying tokens to solver via allocatedTransfer
-        // claimant = uint160(solver) → zero upper bits → zero lockTag → withdrawal of underlying
+        // claimant = uint160(solver) -> zero upper bits -> zero lockTag -> withdrawal of underlying
         Component[] memory recipients = new Component[](1);
         recipients[0] = Component({claimant: uint160(msg.sender), amount: withdrawAmount});
 

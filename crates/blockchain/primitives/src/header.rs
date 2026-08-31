@@ -33,7 +33,7 @@ pub struct OutbeHeader {
     pub inner: Header,
 }
 
-// Manual RLP impls — we derive `Default`, `Compact`, etc. but RLP must
+// Manual RLP impls - we derive `Default`, `Compact`, etc. but RLP must
 // be byte-for-byte identical to the inner Ethereum `Header`. A blanket
 // `RlpEncodable` derive on a single-field struct would still wrap
 // `inner` in an outer RLP list, breaking hash compatibility with any
@@ -61,7 +61,7 @@ impl OutbeHeader {
     /// Wrap an Ethereum header.
     ///
     /// Sub-second timestamp must already be encoded inside
-    /// `inner.extra_data` (via `encode_outbe_block_artifacts`) — this
+    /// `inner.extra_data` (via `encode_outbe_block_artifacts`) - this
     /// constructor does not synthesise it.
     pub const fn new(inner: Header) -> Self {
         Self { inner }
@@ -69,7 +69,7 @@ impl OutbeHeader {
 
     /// Sub-second millisecond portion of the consensus timestamp,
     /// decoded from `extra_data` under tag 0x05. Returns `0` if absent
-    /// or if the artifact envelope is missing/unparseable — callers
+    /// or if the artifact envelope is missing/unparseable - callers
     /// that require strict validation should decode the artifacts
     /// directly via [`crate::reshare_artifact::decode_outbe_block_artifacts`].
     pub fn timestamp_millis_part(&self) -> u64 {
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn header_hash_matches_standard_ethereum_hash() {
         // The Outbe wrapper must be a transparent passthrough at the
-        // RLP level — same bytes in, same hash out — otherwise external
+        // RLP level - same bytes in, same hash out - otherwise external
         // L1 consumers (kona, op-node, light clients) that recompute
         // `keccak256(rlp(header))` will see a mismatch with what the
         // RPC reports.
@@ -382,7 +382,7 @@ mod tests {
         let bytes = alloy_rlp::encode(&outbe);
 
         // Decode the same bytes through the STANDARD `alloy_consensus::Header`
-        // path — this is what op-node, light clients, blockchair indexers do.
+        // path - this is what op-node, light clients, blockchair indexers do.
         let mut slice = bytes.as_slice();
         let decoded = Header::decode(&mut slice)
             .expect("standard Header::decode must accept OutbeHeader bytes");

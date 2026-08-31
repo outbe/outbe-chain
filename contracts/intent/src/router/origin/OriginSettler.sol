@@ -84,14 +84,14 @@ abstract contract OriginSettler is OriginSettlerBase {
 
     /**
      * @notice Releases tokens from The Compact resource lock to a recipient.
-     * @dev claimant = uint256(uint160(recipient)) — zero lockTag triggers withdrawal
+     * @dev claimant = uint256(uint160(recipient)) - zero lockTag triggers withdrawal
      *      (underlying tokens sent directly, not ERC6909).
      *      Nonce derived from orderId + label to ensure uniqueness without extra storage.
      * @param _token    The underlying token address (address(0) for native ETH).
      * @param _to       The recipient address.
      * @param _amount   The amount to release.
      * @param _orderId  The order ID (used to derive a unique nonce).
-     * @param _label    "settle" or "refund" — makes nonce unique per operation.
+     * @param _label    "settle" or "refund" - makes nonce unique per operation.
      */
     function _allocatedTransfer(address _token, address _to, uint256 _amount, bytes32 _orderId, bytes32 _label)
         internal
@@ -104,7 +104,7 @@ abstract contract OriginSettler is OriginSettlerBase {
         Component[] memory recipients = new Component[](1);
         recipients[0] = Component({claimant: uint256(uint160(_to)), amount: _amount});
 
-        // Nonce derived from orderId + label — unique per operation, no extra storage needed
+        // Nonce derived from orderId + label - unique per operation, no extra storage needed
         uint256 nonce = uint256(keccak256(abi.encode(_orderId, _label)));
 
         _compact()

@@ -32,7 +32,7 @@ pub const OUTBE_MAX_EXTRA_DATA_SIZE: usize = 64 * 1_024;
 /// commonware caps at `MAX_P2P_MESSAGE_SIZE` (2 MiB) and **panics** on overflow.
 /// The execution-layer gas limit permits far larger blocks (~7.5 MB of
 /// zero-byte calldata at 30M gas), so without this cap an honest proposer could
-/// build a valid block that can never be disseminated — verifiers could never
+/// build a valid block that can never be disseminated - verifiers could never
 /// pull it and the view would stall. This bound keeps a margin below the 2 MiB
 /// transport cap for the message envelope and the attached certificate.
 ///
@@ -61,19 +61,19 @@ pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
 /// (`validate_against_parent_timestamp_millis`) and the proposer build path in
 /// `crates/blockchain/consensus/src/application/handler.rs`.
 ///
-/// 1 hour is >400× the certification timeout, so honest operation — including
-/// view-nullification bursts and DKG-reshare pauses — never trips it, while a
+/// 1 hour is >400x the certification timeout, so honest operation - including
+/// view-nullification bursts and DKG-reshare pauses - never trips it, while a
 /// genuinely long outage self-heals: the proposer caps at `parent + this` and
 /// chain time ratchets forward in bounded steps until it catches up to real
 /// time, so the band never turns a recoverable stall into a permanent halt. It
-/// is ~504× smaller than the 21-day default unbonding period, so the
+/// is ~504x smaller than the 21-day default unbonding period, so the
 /// single-block unbonding-lock bypass is eliminated and any residual time
 /// ratchet by a sustained byzantine leader is slow and on-chain visible.
 /// Hard-fork-governed protocol constant; both paths read it from here.
 pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 
 /// Minimum advance, in milliseconds, that a block's `timestamp_millis` must add
-/// over its parent's — the lower bound of the two-sided drift band.
+/// over its parent's - the lower bound of the two-sided drift band.
 ///
 /// Stock monotonicity only requires `+1 ms`, so a colluding leader majority can
 /// keep `timestamp = parent + 1 ms` while real time advances, freezing every
@@ -81,7 +81,7 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// emission schedule never crosses a UTC boundary and unbonding maturity
 /// (`complete_time`) is never reached, so stake never unlocks and emission
 /// stalls. This bound forces each block to advance chain time by at least
-/// `this`, so the freeze is neutralized — the only way to slow chain time below
+/// `this`, so the freeze is neutralized - the only way to slow chain time below
 /// `this`-per-block is to withhold blocks, which the view-timeout / leader
 /// rotation machinery already bounds.
 ///
@@ -97,8 +97,8 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// monotonicity.
 ///
 /// 1 s is half the 2 s default block-time floor
-/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing — which leaves real intervals
-/// `≥` the floor between consecutive block timestamps — never trips the clamp at
+/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing - which leaves real intervals
+/// `>=` the floor between consecutive block timestamps - never trips the clamp at
 /// the default cadence, while a sub-second freeze is impossible. Operators who
 /// configure a block-time floor below `this` accept proportionally more bounded
 /// forward inflation. Hard-fork-governed protocol constant; both paths read it
@@ -109,7 +109,7 @@ pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
 ///
 /// Block `N`'s fees are escrowed and split at `N+K` across everyone whose
 /// finalize signature for `N` was gathered within `K` blocks. Inclusion distance
-/// is `k = inclusion_block − N`, `k ∈ {0..=K}`; the window closes / settles at
+/// is `k = inclusion_block - N`, `k in {0..=K}`; the window closes / settles at
 /// `N+K` and per-block state is freed at `N+K+1`. Hard-fork-set protocol
 /// constant. Shared by the executor (settle timing) and
 /// the rewards module (decay weights).
@@ -236,7 +236,7 @@ pub struct DkgBoundaryArtifact {
     /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
     /// authorizing the incoming committee's TEE re-registrations. The begin-zone
     /// handler verifies it against the stored prior group public key before applying
-    /// `tee_reshare_registrations` — so a malicious supermajority of the NEW committee
+    /// `tee_reshare_registrations` - so a malicious supermajority of the NEW committee
     /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
     pub endorsement_signature: Bytes,
 }

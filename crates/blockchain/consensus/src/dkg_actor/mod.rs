@@ -1,4 +1,4 @@
-//! DKG Actor — runs interactive DKG protocol over dedicated P2P channel.
+//! DKG Actor - runs interactive DKG protocol over dedicated P2P channel.
 //!
 //! Two modes:
 //! - **Initial**: Standalone P2P ceremony, blocks consensus engine startup.

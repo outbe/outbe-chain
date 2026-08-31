@@ -14,7 +14,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @title DeployTarget
 /// @author Outbe
 /// @notice Deploy the auction target stack on one chain: the NFT collection + bridge, EscrowAdapter,
-///         IntexAuction and TargetRouter. Uniform for every target — including the origin chain as a
+///         IntexAuction and TargetRouter. Uniform for every target - including the origin chain as a
 ///         loopback target (origin==target): the shared NFT/bridge fall out of idempotent CREATE3
 ///         deploy, and the bridge meshes only with OTHER targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),

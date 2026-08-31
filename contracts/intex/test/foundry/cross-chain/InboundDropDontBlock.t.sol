@@ -18,7 +18,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @notice Desis stub that reverts `NotReady` on `processBidsBatch` until `enable()` is called — a stand-in for an
+/// @notice Desis stub that reverts `NotReady` on `processBidsBatch` until `enable()` is called - a stand-in for an
 ///         inbound prerequisite that has not yet landed. Advertises `IDesis` via ERC-165 so `OriginRouter.wire`
 ///         accepts it.
 contract GatedDesis {
@@ -48,7 +48,7 @@ contract GatedDesis {
 
 /// @title InboundRevertAndRedeliverTest
 /// @notice Under ERC-7786 the routers no longer swallow a failed inbound (there is no ORDERED lane to keep
-///         moving). A premature message — one whose on-chain prerequisite has not yet landed — REVERTS, the bridge
+///         moving). A premature message - one whose on-chain prerequisite has not yet landed - REVERTS, the bridge
 ///         rolls back, and the transport redelivers it later. Once the prerequisite lands, re-delivering the same
 ///         message SUCCEEDS. This preserves the old out-of-order resilience with the new revert-and-redeliver
 ///         mechanism.
@@ -111,7 +111,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter — premature MARK_CALLED waits in the series' slot, then applies once the series lands
+    // TargetRouter - premature MARK_CALLED waits in the series' slot, then applies once the series lands
     // ---------------------------------------------------------------
 
     /// @notice MARK_CALLED for a series the BNB intex has never seen waits in its slot rather than rejecting:
@@ -125,12 +125,12 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
-    ///         Called — the out-of-order arrival resolves without a redelivery.
+    ///         Called - the out-of-order arrival resolves without a redelivery.
     function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
         bytes memory packet =
             BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
 
-        // Premature: no series yet → slotted.
+        // Premature: no series yet -> slotted.
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
@@ -143,7 +143,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginRouter — premature BIDS_BATCH reverts, then redeliver succeeds
+    // OriginRouter - premature BIDS_BATCH reverts, then redeliver succeeds
     // ---------------------------------------------------------------
 
     /// @notice A BIDS_BATCH whose downstream (Desis) prerequisite has not landed reverts; once Desis is ready,
@@ -153,7 +153,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         bytes memory bids =
             BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
 
-        // Premature: Desis not ready → revert propagates out of the bridge.
+        // Premature: Desis not ready -> revert propagates out of the bridge.
         vm.expectRevert(GatedDesis.NotReady.selector);
         _deliverToOM(bids);
 

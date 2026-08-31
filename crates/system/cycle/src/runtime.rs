@@ -66,8 +66,8 @@ pub fn dispatch_triggers(
         //, Phase 1 commits BEFORE Phase 2 (`CycleTick`), so
         // this gate is normally vacuously satisfied; it fires only when
         // a regression reorders the phases or a new trigger reads state
-        // that races the parent-finalization tx. Defer silently — no
-        // error, no state change — so the trigger retries on the next
+        // that races the parent-finalization tx. Defer silently - no
+        // error, no state change - so the trigger retries on the next
         // block.
         let progress = EvmAccountingProgress::new(ctx);
         if accounting_gate_blocks(spec, &progress, &ctx.block)? {

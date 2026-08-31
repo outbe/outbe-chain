@@ -1,16 +1,16 @@
 [tools]
-# ── Core ────────────────────────────────────────────────────────────── #
+# -- Core -------------------------------------------------------------- #
 rust = "1.96"                      # build outbe-chain + all crates
 foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI)
 
-# ── System deps ─────────────────────────────────── #
+# -- System deps ----------------------------------- #
 # These must come from the system package manager:
 #   - gcc / clang   (C/C++ toolchain for native crates)
 #   - openssl       (linked by openssl-sys; pkg-config locates it)
 # macOS: `brew install openssl pkg-config` (clang ships with Xcode CLT)
 # Debian/Ubuntu: `sudo apt install build-essential clang libssl-dev pkg-config libc++-dev libc++abi-dev`
 
-# ── Cargo tools ─────────────────────────────────────────────────────── #
+# -- Cargo tools ------------------------------------------------------- #
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain
 # (machete, udeps, bloat, llvm-lines, llvm-cov) is installed on
 # demand by `mise run audit-tools-install` to mirror the old Makefile.
@@ -20,8 +20,8 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 "cargo:cargo-auditable" = "latest"
 "cargo:cargo-audit"     = "latest"
 
-# ── Release / versioning ────────────────────────────────────────────── #
-cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
+# -- Release / versioning ---------------------------------------------- #
+cocogitto = "7"                    # `cog` - conventional-commit check + auto-version bump
 duckdb = "latest"
 
 [env]
@@ -34,9 +34,9 @@ VALIDATORS         = "4"
 SOURCE_DATE_EPOCH  = "0"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
 # The persistent Rust harness owns the MongoDB replica set, mock enclaves, and
-# validator processes for the complete localnet-start → localnet-stop lifetime.
+# validator processes for the complete localnet-start -> localnet-stop lifetime.
 
-# ─── Build ──────────────────────────────────────────────────────────── #
+# --- Build ------------------------------------------------------------ #
 
 [tasks.build]
 description = "Build the workspace (debug, cargo auditable)"
@@ -50,7 +50,7 @@ run = [
 description = "Build the workspace (release, cargo auditable)"
 run = "cargo auditable build --release"
 
-# ─── Format / Lint ──────────────────────────────────────────────────── #
+# --- Format / Lint ---------------------------------------------------- #
 
 [tasks.export-abi]
 description = "Regenerate contracts/*/abi-export from Solidity (Rust reads the .sol; the MCP reads these JSONs)"
@@ -80,7 +80,7 @@ fi
 description = "Type-check the workspace"
 run = "cargo check --workspace"
 
-# ─── Test ───────────────────────────────────────────────────────────── #
+# --- Test ------------------------------------------------------------- #
 
 [tasks.test]
 description = "Run the default test suite (cargo nextest run + cargo test --doc)"
@@ -101,7 +101,7 @@ run = "cargo nextest run -p outbe-consensus"
 description = "Install cargo-nextest locally (one-shot helper)"
 run = "cargo install --locked cargo-nextest"
 
-# ─── Audit (RustSec on built binaries) ──────────────────────────────── #
+# --- Audit (RustSec on built binaries) -------------------------------- #
 
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
@@ -113,7 +113,7 @@ description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
 run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
 
-# ─── Audit toolchain (rust-module-audit skill entry points) ─────────── #
+# --- Audit toolchain (rust-module-audit skill entry points) ----------- #
 
 [tasks.audit-tools-install]
 description = "Install full cargo audit toolchain + nightly + miri/llvm components"
@@ -180,7 +180,7 @@ run = "cargo llvm-cov nextest --workspace --html"
 description = "cargo bench (criterion baseline; configure benches per crate)"
 run = "cargo bench --workspace"
 
-# ─── Localnet ───────────────────────────────────────────────────────── #
+# --- Localnet --------------------------------------------------------- #
 
 [tasks.localnet-bootstrap]
 description = "Bootstrap a fresh dev/mock LocalNet through the canonical Rust E2E harness"
@@ -290,7 +290,7 @@ cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-encla
 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
 """
 
-# ─── Off-chain Computation PoC ─────────────────────────────────────── #
+# --- Off-chain Computation PoC --------------------------------------- #
 #
 # These names are the stable surfaces frozen by the OCOMP PoC plan. OCM-00
 # intentionally leaves future lanes fail-closed: only the named task-progress
@@ -355,7 +355,7 @@ cargo build --locked --release --manifest-path ../outbe-heartwood/Cargo.toml --b
 OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --locked --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e -- --tee sgx-no-attest --sudo --validators 4 --all --tags @radicle "$@"
 """
 
-# ─── SGX / Benchmarks ───────────────────────────────────────────────── #
+# --- SGX / Benchmarks ------------------------------------------------- #
 
 # Hardware SGX smoke: build + sign + run the enclave under gramine-sgx and
 # assert real SGX execution + EGETKEY sealing. Requires gramine + SGX

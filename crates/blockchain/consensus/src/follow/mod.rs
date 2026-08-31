@@ -1,21 +1,21 @@
 //! Lightweight follower: cold-sync finalized blocks from an upstream node and
 //! verify them against the chain's committee, WITHOUT running consensus.
 //!
-//! **Trust model — committee-chaining.** outbe's finalize certificate is an
+//! **Trust model - committee-chaining.** outbe's finalize certificate is an
 //! atomic aggregate of individual MinPk votes and a mandatory MinSig threshold
 //! VRF proof over a *committee-bound* namespace. Both are verified with the
 //! epoch-scoped committee material, which changes on every reshare. A follower
 //! therefore:
 //!
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
-//!    set**, read from the follower's OWN genesis state — the trust root;
+//!    set**, read from the follower's OWN genesis state - the trust root;
 //!    nothing the operator must provide;
 //! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
 //!    previous epoch's last finalized block, verifies that block with the already
 //!    trusted previous committee, and only then installs the next verifier.
 //!
 //! All inputs are public on-chain data carried in the boundary block
-//! `extra_data` (the full DKG [`Output`] — players + polynomial); the follower
+//! `extra_data` (the full DKG [`Output`] - players + polynomial); the follower
 //! never holds any DKG secret. [`CommitteeChain`] implements this chaining; it
 //! is exercised by `phase0_spike_*` (the de-risk gate) and the tests below.
 
@@ -50,13 +50,13 @@ pub use upstream::{
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
 /// blocks, anchored on the trusted genesis committee. Verifiers are kept in a
-/// [`HybridSchemeProvider`] keyed by epoch — the same provider type the live
-/// stack uses — so cert verification is byte-identical to the validator path.
+/// [`HybridSchemeProvider`] keyed by epoch - the same provider type the live
+/// stack uses - so cert verification is byte-identical to the validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
 /// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
 /// round seed but is not the committee identity authenticator. So the anchor is the **genesis validator
-/// MinPk set**, read from the follower's OWN genesis state — not a VRF group
+/// MinPk set**, read from the follower's OWN genesis state - not a VRF group
 /// key, and nothing the operator has to provide. The start epoch's committee
 /// (`output.players()`) must equal this set; each later epoch's committee is
 /// trusted via the finalized-boundary chain.
@@ -107,7 +107,7 @@ impl CommitteeChain {
     /// `extra_data`).
     ///
     /// For the anchor epoch (`epoch == anchor.from_epoch`) the committee's group
-    /// key MUST equal the trusted anchor identity — this is the trust root. For
+    /// key MUST equal the trusted anchor identity - this is the trust root. For
     /// later epochs the caller is responsible for only registering committees
     /// from boundary blocks it has already verified as finalized by the prior
     /// (trusted) committee (the chaining link).
@@ -198,11 +198,11 @@ impl CommitteeChain {
     ///
     /// Two carriers register a committee:
     /// - [`CommitteePreAnnounce`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::CommitteePreAnnounce)
-    ///   — the Path A committee-chaining carrier: epoch `E`'s committee riding a
+    ///   - the Path A committee-chaining carrier: epoch `E`'s committee riding a
     ///   block finalized by the already-trusted `E-1` committee. This is the
-    ///   authenticated path — the trust chains from genesis through each E-1.
+    ///   authenticated path - the trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
-    ///   — the activating boundary at `E·L+1`, finalized by `E` ITSELF. We register
+    ///   - the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
     ///   from it ONLY for a not-yet-known epoch (the genesis anchor; and, until the
     ///   pre-announce producer is wired, epochs lacking a pre-announce). We must NOT
     ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce:
@@ -692,7 +692,7 @@ mod tests {
     fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
         // The D1 fix, end to end at the follower: epoch 6's committee is registered
         // from its E-1 PRE-ANNOUNCE (carried in a block finalized by the trusted
-        // epoch-5 committee — the chained path). A later self-finalized epoch-6
+        // epoch-5 committee - the chained path). A later self-finalized epoch-6
         // boundary announcing a DIFFERENT (forged) committee must NOT override it.
         let (e5, e6) = (Epoch::new(5), Epoch::new(6));
         let c5 = committee(10);
@@ -711,7 +711,7 @@ mod tests {
         );
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
 
-        // A forged, self-finalized epoch-6 boundary is a NO-OP — it cannot overwrite
+        // A forged, self-finalized epoch-6 boundary is a NO-OP - it cannot overwrite
         // the chained committee (that overwrite would be the D1 bug).
         let forged_boundary = forged6.boundary_block_extra_data(e6);
         assert_eq!(
@@ -744,7 +744,7 @@ mod tests {
     fn committee_chain_advances_from_boundary_block_extra_data() {
         let e6 = Epoch::new(6);
         let c6 = committee(70);
-        // Anchor on epoch 6 — the boundary block we process announces it.
+        // Anchor on epoch 6 - the boundary block we process announces it.
         let mut chain = CommitteeChain::new(e6, c6.participants.clone());
         // Feeding the boundary block's extra_data registers epoch 6's committee.
         let extra = c6.boundary_block_extra_data(e6);
@@ -764,7 +764,7 @@ mod tests {
     /// the epoch verifier's certificate codec config, then decoding the
     /// `ConsensusBlock` from the REMAINING buffer. This pins that two-step decode
     /// against the resolver's `finalization.encode() ++ block.encode()` wire
-    /// format — the load-bearing interop contract between the follower's
+    /// format - the load-bearing interop contract between the follower's
     /// resolver and the marshal (a divergence here would compile clean but fail
     /// every backfill at runtime).
     #[test]
@@ -787,7 +787,7 @@ mod tests {
         let cert_cfg = verifier.certificate_codec_config();
 
         // An arbitrary valid block (its digest need not match the finalization
-        // payload for the codec contract — the marshal checks that separately).
+        // payload for the codec contract - the marshal checks that separately).
         let block = {
             use alloy_primitives::Bytes;
             use outbe_primitives::OutbeHeader;
@@ -828,16 +828,16 @@ mod tests {
         );
     }
 
-    /// Full `outbe_getFinalization` server→client interop. The SERVER side
+    /// Full `outbe_getFinalization` server->client interop. The SERVER side
     /// (drainer) encodes the certificate and block separately and hexes them
-    /// (`FinalizedBlockBytes` → `FinalizationProof`); the CLIENT side hex-decodes
+    /// (`FinalizedBlockBytes` -> `FinalizationProof`); the CLIENT side hex-decodes
     /// and decodes the certificate with the UNBOUNDED committee config (the
-    /// engine `UpstreamRpcClient` path — it has no committee size yet), then the
+    /// engine `UpstreamRpcClient` path - it has no committee size yet), then the
     /// follower registers the epoch committee from the boundary block and the
     /// marshal-equivalent verification passes. This pins that:
     ///   (a) the unbounded cfg decodes a real committee-length certificate, and
     ///   (b) the decoded `(finalization, block)` is exactly what the resolver
-    ///       registers + the `CommitteeChain` verifies — i.e. a follower accepts
+    ///       registers + the `CommitteeChain` verifies - i.e. a follower accepts
     ///       what a validator serves, end to end.
     #[test]
     fn served_finalization_round_trips_to_verified_certified_block() {
@@ -849,7 +849,7 @@ mod tests {
         let c = committee(40);
 
         // Anchor a chain on this committee and register epoch 4 from its boundary
-        // block — exactly what the follower does on the fetch path.
+        // block - exactly what the follower does on the fetch path.
         let mut chain = CommitteeChain::new(epoch, c.participants.clone());
         let boundary_extra = c.boundary_block_extra_data(epoch);
         assert_eq!(
@@ -895,7 +895,7 @@ mod tests {
         assert!(block_reader.is_empty(), "no trailing bytes after block");
 
         // The decoded certificate verifies against the committee the follower
-        // registered from the boundary block — a follower accepts what the
+        // registered from the boundary block - a follower accepts what the
         // validator served.
         chain
             .verify_finalization(epoch, &decoded_fin)

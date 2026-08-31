@@ -1,4 +1,4 @@
-//! `CommitteeSnapshotStore` — state-backed canonical committee snapshots.
+//! `CommitteeSnapshotStore` - state-backed canonical committee snapshots.
 //!
 //! The V2 certified-parent accounting flow
 //! must verify finalized-parent certificates against the *historical* committee
@@ -50,7 +50,7 @@ pub use outbe_consensus::proof::{
 ///
 /// invariant: the version is strictly
 /// monotonic, incremented by exactly 1, and **never saturates**. Overflow at
-/// `u64::MAX` is a deterministic activation error — both proposer and
+/// `u64::MAX` is a deterministic activation error - both proposer and
 /// validator paths reject the activation rather than silently capping the
 /// value, which would otherwise let two distinct DKG outputs share a version
 /// and break the V2 metadata binding.
@@ -77,10 +77,10 @@ fn join_pubkey(lo: B256, hi: B256) -> [u8; 48] {
 }
 
 /// Number of recent epochs whose committee snapshots stay live. Every reader
-/// (`read_committee_snapshot`) only touches the current finalized epoch ± the
-/// K-block late-finalize window (≪ 1 epoch), so this is a generous retention;
+/// (`read_committee_snapshot`) only touches the current finalized epoch +/- the
+/// K-block late-finalize window (<< 1 epoch), so this is a generous retention;
 /// `write_committee_snapshot` prunes older snapshots to bound state growth.
-/// Changing it is a hard fork (it changes which slots are zero → the state root).
+/// Changing it is a hard fork (it changes which slots are zero -> the state root).
 pub const COMMITTEE_SNAPSHOT_RETAIN_EPOCHS: u64 = 8;
 
 /// Domain separator for the historical OCOMP-key binding attached to an
@@ -149,8 +149,8 @@ fn join_ocomp_public_key(lo: B256, hi: B256) -> Result<[u8; 33]> {
     Ok(public_key)
 }
 
-/// Zeroes every slot of the committee snapshot at `key` — the inverse of
-/// [`write_committee_snapshot`] — reclaiming its EVM storage (a slot set to its
+/// Zeroes every slot of the committee snapshot at `key` - the inverse of
+/// [`write_committee_snapshot`] - reclaiming its EVM storage (a slot set to its
 /// default is empty in the state trie). All loop bounds are read before
 /// `exists` is cleared; otherwise the guard needed to discover them could turn
 /// the clear into a no-op. The flag is cleared only after every field is
@@ -221,7 +221,7 @@ pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()>
 ///
 /// Returns `(committee_set_hash, snapshot_key)`. The function is "atomic per
 /// boundary block" in the sense that all writes happen inside the current EVM
-/// journal — wrap the caller in a [`outbe_primitives::storage::CheckpointGuard`]
+/// journal - wrap the caller in a [`outbe_primitives::storage::CheckpointGuard`]
 /// to roll back on artifact rejection.
 ///
 /// The `exists` flag is intentionally written *last*: even if a checkpoint
@@ -381,7 +381,7 @@ pub fn write_committee_snapshot(
     }
 
     // Prune ring: retain only the last COMMITTEE_SNAPSHOT_RETAIN_EPOCHS epochs.
-    // A boundary writes outgoing(epoch-1) + incoming(epoch) — distinct epochs →
+    // A boundary writes outgoing(epoch-1) + incoming(epoch) - distinct epochs ->
     // distinct ring slots. Writing epoch E evicts the snapshot from epoch E-RETAIN.
     vs.committee_snapshot_key_ring.write(&ring_idx, key)?;
 

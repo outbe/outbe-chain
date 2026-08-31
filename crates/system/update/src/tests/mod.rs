@@ -30,7 +30,7 @@ mod vote_dispatch;
 
 static EMPTY_UPGRADE_HANDLER_REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(&[]);
 
-/// Binary protocol version — safe to activate in tests.
+/// Binary protocol version - safe to activate in tests.
 pub(super) const PV: ProtocolVersion = PROTOCOL_VERSION;
 
 pub(super) const V1_2: ProtocolVersion = encode_protocol_version(1, 2);

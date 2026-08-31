@@ -2,7 +2,7 @@
 # Multi-node consensus smoke (M-24): bootstrap a 4-validator localnet, prove
 # every node clears genesis DKG and finalizes blocks in lockstep, then RESTART
 # the localnet (preserving chain state) and prove every node recovers and keeps
-# advancing in lockstep — exercising the M-21 restart-recovery path end to end.
+# advancing in lockstep - exercising the M-21 restart-recovery path end to end.
 #
 # This is the working replacement for the removed `localnet-chain244-smoke`
 # task (which referenced a script that never existed). It is the CI signal for
@@ -77,11 +77,11 @@ wait_all_reach() {
     done
     echo "$line"
     if [[ $all_ok -eq 1 ]]; then
-      echo "smoke: [$label] PASS — all $VALIDATORS nodes reached height >= $target in lockstep"
+      echo "smoke: [$label] PASS - all $VALIDATORS nodes reached height >= $target in lockstep"
       return 0
     fi
   done
-  echo "smoke: [$label] FAIL — not all nodes reached height >= $target within ${timeout}s" >&2
+  echo "smoke: [$label] FAIL - not all nodes reached height >= $target within ${timeout}s" >&2
   for ((i = 0; i < VALIDATORS; i++)); do
     echo "--- validator-$i last log lines ---" >&2
     tail -n 20 "$OUT_DIR/validator-$i/node.log" 2>/dev/null >&2 || true
@@ -114,7 +114,7 @@ if [[ "${SMOKE_RESTART:-1}" != "0" ]]; then
   sleep 3
   ./scripts/run-testnet.sh start "$OUT_DIR" >/dev/null
   if ! wait_all_reach "$resume_target" "${SMOKE_RESTART_TIMEOUT:-$TIMEOUT}" "restart-recovery"; then
-    echo "smoke: FAIL — localnet did not recover + advance after restart (M-21 recovery regression?)" >&2
+    echo "smoke: FAIL - localnet did not recover + advance after restart (M-21 recovery regression?)" >&2
     exit 1
   fi
 fi

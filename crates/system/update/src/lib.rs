@@ -1,4 +1,4 @@
-//! `Update` — on-chain protocol version scheduling and activation.
+//! `Update` - on-chain protocol version scheduling and activation.
 //!
 //! Vote owns proposal lifecycle; update stores scheduled upgrades and
 //! activates them at `activationHeight` via begin-block processing.

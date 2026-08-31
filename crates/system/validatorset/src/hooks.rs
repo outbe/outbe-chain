@@ -6,7 +6,7 @@ use crate::state::{self, CommitteeSnapshot};
 
 /// Returns `true` if an epoch boundary has been reached at the given block height.
 ///
-/// Does NOT transition the epoch — the caller is responsible for orchestrating
+/// Does NOT transition the epoch - the caller is responsible for orchestrating
 /// the full epoch transition sequence (distribute rewards, reset slash counters,
 /// then call `transition_epoch`).
 pub fn is_epoch_boundary(storage: StorageHandle, block_number: u64) -> Result<bool> {

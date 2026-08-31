@@ -4,7 +4,7 @@
 //! Mirrors reth-node-core's build script (which kona-node and others
 //! copy) so operators see a familiar block format. Uses `vergen-git2` to
 //! pull commit/SHA/dirty/describe and `vergen` for build timestamp,
-//! cargo features and target triple. No runtime dependency is added —
+//! cargo features and target triple. No runtime dependency is added -
 //! everything is collected at build time and exposed via
 //! `cargo:rustc-env`.
 //!

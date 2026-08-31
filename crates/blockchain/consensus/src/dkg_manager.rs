@@ -47,7 +47,7 @@ pub type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlo
 /// Read-only ancestry access used by [`Mailbox::resolve_boundary`] to walk a
 /// proposal/verification parent chain looking for an already-committed DKG
 /// boundary. The production implementation (`MarshalAncestryReader`) lives in
-/// the application handler — `dkg_manager` is the sole consumer and defines the
+/// the application handler - `dkg_manager` is the sole consumer and defines the
 /// contract it needs.
 pub trait AncestryReader: Send + Sync {
     fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
@@ -132,7 +132,7 @@ pub struct CommittedDkgBoundary {
 
 // `BoundaryCommitted` carries the full committed boundary; the other variants are
 // unit. Boxing it would ripple through every match/construct site for a status
-// enum that is held briefly per epoch — not worth it for the stack-size delta.
+// enum that is held briefly per epoch - not worth it for the stack-size delta.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoundaryStatus {
@@ -273,7 +273,7 @@ impl Mailbox {
     /// `(parent_hash, pending_artifact_hash)`) is consulted first; on a miss the
     /// parent chain is walked via `ancestry` down to `boundary_scan_floor`, and
     /// the resolved verdict is cached. Each cache touch is a discrete
-    /// `with_state` call — no lock guard is ever held across an `.await`.
+    /// `with_state` call - no lock guard is ever held across an `.await`.
     ///
     /// Both the propose path (`build_block`) and the verify path
     /// (`validate_header_consensus_artifacts`) call this, so the result must be
@@ -747,7 +747,7 @@ impl Mailbox {
                                 "recorded finalized DKG dealer log"
                             );
                             // Effect: notify the local DKG actor (best-effort),
-                            // preserving the historical insert → send → reconstruct
+                            // preserving the historical insert -> send -> reconstruct
                             // ordering.
                             if let Some(tx) = &ceremony.finalized_dealer_log_tx {
                                 if tx.send(bytes.clone()).is_err() {
@@ -915,7 +915,7 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
     // Per-entry MinPk pubkeys are encoded from the DKG `participants` list, in
     // the same Commonware participant-index order as `new_active_set` (we built
     // `new_active_set` by iterating `participants` above). Length must be 48
-    // bytes — `bls12381::PublicKey` is MinPk-compressed.
+    // bytes - `bls12381::PublicKey` is MinPk-compressed.
     let encoded_pubkeys: Vec<Vec<u8>> = participants
         .iter()
         .map(|bls_pk| commonware_codec::Encode::encode(bls_pk).to_vec())
@@ -1045,7 +1045,7 @@ pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
 /// `keccak256(Encode(full public polynomial))` of the carried DKG output.
 ///
 /// Returns `B256::ZERO` when the outcome is not a decodable full-output ODKO
-/// record (e.g. a group-key-only bootstrap outcome) — in that case the
+/// record (e.g. a group-key-only bootstrap outcome) - in that case the
 /// committee's "invalid seed partial" slash offense is simply unavailable for
 /// that epoch. Deterministic and panic-free; safe to call in the executor over
 /// the already-consensus-validated boundary `outcome`.

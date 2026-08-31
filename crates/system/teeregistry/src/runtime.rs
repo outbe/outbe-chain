@@ -112,7 +112,7 @@ impl TeeRegistry<'_> {
     ///
     /// Native-only: the `TeeBootstrap` system-tx handler calls this
     /// through `StorageHandle::contract` after full validation. Idempotency is
-    /// enforced here as a defense in depth — a second bootstrap is rejected even
+    /// enforced here as a defense in depth - a second bootstrap is rejected even
     /// if the system-tx ordering guard is bypassed.
     pub fn write_bootstrap(&mut self, data: &TeeBootstrapData) -> Result<()> {
         if self.bootstrapped.read()? {
@@ -141,7 +141,7 @@ impl TeeRegistry<'_> {
     /// registered role-neutral NodeHost bindings. Each entry is
     /// `(validator, recipient_x25519, attestation_pub, noise_static_pub)`. The
     /// offer key is PRESERVED across a reshare, so the offer-key / bootstrapped /
-    /// policy / snapshot slots are NOT touched — only the rotating per-validator
+    /// policy / snapshot slots are NOT touched - only the rotating per-validator
     /// enclave keys. Native-only: called from the begin-zone `BoundaryOutcome`
     /// handler after the artifact is validated.
     pub fn record_reshare_registrations(

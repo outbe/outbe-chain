@@ -75,7 +75,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     ///      responsibility (AccessControl lives there).
     function _setRemoteMessenger(uint32 chainId, bytes calldata interop) internal {
         // Inbound auth derives the key from the sender's own bytes, so the interop must embed the same chainId as
-        // the key — a mismatch would silently blackhole every message from that chain.
+        // the key - a mismatch would silently blackhole every message from that chain.
         if (interop.length != 0) {
             (uint256 embedded,) = interop.parseEvmV1Calldata();
             require(embedded == chainId, RemoteMessengerChainMismatch(chainId, embedded));

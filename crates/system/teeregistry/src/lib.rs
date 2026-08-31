@@ -1,4 +1,4 @@
-//! `TeeRegistry` — storage-backed KV precompile (`0x…EE0A`).
+//! `TeeRegistry` - storage-backed KV precompile (`0x...EE0A`).
 //!
 //! Records role-neutral V1 NodeHost enclave bindings and the global
 //! `tribute_offer_public_key`, written once by the OST3 block-1 system

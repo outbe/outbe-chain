@@ -101,7 +101,7 @@ pub fn pledge(
 
 /// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
 /// Returns `(pledge_handle, fidelity_outcome)`; the outcome's `league` is the
-/// caller's current league for the eligibility gate (nothing to persist — a
+/// caller's current league for the eligibility gate (nothing to persist - a
 /// probe never mutates cohorts).
 pub fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
@@ -115,7 +115,7 @@ pub fn pledge_with_fidelity(
 }
 
 /// Directly unpledge an unspent (pending) pledge (`pledge_handle`) back to `caller`.
-/// `amount_stables` is the stables figure the pledge was quoted for — the enclave
+/// `amount_stables` is the stables figure the pledge was quoted for - the enclave
 /// matches it against the ticket. Returns the gratis collateral credited back.
 pub fn unpledge(
     storage: StorageHandle<'_>,
@@ -131,7 +131,7 @@ pub fn unpledge(
 
 /// requestCredis: consume `pledge_handle`'s ticket for `bundle` (authorized by
 /// `spend_auth`), crediting the collateral into the pledger's OWN pledged ledger and
-/// deleting the ticket. The pledger EOA is not passed in calldata — the enclave recovers
+/// deleting the ticket. The pledger EOA is not passed in calldata - the enclave recovers
 /// it from the ticket. Returns `(terms, eoa_ct)`: the loan terms quoted when the pledge
 /// was made (stables amount, asset, entry rate and the gratis collateral), plus the
 /// sealed EOA the caller stores on the Credis position (later opened via

@@ -410,7 +410,7 @@ fn mine_promis(world: &mut World) {
         assert!(settled > 0, "series {series} has nothing settled to mine");
 
         // Promis is minted per unit at the series' load, and the engine derives the
-        // same figure — a mismatch here would fail the proof rather than the mint.
+        // same figure - a mismatch here would fail the proof rather than the mint.
         let promis_load =
             venue_probes::series_promis_load(&url, nft, series).expect("series promis load");
         let amount = U256::from(promis_load) * U256::from(settled);

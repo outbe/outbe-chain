@@ -169,7 +169,7 @@ pub struct GemContract {
 }
 
 impl GemContract<'_> {
-    /// `gem_id = keccak256("gem" ‖ owner ‖ amount_be ‖ block_number_be)`.
+    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be)`.
     /// `amount` is the gem's `gem_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
         use alloy_primitives::keccak256;

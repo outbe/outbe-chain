@@ -42,7 +42,7 @@ impl GemContract<'_> {
     ///
     /// Both terms are per-gem snapshots taken at issuance, so a later change to
     /// `CALL_WINDOW`/`CALL_THRESHOLD` cannot re-term a live gem. `window` must
-    /// come from this gem's own `reference_currency` pair — the caller selects
+    /// come from this gem's own `reference_currency` pair - the caller selects
     /// it (`hooks::window_for`).
     pub(crate) fn trigger_call(
         &mut self,

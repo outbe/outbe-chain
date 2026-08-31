@@ -239,7 +239,7 @@ fn advance_metadosis_only(
 }
 
 // ---------------------------------------------------------------------------
-// next_fire_at — pure scheduling math
+// next_fire_at - pure scheduling math
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -338,7 +338,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
             "block-1 begin_block must create the genesis worldwide day"
         );
 
-        // The daily trigger must only have anchored — no settlement fired.
+        // The daily trigger must only have anchored - no settlement fired.
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -429,7 +429,7 @@ fn does_not_fire_before_next_slot_after_anchor() {
         anchor_genesis(&ctx_anchor);
         dispatch_triggers(&ctx_anchor).unwrap();
 
-        // Block at 00:59:59 UTC — still before the next slot.
+        // Block at 00:59:59 UTC - still before the next slot.
         let ctx_before =
             BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
         dispatch_triggers(&ctx_before).unwrap();
@@ -1214,7 +1214,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
 }
 
 /// a second `run_emission_limit_daily` invocation for an already-settled
-/// `prev_day` is a no-op — the CCA agent pool (and terminal Metadosis)
+/// `prev_day` is a no-op - the CCA agent pool (and terminal Metadosis)
 /// are NOT minted twice. Guards the per-day idempotency added on top of the
 /// C-01 timestamp drift band.
 #[test]
@@ -1246,7 +1246,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
-        // `daily_settled[20240101] == true` and returns early — no double-mint.
+        // `daily_settled[20240101] == true` and returns early - no double-mint.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage
@@ -1536,7 +1536,7 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
 #[test]
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC
-    // on day D+1. prev_day = D = genesis_utc_day → day_number = 0 → Ok.
+    // on day D+1. prev_day = D = genesis_utc_day -> day_number = 0 -> Ok.
     // This is the production scenario that was broken when genesis_utc_day
     // was derived from block 0 timestamp at 10:00 instead of genesisTime.
     const DAY_D_MIDNIGHT: u64 = GENESIS_TS; // 2024-01-01 00:00:00
@@ -1544,7 +1544,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 
     let mut storage = cycle_storage();
     storage.enter(|handle| {
-        // Block 1 at 10:00 — genesis anchor records genesis_utc_day = day D.
+        // Block 1 at 10:00 - genesis anchor records genesis_utc_day = day D.
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, DAY_D_10AM), handle.clone());
         anchor_genesis(&ctx_anchor);
         run_cycle_lifecycle(&ctx_anchor).unwrap();
@@ -1559,8 +1559,8 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             "block 1 at the UTC+14 boundary must create only the canonical WWD"
         );
 
-        // Block at 00:00:01 UTC day D+1 — CycleTick fires.
-        // prev_day = D = genesis_utc_day → day_number_since_genesis = 0.
+        // Block at 00:00:01 UTC day D+1 - CycleTick fires.
+        // prev_day = D = genesis_utc_day -> day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);

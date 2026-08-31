@@ -4,7 +4,7 @@
 //! The node installs one session at startup. When a request fails with a
 //! connection-class fault ([`TransportError::is_connection_fault`]) the session
 //! performs ONE bounded reconnect with identity re-validation and re-sends the
-//! request once — only when [`EnclaveRequest::is_idempotent`] allows it. A
+//! request once - only when [`EnclaveRequest::is_idempotent`] allows it. A
 //! reconnected peer must present the byte-identical identity that was pinned at
 //! install; any mismatch permanently revokes the session (fail-closed), because
 //! every later attestation-tag check would otherwise validate against the
@@ -151,7 +151,7 @@ impl EnclaveSession {
 
     /// The pinned enclave attestation key. Sourced from install-time identity
     /// (dev: quote pin; production: committed manifest), NOT from the live
-    /// connection — so post-reconnect attestation-tag checks verify against the
+    /// connection - so post-reconnect attestation-tag checks verify against the
     /// identity the operator installed, not whatever peer answered last.
     pub fn attestation_pub(&self) -> [u8; 32] {
         match &self.context {
@@ -172,7 +172,7 @@ impl EnclaveSession {
 
     /// Recover after a caller panicked while holding the session mutex: the
     /// interrupted request left the Noise cipher state unknown, so drop the
-    /// client and force a clean reconnect on next use. Latched — later lock
+    /// client and force a clean reconnect on next use. Latched - later lock
     /// acquisitions must not tear down a healthy reconnected client.
     pub fn recover_from_poison(&mut self) {
         if !self.poison_recovered {
@@ -217,7 +217,7 @@ impl EnclaveSession {
         self.reconnect()?;
         if !req.is_idempotent() {
             // The session is healed for the next caller, but this request may
-            // already have executed inside the enclave — surface the original
+            // already have executed inside the enclave - surface the original
             // fault instead of risking a double apply.
             return Err(first_err);
         }
@@ -232,7 +232,7 @@ impl EnclaveSession {
     /// Whole-operation wrapper for the production-only DCAP flows: run the
     /// operation once; on a connection fault reconnect once and rerun the WHOLE
     /// operation (a multi-frame upload restarts from `Begin` on the fresh
-    /// session — the enclave keys upload state per connection).
+    /// session - the enclave keys upload state per connection).
     fn with_production_retry<T>(
         &mut self,
         op_label: &'static str,
@@ -376,7 +376,7 @@ impl EnclaveSession {
                 // Noise-IK against `manifest.noise_responder_x25519` IS the
                 // identity check: an impostor can never complete the handshake.
                 // Handshake failure therefore stays retryable (connect_failed),
-                // never a revocation — a legitimately replaced enclave keeps
+                // never a revocation - a legitimately replaced enclave keeps
                 // failing here until the operator restarts the node, which the
                 // replacement flow already requires.
                 match AuthorizedEnclaveClient::connect_endpoint(endpoint, manifest, node_host) {
@@ -652,11 +652,11 @@ mod tests {
         let mut session = connect_session(&server);
         assert_eq!(session.generation(), 1);
         // Install consumed request #1 (the probe); #2 succeeds; #3 gets the
-        // connection dropped mid-request → reconnect (fresh connection, its own
-        // probe) → retry succeeds.
+        // connection dropped mid-request -> reconnect (fresh connection, its own
+        // probe) -> retry succeeds.
         let first = session.request(&EnclaveRequest::GetPublicKeys).expect("ok");
         assert!(matches!(first, EnclaveResponse::PublicKeys { .. }));
-        // Request #3 on connection 1 exceeds the per-connection budget → the
+        // Request #3 on connection 1 exceeds the per-connection budget -> the
         // server drops it mid-request; the reconnect's fresh connection serves
         // its probe + the retry within the same budget.
         let retried = session
@@ -688,7 +688,7 @@ mod tests {
             "connect failure must stay retryable, got: {error}"
         );
         // A new server at the SAME endpoint path cannot be rebuilt (tempdir
-        // dropped); the point above — no revocation — is the invariant.
+        // dropped); the point above - no revocation - is the invariant.
     }
 
     #[test]

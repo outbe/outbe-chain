@@ -22,7 +22,7 @@ interface IFidelity {
     function decimals() external view returns (uint8);
 
     /// Synthetic maximum Fidelity Index (saturating RCFI) at `timestamp`.
-    /// Derived from the plaintext global anchor — no authorization needed.
+    /// Derived from the plaintext global anchor - no authorization needed.
     function maxFidelityIndexAt(uint64 timestamp) external view returns (uint256);
 
     /// Lowest league (inclusive).

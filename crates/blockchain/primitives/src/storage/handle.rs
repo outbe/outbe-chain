@@ -323,14 +323,14 @@ impl<'storage> StorageHandle<'storage> {
     // === Sub-call API stubs ===
     //
     // STUB until T4/T6 lands real behavior; returns Ok(empty). Signatures
-    // here are the public contract — T4 (STATICCALL) and T6 (CALL) MUST swap
+    // here are the public contract - T4 (STATICCALL) and T6 (CALL) MUST swap
     // bodies only, never types.
 
     /// Invokes a child CALL frame and returns the raw returndata.
     ///
-    /// Maps `SubCallStatus::Success → Ok(bytes)`,
-    /// `Revert(bytes) → Err(RevertBytes(bytes))`,
-    /// `Halt(err) → Err(SubCall(err))`.
+    /// Maps `SubCallStatus::Success -> Ok(bytes)`,
+    /// `Revert(bytes) -> Err(RevertBytes(bytes))`,
+    /// `Halt(err) -> Err(SubCall(err))`.
     pub fn call(
         &self,
         target: Address,

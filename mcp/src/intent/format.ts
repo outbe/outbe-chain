@@ -18,7 +18,7 @@ export const ORDER_DATA_TUPLE = parseAbiParameters(
   "(bytes32 sender, bytes32 recipient, bytes32 inputToken, bytes32 outputToken, uint256 amountIn, uint256 amountOut, uint256 senderNonce, uint32 originDomain, uint32 destinationDomain, bytes32 destinationSettler, uint32 fillDeadline, bytes data)",
 );
 
-// keccak256 of the OrderData type string — matches OrderEncoder.orderDataType().
+// keccak256 of the OrderData type string - matches OrderEncoder.orderDataType().
 export const ORDER_DATA_TYPE_HASH = keccak256(
   stringToBytes(
     "OrderData(bytes32 sender,bytes32 recipient,bytes32 inputToken,bytes32 outputToken,uint256 amountIn,uint256 amountOut,uint256 senderNonce,uint32 originDomain,uint32 destinationDomain,bytes32 destinationSettler,uint32 fillDeadline,bytes data)",
@@ -51,7 +51,7 @@ export function decodeOrderData(bytes: Hex): OrderData {
   const [d] = decodeAbiParameters(ORDER_DATA_TUPLE, bytes);
   return d as OrderData;
 }
-/** Order id = keccak256(abi.encode(OrderData)) — matches OrderEncoder.id(). */
+/** Order id = keccak256(abi.encode(OrderData)) - matches OrderEncoder.id(). */
 export function computeOrderId(o: OrderData): Hex {
   return keccak256(encodeOrderData(o));
 }

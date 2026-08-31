@@ -282,7 +282,7 @@ pub struct MetadosisContract {
     >,
 
     /// Per-WorldwideDay terminal IntentIds in canonical attempt order, keyed
-    /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 ‖ wwd_be ‖ index_be)` (see
+    /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 || wwd_be || index_be)` (see
     /// `ocomp::terminal_index`). Bounded by the frozen profile's
     /// `max_terminal_job_records` **for that day only**; entries are immutable
     /// once written and deleted together with the day on retirement. Must stay

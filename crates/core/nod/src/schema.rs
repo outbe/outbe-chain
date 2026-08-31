@@ -199,7 +199,7 @@ pub struct NodContract {
     #[attribute(order = 13)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
-    // slot 5: per-bin bucket index — keccak(iso ++ bin_id ++ index) →
+    // slot 5: per-bin bucket index - keccak(iso ++ bin_id ++ index) ->
     // bucket_key. Insertion-ordered; on qualification, the bin is either
     // drained wholesale (count := 0, bit cleared) or compacted (survivors
     // moved up).
@@ -314,7 +314,7 @@ pub struct NodContract {
     #[attribute(order = 39)]
     pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `entry_price_minor × CALL_RATE_PCT / 100`, snapshotted at qualification so
+    /// `entry_price_minor x CALL_RATE_PCT / 100`, snapshotted at qualification so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
@@ -351,7 +351,7 @@ impl<'storage> NodContract<'storage> {
     /// The currency is part of the preimage because `floor_price_minor` is
     /// denominated in it: two Nods sharing a day and a floor value in
     /// different currencies are priced against different oracle rates and must
-    /// not share a bucket. This is the single derivation — the Lysis program
+    /// not share a bucket. This is the single derivation - the Lysis program
     /// calls it too, so the off-chain and on-chain keys cannot drift.
     pub fn bucket_key(
         worldwide_day: WorldwideDay,

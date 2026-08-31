@@ -4,7 +4,7 @@
 //! The rule has two halves:
 //!
 //! 1. At genesis the version is exactly `0`. Each successful reshare
-//!    activation produces exactly `previous + 1` — never `previous` and never
+//!    activation produces exactly `previous + 1` - never `previous` and never
 //!    `previous + 2`.
 //! 2. At `u64::MAX` the activation **rejects deterministically** with
 //!    [`outbe_validatorset::ActivationError::VrfVersionOverflow`]. Saturation
@@ -25,7 +25,7 @@ fn vrf_material_version_zero_at_genesis_and_increments_by_one_per_reshare() {
     // Genesis: pin the genesis value to 0.
     assert_eq!(VRF_MATERIAL_VERSION_GENESIS, 0);
 
-    // Five consecutive successful reshare activations: 0 → 1 → 2 → 3 → 4 → 5.
+    // Five consecutive successful reshare activations: 0 -> 1 -> 2 -> 3 -> 4 -> 5.
     let mut v = VRF_MATERIAL_VERSION_GENESIS;
     for expected in 1..=5u64 {
         v = next_vrf_material_version(v).expect("non-overflow increment");
@@ -43,7 +43,7 @@ fn vrf_material_version_zero_at_genesis_and_increments_by_one_per_reshare() {
         "monotonic +1 must hold across the full u64 range until u64::MAX",
     );
 
-    // Sanity: it is strictly monotonic — successive calls must not return the
+    // Sanity: it is strictly monotonic - successive calls must not return the
     // same value (this would be the failure signature of a saturating impl).
     let a = next_vrf_material_version(0).unwrap();
     let b = next_vrf_material_version(a).unwrap();
@@ -57,17 +57,17 @@ fn vrf_material_version_zero_at_genesis_and_increments_by_one_per_reshare() {
 #[test]
 fn vrf_material_version_overflow_rejects_activation_not_saturates() {
     // u64::MAX + 1 overflows. The rule says: reject deterministically with
-    // ActivationError::VrfVersionOverflow — never return u64::MAX (which would
+    // ActivationError::VrfVersionOverflow - never return u64::MAX (which would
     // be the saturation outcome and break version uniqueness).
     let result = next_vrf_material_version(u64::MAX);
 
     match result {
         Err(ActivationError::VrfVersionOverflow) => { /* expected */ }
         Err(other) => panic!("expected ActivationError::VrfVersionOverflow, got {other:?}"),
-        Ok(v) => panic!("expected overflow rejection, got Ok({v}) — saturation is not allowed"),
+        Ok(v) => panic!("expected overflow rejection, got Ok({v}) - saturation is not allowed"),
     }
 
-    // u64::MAX - 1 → u64::MAX is the last successful step; only the *next*
+    // u64::MAX - 1 -> u64::MAX is the last successful step; only the *next*
     // call must reject. This pins the boundary.
     assert_eq!(
         next_vrf_material_version(u64::MAX - 1).unwrap(),

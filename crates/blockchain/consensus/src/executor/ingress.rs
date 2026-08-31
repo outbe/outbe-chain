@@ -12,13 +12,13 @@ use outbe_primitives::OutbePayloadAttributes;
 /// sus-1: this mailbox is intentionally **unbounded**. The executor is the sole
 /// recovery-critical sink for marshal-delivered finalized blocks, and its inflow
 /// is naturally bounded by the consensus block rate (one finalized block per
-/// finalized view, plus low-rate canonicalize/heartbeat traffic) — it is not a
+/// finalized view, plus low-rate canonicalize/heartbeat traffic) - it is not a
 /// fan-in hot path. Because it is unbounded, `Reporter::report` here never
 /// returns `Feedback::Backoff` (an unbounded `unbounded_send` only fails when the
 /// receiver is gone, surfaced as `Feedback::Closed`), so the upstream
 /// `let _ = report(...)` sites cannot be silently throttled. A bounded queue with
 /// an overflow policy would let marshal/Simplex throttle under sustained
-/// pressure; that is deferred — if executor mailbox depth ever becomes a concern,
+/// pressure; that is deferred - if executor mailbox depth ever becomes a concern,
 /// add a depth metric here before switching to a bounded queue. The same holds
 /// for the peer_manager and finalization endpoints.
 #[derive(Clone)]
@@ -92,7 +92,7 @@ impl Mailbox {
 ///
 /// Marshal calls `report(Update::Block(block, ack))` to deliver finalized blocks.
 /// The executor processes the block and acknowledges back to marshal, which
-/// persists the processed height — the recovery truth on restart.
+/// persists the processed height - the recovery truth on restart.
 impl commonware_consensus::Reporter for Mailbox {
     type Activity = crate::marshal_types::MarshalUpdate;
 
@@ -118,7 +118,7 @@ impl commonware_consensus::Reporter for Mailbox {
         }
         // `report` is now synchronous: enqueue the update into the executor
         // actor's mailbox and translate the channel state into `Feedback`.
-        // We must not bridge to async work here (no spawn) — the executor
+        // We must not bridge to async work here (no spawn) - the executor
         // drains `Message::MarshalUpdate` on its own loop and acks marshal
         // after successful EL processing, preserving determinism.
         match self

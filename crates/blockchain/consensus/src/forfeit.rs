@@ -1,7 +1,7 @@
 //! Deterministic proposer-forfeit reason taxonomy.
 //!
 //! A proposer that cannot legitimately build a block must forfeit its slot
-//! with a deterministic, structured reason — the same set of reasons across
+//! with a deterministic, structured reason - the same set of reasons across
 //! every validator. The reason drives the `outbe_proposer_forfeit_total{reason}`
 //! counter (see [`crate::metrics::record_proposer_forfeit`]).
 //!
@@ -13,7 +13,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ProposerForfeitReason {
-    /// Direct-parent proof was not available within budget — neither
+    /// Direct-parent proof was not available within budget - neither
     /// finalization nor certified-notarization, and the bounded remote fetch
     /// did not return a usable proof in time.
     ParentProofUnavailable,
@@ -29,7 +29,7 @@ pub enum ProposerForfeitReason {
 
 impl ProposerForfeitReason {
     /// Stable metric-label string. **Do not rename without a coordinated
-    /// metric-schema change** — operators alert on these values.
+    /// metric-schema change** - operators alert on these values.
     pub const fn label(self) -> &'static str {
         match self {
             Self::ParentProofUnavailable => "parent_proof_unavailable",

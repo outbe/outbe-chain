@@ -2,11 +2,11 @@
 //!
 //! Two entrypoints:
 //!
-//! * [`record_phase1_progress`] — writes `last_accounted_block_number = N`
+//! * [`record_phase1_progress`] - writes `last_accounted_block_number = N`
 //!   after the V2 Phase 1 system tx for block `N` has successfully
 //!   committed. Sole writer for slot 0 of `ACCOUNTING_PROGRESS_ADDRESS`
 //!   (INV4). Invoked by the executor reorder.
-//! * [`read_last_accounted_block_number`] — read-only accessor for Cycle
+//! * [`read_last_accounted_block_number`] - read-only accessor for Cycle
 //!   and Rewards. Returns `0` on a fresh chain.
 //!
 //! Monotonicity: this layer rejects regressions defensively, while the

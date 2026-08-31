@@ -15,8 +15,8 @@ pub const BIN_STEP_BP: u16 = 25;
 /// and is resumed deterministically in the next block.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
-/// Call price as a percent OF the entry price: `call = entry × CALL_RATE_PCT / 100`
-/// (256 => 2.56× entry). This is a multiple, not a markup — gem's `CALL_RATE` is
+/// Call price as a percent OF the entry price: `call = entry x CALL_RATE_PCT / 100`
+/// (256 => 2.56x entry). This is a multiple, not a markup - gem's `CALL_RATE` is
 /// added to 100 before dividing, so the two constants are not interchangeable.
 pub const CALL_RATE_PCT: u64 = 256;
 

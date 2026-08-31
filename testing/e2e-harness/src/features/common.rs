@@ -2,7 +2,7 @@
 //! parity. These back the `Given`/`Then` lines that every flow reuses.
 //!
 //! Environment choices (validator count, TEE mode) come from the CLI, not the
-//! feature text — the setup step reads them off the `World` handles, and the
+//! feature text - the setup step reads them off the `World` handles, and the
 //! requirements themselves are declared as tags (see [`crate::env`]).
 
 use std::thread::sleep;

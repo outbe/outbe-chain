@@ -186,7 +186,7 @@ impl OutbeEvmSigner {
     }
 
     /// Sign a raw 32-byte prehash, returning a recoverable secp256k1 signature in
-    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1) — the exact format
+    /// `r(32) || s(32) || v(1)` form (`v` = recovery id 0/1) - the exact format
     /// [`crate::tee_signatures::recover_signer`] consumes. Used by the consensus
     /// thread to sign the TEE bootstrap payload's `signing_hash` with this
     /// validator's EVM key.

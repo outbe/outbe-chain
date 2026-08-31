@@ -2,7 +2,7 @@
 //!
 //! Step 21 of the rewards-economy-mailbox migration removed the
 //! `Message::Finalized` variant from this mailbox. Finalization
-//! notifications now flow voter → `OutbeReporter` → `FinalizationActor`
+//! notifications now flow voter -> `OutbeReporter` -> `FinalizationActor`
 //! through `crate::finalization::ingress::Mailbox` (an unbounded
 //! channel), so a slow finalization consumer can no longer back-pressure
 //! the application handler.
@@ -40,7 +40,7 @@ impl Mailbox {
             response: tx,
         });
         if let Err(e) = self.inner.send(msg).await {
-            error!(%e, "failed to send genesis message — handler closed");
+            error!(%e, "failed to send genesis message - handler closed");
             return Digest::ZERO;
         }
         rx.await.unwrap_or(Digest::ZERO)
@@ -56,7 +56,7 @@ impl Mailbox {
             response: tx,
         }));
         if let Err(e) = self.inner.send(msg).await {
-            error!(%e, "failed to send propose message — handler closed");
+            error!(%e, "failed to send propose message - handler closed");
         }
         rx
     }
@@ -76,7 +76,7 @@ impl Mailbox {
             response: tx,
         }));
         if let Err(e) = self.inner.send(msg).await {
-            error!(%e, "failed to send verify message — handler closed");
+            error!(%e, "failed to send verify message - handler closed");
         }
         rx
     }
@@ -96,19 +96,19 @@ pub enum Message {
     Verify(Box<Verify>),
 }
 
-/// Genesis request — return the genesis digest for the given epoch.
+/// Genesis request - return the genesis digest for the given epoch.
 pub struct Genesis {
     pub epoch: Epoch,
     pub response: oneshot::Sender<Digest>,
 }
 
-/// Propose request — build a new block on top of the parent.
+/// Propose request - build a new block on top of the parent.
 pub struct Propose {
     pub context: SimplexContext,
     pub response: oneshot::Sender<Digest>,
 }
 
-/// Verify request — validate a proposed block against the execution layer.
+/// Verify request - validate a proposed block against the execution layer.
 pub struct Verify {
     pub context: SimplexContext,
     pub payload: Digest,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title ICredisFactory — credis lifecycle orchestrator.
+/// @title ICredisFactory - credis lifecycle orchestrator.
 interface ICredisFactory {
     event CredisRequested(address indexed smartAccount, address indexed cca, uint256 amount);
 
@@ -25,14 +25,14 @@ interface ICredisFactory {
     ///         as the originating CCA.
     ///
     /// `msg.sender` must be a CCA in `Active` standing at the registry, and
-    /// `smartAccount` must already be deployed — the loan is delivered by a
+    /// `smartAccount` must already be deployed - the loan is delivered by a
     /// call into it, which would silently succeed against a codeless account.
     ///
     /// The call is payable and `msg.value` must equal the pledged collateral
     /// exactly, in COEN: the CCA matches the borrower's stake one for one. That
     /// stake is escrowed against the position, returned to the CCA when the
     /// position settles in full, and burned if it voids. The required amount is
-    /// not in calldata — it was sealed into the ticket at pledge time — so read
+    /// not in calldata - it was sealed into the ticket at pledge time - so read
     /// it from the pledge quote before calling.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
@@ -45,7 +45,7 @@ interface ICredisFactory {
     ///         collateral from the pledged lock ledger back to its balance.
     ///         A position is settleable from the moment it opens. Payment is applied
     ///         interest first, principal second, so an `amount` below the interest accrued
-    ///         since the last settlement is rejected — query
+    ///         since the last settlement is rejected - query
     ///         `ICredis.accruedInterest` for that floor. Collateral is released in
     ///         proportion to the principal covered, and the settlement that clears
     ///         the last of the outstanding principal releases exactly the remainder,

@@ -3,19 +3,19 @@
 //! A non-transferable, mineable/burnable balance ledger whose per-account
 //! balances and pledged amounts are **encrypted at rest**: the TEE enclave is the
 //! only party that decrypts them (and the account's view-key holder, client-side).
-//! Every write routes through the enclave — read the current ciphertext, apply the
-//! op inside SGX, store the returned ciphertext verbatim — mirroring the tribute
+//! Every write routes through the enclave - read the current ciphertext, apply the
+//! op inside SGX, store the returned ciphertext verbatim - mirroring the tribute
 //! offer path's determinism + attestation model.
 //!
 //! Module layout:
-//! - [`api`] — cross-crate surface (owner-authorized writes + credis-driven ops +
+//! - [`api`] - cross-crate surface (owner-authorized writes + credis-driven ops +
 //!   ciphertext reads); other crates call `outbe_gratis::api::*`.
-//! - [`precompile`] — inbound ABI (metadata + confidential reads + non-transferable
+//! - [`precompile`] - inbound ABI (metadata + confidential reads + non-transferable
 //!   stubs); no writes go through the ABI.
-//! - [`enclave_client`] — host caller for `ApplyGratisOp` (determinism + attestation
+//! - [`enclave_client`] - host caller for `ApplyGratisOp` (determinism + attestation
 //!   checks) plus the in-process test enclave.
-//! - `runtime` / `state` — orchestration and ledger CRUD (crate-private).
-//! - `schema` — encrypted storage layout for the [`Gratis`] facade.
+//! - `runtime` / `state` - orchestration and ledger CRUD (crate-private).
+//! - `schema` - encrypted storage layout for the [`Gratis`] facade.
 
 pub mod api;
 pub mod enclave_client;

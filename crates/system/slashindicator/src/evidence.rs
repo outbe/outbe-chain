@@ -11,12 +11,12 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 /// The ordered committee (BLS MinPk public keys) the evidence's epoch ran. The
 /// vote namespaces are committee-bound, so evidence verification must use
-/// the SAME committee the Simplex signer used — supplied by the runtime from the
+/// the SAME committee the Simplex signer used - supplied by the runtime from the
 /// epoch's on-chain `CommitteeSnapshot`. Both the chain
 /// (`outbe_app_namespace()`,) and the committee are thus bound,
 /// so a vote from another chain OR another committee can no longer be replayed as
 /// fabricated double-sign evidence here. The committee-bound namespaces come from
-/// `outbe_consensus::proof` — the single source of truth shared with the signer.
+/// `outbe_consensus::proof` - the single source of truth shared with the signer.
 pub(crate) type EvidenceCommittee = Set<bls12381::PublicKey>;
 
 /// Parsed evidence block containing signer identity, signature, and proposal data.
@@ -127,7 +127,7 @@ fn build_signed_payload_with_ns(namespace: &[u8], payload_bytes: &[u8]) -> Vec<u
 }
 
 // Vote namespaces (notarize/nullify/finalize) come from
-// `outbe_consensus::proof::*_namespace(committee)` — the single committee-bound
+// `outbe_consensus::proof::*_namespace(committee)` - the single committee-bound
 // derivation shared with the signer. No local namespace builders remain,
 // so signer and evidence verifier cannot drift.
 

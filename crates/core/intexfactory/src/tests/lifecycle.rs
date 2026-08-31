@@ -656,7 +656,7 @@ mod call_sweep {
     }
 
     /// A day's group holds one series per issuance currency, and the credit is
-    /// written once for the whole group — so the total has to be the sum over its
+    /// written once for the whole group - so the total has to be the sum over its
     /// members, with neither double-counted nor dropped.
     #[test]
     fn a_group_credits_every_member_exactly_once() {
@@ -1029,7 +1029,7 @@ mod call_sweep {
     }
 
     /// A price the bin ladder cannot hold skips its currency instead of halting the
-    /// block — the scan runs in `begin_block`, where an error is not survivable.
+    /// block - the scan runs in `begin_block`, where an error is not survivable.
     #[test]
     fn a_window_price_out_of_range_skips_the_currency() {
         with_factory(|s| {
@@ -1381,7 +1381,7 @@ mod called_pstar {
         with_oracle(|s| {
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
-            // 24 breach days, then three quiet ones — including the last closed day.
+            // 24 breach days, then three quiet ones - including the last closed day.
             seed_window(
                 &oracle,
                 pair,

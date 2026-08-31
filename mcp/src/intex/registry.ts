@@ -25,7 +25,7 @@ const abiOf = (json: unknown): Abi =>
  * not a rewrite. The ABI JSON is inlined at build time, never read at runtime.
  *
  * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
- * hand-written — matching the convention in src/registry.ts. Where a method is
+ * hand-written - matching the convention in src/registry.ts. Where a method is
  * only on the concrete contract and not its interface, the concrete artifact is
  * used.
  */
@@ -86,7 +86,7 @@ const OUTBE_ONLY = {
  *  and every target; enabling a new target = adding it here + its wCOEN below. */
 const AUCTION_LIVE = new Set(["bsc-testnet"]);
 
-/** WCOEN — the auction's six-decimal payment token, per chain. */
+/** WCOEN - the auction's six-decimal payment token, per chain. */
 const PAYMENT_TOKEN: Record<string, Address> = {
   "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };

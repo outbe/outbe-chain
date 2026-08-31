@@ -16,7 +16,7 @@ export async function getTokenDecimals(
   provider: Provider
 ): Promise<number> {
   // Native decimals are not discoverable over RPC and are not the same on every
-  // chain — COEN is six-decimal — so they come from the chain config.
+  // chain - COEN is six-decimal - so they come from the chain config.
   if (isNativeToken(tokenAddress)) {
     const { chainId } = await provider.getNetwork();
     const decimals = nativeDecimalsByChainId[Number(chainId)];
@@ -80,7 +80,7 @@ export function getProviderByDomain(domain: number | bigint): JsonRpcProvider {
   );
 
   if (!chainEntry) {
-    console.error('❌ Chain not found for domain:', domainNum);
+    console.error('[FAIL] Chain not found for domain:', domainNum);
     console.error('   Available chains:', Object.keys(chains).join(', '));
     process.exit(1);
   }
@@ -99,11 +99,11 @@ export function sleep(ms: number): Promise<void> {
 
 /**
  * Read order data directly from on-chain storage (openOrders mapping).
- * No event scanning needed — works regardless of block depth.
+ * No event scanning needed - works regardless of block depth.
  *
  * @param orderId The order ID to look up
  * @param router Router contract instance (connected to origin chain)
- * @returns { originData, orderData } — raw bytes and decoded OrderData
+ * @returns { originData, orderData } - raw bytes and decoded OrderData
  */
 export async function getOrderData(
   orderId: string,

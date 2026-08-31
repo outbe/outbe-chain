@@ -134,8 +134,8 @@ contract SyncTokenBridge {
 }
 
 /// @dev Origin==target on one chain: both routers, the auction, the escrow and the canonical NFT
-///      are wired to a synchronous in-process bridge, so every protocol message — including the
-///      nested bids relay fired from inside the CLEARING delivery — executes in the sending
+///      are wired to a synchronous in-process bridge, so every protocol message - including the
+///      nested bids relay fired from inside the CLEARING delivery - executes in the sending
 ///      transaction, mirroring the loopback transport. Each delivery runs under its exact IntexGas
 ///      executionGasLimit attribute, so an undersized budget out-of-gases the delivery and fails
 ///      the walk: the test doubles as the budget check.
@@ -258,7 +258,7 @@ contract LocalLoopbackTest is Test {
     }
 
     function test_FullWalk_OriginAsTarget() public {
-        // 1. STAGE_START broadcast lands synchronously: hub → loopback → hub → TargetRouter → auction.
+        // 1. STAGE_START broadcast lands synchronously: hub -> loopback -> hub -> TargetRouter -> auction.
         vm.prank(address(desis));
         origin.sendAuctionStageStart(_stageStartParams());
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
@@ -282,7 +282,7 @@ contract LocalLoopbackTest is Test {
         assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e6, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
-        //    back through the loopback to the origin — three chained same-tx deliveries.
+        //    back through the loopback to the origin - three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
         origin.sendAuctionStageClearing(DAY);
@@ -295,7 +295,7 @@ contract LocalLoopbackTest is Test {
         assertEq(desis.doneTotalBatches(), 1, "marker batches");
         assertEq(desis.doneTotalBids(), 2, "marker bids");
 
-        // 5. AUCTION_RESULT: supply 50 → iba1 wins 30, iba2 wins 20 at the uniform rate 700k.
+        // 5. AUCTION_RESULT: supply 50 -> iba1 wins 30, iba2 wins 20 at the uniform rate 700k.
         vm.prank(address(desis));
         origin.sendAuctionResult(local, DAY, 50, 700_000, 2);
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(DAY).result;
@@ -308,8 +308,8 @@ contract LocalLoopbackTest is Test {
         bidders[0] = iba1;
         bidders[1] = iba2;
         uint128[] memory refunded = new uint128[](2);
-        refunded[0] = 3e6; // lock 24 WCOEN − paid 30·1·0.7
-        refunded[1] = 14e6; // lock 28 WCOEN − paid 20·1·0.7
+        refunded[0] = 3e6; // lock 24 WCOEN - paid 30*1*0.7
+        refunded[1] = 14e6; // lock 28 WCOEN - paid 20*1*0.7
         uint128[] memory paid = new uint128[](2);
         paid[0] = 21e6;
         paid[1] = 14e6;

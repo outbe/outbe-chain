@@ -148,7 +148,7 @@ impl PoolError {
 
     /// Returns `true` if this is a blob sidecar error that should NOT be cached as a bad import.
     ///
-    /// The transaction hash may be valid — the issue is peer-specific (e.g. malformed sidecar
+    /// The transaction hash may be valid - the issue is peer-specific (e.g. malformed sidecar
     /// data), so we penalize the peer but allow re-fetching from other peers.
     #[inline]
     pub const fn is_bad_blob_sidecar(&self) -> bool {

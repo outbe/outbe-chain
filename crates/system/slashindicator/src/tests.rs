@@ -111,7 +111,7 @@ fn test_slash_proposer_misdemeanor() {
         }
 
         assert_eq!(si.get_proposer_miss_count(VAL_A).unwrap(), 50);
-        // Misdemeanor is logged only — no felony
+        // Misdemeanor is logged only - no felony
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
 
         // Validator status must still be ACTIVE (not force-exited)
@@ -165,7 +165,7 @@ fn test_slash_proposer_felony() {
 #[test]
 fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
-    // ACTIVE→EXITING / PENDING→REGISTERED when stake drops below min_stake, but a
+    // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake, but a
     // JAILED status matches neither arm, so a JAILED validator stays JAILED even
     // when the slash takes it below min_stake.
     with_storage(|storage| {
@@ -529,7 +529,7 @@ fn test_conflicting_vote_same_type_fails() {
 
         write_test_committee(&storage);
 
-        // This should fail — both are notarize, need one notarize + one nullify
+        // This should fail - both are notarize, need one notarize + one nullify
         let mut si = SlashIndicator::new(storage.clone());
         assert!(si
             .submit_conflicting_vote_evidence(SUBMITTER, &ev1, &ev2)
@@ -540,7 +540,7 @@ fn test_conflicting_vote_same_type_fails() {
 // ---------------------------------------------------------------------------
 // 10. test_full_lifecycle_integration
 // ---------------------------------------------------------------------------
-/// Integration test: register → stake → activate → propose → slash → forced exit.
+/// Integration test: register -> stake -> activate -> propose -> slash -> forced exit.
 #[test]
 fn test_full_lifecycle_integration() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -573,14 +573,14 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(validator, U256::from(1_000_000u64))
             .unwrap();
 
-        // Stake to meet min_stake → PENDING (PoS lifecycle), then activate so the
+        // Stake to meet min_stake -> PENDING (PoS lifecycle), then activate so the
         // felony has an ACTIVE consensus participant to act on (the DKG reshare
-        // normally promotes PENDING→ACTIVE; use the semantic boundary fixture).
+        // normally promotes PENDING->ACTIVE; use the semantic boundary fixture).
         staking
             .stake(validator, validator, U256::from(10_000u64))
             .unwrap();
         // stake() no longer transfers funds (EVM call value does it).
-        // slash_stake burns from STAKING_ADDRESS — fund it for the test.
+        // slash_stake burns from STAKING_ADDRESS - fund it for the test.
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
         assert!(matches!(
@@ -641,7 +641,7 @@ fn test_full_lifecycle_integration() {
 
 // ---------------------------------------------------------------------------
 // Voter felony: missed finalize votes are punitive at the felony threshold.
-// Mirrors the proposer-felony path — force-exit + 5% slash.
+// Mirrors the proposer-felony path - force-exit + 5% slash.
 // ---------------------------------------------------------------------------
 #[test]
 fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
@@ -660,7 +660,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
         assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
 
-        // 150th miss crosses the felony threshold → force-exit + 5% stake slash.
+        // 150th miss crosses the felony threshold -> force-exit + 5% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
@@ -669,13 +669,13 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
             ValidatorLifecycle::JailRetained(_)
         ));
 
-        // 1_000_000 stake slashed by 5% → 950_000.
+        // 1_000_000 stake slashed by 5% -> 950_000.
         let staking = Staking::new(storage.clone());
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
     });
 }
 
-/// graduated escalation invariant — the misdemeanor (warning) threshold
+/// graduated escalation invariant - the misdemeanor (warning) threshold
 /// must be strictly below the felony (slash) threshold for both proposer and
 /// voter, so the warning can fire before the punishment.
 #[test]
@@ -702,7 +702,7 @@ fn already_jailed_voter_is_not_re_slashed() {
         let mut si = SlashIndicator::new(storage.clone());
         si.config_voter_felony_threshold.write(2).unwrap();
 
-        // First felony at count==2: JAIL + 5% slash (1_000_000 → 950_000).
+        // First felony at count==2: JAIL + 5% slash (1_000_000 -> 950_000).
         si.slash_voter(VAL_A).unwrap();
         si.slash_voter(VAL_A).unwrap();
         let vs = ValidatorSet::new(storage.clone());
@@ -715,7 +715,7 @@ fn already_jailed_voter_is_not_re_slashed() {
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
 
         // Two more misses reach count==4 (another threshold multiple), but the
-        // validator is already JAILED → no second felony, no second slash.
+        // validator is already JAILED -> no second felony, no second slash.
         si.slash_voter(VAL_A).unwrap();
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(
@@ -909,7 +909,7 @@ fn write_test_leb128(buf: &mut Vec<u8>, mut value: u64) {
 // Evidence dedup regression tests
 // ===========================================================================
 
-/// Same evidence submitted twice — second must be rejected.
+/// Same evidence submitted twice - second must be rejected.
 #[test]
 fn test_evidence_dedup_rejects_duplicate() {
     use blst::min_pk::SecretKey;
@@ -982,7 +982,7 @@ fn slash_window_voters_idempotent_on_repeat_for_same_fb_hash() {
             .unwrap();
         assert_eq!(after_first, 1, "first window pass bumps the counter");
 
-        // Replay: same fb_hash window — must be a no-op (per-fb_hash guard).
+        // Replay: same fb_hash window - must be a no-op (per-fb_hash guard).
         hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         assert_eq!(
@@ -1036,7 +1036,7 @@ fn slash_window_proposers_processes_list_once() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
 
-        // The same proposer can appear twice (two skipped views) in one window —
+        // The same proposer can appear twice (two skipped views) in one window -
         // each occurrence is slashed within the single atomic pass.
         hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A, VAL_A]).unwrap();
         assert_eq!(

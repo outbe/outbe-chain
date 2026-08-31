@@ -10,7 +10,7 @@ import {BatchSendParam, IIntexNFT1155Bridge} from "@contracts/shared/interfaces/
 
 /// @dev Cross-chain conservation invariants for the IntexNFT1155 + IntexNFT1155Bridge pair:
 ///
-///   - SI-08: `Σ totalSupply(issuedId)` across chains is never larger than the on-chain
+///   - SI-08: `sum totalSupply(issuedId)` across chains is never larger than the on-chain
 ///     `issuedIntexCount` cap of the underlying series. Mint+bridge+round-trip moves balances
 ///     between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
@@ -94,7 +94,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
         // Pick a fresh series that exists on A but not on B: the inbound crosschainMint reverts
         // NonexistentToken and the transfer parks on B. Tokens are burned on A but not yet
-        // minted on B — the missing amount lives in failedCrosschainMints.
+        // minted on B - the missing amount lives in failedCrosschainMints.
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
@@ -120,7 +120,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint256 total = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId) + parkedAmount;
         assertEq(total, minted, "SI-09: source-burned == dest-minted + dest-parked");
 
-        // Fix the destination cause and retry — parked moves into B.totalSupply with no
+        // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
         tokenB.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(parkSeries);
@@ -135,7 +135,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     }
 
     function test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply() public {
-        // A series that exists on A but not B: bridging A→B parks on B (crosschainMint reverts).
+        // A series that exists on A but not B: bridging A->B parks on B (crosschainMint reverts).
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(uint112(parkSeries));
@@ -158,13 +158,13 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         (,,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillExists, "entry consumed on reclaim");
 
-        // Deliver the reverse SEND_MULTI on A → holder re-minted, global supply conserved end-to-end.
+        // Deliver the reverse SEND_MULTI on A -> holder re-minted, global supply conserved end-to-end.
         _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), bridge.lastPayload());
         assertEq(tokenA.totalSupply(parkTokenId), minted, "A restored via reclaim");
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B holds nothing");
         assertEq(tokenA.balanceOf(user, parkTokenId), minted, "holder whole on origin");
 
-        // A second reclaim reverts — the entry is gone.
+        // A second reclaim reverts - the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
     }

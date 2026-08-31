@@ -9,7 +9,7 @@
 //!     handshake), or
 //!   - a raw Noise handshake message.
 //!
-//! Messages are serialized with `postcard` — a compact binary serde format. The
+//! Messages are serialized with `postcard` - a compact binary serde format. The
 //! offer ciphertext rides as a length-prefixed raw byte string (1x) rather than a
 //! JSON number array (~4x under `serde_json`), and alloy `U256`/`Address`/`B256`
 //! serialize as raw bytes (non-human-readable serde) instead of hex strings, so
@@ -134,8 +134,8 @@ mod tests {
     /// Postcard encodes an enum as a varint of its variant declaration index, so
     /// the on-wire index of every existing variant is part of the protocol. New
     /// variants may be appended ONLY at the tail of `EnclaveRequest` /
-    /// `EnclaveResponse`; inserting, reordering or removing a variant — or
-    /// changing the fields of an existing wire struct — breaks a node and an
+    /// `EnclaveResponse`; inserting, reordering or removing a variant - or
+    /// changing the fields of an existing wire struct - breaks a node and an
     /// enclave built from different revisions. These fixtures pin the indices of
     /// representative existing variants; if this test fails, the wire layout
     /// changed and the change must be reverted, not the fixture updated.

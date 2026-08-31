@@ -1,16 +1,16 @@
 //! debug sub-call probe precompile.
 //!
 //! Registered at [`outbe_primitives::addresses::DEBUG_SUBCALL_PRECOMPILE_ADDRESS`]
-//! (`0xF999`). Test-only — exercises the production sub-call path from a
+//! (`0xF999`). Test-only - exercises the production sub-call path from a
 //! live node so a localnet smoke flow can observe end-to-end success and
 //! revert propagation without touching real economic precompiles.
 //!
 //! ## ABI
 //!
-//! Calldata: `abi.encode(address target, int256 x)` — exactly 64 bytes.
-//! - `target` — Solidity contract implementing `inc(int256)` (the canonical
+//! Calldata: `abi.encode(address target, int256 x)` - exactly 64 bytes.
+//! - `target` - Solidity contract implementing `inc(int256)` (the canonical
 //!   `Counter` fixture lives at `0x...C0DE`, see `e2e/evm/README.md`).
-//! - `x` — value to increment by; if the target rejects (e.g. with
+//! - `x` - value to increment by; if the target rejects (e.g. with
 //!   `revert NegativeNotAllowed(x)` on `x < 0`) the precompile surfaces
 //!   the raw revert bytes back to the EVM caller via
 //!   `PrecompileError::RevertBytes`.
@@ -38,7 +38,7 @@ const INC_SELECTOR: [u8; 4] = [0x62, 0x38, 0x45, 0xd8];
 
 /// Decoded calldata: `(address target, int256 x_raw)` where `x_raw` is the
 /// raw 32-byte two's-complement encoding of the signed integer. We don't
-/// interpret the sign — the target contract reverts on negative; we just
+/// interpret the sign - the target contract reverts on negative; we just
 /// forward the bytes.
 struct Args {
     target: Address,
@@ -72,7 +72,7 @@ fn encode_inc_call(x_raw: U256) -> Bytes {
     Bytes::from(buf)
 }
 
-/// Public dispatch entrypoint — wired into [`crate::precompiles::outbe_dispatch_fn`].
+/// Public dispatch entrypoint - wired into [`crate::precompiles::outbe_dispatch_fn`].
 pub fn dispatch(
     storage: StorageHandle<'_>,
     calldata: &[u8],
@@ -173,7 +173,7 @@ fn hex_preview(b: &Bytes) -> String {
         format!("0x{}", alloy_primitives::hex::encode(b))
     } else {
         format!(
-            "0x{}…(+{} bytes)",
+            "0x{}...(+{} bytes)",
             alloy_primitives::hex::encode(&b[..64]),
             b.len() - 64
         )

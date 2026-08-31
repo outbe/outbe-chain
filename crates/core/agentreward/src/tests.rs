@@ -152,7 +152,7 @@ fn test_distribution_with_cap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let bob = address!("0x2222222222222222222222222222222222222222");
 
-    // Alice has 9 tributes, Bob has 1 — Alice would get 90% but is capped at 32%.
+    // Alice has 9 tributes, Bob has 1 - Alice would get 90% but is capped at 32%.
     // Excess (58%) is redistributed to Bob who is uncapped; Bob ends up at 32%
     // as well because 68% > 32%. Final excess = 100% - 32% - 32% = 36%.
     let pool = U256::from(1000u64);
@@ -195,7 +195,7 @@ fn test_distribution_all_capped() {
 
 #[test]
 fn test_distribution_all_capped_with_excess() {
-    // 3 addresses with exactly equal shares — 33.3% each, all exceed 32% cap.
+    // 3 addresses with exactly equal shares - 33.3% each, all exceed 32% cap.
     // After capping: each gets 32%, total = 96%, excess = 4%.
     // Redistribution cannot help (all capped), so excess stays.
     let a = address!("0x1111111111111111111111111111111111111111");
@@ -340,7 +340,7 @@ fn test_add_claimable_reward_rejects_overflow() {
 }
 
 // ---------------------------------------------------------------------------
-// distribute_daily — new daily orchestrator surface
+// distribute_daily - new daily orchestrator surface
 // ---------------------------------------------------------------------------
 
 mod distribute_daily_tests {
@@ -376,7 +376,7 @@ mod distribute_daily_tests {
             let alice = address!("0x1111111111111111111111111111111111111111");
             let bob = address!("0x2222222222222222222222222222222222222222");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
-            // alice 9, bob 1 → both end up capped at 32 % of 1000 = 320 each;
+            // alice 9, bob 1 -> both end up capped at 32 % of 1000 = 320 each;
             // residue = 1000 - 640 = 360.
             for _ in 0..9 {
                 c.increment_waa_tribute(DAY, alice).unwrap();
@@ -433,7 +433,7 @@ mod distribute_daily_tests {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
             assert_eq!(excess, U256::from(500u64));
-            // closure: minted 500, burned 500 — net zero.
+            // closure: minted 500, burned 500 - net zero.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -505,8 +505,8 @@ mod distribute_daily_tests {
                 ctx,
                 DAY,
                 &[
-                    (PoolKind::Waa, U256::from(1000u64)), // alice capped 320 → excess 680
-                    (PoolKind::Sra, U256::from(500u64)),  // no tribute → excess 500
+                    (PoolKind::Waa, U256::from(1000u64)), // alice capped 320 -> excess 680
+                    (PoolKind::Sra, U256::from(500u64)),  // no tribute -> excess 500
                     (PoolKind::Cca, U256::from(100u64)),  // no excess
                 ],
             )
@@ -549,7 +549,7 @@ mod distribute_daily_tests {
     #[test]
     fn chain_219_burn_parity_invariant() {
         // After distribute_daily on any input, balance(AGENT_REWARD)
-        // must equal the sum of claimable_rewards credited that call —
+        // must equal the sum of claimable_rewards credited that call -
         // never higher.
         run(|ctx| {
             let alice = address!("0x1111111111111111111111111111111111111111");

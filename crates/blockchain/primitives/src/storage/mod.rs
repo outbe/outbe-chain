@@ -191,8 +191,8 @@ pub trait StorageBacked<'storage>: Sized {
 ///
 /// # Implementations
 ///
-/// - [`evm::EvmStorageProvider`] — Production EVM storage via `EvmInternals`
-/// - [`hashmap::HashMapStorageProvider`] — Test storage
+/// - [`evm::EvmStorageProvider`] - Production EVM storage via `EvmInternals`
+/// - [`hashmap::HashMapStorageProvider`] - Test storage
 ///
 /// Runtime code reaches providers through explicit [`StorageHandle`] values
 /// created by precompile, transaction, or block lifecycle entrypoints.
@@ -282,7 +282,7 @@ pub trait PrecompileStorageProvider {
     ///
     /// `SlashIndicator::submit_invalid_vrf_evidence`
     /// rejects evidence whose `parent_block_hash` is not the canonical hash
-    /// at `parent_block_number`. No default impl on purpose — every storage
+    /// at `parent_block_number`. No default impl on purpose - every storage
     /// provider must answer this question explicitly so a missing override
     /// cannot silently accept side-chain evidence.
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<alloy_primitives::B256>>;
@@ -341,7 +341,7 @@ pub trait PrecompileStorageProvider {
     /// Increases the native token balance of an address (minting).
     ///
     /// Used by system hooks (e.g., block reward emission) to mint new tokens
-    /// to a contract address. No source is debited — this creates new supply.
+    /// to a contract address. No source is debited - this creates new supply.
     fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()>;
 
     /// Decreases the native token balance of an address (burning).
@@ -350,7 +350,7 @@ pub trait PrecompileStorageProvider {
     /// Returns an error if the address has insufficient balance.
     fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()>;
 
-    /// Synchronous Rust → Solidity sub-call.
+    /// Synchronous Rust -> Solidity sub-call.
     ///
     /// Default body returns [`SubCallError::NotAvailable`]; concrete
     /// providers wired to the sub-call driver override with a real implementation that

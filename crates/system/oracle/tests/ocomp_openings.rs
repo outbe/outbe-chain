@@ -100,7 +100,7 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 U256::from(1),   // pair_index[COEN/840]
                 U256::from(2),   // pair_index[COEN/978]
                 U256::from(1),   // wwd_vwap_exists
-                // One value word per subject pair, at its registry index — the
+                // One value word per subject pair, at its registry index - the
                 // pair itself no longer has to be opened alongside it.
                 scaled(100, COEN_ISO_SCALE), // wwd_vwap_value[1]
                 scaled(200, COEN_ISO_SCALE), // wwd_vwap_value[2]

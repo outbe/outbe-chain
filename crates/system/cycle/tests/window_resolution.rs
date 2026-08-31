@@ -1,4 +1,4 @@
-//! — accounting-window resolution + Phase 2 gating tests.
+//! - accounting-window resolution + Phase 2 gating tests.
 //!
 //! These integration tests pin
 //!
@@ -65,7 +65,7 @@ fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
 }
 
-/// Stub `AccountingProgressView` for tests that don't need EVM storage —
+/// Stub `AccountingProgressView` for tests that don't need EVM storage -
 /// the proptest and gate-arithmetic checks consume this directly.
 struct StubProgress(u64);
 
@@ -81,12 +81,12 @@ impl AccountingProgressView for StubProgress {
 // The "Phase 1 commit happens before the Cycle dispatcher" invariant is covered
 // REALLY (no source-text scanning) by two complementary sets of tests:
 //
-//   * Phase ORDER — `crates/blockchain/evm/tests/phase1_reorder.rs`
+//   * Phase ORDER - `crates/blockchain/evm/tests/phase1_reorder.rs`
 //     (`phase1_receipt_index_0_before_cycle_tick`,
 //     `phase1_reordering_preserves_body_receipt_order`) asserts, via the real
 //     `expected_begin_block_kinds` / `SystemTxPhase` routing API that drives the
 //     executor, that Phase 1 owns body_index 0 and CycleTick owns body_index 1.
-//   * Gate DEPENDENCY — the behavioral tests below
+//   * Gate DEPENDENCY - the behavioral tests below
 //     (`*_boundary_cycle_runs_after_parent_accounted` for the committed case and
 //     `cycle_job_blocks_when_window_end_not_accounted` for the stale case) prove
 //     the Cycle gate reads `last_accounted_block_number` and only runs once the
@@ -198,7 +198,7 @@ fn cycle_job_without_accounting_window_runs_on_schedule() {
     let block = block_ctx(100, DAY * 7);
 
     // Resolver returns `None` for ungated specs even on a deeply
-    // accounted chain — the gate never consults the progress view.
+    // accounted chain - the gate never consults the progress view.
     let window = resolve_accounting_window(&spec, &block);
     assert!(window.is_none(), "ungated spec must resolve to no window");
 
@@ -239,7 +239,7 @@ fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
 }
 
 // ---------------------------------------------------------------------------
-// determinism property — same inputs → same
+// determinism property - same inputs -> same
 // `AccountingWindow`. The resolver must be a pure function over
 // `(period, offset, block_number, timestamp)` with no wall-clock or
 // RNG dependency.

@@ -1,4 +1,4 @@
-//! Governance record steps used by `features/governance.feature` — committee approval of
+//! Governance record steps used by `features/governance.feature` - committee approval of
 //! OIP/GIP via the governance VoteTarget. Reuses vote cast / deadline / tally
 //! steps from [`super::update`] where the Gherkin lines match.
 

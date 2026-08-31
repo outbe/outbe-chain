@@ -1,10 +1,10 @@
 //! Integration tests for reading vote/update state via precompile `eth_call` dispatch.
 //!
 //! Replaces the removed custom JSON-RPC methods:
-//! - `outbe_getUpdateActiveVersion` → `IUpdate.getActiveVersion`
-//! - `outbe_getUpdateScheduledUpdate` → `IUpdate.getScheduledUpdate`
-//! - `outbe_listUpdateWaitingForActivation` → `IUpdate.listWaitingForActivation`
-//! - vote proposal status reads → `IVote.getProposal`
+//! - `outbe_getUpdateActiveVersion` -> `IUpdate.getActiveVersion`
+//! - `outbe_getUpdateScheduledUpdate` -> `IUpdate.getScheduledUpdate`
+//! - `outbe_listUpdateWaitingForActivation` -> `IUpdate.listWaitingForActivation`
+//! - vote proposal status reads -> `IVote.getProposal`
 
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;

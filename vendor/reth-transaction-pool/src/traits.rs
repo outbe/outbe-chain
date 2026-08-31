@@ -23,18 +23,18 @@
 //! ### Type Relationships
 //!
 //! ```text
-//! NodePrimitives::SignedTx  ←──   NetworkPrimitives::BroadcastedTransaction
-//!        │                              │
-//!        │ (consensus format)           │ (announced to peers)
-//!        │                              │
-//!        └──────────┐  ┌────────────────┘
-//!                   ▼  ▼
+//! NodePrimitives::SignedTx  <---   NetworkPrimitives::BroadcastedTransaction
+//!        |                              |
+//!        | (consensus format)           | (announced to peers)
+//!        |                              |
+//!        +----------+  +----------------+
+//!                   v  v
 //!            PoolTransaction::Consensus
-//!                   │ ▲
-//!                   │ │ from pooled (always succeeds)
-//!                   │ │
-//!                   ▼ │ try_from consensus (may fail)
-//!            PoolTransaction::Pooled  ←──→  NetworkPrimitives::PooledTransaction
+//!                   | ^
+//!                   | | from pooled (always succeeds)
+//!                   | |
+//!                   v | try_from consensus (may fail)
+//!            PoolTransaction::Pooled  <---->  NetworkPrimitives::PooledTransaction
 //!                                             (sent on request)
 //! ```
 //!
@@ -1224,7 +1224,7 @@ impl BestTransactionsAttributes {
 ///
 /// Implementations should cache frequently accessed values to avoid recomputation:
 /// - **Address**: Recovered sender address of the transaction
-/// - **Cost**: Max amount spendable (gas × price + value + blob costs)
+/// - **Cost**: Max amount spendable (gas x price + value + blob costs)
 /// - **Size**: RLP encoded length for mempool size limits
 ///
 /// See [`EthPooledTransaction`] for a reference implementation.
@@ -1259,9 +1259,9 @@ impl BestTransactionsAttributes {
 ///
 /// ## Conversion Rules
 ///
-/// - `Consensus` → `Pooled`: May fail for transactions that cannot be pooled (e.g., OP deposit
+/// - `Consensus` -> `Pooled`: May fail for transactions that cannot be pooled (e.g., OP deposit
 ///   transactions, blob transactions without sidecars)
-/// - `Pooled` → `Consensus`: Always succeeds (pooled is a superset)
+/// - `Pooled` -> `Consensus`: Always succeeds (pooled is a superset)
 pub trait PoolTransaction:
     alloy_consensus::Transaction + InMemorySize + Debug + Send + Sync + Clone
 {

@@ -44,7 +44,7 @@ impl Provider for MockProvider {
                     },
                 );
             }
-            // Unknown pairs are silently skipped — no fabricated prices
+            // Unknown pairs are silently skipped - no fabricated prices
         }
         Ok(result)
     }

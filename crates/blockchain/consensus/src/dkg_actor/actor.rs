@@ -4,19 +4,19 @@
 //! Initial bootstrap makes all genesis validators Dealer and Player. Live
 //! reshare makes previous-output players Dealer and the target set Player, so
 //! newly added validators can join as player-only until they receive a share.
-//! Reshare ceremonies complete from ≥ 2f+1 chain-finalized dealer logs.
+//! Reshare ceremonies complete from >= 2f+1 chain-finalized dealer logs.
 //! Interactive bootstrap without a chain carrier waits for every genesis
 //! participant's dealer log, because threshold P2P subsets are not canonical and
 //! may otherwise produce different public polynomials on different validators.
 //!
 //! Protocol:
-//! 1. Each validator calls `Dealer::start()` → gets `DealerPubMsg` + per-player `DealerPrivMsg`
+//! 1. Each validator calls `Dealer::start()` -> gets `DealerPubMsg` + per-player `DealerPrivMsg`
 //! 2. Each dealer sends `DealerBundle(pub_msg, priv_msg_i)` to player i via P2P
 //! 3. Each player validates via `Player::dealer_message()`, sends `Ack` back to dealer
 //! 4. Each node handles its own dealing locally (no network round-trip for self)
-//! 5. Each dealer calls `Dealer::finalize()` → `SignedDealerLog`
+//! 5. Each dealer calls `Dealer::finalize()` -> `SignedDealerLog`
 //! 6. Each dealer broadcasts `FinalizedLog(log)` to ALL via P2P
-//! 7. Each player collects dealer logs, calls `Player::finalize()` → `(Output, Share)`
+//! 7. Each player collects dealer logs, calls `Player::finalize()` -> `(Output, Share)`
 //!
 //! Local threshold finalization is not the activation source of truth. The
 //! commonware `select()` function deterministically picks the first
@@ -143,18 +143,18 @@ const BOOTSTRAP_FINALIZED_LOG_GOSSIP_GRACE: Duration = Duration::from_millis(250
 ///   the identical complete dealer-log set to derive the same public polynomial;
 ///   a `2f+1` subset would be non-deterministic and could fork the genesis
 ///   committee. A single offline founder therefore stalls genesis until the
-///   timeout — by design (see the completion guard below and
+///   timeout - by design (see the completion guard below and
 ///   `test_bootstrap_dkg_waits_for_all_genesis_nodes_*`).
 ///
 /// # Arguments
-/// * `signing_key` — this validator's BLS individual private key (MinPk)
-/// * `participants` — ordered set of all validator BLS public keys
-/// * `previous_output` — `None` for initial DKG, `Some(output)` for reshare
-/// * `previous_share` — `None` for initial DKG, `Some(share)` for reshare
-/// * `round` — DKG round number (0 for initial, incremented for reshares)
-/// * `finalized_log_rx` — finalized chain-carried dealer logs for this ceremony
-/// * `sender` — P2P sender for the DKG channel
-/// * `receiver` — P2P receiver for the DKG channel
+/// * `signing_key` - this validator's BLS individual private key (MinPk)
+/// * `participants` - ordered set of all validator BLS public keys
+/// * `previous_output` - `None` for initial DKG, `Some(output)` for reshare
+/// * `previous_share` - `None` for initial DKG, `Some(share)` for reshare
+/// * `round` - DKG round number (0 for initial, incremented for reshares)
+/// * `finalized_log_rx` - finalized chain-carried dealer logs for this ceremony
+/// * `sender` - P2P sender for the DKG channel
+/// * `receiver` - P2P receiver for the DKG channel
 #[allow(clippy::too_many_arguments)]
 #[cfg(test)]
 pub async fn run_initial_dkg(
@@ -324,12 +324,12 @@ pub async fn run_initial_dkg_durable(
         retry_store.as_ref(),
     )?;
 
-    // Build a map of unsent private shares: public_key → DealerPrivMsg.
+    // Build a map of unsent private shares: public_key -> DealerPrivMsg.
     let mut unsent_shares: BTreeMap<bls12381::PublicKey, _> = priv_msgs.into_iter().collect();
 
     // Use a BTreeSet for unique ack tracking instead of a counter
-    // (BTreeSet, not HashSet — deterministic iteration order on the consensus path).
-    // Start empty — only count self-ack if self-dealing succeeded below.
+    // (BTreeSet, not HashSet - deterministic iteration order on the consensus path).
+    // Start empty - only count self-ack if self-dealing succeeded below.
     let mut acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
         std::collections::BTreeSet::new();
 
@@ -427,7 +427,7 @@ pub async fn run_initial_dkg_durable(
     let mut ack_collection_deadline = None;
     // C1 (chain-finalized completion gate): only probe `observe` when a NEW dealer
     // log has arrived, so the actor breaks at the same first-reconstructable log
-    // prefix that `DkgManager` freezes `canonical_output` at (→ matching output).
+    // prefix that `DkgManager` freezes `canonical_output` at (-> matching output).
     let mut last_reconstruct_probe_len: usize = 0;
 
     let mut bootstrap_threshold_logged = false;
@@ -496,7 +496,7 @@ pub async fn run_initial_dkg_durable(
                                 invalid_dealers.insert(from.clone());
                             }
                             PlayerBundleAction::Invalid => {
-                                warn!(?from, "dealer sent invalid share — potential misbehavior");
+                                warn!(?from, "dealer sent invalid share - potential misbehavior");
                                 invalid_dealers.insert(from.clone());
                             }
                         }
@@ -725,7 +725,7 @@ pub async fn run_initial_dkg_durable(
         // so a validator completes only when ALL genesis dealer logs are collected
         // (threshold P2P subsets are not canonical and may otherwise produce
         // different public polynomials on different validators). Chain-finalized
-        // reshare does NOT complete on the raw all-n count — it flows through the
+        // reshare does NOT complete on the raw all-n count - it flows through the
         // observe gate below (C1), so the actor breaks at the same log-set prefix
         // `DkgManager` freezes `canonical_output` at.
         if !chain_finalized_mode && finalized_logs.len() as u32 >= n {
@@ -777,9 +777,9 @@ pub async fn run_initial_dkg_durable(
                 // check), so the raw first-2f+1 may hold < 2f+1 content-valid logs and
                 // one-shot `finalize` would fail `DkgFailed` identically on every node.
                 // Gate completion on `observe` (public, share-free) over the FULL
-                // finalized_logs — probing once per NEW chain log so the actor breaks
+                // finalized_logs - probing once per NEW chain log so the actor breaks
                 // at the SAME first-observe-success prefix `DkgManager` freezes
-                // `canonical_output` at (→ matching output). Never waits for all-n (an
+                // `canonical_output` at (-> matching output). Never waits for all-n (an
                 // offline dealer's log never arrives); the ceremony deadline bounds it.
                 if finalized_logs.len() > last_reconstruct_probe_len {
                     last_reconstruct_probe_len = finalized_logs.len();
@@ -834,14 +834,14 @@ pub async fn run_initial_dkg_durable(
         )
         .map_err(|error| eyre::eyre!("player finalize failed: {error:?}"))?;
 
-    info!("DKG ceremony complete — threshold material obtained");
+    info!("DKG ceremony complete - threshold material obtained");
 
     // surface validators whose individual share evaluation was publicly
     // REVEALED during the ceremony (they were offline/non-acking, so
     // `feldman_desmedt` reveals their share so recovery can complete). The
     // reveals are permanently committed on-chain in the `DealerLog` artifacts,
     // and a revealed share makes that validator's VRF threshold partial publicly
-    // forgeable — bounded (VRF drives leader election/fairness, not BFT safety:
+    // forgeable - bounded (VRF drives leader election/fairness, not BFT safety:
     // the BLS individual aggregate stays authoritative), but operators must
     // rotate the affected validator's consensus key. `Output::revealed()` was
     // previously never consumed.
@@ -853,7 +853,7 @@ pub async fn run_initial_dkg_durable(
                 target: "outbe::dkg",
                 revealed_validator = %pk,
                 "DKG: a validator's individual share was REVEALED (offline during the ceremony); \
-                 its VRF threshold partial is now publicly forgeable — rotate this validator's \
+                 its VRF threshold partial is now publicly forgeable - rotate this validator's \
                  consensus key"
             );
         }
@@ -1164,19 +1164,19 @@ pub async fn run_reshare_dealer_only_durable(
 
     info!(
         acks = acked_players.len(),
-        player_threshold, "dealer-only DKG complete — local dealer log published"
+        player_threshold, "dealer-only DKG complete - local dealer log published"
     );
     Ok(DkgDealerOnlyComplete { participants })
 }
 
 /// Encode and send one DKG message over the P2P sender. The single owner of the
-/// `encode → send → "empty accepted-set is benign backpressure"` recipe, so every
+/// `encode -> send -> "empty accepted-set is benign backpressure"` recipe, so every
 /// DKG send interprets the result identically.
 ///
 /// Returns `true` if at least one recipient accepted this attempt. An empty
 /// accepted-set (commonware 2026.5.0 sync `Sender::send` returns the accepting
-/// peers) means none accepted *this attempt* — benign rate-limit/backpressure,
-/// recovered by the ceremony retry tick and peer pull — never a hard failure.
+/// peers) means none accepted *this attempt* - benign rate-limit/backpressure,
+/// recovered by the ceremony retry tick and peer pull - never a hard failure.
 /// `#[must_use]`: callers must observe acceptance (typically to log backpressure).
 #[must_use]
 fn send_dkg_message(
@@ -1310,10 +1310,10 @@ fn record_signed_dealer_log(
 }
 
 /// Returns `true` when the canonical group output is reconstructable from the
-/// currently-collected finalized dealer logs — i.e. `observe` (public, share-free)
-/// succeeds, which means ≥ 2f+1 CONTENT-VALID logs are present. Mirrors
+/// currently-collected finalized dealer logs - i.e. `observe` (public, share-free)
+/// succeeds, which means >= 2f+1 CONTENT-VALID logs are present. Mirrors
 /// `DkgManager`'s `ceremony::try_reconstruct`, so the actor completes at the SAME
-/// log-set prefix the manager freezes `canonical_output` at (→ matching output).
+/// log-set prefix the manager freezes `canonical_output` at (-> matching output).
 /// Used as the chain-finalized completion gate: a signed-but-garbage dealer log
 /// inflates the raw log count but is dropped by `observe`'s content check, so
 /// gating on this (not the raw count) prevents finalizing over < 2f+1 valid logs.
@@ -1428,10 +1428,10 @@ mod tests {
     use tokio::sync::mpsc;
 
     // -----------------------------------------------------------------------
-    // Mock P2P network — routes messages between in-process nodes
+    // Mock P2P network - routes messages between in-process nodes
     // -----------------------------------------------------------------------
 
-    /// Shared routing table: maps public key → incoming message channel.
+    /// Shared routing table: maps public key -> incoming message channel.
     type Router =
         Arc<HashMap<bls12381::PublicKey, mpsc::UnboundedSender<(bls12381::PublicKey, IoBuf)>>>;
 
@@ -2137,7 +2137,7 @@ mod tests {
     /// passes the actor's signature-only acceptance check and lands in the raw
     /// first-2f+1, but `observe`/`select` drop it. The old code broke on the raw
     /// 2f+1 count and one-shot `finalize` then failed `DkgFailed` identically on
-    /// every node → chain halt. With the observe-gated trigger the actors keep
+    /// every node -> chain halt. With the observe-gated trigger the actors keep
     /// collecting, complete on 2f+1 CONTENT-VALID logs, and every honest node
     /// recovers a share (signer quorum preserved).
     #[test]
@@ -2165,8 +2165,8 @@ mod tests {
                 let max_players = NonZeroU32::new(participants.len() as u32).unwrap();
 
                 // Byzantine dealer log from dealer 0, dealt with dealer 1's previous
-                // share (wrong): dealer 0 signs it (→ passes `check`), but its content
-                // is inconsistent with the previous output (→ dropped by `select`).
+                // share (wrong): dealer 0 signs it (-> passes `check`), but its content
+                // is inconsistent with the previous output (-> dropped by `select`).
                 let byzantine_pk = keys[0].public_key();
                 let (byz_dealer, _pub, _priv) =
                     Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
@@ -2220,7 +2220,7 @@ mod tests {
                 }
                 drop(progress_tx);
 
-                // Collect VALID dealer logs from dealers 1..=3 (skip dealer 0 — its slot
+                // Collect VALID dealer logs from dealers 1..=3 (skip dealer 0 - its slot
                 // is taken by the garbage log). We need 2f+1 = 3 valid logs.
                 let mut valid_logs: BTreeMap<bls12381::PublicKey, Bytes> = BTreeMap::new();
                 while valid_logs.len() < 3 {
@@ -2258,7 +2258,7 @@ mod tests {
                 }
 
                 // Canonical output agreed by all, and every node recovered a share
-                // (quorum preserved) — the lone garbage log was filtered, not fatal.
+                // (quorum preserved) - the lone garbage log was filtered, not fatal.
                 let expected_public = results[0].output.public().encode();
                 for result in &results {
                     assert_eq!(
@@ -2434,7 +2434,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Offline-node tests — initial interactive bootstrap must not finalize from
+    // Offline-node tests - initial interactive bootstrap must not finalize from
     // arbitrary threshold P2P subsets because no chain carrier exists yet.
     // -----------------------------------------------------------------------
 
@@ -2529,7 +2529,7 @@ mod tests {
         });
     }
 
-    /// 4 validators, only 2 online — below threshold (3).
+    /// 4 validators, only 2 online - below threshold (3).
     /// The ceremony must time out, not hang forever.
     #[test]
     fn test_dkg_fails_below_threshold() {
@@ -2538,10 +2538,10 @@ mod tests {
             .start(|context| async move {
             // Use a short timeout to avoid slow test.
             // The DKG has DKG_TIMEOUT=120s, but we wrap with a shorter outer timeout.
-            // The ceremony should not complete — it will hit DKG_TIMEOUT internally,
+            // The ceremony should not complete - it will hit DKG_TIMEOUT internally,
             // but we can't wait 120s in a test. Instead, verify it doesn't complete
             // within a reasonable window.
-            // Should not complete — 2 nodes can't reach threshold=3.
+            // Should not complete - 2 nodes can't reach threshold=3.
             commonware_macros::select! {
                 _ = run_partial_dkg(&context, 4, 2) => {
                     panic!("DKG should NOT complete with only 2/4 nodes online (below threshold=3)");
@@ -2551,7 +2551,7 @@ mod tests {
         });
     }
 
-    /// 4 nodes, 1 offline — verify bootstrap does not return a threshold
+    /// 4 nodes, 1 offline - verify bootstrap does not return a threshold
     /// output that could later mismatch another validator's boundary artifact.
     #[test]
     fn test_bootstrap_dkg_does_not_return_threshold_subset_output() {
@@ -2569,7 +2569,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Ack dedup — HashSet ignores duplicate inserts
+    // Ack dedup - HashSet ignores duplicate inserts
     // -----------------------------------------------------------------------
 
     /// Verify that acked_players HashSet correctly deduplicates.
@@ -2586,11 +2586,11 @@ mod tests {
 
         let mut acked_players = std::collections::BTreeSet::new();
 
-        // First insert — count goes to 1
+        // First insert - count goes to 1
         acked_players.insert(pk_a.clone());
         assert_eq!(acked_players.len(), 1);
 
-        // Duplicate insert of same key — count stays at 1
+        // Duplicate insert of same key - count stays at 1
         acked_players.insert(pk_a.clone());
         assert_eq!(
             acked_players.len(),
@@ -2598,17 +2598,17 @@ mod tests {
             "duplicate ack must not increment count"
         );
 
-        // Different key — count goes to 2
+        // Different key - count goes to 2
         acked_players.insert(pk_b.clone());
         assert_eq!(acked_players.len(), 2);
 
-        // Duplicate of second key — still 2
+        // Duplicate of second key - still 2
         acked_players.insert(pk_b);
         assert_eq!(acked_players.len(), 2);
     }
 
     // -----------------------------------------------------------------------
-    // Self-dealing ack count — only on success
+    // Self-dealing ack count - only on success
     // -----------------------------------------------------------------------
 
     /// Verify that self-ack is counted only when self-dealing succeeds.
