@@ -275,19 +275,24 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
             Ok(true) => {
                 burned = burned.saturating_add(1);
                 gem.expiry_attempts.clear(&gem_id)?;
+                continue;
             }
-            Ok(false) => {}
+            // Due and still refusing to burn: the entry no longer matches its
+            // gem, and it holds up every entry behind it just as an error does.
+            Ok(false) => {
+                tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
+            }
             Err(error) => {
-                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem");
-                let attempts = gem.expiry_attempts.read(&gem_id)?.saturating_add(1);
-                gem.expiry_attempts.write(&gem_id, attempts)?;
-                if attempts == EXPIRY_STALL_THRESHOLD {
-                    gem.emit(crate::precompile::IGem::GemExpiryStalled {
-                        gemId: gem_id,
-                        attempts,
-                    })?;
-                }
+                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem")
             }
+        }
+        let attempts = gem.expiry_attempts.read(&gem_id)?.saturating_add(1);
+        gem.expiry_attempts.write(&gem_id, attempts)?;
+        if attempts == EXPIRY_STALL_THRESHOLD {
+            gem.emit(crate::precompile::IGem::GemExpiryStalled {
+                gemId: gem_id,
+                attempts,
+            })?;
         }
     }
     gem.compact_called_queue()?;

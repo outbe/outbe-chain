@@ -810,6 +810,27 @@ fn a_sweep_that_keeps_failing_says_so() {
     });
 }
 
+/// A due entry whose gem is no longer Called burns nothing, so it must be
+/// counted as a stall: left silent it would hold the queue head forever.
+#[test]
+fn a_due_entry_that_cannot_burn_is_counted_too() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let gem = GemContract::new(storage.clone());
+        gem.called_queue_at.write(&0, gem_id).unwrap();
+        gem.called_queue_index.write(&gem_id, 0).unwrap();
+        gem.called_deadline.write(&gem_id, T_NOW).unwrap();
+        gem.called_tail.write(1).unwrap();
+
+        let ctx = block_ctx_at(storage, T_NOW + 1);
+        for expected in 1..=crate::constants::EXPIRY_STALL_THRESHOLD {
+            crate::hooks::run_call_daily(&ctx).unwrap();
+            assert_eq!(gem.expiry_attempts.read(&gem_id).unwrap(), expected);
+        }
+        assert_eq!(unallocated(storage), U256::ZERO);
+    });
+}
+
 /// The load of a gem nobody settled goes back to the emission accumulator.
 #[test]
 fn forfeiting_a_gem_returns_its_load_to_the_pool() {
