@@ -93,8 +93,9 @@ pub(crate) fn deposit(
 ) -> Result<()> {
     // Guards, before any mutation.
     if amount == 0 {
-        return Err(PayNoteError::DepositAmountZero.into());
+        return Err(PayNoteError::MustBeNonZero("amount").into());
     }
+    // `asset != 0` is enforced here such as we do not accept native currency here.
     if asset.is_zero() {
         return Err(PayNoteError::MustBeNonZero("asset").into());
     }
@@ -212,10 +213,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::ChainIdMismatch.into());
     }
 
-    // `asset != 0` is enforced here regardless of the circuit: the frozen
-    // 1.0.0 circuit asserts it, but the head `.nr` source has dropped that
-    // assert, so a future re-freeze would silently remove it. The pool never
-    // builds a zero-asset leaf, so rejecting one costs nothing.
+    // `asset != 0` is enforced here such as we do not accept native currency here.
     if claim.asset.is_zero() {
         return Err(PayNoteError::MustBeNonZero("asset").into());
     }
@@ -223,7 +221,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::MustBeNonZero("spender").into());
     }
     if claim.spend_amount == 0 {
-        return Err(PayNoteError::SpendAmountZero.into());
+        return Err(PayNoteError::MustBeNonZero("spend_amount").into());
     }
 
     let nullifier = field_from_be_bytes(&claim.nullifier)

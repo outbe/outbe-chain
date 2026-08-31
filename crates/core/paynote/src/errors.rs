@@ -28,8 +28,6 @@ pub enum PayNoteError {
     MalformedProof(String),
     #[error("PayNote chain ID does not match runtime")]
     ChainIdMismatch,
-    #[error("PayNote spend amount must be non-zero")]
-    SpendAmountZero,
     #[error("PayNote root is not recent")]
     RootNotRecent,
     #[error("PayNote nullifier has already been spent")]
