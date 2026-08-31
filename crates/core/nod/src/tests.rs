@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
+use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
@@ -20,7 +20,7 @@ const EUR: u16 = 978;
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -46,11 +46,9 @@ fn item(owner: Address, floor: U256, reference_currency: u16) -> NodItemState {
         league_id: 4,
         floor_price_minor: floor,
         bucket_key: NodContract::bucket_key(worldwide_day, floor, reference_currency),
-        cost_amount_minor: U256::from(17),
         issuance_currency: 840,
         reference_currency,
         issued_at: 1_752_534_000,
-        is_settled: false,
     }
 }
 
@@ -191,7 +189,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             &storage,
             &scope,
             &parent,
-            EntityId36::new(usd.worldwide_day, usd.bucket_key.0),
+            WwdEntityId::from_day_and_digest(usd.worldwide_day, usd.bucket_key),
         )
         .unwrap()
         .unwrap();
@@ -199,7 +197,7 @@ fn same_day_and_floor_in_two_currencies_are_two_buckets_in_two_bins() {
             &storage,
             &scope,
             &parent,
-            EntityId36::new(eur.worldwide_day, eur.bucket_key.0),
+            WwdEntityId::from_day_and_digest(eur.worldwide_day, eur.bucket_key),
         )
         .unwrap()
         .unwrap();
@@ -270,7 +268,7 @@ fn the_scan_stops_at_its_budget_and_resumes_from_the_bin_cursor() {
                         storage,
                         &scope,
                         &parent,
-                        EntityId36::new(body.worldwide_day, body.bucket_key.0),
+                        WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key),
                     )
                     .unwrap()
                     .unwrap()

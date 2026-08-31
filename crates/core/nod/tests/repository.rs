@@ -257,22 +257,6 @@ fn projection_session_owns_item_prior_state_and_rejects_untracked_identity() {
     ));
 }
 
-/// An unsettled body must encode exactly as it did before `is_settled` existed,
-/// so no stored Nod needs migrating; settling only appends field 12.
-#[test]
-fn settlement_only_appends_to_the_canonical_nod_payload() {
-    let mut body = nod(
-        entity(U256::from(7), WorldwideDay::new(20_260_715)),
-        Address::repeat_byte(0x77),
-    );
-    body.is_settled = false;
-    let unsettled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
-    body.is_settled = true;
-    let settled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
-
-    assert_eq!(settled, [unsettled.as_slice(), &[0x60, 0x01]].concat());
-}
-
 /// The bucket's `reference_currency` is likewise append-only and omitted on
 /// zero, so every bucket body written before the field existed keeps its exact
 /// prior bytes — which is what keeps the pinned `ces1-noble-poseidon` bucket

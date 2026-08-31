@@ -96,7 +96,6 @@ message NodItemBody {
   uint32 issuance_currency = 9;          // <= u16::MAX
   uint32 reference_currency = 10;        // <= u16::MAX
   uint64 issued_at = 11;
-  bool is_settled = 12;
 }
 
 message NodBucketBody {

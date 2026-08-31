@@ -279,19 +279,19 @@ fn seed_bucket(
     parent: &NodRepositoryReader,
     owner: Address,
     iso: u16,
-) -> outbe_compressed_entities::EntityId36 {
+) -> WwdEntityId {
     let mut body = item(owner);
     body.reference_currency = iso;
     body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
     api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
-    outbe_compressed_entities::EntityId36::new(body.worldwide_day, body.bucket_key.0)
+    WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 
 fn is_qualified(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &NodRepositoryReader,
-    bucket_id: outbe_compressed_entities::EntityId36,
+    bucket_id: WwdEntityId,
 ) -> bool {
     api::get_bucket(storage, scope, parent, bucket_id)
         .unwrap()

@@ -31,7 +31,6 @@ message NodItemBody {
   uint32 issuance_currency = 9;
   uint32 reference_currency = 10;
   uint64 issued_at = 11;
-  bool is_settled = 12;
 }
 
 message NodBucketBody {
