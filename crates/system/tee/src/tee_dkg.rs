@@ -9,10 +9,10 @@
 //! shares and the assembled key never appear in host memory.
 //!
 //! The coordinator exposes the ceremony as explicit phase methods that each (a)
-//! call the enclave seam and (b) shape the resulting host wire messages. A driver
-//! - the production commonware-P2P event loop, or the in-process e2e test harness
-//! - routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between peers
-//! and feeds them back into the matching phase method. The wire messages carry
+//! call the enclave seam and (b) shape the resulting host wire messages. A
+//! driver - the production commonware-P2P event loop, or the in-process e2e test
+//! harness - routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between
+//! peers and feeds them back into the matching phase method. The wire messages carry
 //! only opaque bytes (the host never decodes Commonware types - the enclave does).
 //!
 //! Production note: the threshold/timeout/retry event loop that drives these

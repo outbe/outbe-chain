@@ -225,8 +225,8 @@ impl EncryptedShare {
 /// info = DKG_SHARE_INFO)`; a fresh ephemeral key per call makes the key unique,
 /// so the random nonce is defense-in-depth.
 ///
-/// `OsRng` here is **transport-encryption** randomness (ephemeral X25519 + nonce)
-/// - it is NOT consensus randomness. The encrypted share decrypts to a
+/// `OsRng` here is **transport-encryption** randomness (ephemeral X25519 +
+/// nonce) - it is NOT consensus randomness. The encrypted share decrypts to a
 /// deterministic plaintext; ciphertext freshness only protects confidentiality
 /// in flight, and never feeds VRF/leader-election/state transitions.
 pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedShare> {
