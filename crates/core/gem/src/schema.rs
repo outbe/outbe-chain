@@ -165,40 +165,45 @@ pub struct GemContract {
     #[attribute(order = 15)]
     pub qualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// Next bin the call scan visits, per reference currency.
+    /// Where the next call scan starts, mirroring the qualify cursor so a heavy
+    /// currency cannot starve the ones behind it.
     #[attribute(order = 16)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Next bin the call scan visits, per reference currency.
+    #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Next bin the qualify scan visits, per reference currency. Non-zero only
     /// while a sweep was cut short by the per-block budget.
-    #[attribute(order = 17)]
+    #[attribute(order = 18)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Where the next qualify scan starts, so a heavy currency cannot starve the
     /// ones behind it when the per-block budget runs out.
-    #[attribute(order = 18)]
+    #[attribute(order = 19)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // --- Called-gem queue: gems awaiting their notice period, in call order.
     // Calling is driven by price, expiry only by time, so the two stages keep
     // separate structures and the forfeit arm reads a head instead of walking.
-    #[attribute(order = 19)]
-    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 20)]
+    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 21)]
     pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
     /// Queue index -> gem id; zero marks a slot already taken.
-    #[attribute(order = 21)]
+    #[attribute(order = 22)]
     pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// gem_id -> its queue index, for O(1) removal on settle or burn.
-    #[attribute(order = 22)]
+    #[attribute(order = 23)]
     pub called_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     /// gem_id -> when its notice period closes. Stored so the head check costs
     /// no record load.
-    #[attribute(order = 23)]
+    #[attribute(order = 24)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
 
     /// gem_id -> consecutive failed forfeit attempts. Cleared on success.
-    #[attribute(order = 23)]
+    #[attribute(order = 25)]
     pub expiry_attempts: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 

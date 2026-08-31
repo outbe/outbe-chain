@@ -158,13 +158,25 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
+    let currencies = get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        return Ok(0);
+    }
+    let gem = GemContract::new(ctx.storage.clone());
+    let start = gem.call_currency_cursor.read()? as usize % currencies.len();
+
     let mut budget = MAX_GEM_CALL_ACTIONS_PER_RUN;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
     let mut mutated: u32 = 0;
-    for iso_code in get_all_reference_currencies(ctx)? {
+    let mut resume_at = start;
+    for offset in 0..currencies.len() {
+        let at = (start + offset) % currencies.len();
         if budget == 0 {
+            // Resume here, so a heavy currency cannot starve the ones behind it.
+            resume_at = at;
             break;
         }
+        let iso_code = currencies[at];
         let index = window_for(&oracle, &mut windows, iso_code, last_closed_day)?;
         let window = windows[index].1.as_slice();
         // A gem priced above every day in the window cannot have breached, so the
@@ -176,6 +188,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         mutated =
             mutated.saturating_add(call_currency(ctx, iso_code, window, ceiling, &mut budget)?);
     }
+    gem.call_currency_cursor.write(resume_at as u32)?;
     Ok(mutated)
 }
 
