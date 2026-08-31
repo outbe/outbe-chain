@@ -144,7 +144,6 @@ where
 
 #[test]
 fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
-    let _expected_owner = StackShutdownOrNetworkExit::GlobalStop;
     let storage = tempfile::tempdir().expect("stack shutdown test storage");
     let config = commonware_tokio::Config::default()
         .with_worker_threads(1)
@@ -239,9 +238,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
             let mut shutdown = owner.stopped();
             let mut network_handle = network_handle;
             let mut engine_handle = engine_handle;
-            match wait_for_stack_shutdown_or_network_exit(&mut shutdown, &mut network_handle).await
-            {
-                StackShutdownOrNetworkExit::GlobalStop => {
+            commonware_macros::select! {
+                _ = &mut shutdown => {
                     let action = supervise_epoch_loop_result(
                         &owner,
                         Ok(EpochLoopOutcome::GlobalStop),
@@ -250,8 +248,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
                     .await
                     .expect("simplex engine must drain on global stop");
                     assert_eq!(action, EpochLoopAction::ExitStack);
-                }
-                StackShutdownOrNetworkExit::NetworkExit => {}
+                },
+                _ = &mut network_handle => {}
             }
         });
 
@@ -395,15 +393,12 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             .recv_timeout(Duration::from_secs(1))
             .expect("sole blocking worker must be occupied");
 
-        // The next first-attempt timeout queues the real voter's ordinary
-        // sync_journal behind the occupied Tokio blocking worker.
-        let send_count_before_pending_sync = vote_send_count.load(Ordering::Relaxed);
+        // Let the next first-attempt timeout queue the real voter's ordinary
+        // journal sync behind the occupied blocking worker. The sender count is
+        // deliberately not used as a barrier: it also includes unrelated and
+        // retry traffic. The direct owner-liveness assertion below proves that
+        // shutdown is waiting for the blocked journal operation.
         context.sleep(Duration::from_millis(250)).await;
-        assert_eq!(
-            vote_send_count.load(Ordering::Relaxed),
-            send_count_before_pending_sync,
-            "the first-attempt vote must remain behind its required journal sync"
-        );
         fatal_tx.send(()).expect("trigger fatal stack exit");
 
         commonware_macros::select! {
@@ -414,6 +409,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             _ = context.sleep(Duration::from_millis(50)) => {},
         }
 
+        let send_count_before_release = vote_send_count.load(Ordering::Relaxed);
         release_tx.send(()).expect("release blocking worker");
         let result = stack_owner
             .await
@@ -424,7 +420,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             "fatal result: {result:#}"
         );
         assert!(
-            vote_send_count.load(Ordering::Relaxed) > send_count_before_pending_sync,
+            vote_send_count.load(Ordering::Relaxed) > send_count_before_release,
             "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
         );
     });
@@ -519,6 +515,27 @@ fn completed_engine_outcome_is_not_polled_twice() {
         .expect("an already observed engine exit must stop the stack without repolling the handle");
 
         assert_eq!(action, EpochLoopAction::ExitStack);
+    });
+}
+
+#[test]
+fn signer_replacement_aborts_engine_after_epoch_select_completes() {
+    commonware_tokio::Runner::default().start(|context| async move {
+        let mut engine_handle = context
+            .child("replace_signer_engine")
+            .spawn(|engine| async move {
+                let _ = engine.stopped().await;
+            });
+
+        let action = supervise_epoch_loop_result(
+            &context,
+            Ok(EpochLoopOutcome::ReplaceSigner),
+            &mut engine_handle,
+        )
+        .await
+        .expect("signer replacement must stop the old engine before restarting the epoch");
+
+        assert_eq!(action, EpochLoopAction::ReplaceSigner);
     });
 }
 
@@ -2014,7 +2031,7 @@ fn recover_application_finalized_round_returns_none_at_genesis_height() {
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 0)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 0)
             .await
             .unwrap();
 
@@ -2042,7 +2059,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap();
 
@@ -2097,13 +2114,429 @@ fn mismatched_marshal_finalization_digest_fails_closed() {
 }
 
 #[test]
+fn certified_follower_recovery_anchor_is_bounded_by_exact_archive_and_execution() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 358,
+        archive_block_tip: 358,
+        execution_tip: 358,
+        reth_finalized: 357,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 358);
+}
+
+#[test]
+fn certified_follower_replay_suffix_covers_both_archive_tips_without_advancing_execution() {
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(428, 428, 366),
+        (366, 428)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(421, 420, 366),
+        (366, 421)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(420, 421, 366),
+        (366, 421)
+    );
+    assert_eq!(certified_follower_replay_suffix_bounds(0, 0, 0), (0, 0));
+}
+
+#[test]
+fn certified_follower_normalized_archive_does_not_promote_observed_execution_anchor() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 366,
+        archive_finalization_tip: 428,
+        archive_block_tip: 428,
+        execution_tip: 366,
+        reth_finalized: 366,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 366);
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_unexplained_ack_gap() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 359,
+        archive_block_tip: 359,
+        execution_tip: 359,
+        reth_finalized: 357,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("exceeds Marshal processed floor 357 by more than one block"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_finality_regression() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 357,
+        archive_block_tip: 357,
+        execution_tip: 357,
+        reth_finalized: 358,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Reth finalized height 358 exceeds recovery anchor 357"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_requires_matching_verified_records() {
+    let block = recovery_block(358);
+    let round = Round::new(Epoch::new(0), View::new(29));
+    let (provider, finalization) = recovery_finalization_fixture(&block, round);
+
+    let anchor = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap();
+    assert_eq!(anchor.checkpoint.block_number, 358);
+    assert_eq!(anchor.checkpoint.block_hash, block.block_hash());
+
+    let wrong_block = recovery_block(359);
+    let error = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &wrong_block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("local archived block reports height 359, expected 358"));
+}
+
+fn recovered_reth_readback(
+    head: ProjectionCheckpoint,
+    safe: Option<ProjectionCheckpoint>,
+    finalized: Option<ProjectionCheckpoint>,
+) -> RecoveredRethForkchoice {
+    RecoveredRethForkchoice {
+        head,
+        safe,
+        finalized,
+    }
+}
+
+fn exact_recovered_reth_readback(anchor: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(anchor, Some(anchor), Some(anchor))
+}
+
+fn below_recovered_reth_readback(below: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(below, Some(below), Some(below))
+}
+
+#[test]
+fn recovered_fcu_requires_valid_response_and_exact_provider_identity() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            below_recovered_reth_readback(below),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_and_transport_errors_without_changing_anchor() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Syncing,
+            recovered_reth_readback(below, None, None),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Retryable("response lost".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+}
+
+#[test]
+fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Invalid("rejected".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: B256::repeat_byte(0x99),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 359,
+                block_hash: B256::repeat_byte(0x59),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+}
+
+#[test]
+fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(exact_recovered_reth_readback(anchor)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    });
+}
+
+#[test]
+fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let speculative_head = ProjectionCheckpoint {
+            block_number: 359,
+            block_hash: B256::repeat_byte(0x59),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            recovered_reth_readback(speculative_head, Some(anchor), Some(anchor)),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_until_valid_and_provider_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let outcomes = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            RecoveredForkchoiceAttempt::Syncing,
+            RecoveredForkchoiceAttempt::Valid,
+        ])));
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_outcomes = Arc::clone(&outcomes);
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                let outcome = scripted_outcomes.lock().unwrap().pop_front().unwrap();
+                async move { outcome }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcomes.lock().unwrap().is_empty());
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_lost_response_completes_when_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Retryable("response lost".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_payload_invalid_fails_closed_even_if_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        let error = confirm_recovered_forkchoice(
+            context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Invalid("rejected".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("failed closed"));
+    });
+}
+
+#[test]
+fn recovered_fcu_attempt_timeout_exhaustion_fails_closed() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+
+        let error = confirm_recovered_forkchoice(
+            context,
+            anchor,
+            std::future::pending::<RecoveredForkchoiceAttempt>,
+            move || Ok(below_recovered_reth_readback(below)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("did not converge"));
+        assert!(error.contains("timed out"));
+    });
+}
+
+#[test]
 fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
     let error = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let error = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let error = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap_err()
             .to_string();
@@ -2881,11 +3314,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_enclave_socket: None,
         tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
-        tee_renewal_relay_key: None,
-        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-        tee_renewal_poll_secs: 30,
-        tee_renewal_warning_blocks: 600,
-        tee_renewal_critical_blocks: 120,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,
         txpool_pending_staleness_secs: 600,
@@ -3631,6 +4059,44 @@ fn test_dkg_activation_always_advances_consensus_epoch() {
         next_consensus_epoch_after_dkg_activation(Epoch::new(41)),
         Epoch::new(42)
     );
+}
+
+#[test]
+fn active_vrf_material_and_local_share_status_change_together() {
+    let (keys, participants, _output, share, polynomial) = run_test_dkg_complete();
+    let bridge = outbe_primitives::consensus::ConsensusExecutionBridge::new();
+    bridge.set_consensus_status(outbe_primitives::consensus::ConsensusStatus {
+        randomness_status: outbe_primitives::consensus::RandomnessStatus::Healthy,
+        ..Default::default()
+    });
+    let vrf_materials = VrfMaterialProvider::new(0, polynomial.clone(), None);
+    assert!(!bridge.has_threshold_shares());
+
+    activate_vrf_material_and_publish_local_share(
+        &bridge,
+        &vrf_materials,
+        1,
+        polynomial.clone(),
+        Some(share),
+    );
+    assert!(bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants.clone(),
+        keys[0].clone(),
+        vrf_materials.clone(),
+    )
+    .is_some());
+
+    activate_vrf_material_and_publish_local_share(&bridge, &vrf_materials, 2, polynomial, None);
+    assert!(!bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants,
+        keys[0].clone(),
+        vrf_materials,
+    )
+    .is_none());
 }
 
 #[test]
@@ -4390,11 +4856,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_enclave_socket: None,
         tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
-        tee_renewal_relay_key: None,
-        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-        tee_renewal_poll_secs: 30,
-        tee_renewal_warning_blocks: 600,
-        tee_renewal_critical_blocks: 120,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,
         txpool_pending_staleness_secs: 600,
@@ -4435,6 +4896,96 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         super::validate_validator_evm_signer(&args, &bls_key, &empty, &empty, None, true).unwrap(),
         None,
         "non-member must run as verifier (None) when verifier-join"
+    );
+
+    // Lease recovery crosses a different boundary from an unregistered live join:
+    // the old finalized DKG committee excludes this validator, while the canonical
+    // reshare target already binds its EVM address to the same BLS key. Keep that
+    // identity available for the post-DKG signer transition, but do not infer any
+    // threshold authority from it (the runtime still has no signing share).
+    let (boundary_keys, boundary_participants, boundary_output, _polynomial) = run_test_dkg();
+    let boundary_set = ValidatorSet {
+        public_keys: boundary_keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x31),
+            Address::with_last_byte(0x32),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing; 3],
+    };
+    let boundary = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &boundary_set,
+        output: &boundary_output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 420,
+        planned_activation_height: 421,
+        vrf_material_version: 7,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        Some(evm_signer.address()),
+        "a shareless validator in the canonical reshare target must retain its identity for post-DKG promotion"
+    );
+
+    let mismatched_target = ValidatorSet {
+        public_keys: vec![bls12381::PrivateKey::from_seed(8).public_key()],
+        addresses: vec![evm_signer.address()],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing],
+    };
+    let mismatch = super::validate_validator_evm_signer(
+        &args,
+        &bls_key,
+        &boundary_set,
+        &mismatched_target,
+        Some((&boundary_participants, &boundary)),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        mismatch.contains("belongs to a different BLS consensus key"),
+        "shareless recovery must fail closed on an address/BLS mismatch: {mismatch}"
+    );
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &empty,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        None,
+        "an unregistered shareless verifier has no canonical proposer identity"
+    );
+    assert!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            false,
+        )
+        .is_err(),
+        "an excluded validator must fail closed outside shareless recovery mode"
     );
 }
 
@@ -4896,11 +5447,6 @@ mod restart_recovery {
             tee_enclave_socket: None,
             tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
             tee_bootstrap_timeout_secs: 60,
-            tee_renewal_relay_key: None,
-            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-            tee_renewal_poll_secs: 30,
-            tee_renewal_warning_blocks: 600,
-            tee_renewal_critical_blocks: 120,
             tee_canary_interval_secs: 30,
             tee_canary_failure_threshold: 3,
             txpool_pending_staleness_secs: 600,

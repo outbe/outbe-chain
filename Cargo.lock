@@ -8139,6 +8139,7 @@ dependencies = [
  "alloy-sol-types",
  "clap",
  "commonware-consensus",
+ "commonware-macros",
  "commonware-runtime",
  "commonware-storage",
  "commonware-utils",
@@ -9165,9 +9166,11 @@ dependencies = [
 name = "outbe-operator"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "k256 0.13.4",
