@@ -12,7 +12,7 @@
 //! equivocation evidence. The chain id is genesis-fixed and constant for the
 //! process; it is injected once at startup via [`init_consensus_chain_id`] and
 //! every namespace accessor reads it, so the signer (`HybridScheme`) and the
-//! deterministic verifier (this crate, run in the EVM executor — same process,
+//! deterministic verifier (this crate, run in the EVM executor - same process,
 //! same chain) can never drift.
 
 use commonware_codec::Encode;
@@ -101,7 +101,7 @@ fn consensus_domain(cell: &OnceLock<ConsensusDomain>) -> &ConsensusDomain {
     cell.get_or_init(|| ConsensusDomain::new(DEFAULT_CONSENSUS_CHAIN_ID))
 }
 
-/// Install the consensus chain id, once, at node startup — before any consensus
+/// Install the consensus chain id, once, at node startup - before any consensus
 /// signing or block verification runs. Reinstalling the same id is idempotent;
 /// a conflicting id, including a namespace previously cached under the test
 /// default `0`, is rejected without changing the installed domain.
@@ -126,7 +126,7 @@ pub fn outbe_app_namespace() -> Vec<u8> {
 /// This is the "ordered validator-set commitment" the consensus-signature
 /// invariant requires. It is folded into the INDIVIDUAL vote sub-namespaces
 /// (notarize/nullify/finalize), so a vote signature produced under committee A
-/// cannot verify under committee B even within the same chain and epoch —
+/// cannot verify under committee B even within the same chain and epoch -
 /// closing the residual that committee-scoped verification covered only
 /// operationally. The threshold seed / seed-attest namespaces stay chain-only:
 /// the seed is a threshold signature already bound to the committee by its group
@@ -210,7 +210,7 @@ pub fn hybrid_seed_namespace() -> Vec<u8> {
 /// asserted byte-equal to commonware's `Namespace::new(..).seed` by
 /// [`tests::hybrid_seed_namespace_equals_commonware_seed_namespace`]; the seed
 /// round's offset (e.g. the elector's `view().previous()`) is the caller's
-/// responsibility — this helper is offset-agnostic.
+/// responsibility - this helper is offset-agnostic.
 pub fn seed_namespace_and_message(round_epoch: u64, round_view: u64) -> (Vec<u8>, Vec<u8>) {
     let message = Round::new(Epoch::new(round_epoch), View::new(round_view))
         .encode()
@@ -224,7 +224,7 @@ pub fn seed_namespace_and_message(round_epoch: u64, round_view: u64) -> (Vec<u8>
 ///
 /// Distinct from the four Simplex sub-namespaces so a seed-partial identity
 /// signature can never be confused with a vote, nullify, finalize, or the
-/// threshold-seed signature itself. Used by [`crate::proof::seed_partial`] — the
+/// threshold-seed signature itself. Used by [`crate::proof::seed_partial`] - the
 /// signer (`HybridScheme::sign`) and the SlashIndicator evidence verifier both
 /// bind a validator's `bls_seed_partial` to its MinPk identity key under this
 /// namespace so the partial becomes non-repudiably attributable.

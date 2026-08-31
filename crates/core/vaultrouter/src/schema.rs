@@ -17,7 +17,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 0)]
     pub owner: outbe_primitives::storage::dsl::Value<Address>,
 
-    /// slots 1–2: set of assets that have at least one registered vault.
+    /// slots 1-2: set of assets that have at least one registered vault.
     #[attribute(order = 1)]
     pub assets: outbe_primitives::storage::dsl::Set<Address>,
 
@@ -27,7 +27,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 2)]
     pub asset_vaults: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    /// slots 4–5: set of authorized liquidity-source accounts.
+    /// slots 4-5: set of authorized liquidity-source accounts.
     #[attribute(order = 3)]
     pub liquidity_sources: outbe_primitives::storage::dsl::Set<Address>,
 
@@ -35,7 +35,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 4)]
     pub liquidity_source_types: outbe_primitives::storage::dsl::Map<Address, u8>,
 
-    /// slots 7–8: set of authorized liquidity-target accounts.
+    /// slots 7-8: set of authorized liquidity-target accounts.
     #[attribute(order = 5)]
     pub liquidity_targets: outbe_primitives::storage::dsl::Set<Address>,
 
@@ -111,7 +111,7 @@ pub struct VaultRouterContract {
 
 impl<'storage> VaultRouterContract<'storage> {
     /// Returns the enumerable vault set for `asset`, laid out exactly as
-    /// Solidity's `mapping(address => EnumerableSet.AddressSet)` — the set's
+    /// Solidity's `mapping(address => EnumerableSet.AddressSet)` - the set's
     /// base slot is the `asset_vaults` mapping's per-key slot.
     pub fn asset_vault_set(&self, asset: Address) -> StorageSet<'storage, Address> {
         let base = asset.mapping_slot(self.asset_vaults.base_slot());

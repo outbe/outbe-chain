@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
 
     // ORC-AUD-039: Warn about plaintext key usage.
     // Production deployments should use an encrypted keystore or OS keyring.
-    warn!("private key loaded from plaintext config — use an encrypted keystore in production");
+    warn!("private key loaded from plaintext config - use an encrypted keystore in production");
 
     info!(
         rpc = %config.chain.rpc_endpoint,
@@ -201,7 +201,7 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
                 height,
                 next_block,
                 period = current_period,
-                "vote period boundary — submitting"
+                "vote period boundary - submitting"
             );
 
             // Fetch prices from all providers
@@ -213,7 +213,7 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
                 }
             };
 
-            // Always advance period after attempting — prevents retry storms
+            // Always advance period after attempting - prevents retry storms
             // on persistent failures (nonce conflicts, RPC errors, etc.).
             last_voted_period = current_period;
 

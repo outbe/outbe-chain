@@ -7,15 +7,15 @@
 //! stubbed `B256` value and does NOT exercise the production path:
 //!
 //! ```text
-//! verify_v2_proof  →  VerifiedProof::vrf_proof_hash
-//!                          │
-//!                          ▼
+//! verify_v2_proof  ->  VerifiedProof::vrf_proof_hash
+//!                          |
+//!                          v
 //!                  OutbeBlockExecutor.verified_phase1_vrf_proof_hash
-//!                          │
-//!                          ▼
+//!                          |
+//!                          v
 //!         PreloadedSystemTxContext.canonical_vrf_proof_hash
-//!                          │
-//!                          ▼
+//!                          |
+//!                          v
 //!  outbe_rewards::runtime::check_and_record_metadata_fingerprint(_, _, _, hash)
 //! ```
 //!
@@ -51,7 +51,7 @@ use outbe_validatorset::state::{committee_set_hash_v2, CommitteeEntry, Committee
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-// Fixture constants — same shape as the verifier_cluster.rs fixture so
+// Fixture constants - same shape as the verifier_cluster.rs fixture so
 // the cert format and metadata field layout are byte-compatible with the
 // production verifier path.
 const FINALIZED_EPOCH: u64 = 3;
@@ -194,11 +194,11 @@ fn build_metadata(
 /// fingerprint helper. Assert byte-equality between (a) the
 /// verifier-derived hash and (b) an independent computation via the
 /// public `canonical_vrf_proof_hash_v2(VrfProof)` helper. Then build
-/// the V3 fingerprint twice — once with each source — and assert the
+/// the V3 fingerprint twice - once with each source - and assert the
 /// two fingerprints are byte-equal.
 ///
 /// This pins the contract that a future refactor cannot pass
-/// while silently breaking the verify_v2_proof → fingerprint wire.
+/// while silently breaking the verify_v2_proof -> fingerprint wire.
 #[test]
 fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     // 1. Build the DKG fixture and a real signed certificate.
@@ -232,7 +232,7 @@ fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     assert_eq!(
         verified.vrf_proof_hash, independent_vrf_hash,
         "verify_v2_proof must return the same canonical_vrf_proof_hash_v2 the test \
-         computes independently — this pins the verify_v2_proof → cache → context → \
+         computes independently - this pins the verify_v2_proof -> cache -> context -> \
          fingerprint wire end-to-end"
     );
 
@@ -240,10 +240,10 @@ fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     assert_eq!(verified.vrf_material_version, VRF_MATERIAL_VERSION);
     assert_eq!(verified.signer_bitmap.len(), snapshot.committee.len());
 
-    // 6. Build the V3 fingerprint twice — once using the verifier's
+    // 6. Build the V3 fingerprint twice - once using the verifier's
     // output, once using the independent computation. Both must be
     // byte-equal because they share the same (metadata, fee_sum) and
-    // the only varying input — `canonical_vrf_proof_hash` — was just
+    // the only varying input - `canonical_vrf_proof_hash` - was just
     // proved equal in step 4.
     let fee_sum = U256::from(12_345_678_900_000u128);
     let fp_via_verifier = compute_metadata_fingerprint(&metadata, fee_sum, verified.vrf_proof_hash);
@@ -266,7 +266,7 @@ fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     let fp_with_wrong_vrf = compute_metadata_fingerprint(&metadata, fee_sum, wrong_vrf_hash);
     assert_ne!(
         fp_via_verifier, fp_with_wrong_vrf,
-        "fingerprint must change when canonical_vrf_proof_hash is altered — proves the \
+        "fingerprint must change when canonical_vrf_proof_hash is altered - proves the \
          argument flows through to the keccak input"
     );
 }

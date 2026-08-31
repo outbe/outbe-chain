@@ -1,4 +1,4 @@
-# testnet.yaml — one file describing a complete Outbe network.
+# testnet.yaml - one file describing a complete Outbe network.
 #
 #   python3 scripts/create_genesis.py testnet.yaml
 #
@@ -48,7 +48,7 @@ tee:
 
 # Dev lane only: the container image the mock/gramine-direct enclave runs from.
 # enclave_image: outbe-tee-enclave:latest
-# Production (dcap-required) runs gramine-sgx on the host instead — point
+# Production (dcap-required) runs gramine-sgx on the host instead - point
 # these at the release enclave checkout on each machine.
 # enclave_dir: /opt/outbe-chain/enclave
 # enclave_runner: ./run-enclave.sh
@@ -82,8 +82,8 @@ tee:
 
 # --- Chain parameters ------------------------------------------------------
 
-# Pin the timestamp to keep the genesis hash — and the OCOMP registrations
-# that sign it — reproducible. Left unset, each run stamps the current time.
+# Pin the timestamp to keep the genesis hash - and the OCOMP registrations
+# that sign it - reproducible. Left unset, each run stamps the current time.
 # timestamp: 1756032000
 
 # output: genesis.json
@@ -172,7 +172,7 @@ oracle:
 # MissedOffering the whole ProtocolCycle dies with
 # `MissedOffering requires an immutable formed day limit` and the chain stops
 # producing blocks. The one that used to live here avoided that only by
-# declaring `offering_end: 4000000000` — a window open until 2096 — which hid
+# declaring `offering_end: 4000000000` - a window open until 2096 - which hid
 # the gap instead of closing it.
 
 # Intex profile selector. `prod` seeds nothing.

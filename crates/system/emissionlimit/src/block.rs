@@ -11,7 +11,7 @@
 //! and forwards the Metadosis terminal portion through
 //! [`dispatch_terminal_remainder_at`] below.
 //!
-//! This file is intentionally tiny — it owns the purpose-bound terminal
+//! This file is intentionally tiny - it owns the purpose-bound terminal
 //! dispatch calls used by Cycle and late fee settlement. Keeping them distinct
 //! prevents a non-daily residue from becoming an OCOMP base-limit producer.
 
@@ -29,7 +29,7 @@ use outbe_primitives::{
 /// accounting lands in the right bucket regardless of when the call physically
 /// runs.
 ///
-/// Returns `Fatal` if the Metadosis sink reports any unused amount —
+/// Returns `Fatal` if the Metadosis sink reports any unused amount -
 /// the terminal sink is required to be a sink, not a pass-through.
 pub fn dispatch_terminal_remainder_at(
     ctx: &BlockRuntimeContext,

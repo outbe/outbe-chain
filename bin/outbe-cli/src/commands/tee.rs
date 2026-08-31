@@ -1,4 +1,4 @@
-//! `outbe-cli tee` — V1 TEE registration for a joining validator or full node.
+//! `outbe-cli tee` - V1 TEE registration for a joining validator or full node.
 //!
 //! Pre-start flow: before launching `outbe-chain node` on a
 //! TEE-bootstrapped chain, the joiner registers its enclave on-chain
@@ -220,7 +220,7 @@ pub enum TeeCmd {
     /// Print this enclave's resident tribute-offer public key (the key clients
     /// encrypt offers to once DKG completes) and its DKG identity key. With
     /// `--diff-chain`, also read the on-chain registry `tributeOfferPublicKey()`
-    /// and assert it MATCHES the enclave — exits non-zero on a registry-vs-enclave
+    /// and assert it MATCHES the enclave - exits non-zero on a registry-vs-enclave
     /// mismatch, so it can gate scripts.
     Pubkey {
         /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
@@ -614,7 +614,7 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
     .await?;
     if onchain.is_zero() {
         return Err(eyre::eyre!(
-            "on-chain tributeOfferPublicKey == 0 — chain is not TEE-bootstrapped yet, \
+            "on-chain tributeOfferPublicKey == 0 - chain is not TEE-bootstrapped yet, \
              nothing to diff against"
         ));
     }
@@ -624,11 +624,11 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
         hex::encode(onchain_bytes)
     );
     if onchain_bytes == offer_pub {
-        println!("✓ MATCH — enclave resident offer key == on-chain registry");
+        println!("[OK] MATCH - enclave resident offer key == on-chain registry");
         Ok(())
     } else {
         Err(eyre::eyre!(
-            "✗ MISMATCH — enclave offer key 0x{} != on-chain 0x{}",
+            "[FAIL] MISMATCH - enclave offer key 0x{} != on-chain 0x{}",
             hex::encode(offer_pub),
             hex::encode(onchain_bytes)
         ))
@@ -1153,7 +1153,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                             binding.enclave_id,
                             binding.intent_hash,
                         )?;
-                        println!("✓ exact tee join is already finalized and locally committed");
+                        println!("[ok] exact tee join is already finalized and locally committed");
                         return Ok(());
                     }
                     other => eyre::bail!(
@@ -1582,7 +1582,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                         |error| eyre::eyre!("clear recovered committed join checkpoint: {error}"),
                     )?;
                     println!(
-                        "✓ finalized tee join cleanup recovered without another transaction or onboarding ingest"
+                        "[ok] finalized tee join cleanup recovered without another transaction or onboarding ingest"
                     );
                     return Ok(());
                 }
@@ -1811,13 +1811,13 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             }
             if join_transport == JoinTransport::AuthorizedNodeHost {
                 println!(
-                    "✓ offer key durably installed and the authenticated enclave connection reopened (offer_public 0x{}). \
+                    "[OK] offer key durably installed and the authenticated enclave connection reopened (offer_public 0x{}). \
                      You can now start outbe-chain node.",
                     hex::encode(tribute_offer_public)
                 );
             } else {
                 println!(
-                    "✓ development offer key installed in enclave (offer_public 0x{}). \
+                    "[OK] development offer key installed in enclave (offer_public 0x{}). \
                      You can now start the separate GramineDirectDev node.",
                     hex::encode(tribute_offer_public)
                 );

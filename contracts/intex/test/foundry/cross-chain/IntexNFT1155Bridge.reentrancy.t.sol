@@ -14,12 +14,12 @@ import {
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
-///      mid-`receiveMessage` (via `token.crosschainMint` → `_mint`), re-enters the adapter's
+///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `multiSend` entrypoint. With both `receiveMessage` and `multiSend` carrying
 ///      `nonReentrant`, the inner call reverts with `ReentrancyGuardReentrantCall`
 ///      at the modifier check (before the empty-batch validation), and we capture
 ///      the selector. Without the guards, the inner call would revert with
-///      `EmptyBatch` instead — distinguishing the two cases.
+///      `EmptyBatch` instead - distinguishing the two cases.
 contract ReentrantBatchProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -68,10 +68,10 @@ contract ReentrantBatchProbe is IERC1155Receiver {
 /// @title IntexNFT1155BridgeReentrancyTest
 /// @notice Behavioral test that `receiveMessage` and `multiSend` are mutually `nonReentrant`-guarded.
 /// @dev Source chain (A) caller initiates a single-recipient batch transfer to the hostile probe
-///      on the destination chain (B). On B, `receiveMessage` → `_handleBatchReceive` → `token.crosschainMint`
-///      → `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
+///      on the destination chain (B). On B, `receiveMessage` -> `_handleBatchReceive` -> `token.crosschainMint`
+///      -> `_mint` invokes the probe's `onERC1155Received`, which attempts to re-enter
 ///      `adapterB.multiSend`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` — proving the guard is held by `receiveMessage` AND that
+///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that
 ///      `multiSend` carries the modifier.
 contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;

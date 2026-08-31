@@ -177,7 +177,7 @@ pub enum SystemTxKind {
     /// block; reads the same-block `CommitteeSnapshotStore` written by Phase 3a).
     TeeBootstrap,
     OracleSlashWindow,
-    /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, …).
+    /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, ...).
     HookEvents,
     /// Sole end-zone system transaction. The executor seals compressed
     /// entities before dispatching this terminal request slot.
@@ -223,7 +223,7 @@ impl SystemTxKind {
     /// atomically before a receipt, including for a phase classified as soft.
     ///
     /// Consensus- and economic-critical phases are one-shot: their work cannot
-    /// be retried by a later block, so a swallowed revert permanently loses it —
+    /// be retried by a later block, so a swallowed revert permanently loses it -
     /// stranded validator-fee escrow (`LateFinalizeCredits`), a dropped day of
     /// emission / terminal Metadosis (`CycleTick`), a skipped reshare / validator
     /// set activation (`BoundaryOutcome`), or unrecorded finalized-parent
@@ -359,7 +359,7 @@ impl SystemTxInputV2 {
             | Self::HookEvents
             | Self::OcompTerminalRequest => {}
             Self::LateFinalizeCredits { artifact } => {
-                // Empty batches encode to empty bytes — the mandatory tx then
+                // Empty batches encode to empty bytes - the mandatory tx then
                 // carries an empty body and still drives the window-close settle.
                 out.extend_from_slice(
                     encode_late_finalize_credits_artifact(artifact)
@@ -401,7 +401,7 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?,
             }),
             SystemTxKind::LateFinalizeCredits => Ok(Self::LateFinalizeCredits {
-                // Empty body ⇒ empty (no-op) artifact; the matured-window close
+                // Empty body => empty (no-op) artifact; the matured-window close
                 // still runs on execution.
                 artifact: decode_late_finalize_credits_artifact(body)
                     .map_err(SystemTxError::from_precompile)?
@@ -718,8 +718,8 @@ impl<'a> SystemTxLayout<'a> {
 
     /// True if the begin zone contains a system tx of `kind`. Used to derive the
     /// layout-signaled optional-phase flags (e.g. the one-time
-    /// [`SystemTxKind::TeeBootstrap`]). A decode failure — which a
-    /// successful [`split_system_layout`] precludes — is treated as absent.
+    /// [`SystemTxKind::TeeBootstrap`]). A decode failure - which a
+    /// successful [`split_system_layout`] precludes - is treated as absent.
     pub fn has_begin_kind(&self, kind: SystemTxKind) -> bool {
         self.begin_block_kinds()
             .map(|kinds| kinds.contains(&kind))

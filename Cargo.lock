@@ -8794,6 +8794,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promisfactory",
+ "outbe-promislimit",
  "outbe-vaultrouter",
  "ring",
  "thiserror 2.0.18",

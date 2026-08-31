@@ -61,7 +61,7 @@ impl FeederHealth {
     fn is_healthy(&self) -> bool {
         let last = self.last_vote_time.load(Ordering::Relaxed);
         if last == 0 {
-            // No vote submitted yet — healthy if daemon just started
+            // No vote submitted yet - healthy if daemon just started
             return true;
         }
         let now = std::time::SystemTime::now()
@@ -89,8 +89,8 @@ impl FeederHealth {
 /// Starts the health HTTP server on the given bind address.
 ///
 /// Serves:
-/// - `GET /health` — 200 if healthy, 503 if not
-/// - `GET /status` — JSON with full feeder state
+/// - `GET /health` - 200 if healthy, 503 if not
+/// - `GET /status` - JSON with full feeder state
 ///
 /// Returns immediately; the server runs as a background task.
 pub async fn start_health_server(bind_addr: &str, health: Arc<FeederHealth>) -> eyre::Result<()> {

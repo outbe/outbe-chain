@@ -56,8 +56,10 @@ library IntexGas {
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 305_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 270_000;
-    /// @dev Measured at ~3.31M for a full 64-bidder chunk against a live escrow.
-    uint256 internal constant REFUND_BASE = 250_000;
+    /// @dev Measured at ~3.31M for a full 64-bidder chunk, and ~440k for a two-bidder one: the
+    ///      chunk completing a day also routes the paid wCOEN home at a fixed cost, which lands on
+    ///      the base. `LocalLoopback.t.sol` walks the narrow case.
+    uint256 internal constant REFUND_BASE = 500_000;
     uint256 internal constant REFUND_PER_ITEM = 75_000;
     /// @dev Sized on the failure path: a rejected item is recorded with its revert bytes while the tokens
     ///      are already burned on the source. Measured ~4.64M for a full rejected batch.

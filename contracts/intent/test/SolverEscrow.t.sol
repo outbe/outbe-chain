@@ -35,7 +35,7 @@ contract SolverEscrowTest is Test {
         authorizedCaller = makeAddr("authorizedCaller");
         token = new MockERC20("Test Token", "TT");
 
-        // Deploy stack: Compact → Allocator → Escrow → wire arbiter
+        // Deploy stack: Compact -> Allocator -> Escrow -> wire arbiter
         compact = new MockTheCompact();
         allocator = new SolverAllocator(address(compact));
         lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
@@ -371,7 +371,7 @@ contract SolverEscrowTest is Test {
     // ============ hasMinCollateral with locks ============
 
     function test_hasMinCollateral_accountsForLocked() public {
-        // Deposit 100, lock 50 → available = 50
+        // Deposit 100, lock 50 -> available = 50
         vm.startPrank(solver);
         token.approve(address(escrow), 100);
         escrow.deposit(address(token), 100);
@@ -380,11 +380,11 @@ contract SolverEscrowTest is Test {
         vm.prank(authorizedCaller);
         escrow.lockCollateral(keccak256("order1"), solver, address(token), 50);
 
-        // 10% of 500 = 50 → available 50 >= 50 → true
+        // 10% of 500 = 50 -> available 50 >= 50 -> true
         assertTrue(escrow.hasMinCollateral(solver, address(token), 500));
-        // 10% of 501 = 50.1 → rounds to 50 → true (integer division)
+        // 10% of 501 = 50.1 -> rounds to 50 -> true (integer division)
         assertTrue(escrow.hasMinCollateral(solver, address(token), 501));
-        // 10% of 510 = 51 → available 50 < 51 → false
+        // 10% of 510 = 51 -> available 50 < 51 -> false
         assertFalse(escrow.hasMinCollateral(solver, address(token), 510));
     }
 
@@ -482,7 +482,7 @@ contract SolverEscrowTest is Test {
     }
 
     function test_distributeReward_works() public {
-        // Slash 1000 tokens → escrow holds 1000 ERC6909
+        // Slash 1000 tokens -> escrow holds 1000 ERC6909
         _slashSolver(5000, 1000);
 
         address receiver = makeAddr("receiver");
@@ -506,7 +506,7 @@ contract SolverEscrowTest is Test {
     }
 
     function test_distributeReward_exactSlashedBalance() public {
-        // Slash exactly 150 tokens → 1.5% of 10_000 = 150 → exact match
+        // Slash exactly 150 tokens -> 1.5% of 10_000 = 150 -> exact match
         _slashSolver(5000, 150);
         deal(address(token), address(compact), 10_000);
 

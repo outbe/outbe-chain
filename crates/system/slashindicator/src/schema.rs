@@ -6,23 +6,23 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// EVM storage layout for the SlashIndicator precompile.
 ///
 /// Storage slots:
-///   0: config_proposer_misdemeanor_threshold — u64 (default 50)
-///   1: config_proposer_felony_threshold      — u64 (default 150)
-///   2: config_voter_misdemeanor_threshold    — u64 (default 500)
-///   3: config_slash_amount_percent           — u64 (default 5)
-///   4: config_evidence_reward_percent        — u64 (default 10)
-///   5: proposer_miss_count                   — mapping(address => u64), per-epoch, resets
-///   6: voter_miss_count                      — mapping(address => u64), per-epoch, resets
-///   7: felony_count                          — mapping(address => u64), cumulative
-/// 8: evidence_processed — mapping(B256 => bool), dedup
-/// 9: voter_window_slashed — mapping(B256 => bool), per-finalized-block voter slash-window guard
-/// 10: proposer_window_slashed — mapping(B256 => bool), per-finalized-block missed-proposer slash-window guard
-///  11: invalid_vrf_evidence_processed        — mapping(B256 => bool) dedup keyed by `invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`
-///  12: config_voter_felony_threshold         — u64 (default 150); appended at the end to preserve the slot 0-11 layout
-///  13: seed_partial_equivocation_processed   — mapping(B256 => bool) dedup keyed by `SeedPartialEquivocationEvidence::dedup_hash`
-///  14: invalid_seed_partial_processed        — mapping(B256 => bool) dedup keyed by `InvalidSeedPartialEvidence::dedup_hash`
-/// 15: slash_guard_ring — mapping(uint64 => B256), prune ring of finalized fb_hashes
-/// 16: slash_guard_ring_seq — uint64, ring write cursor
+///   0: config_proposer_misdemeanor_threshold - u64 (default 50)
+///   1: config_proposer_felony_threshold      - u64 (default 150)
+///   2: config_voter_misdemeanor_threshold    - u64 (default 500)
+///   3: config_slash_amount_percent           - u64 (default 5)
+///   4: config_evidence_reward_percent        - u64 (default 10)
+///   5: proposer_miss_count                   - mapping(address => u64), per-epoch, resets
+///   6: voter_miss_count                      - mapping(address => u64), per-epoch, resets
+///   7: felony_count                          - mapping(address => u64), cumulative
+/// 8: evidence_processed - mapping(B256 => bool), dedup
+/// 9: voter_window_slashed - mapping(B256 => bool), per-finalized-block voter slash-window guard
+/// 10: proposer_window_slashed - mapping(B256 => bool), per-finalized-block missed-proposer slash-window guard
+///  11: invalid_vrf_evidence_processed        - mapping(B256 => bool) dedup keyed by `invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`
+///  12: config_voter_felony_threshold         - u64 (default 150); appended at the end to preserve the slot 0-11 layout
+///  13: seed_partial_equivocation_processed   - mapping(B256 => bool) dedup keyed by `SeedPartialEquivocationEvidence::dedup_hash`
+///  14: invalid_seed_partial_processed        - mapping(B256 => bool) dedup keyed by `InvalidSeedPartialEvidence::dedup_hash`
+/// 15: slash_guard_ring - mapping(uint64 => B256), prune ring of finalized fb_hashes
+/// 16: slash_guard_ring_seq - uint64, ring write cursor
 #[contract(addr = SLASH_INDICATOR_ADDRESS)]
 pub struct SlashIndicator {
     // Config slots (0-4)
@@ -39,7 +39,7 @@ pub struct SlashIndicator {
     // Cumulative felony count (slot 7), never reset
     pub felony_count: Mapping<Address, u64>,
 
-    // Evidence dedup — tracks processed evidence hashes (slot 8)
+    // Evidence dedup - tracks processed evidence hashes (slot 8)
     pub evidence_processed: Mapping<B256, bool>,
 
     // per-finalized-block voter slash-window guard, keyed by
@@ -61,7 +61,7 @@ pub struct SlashIndicator {
     // canonical evidence hash
     // `outbe_consensus::proof::invalid_vrf_evidence_hash_v2(child_hash, phase1_tx_hash)`.
     // A child block has exactly one Phase 1 system transaction, so this
-    // pair encodes "one slash per (child, phase1)" — submitting the same
+    // pair encodes "one slash per (child, phase1)" - submitting the same
     // evidence twice reverts with "evidence already processed", matching
     // the precedent set by `evidence_processed` for double-proposal and
     // conflicting-vote evidence (slot 8).

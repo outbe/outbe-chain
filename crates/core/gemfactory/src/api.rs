@@ -13,6 +13,7 @@ pub fn mint_gem(
     gem_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
+    entry_price: U256,
 ) -> Result<U256> {
     runtime::mint_gem(
         storage,
@@ -21,6 +22,7 @@ pub fn mint_gem(
         gem_load,
         issuance_currency,
         reference_currency,
+        entry_price,
     )
 }
 

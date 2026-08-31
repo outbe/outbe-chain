@@ -64,7 +64,7 @@ pub struct HashMapStorageProvider {
     snapshots: Vec<Snapshot>,
     /// When true, `sub_call` returns `SubCallOutput::default_success()`
     /// instead of the trait default `Err(SubCallError::NotAvailable)`. Tests
-    /// that exercise runtime paths which issue Rust → Solidity sub-calls but
+    /// that exercise runtime paths which issue Rust -> Solidity sub-calls but
     /// don't assert child-frame state opt in via [`Self::enable_sub_call_stub`].
     sub_call_stub: bool,
     /// Per-address return data stubs. Entries registered via
@@ -206,7 +206,7 @@ impl HashMapStorageProvider {
     /// returns [`SubCallOutput::default_success`] (success with empty
     /// returndata) instead of [`SubCallError::NotAvailable`].
     ///
-    /// Use only in tests whose runtime now issues Rust → Solidity sub-calls
+    /// Use only in tests whose runtime now issues Rust -> Solidity sub-calls
     /// but do not assert vault/EVM state on the child frame.
     pub fn enable_sub_call_stub(&mut self) {
         self.sub_call_stub = true;

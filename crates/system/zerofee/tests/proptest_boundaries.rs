@@ -1,7 +1,7 @@
 //! Property-based tests for the EIP-7702 sponsorship policy.
 //!
 //! Targets behaviours that are easy to spec but hard to spot-test
-//! exhaustively — UTC day boundary arithmetic, lazy reset around
+//! exhaustively - UTC day boundary arithmetic, lazy reset around
 //! midnight, and the determinism contract that a fixed `(signer,
 //! timestamp)` tuple always produces the same
 //! authorization outcome regardless of pre-existing storage history

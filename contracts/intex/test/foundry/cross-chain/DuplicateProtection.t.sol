@@ -12,7 +12,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
-/// @dev Under ERC-7786 the routers have NO message-level dedup — the hub deduplicates and rolls back, so the old
+/// @dev Under ERC-7786 the routers have NO message-level dedup - the hub deduplicates and rolls back, so the old
 ///      ERC-7786 ORDERED `nextNonce` premise no longer exists at the router. The NFT batch adapter, which
 ///      carries independent transfers, keeps its OWN defence-in-depth dedup keyed by the bridge `receiveId`
 ///      (`processed[receiveId]`), rejecting a replay of the same message with `AlreadyProcessed(receiveId)`. A
@@ -91,7 +91,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         bridge.deliverLast();
     }
 
-    /// @notice Two sends carrying distinct payloads → distinct receiveIds, so both land. Proves the guard keys on
+    /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. Proves the guard keys on
     ///         the message id, not merely on the source. (Different recipients keep the payloads distinct, which the
     ///         loopback bridge needs since it binds the receiveId to the payload bytes.)
     function test_NFTBatch_DistinctMessages_BothSucceed() public {
@@ -101,7 +101,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         batchSrc.batchSend(_batchSendParam(recipient));
         assertEq(intexDst.balanceOf(recipient, TOKEN_ID), 1, "first send minted");
 
-        // Mint another unit and send to a different recipient — a fresh payload/receiveId, not a duplicate.
+        // Mint another unit and send to a different recipient - a fresh payload/receiveId, not a duplicate.
         intexSrc.mint(sender, 1, SERIES_ID);
         vm.prank(sender);
         batchSrc.batchSend(_batchSendParam(other));

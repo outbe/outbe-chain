@@ -1,4 +1,4 @@
-//! Enclave key material + quote assembly (secret-bearing — enclave only).
+//! Enclave key material + quote assembly (secret-bearing - enclave only).
 //!
 //! One sealed identity seed deterministically derives the Noise responder,
 //! recipient X25519, Ed25519 attestation, TEE-BLS and DKG-decryption keys. The
@@ -21,7 +21,7 @@ use crate::process::TributeOfferKeyMaterial;
 
 /// Measurement value used when no SGX hardware quote is available
 /// (`gramine-direct`/bare). Zero is not a valid SGX measurement, so it cannot be
-/// mistaken for an attested enclave — a strict host policy rejects it.
+/// mistaken for an attested enclave - a strict host policy rejects it.
 pub const UNATTESTED_MEASUREMENT: B256 = B256::ZERO;
 
 /// Domain-separation namespace binding a DKG X25519 share-encryption key to its
@@ -257,7 +257,7 @@ impl EnclaveKeys {
             .to_vec()
     }
     /// The running enclave's ISV SVN (0 when unattested). Consumed by the
-    /// seal/unseal boot path for the anti-rollback floor (plan §"Local
+    /// seal/unseal boot path for the anti-rollback floor (plan section "Local
     /// Persistence").
     pub fn isv_svn(&self) -> u16 {
         self.isv_svn
@@ -275,7 +275,7 @@ impl EnclaveKeys {
 
     /// Offer decrypt key material using an externally-supplied secret (the
     /// DKG-derived offer secret) with the fixed protocol salt
-    /// [`outbe_tee::OFFER_HKDF_SALT`] — the same non-secret domain value clients
+    /// [`outbe_tee::OFFER_HKDF_SALT`] - the same non-secret domain value clients
     /// use, shared by the dev and DKG-derived offer keys alike.
     pub fn tribute_offer_key_material_with<'a>(
         &'a self,
@@ -288,7 +288,7 @@ impl EnclaveKeys {
     }
 
     /// `report_data = keccak256(noise_static_pub || recipient_x25519_pub ||
-    /// attestation_pub)` — binds the cleartext quote keys to the attestation. The
+    /// attestation_pub)` - binds the cleartext quote keys to the attestation. The
     /// first 32 bytes of the SGX 64-byte report_data carry this value, so the
     /// host can verify the binding against the value embedded in the real quote.
     pub fn report_data_binding(
@@ -318,7 +318,7 @@ impl EnclaveKeys {
 
     /// Build the SGX quote response. The `quote_body` is the real DCAP quote
     /// generated at startup (empty when unattested). `nonce` is unused for
-    /// freshness here — the channel's freshness comes from the Noise-IK handshake
+    /// freshness here - the channel's freshness comes from the Noise-IK handshake
     /// that pins the attested static key.
     pub fn quote(&self, _nonce: [u8; 32]) -> EnclaveResponse {
         EnclaveResponse::Quote {
@@ -342,7 +342,7 @@ mod tests {
     /// Off SGX hardware (CI / gramine-direct / bare) the enclave MUST run
     /// unattested: empty quote and zero measurements. It must never fabricate a
     /// quote or measurements (the old mock did exactly
-    /// that — `mock-gramine-direct-quote` + `[0xE1;32]`/`[0x51;32]`).
+    /// that - `mock-gramine-direct-quote` + `[0xE1;32]`/`[0x51;32]`).
     #[test]
     fn unattested_when_no_sgx_hardware() {
         let keys = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("key init off-hardware");
@@ -378,9 +378,9 @@ mod tests {
     }
 
     /// Pin the REPORT_DATA preimage byte order. The canonical layout is
-    /// `keccak256(noise_static ‖ recipient_x25519 ‖ attestation)`; the host
+    /// `keccak256(noise_static || recipient_x25519 || attestation)`; the host
     /// (`outbe-tee::client::verify_quote`) recomputes it in the SAME order, so a
-    /// drift on either side breaks the channel — this test freezes it.
+    /// drift on either side breaks the channel - this test freezes it.
     #[test]
     fn report_data_preimage_order_is_pinned() {
         let noise = [1u8; 32];
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(
             got,
             keccak256(&canonical),
-            "canonical order is noise‖offer‖attest"
+            "canonical order is noise||offer||attest"
         );
 
         // Any other field order yields a different binding.

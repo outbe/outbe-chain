@@ -1,13 +1,13 @@
-//! BLS12-381 key management — threshold keys and individual (MinPk) keys.
+//! BLS12-381 key management - threshold keys and individual (MinPk) keys.
 //!
 //! Provides loading/saving of:
 //! - BLS threshold shares and public polynomials (MinSig variant)
 //! - BLS individual signing keys (MinPk variant, for P2P identity + vote attribution)
 //!
 //! Supports three key storage backends via [`KeyBackend`]:
-//! - `Plaintext` — hex-encoded files (development/testing)
-//! - `Encrypted` — AES-256-GCM with Argon2id-derived key
-//! - `OsLevel` — OS keychain (macOS Keychain / Linux Secret Service)
+//! - `Plaintext` - hex-encoded files (development/testing)
+//! - `Encrypted` - AES-256-GCM with Argon2id-derived key
+//! - `OsLevel` - OS keychain (macOS Keychain / Linux Secret Service)
 //!
 //! Also includes a centralized DKG bootstrap utility for genesis setup.
 
@@ -36,7 +36,7 @@ pub const MAX_VALIDATORS: u32 = 256;
 static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
-// KeyBackend — storage backend for BLS key material
+// KeyBackend - storage backend for BLS key material
 // ---------------------------------------------------------------------------
 
 /// Backend for BLS key storage at rest.
@@ -437,9 +437,9 @@ pub fn save_individual_key(
 /// Contains the public polynomial (shared by all validators) and
 /// per-validator private shares (distributed to each validator).
 pub struct DkgBootstrapResult {
-    /// Public polynomial — distribute to all validators.
+    /// Public polynomial - distribute to all validators.
     pub polynomial: Sharing<MinSig>,
-    /// Per-participant shares — distribute each to its corresponding validator.
+    /// Per-participant shares - distribute each to its corresponding validator.
     /// Indexed by participant index (0-based).
     pub shares: Vec<Share>,
 }
@@ -451,9 +451,9 @@ pub struct DkgBootstrapResult {
 /// needs this output to build the canonical genesis DKG boundary and to support
 /// later reshare continuity.
 pub struct ParticipantDkgBootstrapResult {
-    /// Full DKG output artifact — distribute to every validator.
+    /// Full DKG output artifact - distribute to every validator.
     pub output: dkg::Output<MinSig, bls12381::PublicKey>,
-    /// Public polynomial — distribute to all validators.
+    /// Public polynomial - distribute to all validators.
     pub polynomial: Sharing<MinSig>,
     /// Per-participant shares in ordered participant-set order.
     pub shares: Vec<Share>,
@@ -464,7 +464,7 @@ pub struct ParticipantDkgBootstrapResult {
 /// Generates a random polynomial and `n` shares with `N3f1` fault tolerance
 /// (requires 2f+1 of 3f+1 participants for threshold recovery).
 ///
-/// This is used for genesis setup — each validator receives its share via
+/// This is used for genesis setup - each validator receives its share via
 /// a secure offline channel. For production use, a distributed DKG protocol
 /// should be used instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
@@ -653,7 +653,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         save_signing_share(file.path(), share, &backend).unwrap();
 
-        // Load with wrong passphrase → should fail
+        // Load with wrong passphrase -> should fail
         let wrong_backend = KeyBackend::Encrypted("wrong-password".into());
         let err = load_signing_share(file.path(), &wrong_backend);
         assert!(err.is_err(), "wrong passphrase should fail");
@@ -727,7 +727,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &hex_str).unwrap();
 
-        // Load with Plaintext backend → should work
+        // Load with Plaintext backend -> should work
         let loaded = load_signing_share(file.path(), &KeyBackend::Plaintext).unwrap();
         assert_eq!(share.index, loaded.index);
     }
@@ -760,7 +760,7 @@ mod tests {
     }
 
     /// Runtime-level test: save and load full threshold material (share + polynomial)
-    /// through encrypted backend — the same flow as save_dkg_state() / obtain_threshold_material().
+    /// through encrypted backend - the same flow as save_dkg_state() / obtain_threshold_material().
     #[test]
     fn test_encrypted_threshold_material_full_flow() {
         let result = bootstrap_dkg(3).unwrap();

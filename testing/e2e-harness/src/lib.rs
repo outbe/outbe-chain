@@ -5,7 +5,7 @@
 //! sends are native (alloy [`Provider`]/`sol!`, see `internal::eth`); the
 //! committee validators, joiner, followers, and their enclave containers are all
 //! launched as Rust-owned processes by one handle ([`world::localnet`], via
-//! [`internal::proc`]) — no `run-testnet.sh`/`nohup`. Bootstrap keeps only two
+//! [`internal::proc`]) - no `run-testnet.sh`/`nohup`. Bootstrap keeps only two
 //! one-shot subprocesses (`outbe-chain dkg bootstrap` + `python3 seed_genesis.py`);
 //! governance/tribute sends still go through `outbe-cli`.
 //!
@@ -54,7 +54,7 @@ use crate::world::World;
 /// Cucumber's per-scenario `after` hook only runs on normal completion, so a
 /// signal would otherwise leave the running scenario's committee validators and
 /// enclave containers orphaned. On the signal path the `World` is never dropped,
-/// so the owned process/enclave guards never fire — we reconstruct the teardown
+/// so the owned process/enclave guards never fire - we reconstruct the teardown
 /// target from the resolved environment (the same data-dir every `World` uses)
 /// and run the stateless datadir-scoped sweep before exiting `130` (SIGINT).
 async fn teardown_on_signal(env: Environment) {
@@ -84,7 +84,7 @@ async fn teardown_on_signal(env: Environment) {
 /// Run the shared localnet teardown for `env` and exit the process. Never
 /// returns.
 fn shutdown_and_exit(env: &Environment) -> ! {
-    eprintln!("\noutbe-e2e: interrupted — tearing down the localnet…");
+    eprintln!("\noutbe-e2e: interrupted - tearing down the localnet...");
     // Best-effort: the shutdown is itself best-effort (ignores already-stopped
     // nodes / missing containers), so a partially-started run is safe to tear
     // down too.
@@ -98,7 +98,7 @@ fn shutdown_and_exit(env: &Environment) -> ! {
 ///
 /// A scenario whose requirements the environment can't satisfy is **skipped**
 /// (a `SKIPPED:` line is printed and it is filtered out). With `--all`, such a
-/// scenario instead **fails** — a `before` hook panics so it counts as a hook
+/// scenario instead **fails** - a `before` hook panics so it counts as a hook
 /// error. Only one scenario runs at a time (the localnet is a single shared
 /// resource). Exits non-zero on any failure.
 pub async fn run() {
@@ -110,7 +110,7 @@ pub async fn run() {
     // scenario a `scenario-<n>` subdir under that (see `Config::for_scenario`).
     // The enclave container tag and the teardown sweep both derive from the run
     // dir, so this one move also makes this run's docker names + sweep scope
-    // unique — two runs (or a prior crashed one) never touch each other's
+    // unique - two runs (or a prior crashed one) never touch each other's
     // nodes/containers, with no manual `--data-dir` juggling.
     let run_id = {
         let secs = std::time::SystemTime::now()
@@ -254,7 +254,7 @@ pub async fn run() {
             move |feature, _rule, scenario| match decide(feature, scenario, &env_filter) {
                 Decision::Run => true,
                 Decision::Skip(reason) => {
-                    println!("SKIPPED: {} — {reason}", scenario.name);
+                    println!("SKIPPED: {} - {reason}", scenario.name);
                     false
                 }
             },
@@ -262,7 +262,7 @@ pub async fn run() {
         .await;
 
     // `execution_has_failed` covers failed steps, parsing errors, and hook errors
-    // — so `--all`, which fails unmet scenarios by panicking in the `before` hook,
+    // - so `--all`, which fails unmet scenarios by panicking in the `before` hook,
     // keeps its data dir too.
     let dir = env_cleanup.data_dir.display().to_string();
     if writer.execution_has_failed() {

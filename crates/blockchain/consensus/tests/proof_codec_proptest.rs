@@ -1,7 +1,7 @@
 //! Property-based round-trip for the V2 Hybrid certificate wire codec.
 //!
 //! Generates random signer bitmaps and mandatory VRF proofs, builds a real
-//! BLS aggregate from deterministic seeds, then asserts encode→decode→encode is
+//! BLS aggregate from deterministic seeds, then asserts encode->decode->encode is
 //! byte-stable. Catches any non-deterministic encoding (e.g. unordered set
 //! iteration) before it can ship.
 

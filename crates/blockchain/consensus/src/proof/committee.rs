@@ -5,7 +5,7 @@
 //! certified-parent proof store, Rewards/Slash fingerprints, slashing evidence
 //! dedup, and the `apply_boundary_outcome` writer that seeds
 //! `CommitteeSnapshotStore`). Everything in this file is pure data and pure
-//! arithmetic — no storage, no async, and only a pure allocation-free build error — so it can be reused by full
+//! arithmetic - no storage, no async, and only a pure allocation-free build error - so it can be reused by full
 //! nodes that have no validator runtime, and by the EVM executor that has no
 //! consensus stack.
 //!
@@ -72,7 +72,7 @@ pub struct CommitteeSnapshot {
     /// "invalid seed partial" slash offense; the executor derives it from the
     /// already-consensus-validated boundary `outcome`, so a proposer cannot
     /// forge it (which would otherwise let an attacker frame an honest
-    /// validator). Intentionally NOT folded into [`committee_set_hash_v2`] —
+    /// validator). Intentionally NOT folded into [`committee_set_hash_v2`] -
     /// its authenticity comes from the validated boundary artifact, not the
     /// committee fingerprint, so adding it changes no V2 binding.
     pub vrf_public_polynomial_hash: B256,
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn rejects_pubkey_that_is_not_48_bytes() {
         let addresses = vec![addr(1), addr(2)];
-        // Second pubkey is 47 bytes — a hypothetical Commonware encode-size drift.
+        // Second pubkey is 47 bytes - a hypothetical Commonware encode-size drift.
         let pubkeys: Vec<Vec<u8>> = vec![vec![1u8; 48], vec![2u8; 47]];
         let err = build_committee_snapshot(&addresses, &pubkeys, 0, Vec::new(), B256::ZERO)
             .expect_err("47-byte pubkey must be rejected, not truncated");

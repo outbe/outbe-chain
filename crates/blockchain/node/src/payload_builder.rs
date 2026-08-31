@@ -199,7 +199,7 @@ where
         // node stashes its pending payload at startup, but only the block-1
         // proposer must inject it. Without this guard a node that did not propose
         // block 1 would still hold its pending payload and inject a stale
-        // `TeeBootstrap` when it later proposes block N > 1 — which the executor
+        // `TeeBootstrap` when it later proposes block N > 1 - which the executor
         // rejects (`committee_snapshot_block` mismatch / already bootstrapped),
         // stalling that slot.
         let pending_tee_bootstrap = if block_number == 1 {
@@ -641,7 +641,7 @@ where
         // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit
         // (validators already get this via their verify-time `new_payload`).
         // This is the SAME execution that produced the sealed block below, so the
-        // cached state matches the sealed block hash exactly — no proposer/
+        // cached state matches the sealed block hash exactly - no proposer/
         // validator divergence.
         let recovered_block = Arc::new(block);
         let execution_output = Arc::new(BlockExecutionOutput {

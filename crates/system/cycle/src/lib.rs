@@ -1,4 +1,4 @@
-//! Cycle — deterministic trigger registry and calendar orchestrator.
+//! Cycle - deterministic trigger registry and calendar orchestrator.
 //!
 //! Each `TriggerSpec` declares a `period_seconds` and a
 //! `start_offset_seconds` phase relative to unix epoch zero. A trigger
@@ -21,7 +21,7 @@
 //! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
 //! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
 //! 3. Validator pool: read `outbe_rewards::api::read_daily_fee_sum_raw`
-//!    and `read_voters_for_day`; if fees ≥ cap or no voters, return
+//!    and `read_voters_for_day`; if fees >= cap or no voters, return
 //!    the validator amount as excess; otherwise prepare one exact immutable
 //!    Rewards Gem batch. The planned total becomes a durable liability and
 //!    the undistributed rounding residue becomes terminal excess. Delivery is

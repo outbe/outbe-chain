@@ -4,7 +4,7 @@
 //! This is an availability/performance cache, NOT consensus state: a miss is
 //! always resolvable via marshal, and its contents never feed a deterministic
 //! state transition. It is sealed behind named operations so callers cannot
-//! hold the raw lock or reach the inner `BTreeMap` — the lock-poison recovery
+//! hold the raw lock or reach the inner `BTreeMap` - the lock-poison recovery
 //! and the size metric live in one place.
 
 use std::collections::BTreeMap;
@@ -52,7 +52,7 @@ impl BlockCache {
     }
 
     /// Remove and return the block for `digest` (proposer parent take / finalize
-    /// fast-path — the block is consumed once resolved).
+    /// fast-path - the block is consumed once resolved).
     pub fn get_and_remove(&self, digest: &Digest) -> Option<ConsensusBlock> {
         self.lock().remove(digest)
     }
@@ -102,12 +102,12 @@ fn insert_block_cache_bounded(
     let inserted_number = block.number();
     cache.insert(digest, block);
 
-    // Step 1: height window — drop entries below the keep-depth floor.
+    // Step 1: height window - drop entries below the keep-depth floor.
     if let Some(floor) = inserted_number.checked_sub(BLOCK_CACHE_KEEP_DEPTH) {
         cache.retain(|_, b| b.number() > floor);
     }
 
-    // Step 2: hard entry cap — under fork spam at the same height, the
+    // Step 2: hard entry cap - under fork spam at the same height, the
     // height window cannot bound `len()`. Drop the entry with the
     // lowest `(number, digest)` until `len() <= MAX_ENTRIES`.
     while cache.len() > BLOCK_CACHE_MAX_ENTRIES {
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn insert_block_cache_bounded_fork_spam() {
         // Drive 10_000 inserts all at the SAME height with distinct
-        // digests (fork spam). Height window cannot bound this — the
+        // digests (fork spam). Height window cannot bound this - the
         // hard entry cap must kick in.
         const SAME_HEIGHT: u64 = BLOCK_CACHE_KEEP_DEPTH + 100;
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();

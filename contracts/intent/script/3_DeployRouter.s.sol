@@ -11,16 +11,16 @@ import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 
 /// @dev Deploys RouterAllocator + the composition {Router} via CreateX. The Router talks to the `crosschain` hub's
-///      `ERC7786Bridge` (no LayerZero endpoint / eids here — the protocol lives on the bridge).
+///      `ERC7786Bridge` (no LayerZero endpoint / eids here - the protocol lives on the bridge).
 ///
 /// Required env vars:
-///   DEPLOYER_PK      — deployer private key
-///   CREATEX_ADDRESS  — deployed CreateX factory
-///   CONTRACT_SALT    — salt string for deterministic deployment
-///   COMPACT_ADDRESS  — The Compact address
-///   AUCTION_ADDRESS  — deployed Auction (immutable on the router)
-///   BRIDGE_ADDRESS   — deployed ERC7786Bridge (the cross-chain hub facade)
-///   ROUTER_OWNER     — contract owner (admin)
+///   DEPLOYER_PK      - deployer private key
+///   CREATEX_ADDRESS  - deployed CreateX factory
+///   CONTRACT_SALT    - salt string for deterministic deployment
+///   COMPACT_ADDRESS  - The Compact address
+///   AUCTION_ADDRESS  - deployed Auction (immutable on the router)
+///   BRIDGE_ADDRESS   - deployed ERC7786Bridge (the cross-chain hub facade)
+///   ROUTER_OWNER     - contract owner (admin)
 /// Optional: ESCROW_ADDRESS (address(0) disables collateral).
 contract DeployRouter is Script {
     function run() public virtual {

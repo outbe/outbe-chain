@@ -2,8 +2,8 @@
 //!
 //! The follower reuses the same marshal and executor as the validator path. The
 //! marshal actor (with its two immutable archives) and the executor mailbox are
-//! built by the caller — they need the reth node handle and the engine-crate
-//! storage config, which `outbe-consensus` does not have — and handed in here.
+//! built by the caller - they need the reth node handle and the engine-crate
+//! storage config, which `outbe-consensus` does not have - and handed in here.
 //! This function then:
 //!
 //! 1. bootstraps the [`CommitteeChain`] at the anchor epoch (fetching the anchor
@@ -75,7 +75,7 @@ where
     pub local: L,
     /// Upstream tip discovery.
     pub tip: T,
-    /// Height→epoch strategy, shared with the marshal.
+    /// Height->epoch strategy, shared with the marshal.
     pub epocher: FollowerEpocher,
     /// The shared committee chain. Its `scheme_provider()` MUST be the same
     /// provider the `marshal_actor` was initialized with, so committee
@@ -126,11 +126,11 @@ where
         mailbox_size,
     } = config;
 
-    // ── 1. Rebuild the authenticated committee chain through the durable
-    //        marshal floor before any new certificate is admitted. ──────────
+    // -- 1. Rebuild the authenticated committee chain through the durable
+    //        marshal floor before any new certificate is admitted. ----------
     prepare_committee_chain(&chain, &upstream, &epocher, anchor_epoch, recovered_height).await?;
 
-    // ── 2. Build the marshal resolver handler pair + follow resolver ────────
+    // -- 2. Build the marshal resolver handler pair + follow resolver --------
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
         handler::init(context.child("follow_resolver_handler"), mailbox_size);
 
@@ -144,18 +144,18 @@ where
     );
     let _resolver_handle = resolver_actor.start();
 
-    // ── 3. Null broadcast (the follower never disseminates) ─────────────────
+    // -- 3. Null broadcast (the follower never disseminates) -----------------
     let broadcast = stubs::null_broadcast(context.child("follow_broadcast"), mailbox_size);
 
-    // ── 4. Start the marshal: executor as application reporter, follow
-    //        resolver for gap repair. ────────────────────────────────────────
+    // -- 4. Start the marshal: executor as application reporter, follow
+    //        resolver for gap repair. ----------------------------------------
     let marshal_handle = marshal_actor.start(
         executor_reporter,
         broadcast,
         (handler_receiver, follow_resolver),
     );
 
-    // ── 5. Start the driver: walk the marshal forward to the upstream tip ───
+    // -- 5. Start the driver: walk the marshal forward to the upstream tip ---
     let driver = Driver::new(
         context.child("follow_driver"),
         driver::Config {

@@ -1,4 +1,4 @@
-//! Height→epoch strategy for the follower, derived from authenticated on-chain
+//! Height->epoch strategy for the follower, derived from authenticated on-chain
 //! committee boundaries.
 //!
 //! Validator activation can be delayed inside the configured grace window, and
@@ -202,7 +202,7 @@ mod tests {
     use super::*;
 
     /// Pin `containing(height).epoch()` against the live-localnet ground truth
-    /// (`L=60`): block 60 → cert epoch 0, 61 → 1, 120 → 1, 121 → 2. With this
+    /// (`L=60`): block 60 -> cert epoch 0, 61 -> 1, 120 -> 1, 121 -> 2. With this
     /// mapping the marshal's `finalization.epoch() == containing(height)` check
     /// holds for every certified block, so a follower can verify boundary blocks.
     #[test]
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(epoch_of(181), 3);
     }
 
-    /// `first(E)` lands on epoch `E`'s boundary-outcome block (1, 61, 121, …) —
+    /// `first(E)` lands on epoch `E`'s boundary-outcome block (1, 61, 121, ...) -
     /// exactly where the driver fetches to register epoch `E`'s committee.
     #[test]
     fn first_lands_on_boundary_block() {
@@ -242,8 +242,8 @@ mod tests {
         assert_eq!(e.first(Epoch::new(3)).unwrap().get(), 181);
     }
 
-    /// `last(E)` is the block `(E+1)·L` (60, 120, 180) — the last block epoch `E`
-    /// signs, contiguous with `first(E+1) − 1`.
+    /// `last(E)` is the block `(E+1)*L` (60, 120, 180) - the last block epoch `E`
+    /// signs, contiguous with `first(E+1) - 1`.
     #[test]
     fn last_is_epoch_final_block() {
         let e = FollowerEpocher::new(60, 0);

@@ -9,7 +9,7 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Randomized mints and burns into a fixed series; the cap and parity invariants must always
-///      hold. A burn frees cap room, so totalSupply moves both ways while staying `≤ cap`.
+///      hold. A burn frees cap room, so totalSupply moves both ways while staying `<= cap`.
 contract NFT1155CapHandler is Test {
     IntexNFT1155 internal intex;
     bytes14 internal seriesId;
@@ -71,8 +71,8 @@ contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @dev Cap is on LIVE supply: `totalSupply ≤ issuedIntexCount` at every step, and a burn frees
-    ///      room rather than permanently consuming the cap. Parity (Σ balanceOf == totalSupply) holds.
+    /// @dev Cap is on LIVE supply: `totalSupply <= issuedIntexCount` at every step, and a burn frees
+    ///      room rather than permanently consuming the cap. Parity (sum balanceOf == totalSupply) holds.
     function invariant_supplyCapAndParity() public view {
         uint256 iTok = intex.issuedTokenId(SERIES_ID);
         IIntexNFT1155.SeriesData memory d = intex.readData(SERIES_ID);

@@ -35,7 +35,7 @@ contract SolverEscrowInvariant is Test {
         targetContract(address(handler));
     }
 
-    /// @dev balanceOf(escrow, id) == Σ_solver totalLocked(solver, id) + slashedPool(id).
+    /// @dev balanceOf(escrow, id) == sum_solver totalLocked(solver, id) + slashedPool(id).
     function invariant_escrowBalanceEqualsLockedPlusPool() public view {
         uint256 id = handler.tokenId();
 

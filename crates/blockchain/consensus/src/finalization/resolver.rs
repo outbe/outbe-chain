@@ -70,11 +70,11 @@ pub enum ProofFetchOutcome {
     /// `parent_hash`. exact-key only; the resolver
     /// fails the request without ever writing under the mismatched key.
     NoProofForExactParent,
-    /// No local witness for the requested `(epoch, view, parent_hash)` —
+    /// No local witness for the requested `(epoch, view, parent_hash)` -
     /// forbids producing a record from remote bytes alone.
     NoLocalCertificationWitness,
     /// All budget exhausted (no successful response within
-    /// `max_attempts` × per-attempt `timeout_ms`).
+    /// `max_attempts` x per-attempt `timeout_ms`).
     BudgetExhausted,
     /// Notarization signature verification failed on the decoded remote
     /// response.
@@ -158,7 +158,7 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 
     /// Try up to `schedule.parent_proof_fetch_max_attempts` targets, applying
     /// the schedule's per-attempt timeout and byte cap. Returns the first
-    /// successful, hash-matching, locally-witnessed response — or one of the
+    /// successful, hash-matching, locally-witnessed response - or one of the
     /// structured failure variants on [`ProofFetchOutcome`].
     ///
     /// The resolver is hash-strict: any decoded notarization whose
@@ -208,21 +208,21 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 return ProofFetchOutcome::NoProofForExactParent;
             }
             // The notarization must be for the requested round. Defence in
-            // depth — a transport implementation that did not enforce this is
+            // depth - a transport implementation that did not enforce this is
             // a bug, but we still fail fast rather than persist mismatched
             // round bookkeeping.
             if notarization.proposal.round != key.round {
                 return ProofFetchOutcome::NoProofForExactParent;
             }
 
-            // Signature verification — same trust boundary the reporter uses
+            // Signature verification - same trust boundary the reporter uses
             // for Activity::Certification (see `reporter.rs::handle_certification`).
             let mut rng = bls_batch_verification_rng();
             if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
                 return ProofFetchOutcome::VerifyFailed;
             }
 
-            // — local witness gate. A record produced from purely
+            // - local witness gate. A record produced from purely
             // remote bytes is never written; the local node must have already
             // observed `Activity::Certification` for the same key. The gate is
             // the in-memory witness index, not the persistent CN record slot:
@@ -251,7 +251,7 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             // outcome rather than writing a record whose committee_set_hash would
             // diverge from the writer's. The shared prelude also populates
             // `vrf_group_public_key_hash`, so a promoted witness record passes the
-            // Phase 1 verifier Rule 6 — this remote-fetch path previously left it
+            // Phase 1 verifier Rule 6 - this remote-fetch path previously left it
             // `B256::ZERO` (via `..default()`), which `to_v2_metadata` then carried
             // into Phase 1 metadata that Rule 6 rejected.
             let prelude = match build_committee_prelude(
@@ -304,7 +304,7 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 /// though marshal's durable finalization archive still holds the direct parent's
 /// finalization. This rebuilds the SAME record the live
 /// [`FinalizationActor`](crate::finalization::actor) writes for that
-/// finalization — byte-identical, so the proposer's Phase 1 metadata stays
+/// finalization - byte-identical, so the proposer's Phase 1 metadata stays
 /// canonical and every validator accepts it (the `record_builder_parity` test
 /// pins this equality). The inputs are all derived from the recovered
 /// finalization plus the finalized epoch's committee scheme + ordered addresses;
@@ -374,7 +374,7 @@ mod tests {
     }
 
     /// A finalization signed by all 3 committee members for `payload`, plus the
-    /// matching verifier scheme — all from ONE DKG so the certificate verifies.
+    /// matching verifier scheme - all from ONE DKG so the certificate verifies.
     fn finalization_and_verifier(
         round: Round,
         parent_view: View,

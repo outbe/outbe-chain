@@ -77,7 +77,7 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10, 20], DEADLINE_FUTURE)
             .unwrap();
 
-        // Chain 10 arrives first: pot accumulates, fan-in not complete → no payout yet.
+        // Chain 10 arrives first: pot accumulates, fan-in not complete -> no payout yet.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(300u64))
             .unwrap();
         runtime::distribute(
@@ -105,7 +105,7 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
 
         runtime::drain_distributions(&s).unwrap();
-        // 800 split 100:100 → 400 each; map cleared since every chain is in.
+        // 800 split 100:100 -> 400 each; map cleared since every chain is in.
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(400u64));
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(400u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);

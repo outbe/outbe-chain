@@ -1,4 +1,4 @@
-//! — handler / selector behaviour tests
+//! - handler / selector behaviour tests
 //!
 //! The full ApplicationHandler is wired across the whole consensus stack and
 //! is exercised end-to-end by `stack_tests.rs`; the tests here pin the V1
@@ -6,7 +6,7 @@
 //! `ParentProofSelector` against the same proof-store substrate the proposer
 //! reads in production.
 //!
-//! - `missing_direct_parent_proof_does_not_wait_for_future_finalization` —
+//! - `missing_direct_parent_proof_does_not_wait_for_future_finalization` -
 //!   (the V1 polling waiter is gone; selector returns synchronously).
 
 use alloy_primitives::B256;
@@ -101,7 +101,7 @@ fn await_parent_cert_is_removed_from_non_test_consensus_src() {
 #[test]
 fn certified_notarized_parent_does_not_block_proposal() {
     // with a CertifiedNotarization record for the requested parent,
-    // the selector returns synchronously — no polling, no future-finalization
+    // the selector returns synchronously - no polling, no future-finalization
     // wait. The V1 path could deadlock here (view 61 reproduction).
     let store = FinalizedParentCertStore::new();
     let hash = B256::with_last_byte(0xAA);
@@ -151,7 +151,7 @@ fn certified_notarized_parent_does_not_block_proposal() {
 #[test]
 fn finalized_parent_uses_finalization_proof_when_available() {
     // across two slots: both finalization AND certified-notarization
-    // present for the same parent → finalization wins.
+    // present for the same parent -> finalization wins.
     let store = FinalizedParentCertStore::new();
     let hash = B256::with_last_byte(0xBB);
     store
@@ -172,7 +172,7 @@ fn finalized_parent_uses_finalization_proof_when_available() {
 
 #[test]
 fn missing_direct_parent_proof_does_not_wait_for_future_finalization() {
-    // empty store → selector returns None immediately. The V1
+    // empty store -> selector returns None immediately. The V1
     // `await_parent_cert` polled until timeout (terminal-view halt root
     // cause); the new selector is synchronous.
     let store = FinalizedParentCertStore::new();

@@ -6,7 +6,7 @@
 //!
 //! land the test file with `#[ignore]`
 //! markers. T(-0.5) stubs return `Ok(empty)` and produce no real CALL,
-//! so the two tx-sets diverge by design at this point — the assertion
+//! so the two tx-sets diverge by design at this point - the assertion
 //! shape is locked but the harness is dormant.
 //!
 //! acceptance: remove `#[ignore]` and plug in the real
@@ -31,12 +31,12 @@
 //! byte-equal `state_root + receipts_root + logs_bloom +
 //! cumulative_gas_used`:
 //!
-//! 1. **Zero-value CALL** — outbe Rust `storage.call(token, U256::ZERO,
+//! 1. **Zero-value CALL** - outbe Rust `storage.call(token, U256::ZERO,
 //!    abi_encode(IERC20::balanceOf { account }))` vs Solidity
 //!    `Trampoline.subcallTest(token, calldata, 100_000)`.
-//! 2. **Value transfer** — outbe Rust `storage.call(recipient, U256::from(100),
+//! 2. **Value transfer** - outbe Rust `storage.call(recipient, U256::from(100),
 //!    Bytes::new())` vs Solidity Trampoline forwarding 100 wei.
-//! 3. **Sub-call reverts** — target reverts with payload; both paths
+//! 3. **Sub-call reverts** - target reverts with payload; both paths
 //!    must surface identical revert bytes and identical post-state.
 
 use alloy_primitives::B256;
@@ -57,11 +57,11 @@ struct PostState {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum Scenario {
-    /// Scenario 1 — zero-value CALL to an ERC20 view function.
+    /// Scenario 1 - zero-value CALL to an ERC20 view function.
     ZeroValueErc20View,
-    /// Scenario 2 — native value transfer through CALL.
+    /// Scenario 2 - native value transfer through CALL.
     NativeValueTransfer,
-    /// Scenario 3 — sub-call target reverts with explicit payload.
+    /// Scenario 3 - sub-call target reverts with explicit payload.
     SubCallRevert,
 }
 

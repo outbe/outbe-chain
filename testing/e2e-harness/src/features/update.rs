@@ -641,7 +641,7 @@ fn active_version_unchanged(world: &mut World) {
     );
 }
 
-/// Scheduled row stays waiting — activation never committed.
+/// Scheduled row stays waiting - activation never committed.
 #[then("the scheduled update is still waiting for activation")]
 fn scheduled_still_waiting(world: &mut World) {
     let su = world

@@ -44,7 +44,7 @@ import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
  *
  * Domain (addresses, ABIs, decoders) lives in src/intex/. Networks come from the
  * NETWORKS table; a resolved network reuses the connected `ctx` when chain ids
- * match, else opens a fresh client via createCtx — same shape as src/tools/intent.ts.
+ * match, else opens a fresh client via createCtx - same shape as src/tools/intent.ts.
  *
  * Read tools work without a key; signing tools require OUTBE_PRIVATE_KEY.
  */
@@ -61,7 +61,7 @@ const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" })
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
 // after its day, so active ids sit up to ~26 days in the past. Discovery probes
-// getAuctionStage across a date window — a few cheap point reads — rather than
+// getAuctionStage across a date window - a few cheap point reads - rather than
 // scanning logs, which public RPCs range-limit.
 const DEFAULT_DAYS_BACK = 30;
 const DEFAULT_DAYS_AHEAD = 2;
@@ -117,7 +117,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   function whoever(explicit?: string): Address {
     if (explicit) return getAddress(explicit);
     if (ctx.account) return ctx.account.address;
-    throw new Error("no address given and no signer configured — pass an explicit address");
+    throw new Error("no address given and no signer configured - pass an explicit address");
   }
 
   function addr(n: Network, key: keyof IntexAddresses): Address {
@@ -126,7 +126,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   function requireAccount(): Account {
     if (!ctx.account) {
-      throw new Error("signing requires a key — set OUTBE_PRIVATE_KEY in the MCP server env");
+      throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
     }
     return ctx.account;
   }
@@ -275,8 +275,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Qualified/Called), issued/called timestamps, and the derived " +
-      "callDeadline/expired pair — check `expired` before attempting settle (past-deadline settles revert).",
+      "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
+      "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
+      "and how the issued units split into settled, parked and still-outstanding.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -298,6 +299,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedIntexCount: Number(d.issuedIntexCount),
+        settledUnits: Number(d.settledUnits),
+        parkedUnits: Number(d.parkedUnits),
+        // Unrealized units lose their load to the pool when the call window closes.
+        unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.parkedUnits),
         costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
@@ -347,7 +352,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
       "for Issued ones the series lifecycle with its callDeadline. Defaults to bsc-testnet (where won NFTs " +
-      "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits — bridge " +
+      "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits - bridge " +
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
@@ -369,7 +374,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
           // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id is
-          // hashed and carries no deadline — that position is already settled.
+          // hashed and carries no deadline - that position is already settled.
           if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
           try {
@@ -476,7 +481,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_info",
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (promis-load strike, " +
-      "min bid rate/quantity, and one entry/floor/call row per currency the day prices — bid in one of those). " +
+      "min bid rate/quantity, and one entry/floor/call row per currency the day prices - bid in one of those). " +
       "Bids are sealed: the bid counts and clearing result stay 0 until clearing runs after reveal, so 0 here " +
       "does NOT mean there are no participants.",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
@@ -592,7 +597,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "auction_bids_by_owner",
     "Your commit/reveal status across active auctions, plus your escrow money on that chain: the commit " +
       "bond (held from commit until reveal/cancel) and the bid lock (held from reveal until finalization). " +
-      "Emits a hint when funds are stuck — a no-reveal bond reclaimable via intex_claim_commit_bond, or a " +
+      "Emits a hint when funds are stuck - a no-reveal bond reclaimable via intex_claim_commit_bond, or a " +
       "never-finalized lock (e.g. the chain missed the clearing deadline) reclaimable in full via " +
       "auction_claim_refund after the shown refundClaimableAt. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkArg.optional() },
@@ -651,7 +656,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             };
             // Locked + never finalized = no refund instructions reached this chain; the bidder
             // self-serves the full principal once the delay passes. Only then is the claim time
-            // meaningful — a finalized lock refunds through the normal path, not this one.
+            // meaningful - a finalized lock refunds through the normal path, not this one.
             if (lock.status === 1 && !finalized) {
               escrow.refundClaimableAt = epochIso(lock.lockedAt + refundDelay);
               hints.push(
@@ -697,7 +702,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "auction_bid_commit",
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
       "hash (no separate salt). When the auction carries an entry bond (commitBondMinor > 0), commitBid pulls " +
-      "it into escrow in the same transaction — the tool auto-approves the escrow if the allowance is short. " +
+      "it into escrow in the same transaction - the tool auto-approves the escrow if the allowance is short. " +
       "The bond returns at reveal/cancel; a green-day no-reveal locks it for 24 hours past revealEnd " +
       "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate, currencies); you must repeat " +
       "them to reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
@@ -772,7 +777,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         note,
         ...receipt,
         reminder:
-          `Record worldwideDay=${worldwideDay}, quantity=${quantity}, rate=${rate} — required to reveal, ` +
+          `Record worldwideDay=${worldwideDay}, quantity=${quantity}, rate=${rate} - required to reveal, ` +
           `not recoverable on-chain, remembered only this session.`,
       });
     }),
@@ -934,7 +939,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_payment_approve",
-    "Manually approve the EscrowAdapter to pull the payment token. Usually unnecessary — auction_bid_reveal " +
+    "Manually approve the EscrowAdapter to pull the payment token. Usually unnecessary - auction_bid_reveal " +
       "auto-approves what it needs. Pass amount in token units (e.g. \"100\") or max=true. Requires OUTBE_PRIVATE_KEY.",
     {
       amount: z.string().optional().describe('token amount to approve, e.g. "100"'),
@@ -1002,7 +1007,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_send",
-    "Bridge an Intex NFT from BSC to outbe, where settlement happens — nothing moves it for you, so a " +
+    "Bridge an Intex NFT from BSC to outbe, where settlement happens - nothing moves it for you, so a " +
       "position left on BSC past the series callDeadline can no longer be settled at all. Works at every " +
       "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
@@ -1189,7 +1194,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
           "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
-          `Proof of work is done — nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
+          `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
           `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",

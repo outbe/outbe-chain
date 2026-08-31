@@ -829,14 +829,14 @@ impl Localnet {
         Ok(())
     }
 
-    /// Stop the joiner node (drop its owned handle → kill + reap). Port of
+    /// Stop the joiner node (drop its owned handle -> kill + reap). Port of
     /// `e2e_stop_joiner`.
     pub fn stop_joiner(&mut self, index: usize) -> Result<()> {
         self.validators.remove(&index);
         Ok(())
     }
 
-    /// `--consensus.peers` (`<public_key>@<p2p_address>,…`) from `validators.json`.
+    /// `--consensus.peers` (`<public_key>@<p2p_address>,...`) from `validators.json`.
     fn consensus_peers(&self) -> Result<String> {
         let raw = fs::read_to_string(self.cfg.dir.join("validators.json"))?;
         let v: serde_json::Value = serde_json::from_str(&raw)?;

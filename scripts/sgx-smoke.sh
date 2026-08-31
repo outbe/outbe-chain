@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Hardware SGX smoke for outbe-tee-enclave — the "≥1 hw SGX smoke" acceptance
+# Hardware SGX smoke for outbe-tee-enclave - the ">=1 hw SGX smoke" acceptance
 # check, runnable on any gramine-sgx box. It builds + signs the enclave, runs it
 # under gramine-sgx, and asserts:
 #   - the enclave loads under gramine-sgx (real SGX, not gramine-direct),
 #   - /dev/attestation/keys exposes the EGETKEY MRSIGNER/MRENCLAVE sealing keys,
 #   - sealing keys derive on hardware (WS-1 seal/unseal uses these).
 # It additionally probes whether a real DCAP quote can be generated; quote
-# generation needs a provisioned PCK (PCCS / Intel PCS), which a fresh box lacks —
+# generation needs a provisioned PCK (PCCS / Intel PCS), which a fresh box lacks -
 # the smoke reports that as a platform-provisioning note, not a failure.
 #
 # Requires: gramine (gramine-manifest/-sgx/-sgx-sign), a built enclave binary,
@@ -21,7 +21,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${1:-$REPO/target/release/outbe-tee-enclave}"
 
 if [ ! -e /dev/sgx_enclave ] && [ ! -e /dev/sgx/enclave ]; then
-    echo "SKIP: no SGX device (/dev/sgx_enclave) — this smoke requires SGX hardware." >&2
+    echo "SKIP: no SGX device (/dev/sgx_enclave) - this smoke requires SGX hardware." >&2
     exit 0
 fi
 command -v gramine-sgx >/dev/null || { echo "FAIL: gramine-sgx not installed" >&2; exit 1; }
@@ -70,7 +70,7 @@ if echo "$DCAP_OUT" | grep -q "dcap_quote: .*bytes"; then
     echo "$DCAP_OUT" | grep -iE "mrenclave|mrsigner|attestation_type" | sed 's/^/  /'
     ATTESTED=1
 else
-    echo "  NOTE: DCAP quote unavailable on this box (PCK not provisioned — needs PCCS/Intel PCS)."
+    echo "  NOTE: DCAP quote unavailable on this box (PCK not provisioned - needs PCCS/Intel PCS)."
     echo "$DCAP_OUT" | grep -iE "AESM service returned error|missing on this machine" | sed 's/^/    /' | head -2 || true
     ATTESTED=0
 fi

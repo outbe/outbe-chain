@@ -490,7 +490,11 @@ pub(crate) fn calculate_cost(
 ) -> Result<U256, ProgramErrorV1> {
     let cost = scaled_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
     if cost.is_zero() {
-        return Err(ProgramErrorV1::ZeroCost { ordinal });
+        return Err(ProgramErrorV1::ZeroCost {
+            ordinal,
+            entry_price_minor,
+            gratis_load_minor,
+        });
     }
     Ok(cost)
 }

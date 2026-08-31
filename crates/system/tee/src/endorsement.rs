@@ -5,7 +5,7 @@
 //! its partial over this message (`bin/outbe-tee-enclave`); the begin-zone
 //! `BoundaryOutcome` handler verifies the recovered group signature against the
 //! stored prior group public key. Both sides MUST use this exact namespace +
-//! message so signing and verification agree — hence it lives in this shared
+//! message so signing and verification agree - hence it lives in this shared
 //! message-contract crate, not in the enclave binary.
 
 use alloy_primitives::{keccak256, B256};

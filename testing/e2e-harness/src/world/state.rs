@@ -448,6 +448,7 @@ pub struct FixtureState {
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// The stablecoin holders settle Intex in, and its reserve vault.
+    #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
@@ -476,6 +477,7 @@ impl Default for FixtureState {
     fn default() -> Self {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
+            #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),
             settled_units: 0,

@@ -54,7 +54,7 @@ pub struct TeeRegistry {
 
     /// slot 9: the active committee's DKG group public key (constant term),
     /// chunked into 32-byte words. The verification key for this committee's
-    /// threshold group signatures — used to verify a prior-committee reshare
+    /// threshold group signatures - used to verify a prior-committee reshare
     /// endorsement before applying `DkgBoundaryArtifact::tee_reshare_registrations`.
     /// Written at bootstrap; updated on reshare activation. Empty (len 0) until set.
     #[attribute(order = 9)]

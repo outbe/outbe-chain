@@ -150,9 +150,9 @@ pub fn calculate_distribution_with_cap(
     (rewards, excess)
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------
 // New daily orchestrator surface
-// ────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------
 
 /// One of the three reward pools that AgentReward owns end-to-end. The
 /// validator pool is intentionally NOT part of this enum: validator
@@ -186,7 +186,7 @@ pub enum PoolKind {
 /// Excess accounting (per pool kind):
 /// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
 ///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: always zero — this pool is a pure accumulator on
+/// * `Cca`: always zero - this pool is a pure accumulator on
 ///   `CCA_ADDRESS`.
 ///
 /// Mint/burn parity is enforced inside the WAA/SRA helpers: each pool
@@ -243,7 +243,7 @@ fn distribute_capped(
     };
 
     if counts.is_empty() {
-        // No tributes — burn the pool we just minted so the pre-funded
+        // No tributes - burn the pool we just minted so the pre-funded
         // balance does not leak onto AGENT_REWARD_ADDRESS.
         ctx.storage
             .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, amount)?;
@@ -269,7 +269,7 @@ fn distribute_capped(
 }
 
 /// Mints `amount` onto `target`'s native balance. Used for the CCA
-/// pool, which is a plain accumulator in v1 — no distribution logic,
+/// pool, which is a plain accumulator in v1 - no distribution logic,
 /// no excess.
 fn accumulate_to_address(
     ctx: &outbe_primitives::block::BlockRuntimeContext,

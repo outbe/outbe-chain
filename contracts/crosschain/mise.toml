@@ -77,7 +77,7 @@ forge script script/SwitchGateway.s.sol:SwitchGateway --rpc-url "$NETWORK" --bro
 # LayerZero-only maintenance: skip a stuck inbound nonce on the adapter so it stops blocking later messages.
 # ADAPTER and its endpoint are read from the bridge (getGateway -> adapter -> endpoint); only SRC_EID is required.
 # Sender defaults to the same-address peer adapter; NONCE defaults to inboundNonce+1.
-# DESTRUCTIVE: skip drops the targeted nonce — if the pathway is not actually stuck it skips the next real message.
+# DESTRUCTIVE: skip drops the targeted nonce - if the pathway is not actually stuck it skips the next real message.
 # Run by the adapter's LZ delegate (= BRIDGE_OWNER).
 [tasks.clear-lz-nonce]
 description = "Skip a stuck inbound LZ nonce (BRIDGE_ADDRESS + SRC_EID; opt SRC_SENDER, NONCE). DESTRUCTIVE."

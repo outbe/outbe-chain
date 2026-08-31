@@ -28,7 +28,7 @@ const SALT = 0n;
 // authorization that binds it to the user's smart account. The CCA holds the
 // `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
 // hold the user's view key, so it cannot read the user's encrypted Gratis
-// balance — only the pledge is consumed and the loan disbursed to the bundle.
+// balance - only the pledge is consumed and the loan disbursed to the bundle.
 //
 // CLI: [ticketPath?] [envName?]
 let ticketPath: string | undefined;
@@ -68,7 +68,7 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const ccaWallet = new Wallet(ccaPrivateKey, provider);
 
-  // Predict the smart account address — the credis receiver, and the account
+  // Predict the smart account address - the credis receiver, and the account
   // the pledge spend is bound to.
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const smartAccount = await saFactory.getAccountAddress(
@@ -108,11 +108,11 @@ async function main() {
 
   // Neither the pledger EOA nor the asset/amount are passed in calldata: the enclave
   // reads the EOA from the pledge ticket, debits its pledged ledger, and returns it
-  // sealed so it is stored as ciphertext on the position (no EOA↔bundle linkage
+  // sealed so it is stored as ciphertext on the position (no EOA<->bundle linkage
   // on-chain); the asset and the disbursed amount were sealed into the same ticket at
   // pledge time, so the loan is issued at the price the user accepted.
   // The CCA matches the user's collateral one for one in native COEN. The required
-  // amount is the gratis the quote cost, which the ticket recorded at pledge time —
+  // amount is the gratis the quote cost, which the ticket recorded at pledge time -
   // it is not in calldata, because it was sealed into the pledge.
   const stake = BigInt(ticket.amount);
   console.log(`CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral)`);
@@ -175,7 +175,7 @@ async function main() {
   const positionId = computePositionId(ticket.pledgeHandle, smartAccount);
   if (eventPositionId !== null && eventPositionId !== positionId) {
     throw new Error(
-      `PositionCreated id ${eventPositionId} != computed ${positionId} — check position_id parity`,
+      `PositionCreated id ${eventPositionId} != computed ${positionId} - check position_id parity`,
     );
   }
 

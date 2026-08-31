@@ -63,7 +63,7 @@ pub struct AuctionConfig {
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
     pub call_trigger: IntexCallTrigger,
-    /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 → no floor.
+    /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,

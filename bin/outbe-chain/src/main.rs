@@ -1261,7 +1261,7 @@ fn load_reth_p2p_node_host_signer(
 /// Run the main node (Reth execution + Commonware consensus).
 fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` → persistent production NodeHost authorization);
+    // (`--tee-enclave-socket` -> persistent production NodeHost authorization);
     // the offer-decryption key exists only inside the enclave (single path, no
     // in-process key material).
 
@@ -1302,7 +1302,7 @@ fn run_node() -> eyre::Result<()> {
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
-    // Consensus thread is spawned conditionally — see inside run_with_components
+    // Consensus thread is spawned conditionally - see inside run_with_components
     // where `args.is_validator` is known. For now, prepare the closure.
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
@@ -1374,14 +1374,14 @@ fn run_node() -> eyre::Result<()> {
         // `<consensus_storage>/slashing-journal.jsonl`. The journal
         // captures every SlashIndicator/ValidatorSet state transition
         // in JSONL form and is independent of reth log rotation. If
-        // initialization fails, log a warning and continue — the
+        // initialization fails, log a warning and continue - the
         // journal is best-effort observability and must not block node
         // startup.
         if let Err(error) = outbe_primitives::slashing_journal::init(&consensus_storage) {
             tracing::warn!(
                 target: "outbe::slashing::journal",
                 %error,
-                "failed to initialize slashing journal — events will not be persisted to a sidecar file",
+                "failed to initialize slashing journal - events will not be persisted to a sidecar file",
             );
         }
 
@@ -1389,7 +1389,7 @@ fn run_node() -> eyre::Result<()> {
             tracing::warn!(
                 target: "outbe::governance::journal",
                 %error,
-                "failed to initialize governance journal — events will not be persisted to a sidecar file",
+                "failed to initialize governance journal - events will not be persisted to a sidecar file",
             );
         }
 
@@ -2329,7 +2329,7 @@ fn run_node() -> eyre::Result<()> {
             ))
         });
         // Pending staleness eviction. Node-local pool policy, so it runs in
-        // every mode — full nodes are the public RPC ingress and shed stuck
+        // every mode - full nodes are the public RPC ingress and shed stuck
         // transactions that would otherwise be re-gossiped to validators.
         let txpool_maintenance_handle = tokio::spawn(outbe_txpool::maintain::maintain_outbe_pool(
             node.provider.clone(),
@@ -2456,7 +2456,7 @@ fn run_node() -> eyre::Result<()> {
             }
             handle_consensus_thread_join(consensus_joined)?;
         } else {
-            info!("outbe node launched in FULL NODE mode — no consensus thread spawned");
+            info!("outbe node launched in FULL NODE mode - no consensus thread spawned");
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
 
             tokio::select! {
@@ -2579,7 +2579,7 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
 /// proposals which fail to finalize is re-injected by the reorg path and stays
 /// pending indefinitely. Two upstream defaults made that worse:
 ///
-/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours — far longer
+/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours - far longer
 ///   than any legitimate parked transaction needs on a two-second chain.
 /// - RPC-submitted transactions are treated as "local" and are exempt from
 ///   lifetime eviction. The incident transactions arrived over public RPC, so
@@ -2594,7 +2594,7 @@ fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
         .with_disable_transactions_backup(OUTBE_TXPOOL_DISABLE_BACKUP)
 }
 
-/// Parked-transaction lifetime. Reth's own default is three hours — orders of
+/// Parked-transaction lifetime. Reth's own default is three hours - orders of
 /// magnitude longer than a two-second chain needs.
 const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
 /// RPC-submitted transactions must NOT be exempt from lifetime eviction.
@@ -3088,7 +3088,7 @@ mod tests {
     /// restart must not resurrect what the node evicted.
     ///
     /// Asserted through `TxPoolArgs::default()`, which reads the installed
-    /// global defaults — the same values clap hands the node when no
+    /// global defaults - the same values clap hands the node when no
     /// `--txpool.*` flag is given.
     #[test]
     fn txpool_defaults_bound_transaction_lifetime() {
@@ -3182,7 +3182,7 @@ mod tests {
         // Simulate full-node path: drop sender without sending.
         drop(node_tx);
 
-        // Consensus thread would call blocking_recv — should return Err immediately.
+        // Consensus thread would call blocking_recv - should return Err immediately.
         let result = node_rx.blocking_recv();
         assert!(
             result.is_err(),
@@ -3190,7 +3190,7 @@ mod tests {
         );
     }
 
-    /// Full-node mode: RPC handler created without bridge → is_validator = false.
+    /// Full-node mode: RPC handler created without bridge -> is_validator = false.
     #[test]
     fn test_fullnode_rpc_no_bridge_means_not_validator() {
         // When OutbeApiHandler::new(provider) is called (no bridge),
@@ -3198,18 +3198,18 @@ mod tests {
         let bridge: Option<outbe_engine::bridge::ConsensusExecutionBridge> = None;
         assert!(
             bridge.is_none(),
-            "full node must have bridge=None → is_validator=false"
+            "full node must have bridge=None -> is_validator=false"
         );
     }
 
-    /// Validator mode: RPC handler created with bridge → is_validator = true.
+    /// Validator mode: RPC handler created with bridge -> is_validator = true.
     #[test]
     fn test_validator_rpc_with_bridge_means_validator() {
         let bridge = outbe_engine::bridge::ConsensusExecutionBridge::new();
         let bridge_opt: Option<outbe_engine::bridge::ConsensusExecutionBridge> = Some(bridge);
         assert!(
             bridge_opt.is_some(),
-            "validator must have bridge=Some → is_validator=true"
+            "validator must have bridge=Some -> is_validator=true"
         );
     }
 

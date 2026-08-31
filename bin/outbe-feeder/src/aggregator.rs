@@ -11,7 +11,7 @@
 //! Final price/volume arithmetic uses the pair's existing integer contract:
 //! stablecoin-backed COEN/ISO markets use six-decimal price and COEN-unit volume, while generic pairs
 //! retain their decimal18 contract. f64 is only used for provider ingestion
-//! (parsing REST responses) and deviation filtering (σ-based statistical
+//! (parsing REST responses) and deviation filtering (sigma-based statistical
 //! test), never for final VWAP/TVWAP output.
 
 use crate::config::FeederConfig;
@@ -111,7 +111,7 @@ fn compute_coen_iso_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256
 /// available weighted average price.
 ///
 /// Strategy per pair:
-/// 1. If any configured provider returns candle data → compute TVWAP.
+/// 1. If any configured provider returns candle data -> compute TVWAP.
 /// 2. Otherwise fall back to ticker-based VWAP.
 ///
 /// Only providers listed in each pair's `providers` config are consulted.
@@ -244,7 +244,7 @@ pub async fn fetch_and_aggregate(
             continue;
         }
 
-        // Filter outliers using f64 σ-test (statistical operation, not pricing)
+        // Filter outliers using f64 sigma-test (statistical operation, not pricing)
         let filtered = filter_deviations(&raw_prices, threshold);
         if filtered.is_empty() {
             continue;
@@ -275,7 +275,7 @@ pub async fn fetch_and_aggregate(
 
 /// Filters prices that deviate more than `threshold` standard deviations from the median.
 ///
-/// Uses f64 for the statistical test only — this is a provider-level outlier filter,
+/// Uses f64 for the statistical test only - this is a provider-level outlier filter,
 /// not on-chain pricing arithmetic. The filtered set is then fed into U256 VWAP.
 fn filter_deviations(prices: &[(f64, f64)], threshold: f64) -> Vec<(f64, f64)> {
     if prices.len() <= 1 {
@@ -431,7 +431,7 @@ mod tests {
     fn test_compute_vwap_fixed() {
         let prices = vec![(100.0, 1000.0), (200.0, 2000.0), (300.0, 3000.0)];
         let (vwap, volume) = compute_vwap_fixed(&prices);
-        // VWAP = (100*1000 + 200*2000 + 300*3000) / (1000 + 2000 + 3000) ≈ 233.33
+        // VWAP = (100*1000 + 200*2000 + 300*3000) / (1000 + 2000 + 3000) ~= 233.33
         let expected_vwap = U256::from(233u128) * SCALE_1E18;
         // Allow 1 unit tolerance due to fixed-point rounding
         assert!(vwap >= expected_vwap);
@@ -449,7 +449,7 @@ mod tests {
 
         // Expected TVWAP = (100*3000 + 102*4000 + 101*3500) / (3000+4000+3500)
         //                = (300000 + 408000 + 353500) / 10500
-        //                = 1061500 / 10500 ≈ 101.095238
+        //                = 1061500 / 10500 ~= 101.095238
         let expected_min = U256::from(101u128) * SCALE_1E18;
         let expected_max = U256::from(102u128) * SCALE_1E18;
         assert!(tvwap >= expected_min, "tvwap too low: {tvwap}");
@@ -529,7 +529,7 @@ mod tests {
         }
     }
 
-    /// Mock provider returns candles for known pairs → TVWAP should be used.
+    /// Mock provider returns candles for known pairs -> TVWAP should be used.
     #[tokio::test]
     async fn test_fetch_and_aggregate_uses_candle_tvwap() {
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(MockProvider::new())];
@@ -548,7 +548,7 @@ mod tests {
         assert!(!agg.price.is_zero());
 
         // MockProvider candles: 2475.0 * 3000 + 2525.0 * 4000 + 2500.0 * 3500
-        // = 7425000 + 10100000 + 8750000 = 26275000 / 10500 ≈ 2502.38
+        // = 7425000 + 10100000 + 8750000 = 26275000 / 10500 ~= 2502.38
         // The TVWAP should be close to 2500 (within 1% = 25.0)
         let price_f64 = agg.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
         assert!(
@@ -591,7 +591,7 @@ mod tests {
                 }
                 Ok(m)
             }
-            // get_candle_prices uses default → returns empty
+            // get_candle_prices uses default -> returns empty
         }
 
         let _ = ChainlinkProvider::new(); // silence unused import

@@ -6,14 +6,14 @@
 # Usage:
 #   ./scripts/scan-events.sh <from> <to> [rpc_url] [options]
 #
-#   <from>, <to>     decimal, hex (0x…), or one of: latest|earliest|safe|finalized
+#   <from>, <to>     decimal, hex (0x...), or one of: latest|earliest|safe|finalized
 #                    Use "latest" for <to> to scan up to the head.
 #   rpc_url          default http://localhost:18545
 #
 # Options:
 #   --address <hex>          filter by contract address (repeatable)
 #   --topic0 <hex>           filter by topic0 (repeatable)
-#   --sig <"Name(t1,t2)">    extra signature → name decode (repeatable)
+#   --sig <"Name(t1,t2)">    extra signature -> name decode (repeatable)
 #   --json                   one JSON line per log (machine-readable)
 #   --only-known             skip logs whose topic0 is not in the registry
 #   --show-empty             also print blocks that emitted zero logs
@@ -24,7 +24,7 @@
 #   ./scripts/scan-events.sh 1000 latest --topic0 0x00c785ee... --json
 #   ./scripts/scan-events.sh 1000 1050 --sig 'Transfer(address,address,uint256)'
 #
-# Requires: curl, jq. Optional: cast (foundry) — used to compute keccak256 of
+# Requires: curl, jq. Optional: cast (foundry) - used to compute keccak256 of
 # event signatures. Without cast, only the built-in pinned registry is used.
 
 set -euo pipefail
@@ -108,7 +108,7 @@ fi
 #
 # Three parallel arrays keyed by topic0:
 #   TOPIC_KEYS[i] = topic0 (lowercase hex)
-#   TOPIC_VALS[i] = canonical "Name(t1,t2,…)" sig (used for display + jq)
+#   TOPIC_VALS[i] = canonical "Name(t1,t2,...)" sig (used for display + jq)
 #   TOPIC_META[i] = pipe-delimited "field=type[ indexed]" entries (decode info)
 #
 # Auto-populated by scanning interfaces/*.sol, contracts/precompiles/src/*.sol,
@@ -288,11 +288,11 @@ decode_indexed_value() {
             [ -n "$val" ] && printf '%s' "$val" || printf '%s' "$raw"
             ;;
         bytes32) printf '%s' "$raw" ;;
-        string|bytes) printf '%s  (keccak hash — cannot recover)' "$raw" ;;
+        string|bytes) printf '%s  (keccak hash - cannot recover)' "$raw" ;;
         *)
             case "$type" in
                 *"["*"]"*|tuple*)
-                    printf '%s  (keccak hash — cannot recover)' "$raw" ;;
+                    printf '%s  (keccak hash - cannot recover)' "$raw" ;;
                 *)
                     printf '%s' "$raw" ;;
             esac
@@ -335,7 +335,7 @@ decode_log_args() {
     done
 
     if [ -n "$data_types" ] && [ "$data" != "0x" ] && [ -n "$data" ] && [ "$data" != "null" ]; then
-        # cast abi-decode signature: `name(in-types)(out-types)` — we treat the
+        # cast abi-decode signature: `name(in-types)(out-types)` - we treat the
         # data section as a function "output" with no inputs.
         local decoded
         decoded="$(cast abi-decode "x()($data_types)" "$data" 2>/dev/null || true)"
@@ -424,12 +424,12 @@ format_human() {
 }
 
 if [ "$JSON_OUT" = "0" ]; then
-    echo "═══════════════════════════════════════════════════════════════════════"
+    echo "======================================================================="
     echo "Scanning blocks $FROM_DEC..$TO_DEC  (rpc=$RPC_URL)"
     [ "${#ADDRESSES[@]}" -gt 0 ] && echo "Addresses: ${ADDRESSES[*]}"
     [ "${#TOPIC0_FILTERS[@]}" -gt 0 ] && echo "Topic0:    ${TOPIC0_FILTERS[*]}"
-    [ "$HAVE_CAST" = "0" ] && echo "Note: cast not found — only pinned topic0s decoded."
-    echo "═══════════════════════════════════════════════════════════════════════"
+    [ "$HAVE_CAST" = "0" ] && echo "Note: cast not found - only pinned topic0s decoded."
+    echo "======================================================================="
 fi
 
 TOTAL=0
@@ -446,7 +446,7 @@ for ((b=FROM_DEC; b<=TO_DEC; b++)); do
     if [ "$COUNT" = "0" ]; then
         if [ "$JSON_OUT" = "0" ] && [ "$SHOW_EMPTY" = "1" ]; then
             echo
-            echo "─── block $b  ($HEX) — 0 log(s) ────────────────────────────"
+            echo "--- block $b  ($HEX) - 0 log(s) ----------------------------"
         fi
         continue
     fi
@@ -463,7 +463,7 @@ for ((b=FROM_DEC; b<=TO_DEC; b++)); do
              }'
     else
         echo
-        echo "─── block $b  ($HEX) — $COUNT log(s) ────────────────────────────"
+        echo "--- block $b  ($HEX) - $COUNT log(s) ----------------------------"
         while read -r LINE; do
             format_human "$b" "$LINE"
         done < <(echo "$LOGS_JSON" | jq -c '.result[]')
@@ -473,7 +473,7 @@ done
 
 if [ "$JSON_OUT" = "0" ]; then
     echo
-    echo "═══════════════════════════════════════════════════════════════════════"
+    echo "======================================================================="
     echo "Total logs: $TOTAL  across $((TO_DEC - FROM_DEC + 1)) block(s)"
-    echo "═══════════════════════════════════════════════════════════════════════"
+    echo "======================================================================="
 fi

@@ -7,12 +7,12 @@
 //! Two layers:
 //!
 //!  * **Synchronous, fixed-entropy** (`run_seeded_round`): drives the
-//!    commonware Feldman–Desmedt primitive step-for-step with a *caller-supplied*
+//!    commonware Feldman-Desmedt primitive step-for-step with a *caller-supplied*
 //!    `ChaCha20Rng` instead of `OsRng`, so the group key is a pure function of
 //!    `(keys, seed)`. Production correctly uses `OsRng` for dealer secrets
 //!    (unpredictability is required), so seed-determinism is a test affordance
 //!    that lets us assert byte-identical reproducibility and adversarial
-//!    rejection on *typed* errors — stronger than the existing string / outer
+//!    rejection on *typed* errors - stronger than the existing string / outer
 //!    timeout-based assertions.
 //!
 //!  * **Actor over the real wire** (`deterministic::Runner` + `simulated::Network`):
@@ -20,7 +20,7 @@
 //!    on the deterministic runtime, so task scheduling and timers are
 //!    reproducible. Asserts (a) a fully-connected committee completes and every
 //!    validator agrees on one group key, and (b) a missing dealer makes the
-//!    survivors hit the ceremony deadline and return a *clean* timeout error —
+//!    survivors hit the ceremony deadline and return a *clean* timeout error -
 //!    never a panic, never a divergent partial key.
 //!
 //! Adversarial cases mirrored as best practice (not 1:1): below-threshold dealers
@@ -197,7 +197,7 @@ fn dkg_group_key_is_deterministic_under_fixed_entropy() {
 #[test]
 fn below_threshold_dealers_cannot_mint_key() {
     // m1: a reshare whose dealer set is below the previous quorum must be
-    // rejected at `Info::new` — no ceremony, no minted key.
+    // rejected at `Info::new` - no ceremony, no minted key.
     let a = keys_from_seeds(&[1, 2, 3, 4]);
     let mut rng = ChaCha20Rng::seed_from_u64(7);
     let (output_a, _) = run_seeded_round(&a, &mut rng);
@@ -234,7 +234,7 @@ fn below_threshold_dealers_cannot_mint_key() {
 #[test]
 fn foreign_previous_output_rejected() {
     // m8: feeding committee B's output as committee A's `previous` (key
-    // substitution) must be rejected — A's dealers are not in B's player set.
+    // substitution) must be rejected - A's dealers are not in B's player set.
     let a = keys_from_seeds(&[1, 2, 3, 4]);
     let b = keys_from_seeds(&[101, 102, 103, 104]);
 
@@ -348,7 +348,7 @@ fn sim_full_ceremony_completes_and_all_agree() {
 fn sim_single_missing_dealer_times_out_clean() {
     // t5: with one of n dealers absent, the bootstrap ceremony can never collect
     // all n genesis logs. Every survivor must hit the ceremony deadline and
-    // return a *clean* timeout error — never panic, never finalize a subset key.
+    // return a *clean* timeout error - never panic, never finalize a subset key.
     use commonware_p2p::Manager as _;
     use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 

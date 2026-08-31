@@ -1158,7 +1158,7 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        // Stage is Started, not Revealing — must be rejected.
+        // Stage is Started, not Revealing - must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1230,7 +1230,7 @@ fn process_bids_accumulate_across_batches() {
         open_revealing(&s);
 
         // Two batches of generation 1 (total_batches=2) accumulate for the chain. Intake stays
-        // Revealing — nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
+        // Revealing - nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1659,7 +1659,7 @@ fn clearing_uniform_price_is_last_allocated_bid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result = clear(&s);
-        // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
+        // Supply 2 -> top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
     });
@@ -1966,7 +1966,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             AuctionStage::Clearing
         );
 
-        // Chain B reports → the gate opens and the tick clears.
+        // Chain B reports -> the gate opens and the tick clears.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -2093,7 +2093,7 @@ fn test_iface_id_matches_selector_xor() {
     use alloy_sol_types::SolCall;
 
     // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) — the four
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) - the four
     // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
     // isChainDone) are not part of that interface, so they are excluded from the XOR.
     let xor: [u8; 4] = [
@@ -2275,7 +2275,7 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
         2
     );
 
-    // Intake's own ceiling — 64 bids across 256 batches — is exactly what the
+    // Intake's own ceiling - 64 bids across 256 batches - is exactly what the
     // arrival set can carry, and one bidder more is refused rather than truncated.
     let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
@@ -2289,7 +2289,7 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
-    // An oracle gap prices nothing — the same condition that makes a day red.
+    // An oracle gap prices nothing - the same condition that makes a day red.
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
@@ -2321,7 +2321,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
-        // It was briefed green, so it holds the day's PROMIS — unlike a red day, which
+        // It was briefed green, so it holds the day's PROMIS - unlike a red day, which
         // is briefed with none. Cancelling it must give that supply back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())

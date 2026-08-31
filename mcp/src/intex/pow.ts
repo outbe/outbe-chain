@@ -3,13 +3,13 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
 /**
  * Proof-of-work for IntexFactory.minePromis. The precompile requires a nonce
  * such that the PoW hash has POW_DIFFICULTY leading zero bytes. Difficulty is
- * tiny (1 byte ⇒ ~256 tries), so a single-threaded grind is instant.
+ * tiny (1 byte => ~256 tries), so a single-threaded grind is instant.
  *
  * Scheme verbatim from crates/core/intexfactory/src/runtime.rs (compute_pow_hash):
  *   preimage = holder[20] ++ promisAmount_be32 ++ seriesId[14] ++ seq_be4
  *   hash     = SHA256(preimage ++ nonce_be8)
  *   valid    = first POW_DIFFICULTY bytes of hash are zero
- * `seq` is the per-(series, holder) mine counter — read it as the count of past
+ * `seq` is the per-(series, holder) mine counter - read it as the count of past
  * PromisMined(series, holder) events. promisAmount = series.promisLoadMinor * amount.
  */
 

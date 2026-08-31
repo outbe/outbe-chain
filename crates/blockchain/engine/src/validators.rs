@@ -73,7 +73,7 @@ impl<'a> StorageReader for RethStateReader<'a> {
 /// Queries the ValidatorSet precompile at the state referenced by `state_access`,
 /// returning the active validators with their BLS MinPk public keys.
 ///
-/// This is the Phase 2 entry point — called at consensus startup and at
+/// This is the Phase 2 entry point - called at consensus startup and at
 /// epoch boundaries to refresh the validator set.
 pub fn read_validators_from_state(state_access: &dyn RethStateAccess) -> Result<ValidatorSet> {
     read_validator_set_from_state(state_access, ValidatorSetKind::ActiveValidators)
@@ -90,7 +90,7 @@ pub fn read_consensus_validators_from_state(
     read_validator_set_from_state(state_access, ValidatorSetKind::ConsensusParticipants)
 }
 
-/// Read the DKG reshare TARGET set (`status ∈ {ACTIVE, PENDING}`) from on-chain
+/// Read the DKG reshare TARGET set (`status in {ACTIVE, PENDING}`) from on-chain
 /// state. This is `next_players`: the committee the upcoming reshare grants shares
 /// to. PENDING joiners are included (so the ceremony activates them); EXITING
 /// validators are excluded (the reshare removes them). Distinct from
@@ -234,7 +234,7 @@ pub fn read_reshare_target_with_empty_tee_exclusions_from_state(
     })
 }
 
-/// Read PENDING validators (`status == PENDING`) from on-chain state — staked
+/// Read PENDING validators (`status == PENDING`) from on-chain state - staked
 /// joiners admitted to the set but not yet share-holders. Used to admit them to
 /// consensus P2P as SECONDARY peers so they sync before their activating reshare.
 pub fn read_pending_validators_from_state(
@@ -243,8 +243,8 @@ pub fn read_pending_validators_from_state(
     read_validator_set_from_state(state_access, ValidatorSetKind::PendingValidators)
 }
 
-/// Read non-voting peers admitted to consensus P2P (`status ∈ {REGISTERED, PENDING}`)
-/// from on-chain state — staked PENDING joiners PLUS TEE
+/// Read non-voting peers admitted to consensus P2P (`status in {REGISTERED, PENDING}`)
+/// from on-chain state - staked PENDING joiners PLUS TEE
 /// full-nodes (REGISTERED, P2P-announced, NOT staked). Used as the secondary-tier P2P
 /// admission source so both sync + execute offer blocks without voting.
 pub fn read_admitted_non_consensus_from_state(
@@ -257,15 +257,15 @@ pub fn read_admitted_non_consensus_from_state(
 enum ValidatorSetKind {
     ActiveValidators,
     ConsensusParticipants,
-    /// DKG reshare target / `next_players`: `status ∈ {ACTIVE, PENDING}`. PENDING
+    /// DKG reshare target / `next_players`: `status in {ACTIVE, PENDING}`. PENDING
     /// joiners must be in the target so the ceremony grants them a share and they
-    /// are promoted PENDING→ACTIVE.
+    /// are promoted PENDING->ACTIVE.
     ReshareTarget,
-    /// PENDING joiners only — admitted to consensus P2P as SECONDARY peers so they
+    /// PENDING joiners only - admitted to consensus P2P as SECONDARY peers so they
     /// sync to head before the reshare that makes them signers.
     PendingValidators,
     /// Non-voting peers admitted to consensus P2P as SECONDARY so they sync + execute
-    /// offer blocks: `status ∈ {REGISTERED, PENDING}`. Adds TEE
+    /// offer blocks: `status in {REGISTERED, PENDING}`. Adds TEE
     /// full-nodes (REGISTERED, P2P-announced, enclave-registered, NOT staked) to the
     /// staked PENDING joiners. Voting still needs `has_bls_share`, so this cannot
     /// affect consensus; distinct from `ReshareTarget` ({ACTIVE, PENDING}).
@@ -417,8 +417,8 @@ pub fn read_pending_validators_at_block(
     read_pending_validators_from_state(&state)
 }
 
-/// Read non-voting admitted peers (`status ∈ {REGISTERED, PENDING}`) from the EVM
-/// state at a given block hash — the secondary-tier P2P admission candidates,
+/// Read non-voting admitted peers (`status in {REGISTERED, PENDING}`) from the EVM
+/// state at a given block hash - the secondary-tier P2P admission candidates,
 /// including TEE full-nodes.
 pub fn read_admitted_non_consensus_at_block(
     provider: &dyn StateProviderFactory,

@@ -25,7 +25,7 @@ export async function estimateGasWithBuffer(
 
     return gasLimit;
   } catch (error: any) {
-    console.error('  ❌ Gas estimation failed:', error.message);
+    console.error('  [FAIL] Gas estimation failed:', error.message);
     if (error.data) {
       console.error('  Error data:', error.data);
     }

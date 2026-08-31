@@ -1,4 +1,4 @@
-//! — exact-hash-first `AccountedParentArtifactProvider` lookup.
+//! - exact-hash-first `AccountedParentArtifactProvider` lookup.
 //!
 //! These tests pin the four invariants from the
 //!
@@ -41,7 +41,7 @@ use reth_provider::{HeaderProvider, ProviderResult};
 // ---------------------------------------------------------------------------
 
 /// In-memory `HeaderProvider` used by all tests in this file. `canonical`
-/// is the (number → SealedHeader) mapping returned by `sealed_header(n)`;
+/// is the (number -> SealedHeader) mapping returned by `sealed_header(n)`;
 /// `by_hash` is the union of all known headers across branches returned by
 /// `header(hash)` / `sealed_header_by_hash(hash)`. The two maps are
 /// independent on purpose: tests stage scenarios where a side-chain header
@@ -150,7 +150,7 @@ fn accounted_parent_artifact_lookup_uses_exact_hash() {
 // ---------------------------------------------------------------------------
 // a canonical-by-number entry whose hash differs
 // from the requested `block_hash` must NOT be silently returned. The provider
-// returns `Ok(None)` (caller — executor — maps this to a hard reject).
+// returns `Ok(None)` (caller - executor - maps this to a hard reject).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -246,7 +246,7 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
     // verify the wire-up by structurally requiring a config built via the
     // full-node constructor to be capable of resolving the seeded header.
     // The provider field is private, so we re-derive a fresh provider with
-    // the same fixture and assert it resolves — this guards against the
+    // the same fixture and assert it resolves - this guards against the
     // installer accidentally dropping the provider.
     let mut hp2 = StageHeaderProvider::default();
     hp2.insert_canonical(header_with_artifact(
@@ -350,7 +350,7 @@ fn competing_branch_same_height_stale_artifact_rejects() {
 //(exact-hash-primary lookup + hash-gated canonical-by-number
 // fallback) are covered BEHAVIORALLY by `accounted_parent_artifact_lookup_uses_exact_hash`,
 // `canonical_number_hash_mismatch_rejects`, and `competing_branch_same_height_stale_artifact_rejects`
-// above — they call `execution_summary_by_hash` over a forked provider and assert the
+// above - they call `execution_summary_by_hash` over a forked provider and assert the
 // resolved artifact / rejection. No source-text scan needed.
 
 // ---------------------------------------------------------------------------

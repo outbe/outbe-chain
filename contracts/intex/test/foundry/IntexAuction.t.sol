@@ -653,8 +653,8 @@ contract AuctionTest is Test {
 
     /// @dev No-sale auction: Desis floors the clearing rate at `minIntexBidRate`, so a clearing
     ///      with zero winners still carries a non-zero rate. This must be accepted as a valid
-    ///      result — the real invariant is `clearingRate >= minIntexBidRate`, NOT the (incorrect)
-    ///      `clearingRate == 0 ⇔ winners == 0`. Guards against re-introducing that wrong rule.
+    ///      result - the real invariant is `clearingRate >= minIntexBidRate`, NOT the (incorrect)
+    ///      `clearingRate == 0 <=> winners == 0`. Guards against re-introducing that wrong rule.
     function test_ExecuteAuctionClearing_NoSale_ZeroWinnersAtFloor() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250144;
@@ -682,8 +682,8 @@ contract AuctionTest is Test {
     }
 
     /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
-    ///      (nothing was allocated because supply was exhausted/zero). It must still complete —
-    ///      full refund is handled via REFUND_INSTRUCTIONS, nothing is issued — and NOT revert
+    ///      (nothing was allocated because supply was exhausted/zero). It must still complete -
+    ///      full refund is handled via REFUND_INSTRUCTIONS, nothing is issued - and NOT revert
     ///      `ZeroValue`/`ClearingRateBelowMin`. The `cleared` flag drives the Completed stage.
     function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
         uint256 startTs = block.timestamp;
@@ -697,7 +697,7 @@ contract AuctionTest is Test {
         vm.prank(bridger);
         auction.startClearingStage(worldwideDay);
 
-        // issued=0, clearingRate=0, won=0 — accepted despite floor=50 (no supply was available).
+        // issued=0, clearingRate=0, won=0 - accepted despite floor=50 (no supply was available).
         vm.expectEmit(true, false, false, true);
         emit IIntexAuction.AuctionClearingExecuted(worldwideDay, 0, 0);
         vm.prank(bridger);
@@ -822,7 +822,7 @@ contract AuctionTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
-        // Wrong chainId — caller's chainId param does not match block.chainid -> WrongChain.
+        // Wrong chainId - caller's chainId param does not match block.chainid -> WrongChain.
         uint64 wrongChainId = 999;
         sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChainId)));
@@ -879,7 +879,7 @@ contract AuctionTest is Test {
     ///      `lockFunds`. With `nonReentrant` in place the inner call reverts with
     ///      `ReentrancyGuardReentrantCall`, which propagates and unwinds all state.
     ///      Removing `nonReentrant` from `revealBid` makes this test fail (reentry succeeds,
-    ///      attacker double-records the bid) — i.e. it is a true red→green test of the guard.
+    ///      attacker double-records the bid) - i.e. it is a true red->green test of the guard.
     function test_RevealBid_reentrancyBlocked() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250201;

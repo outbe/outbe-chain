@@ -35,7 +35,7 @@ use crate::sol_ext::IERC20;
 /// whole geometry of the position is fixed by the quote the pledger accepted.
 ///
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
-/// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position —
+/// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position -
 /// authorization to spend the pledge is `spend_auth`, verified inside the enclave.
 /// Returns `(position_id, amount_stables)`.
 pub fn request_credis(
@@ -52,13 +52,13 @@ pub fn request_credis(
 
     // Origination is a CCA action, not an open one: the caller must be in good
     // standing at the registry. Today's registry is a stub that reports every address
-    // active, so this rejects nothing yet — it is the seam the real one drops into.
+    // active, so this rejects nothing yet - it is the seam the real one drops into.
     if !outbe_cca::api::is_active(&storage, caller)? {
         return Err(CredisFactoryError::CcaNotActive.into());
     }
 
     // The loan is delivered by a call into the smart account, and a CALL to a codeless
-    // account succeeds returning empty — so an undeployed account would take the loan
+    // account succeeds returning empty - so an undeployed account would take the loan
     // into a black hole while the position and the consumed pledge stood. Same guard
     // the vault router applies to its own receiver.
     if storage.with_account_info(smart_account, |info| Ok(info.is_empty_code_hash()))? {
@@ -95,7 +95,7 @@ pub fn request_credis(
 
     // The CCA matches the borrower's collateral one for one, in COEN. Checked only
     // after `consume_pledge` because the required amount is sealed in the ticket, not
-    // in calldata — a caller cannot know it from the call alone, and must read it from
+    // in calldata - a caller cannot know it from the call alone, and must read it from
     // the pledge quote. Exact equality, not a floor: an overpayment has no release path
     // (the escrow returns exactly what the position recorded) and would strand.
     if stake != terms.gratis_amount {
@@ -170,19 +170,19 @@ fn policy_rate_for(storage: StorageHandle<'_>, issuance_currency: u16) -> Result
 // settle
 // ---------------------------------------------------------------------------
 
-/// Applies `amount` to the position — accrued interest first, principal second —
+/// Applies `amount` to the position - accrued interest first, principal second -
 /// and releases the matching share of collateral from the pledger's OWN confidential
 /// pledged ledger back to its balance. When `amount` exceeds what the position still
 /// needs, only the required part is pulled from the caller.
 ///
-/// ANY caller may settle — a third party can settle someone else's position. That is
+/// ANY caller may settle - a third party can settle someone else's position. That is
 /// safe by construction rather than by an access check: the debt is pulled from
 /// `caller`'s own balance, while the freed collateral goes to the pledger EOA stored
 /// sealed on the position and recovered here through the enclave (`reveal_owner`). The
 /// payer can therefore never redirect value to themselves, and the EOA never appears
-/// on-chain. The payment (the ERC20 → vault deposit below) is the authorization for
-/// the release — no separate proof is required. Returns the stablecoin actually pulled.
-/// Settles `amount` against a position and returns `(principal, interest)` — the
+/// on-chain. The payment (the ERC20 -> vault deposit below) is the authorization for
+/// the release - no separate proof is required. Returns the stablecoin actually pulled.
+/// Settles `amount` against a position and returns `(principal, interest)` - the
 /// principal this payment covered and the interest it collected. Their sum is what
 /// was pulled from the caller.
 pub fn settle(
@@ -289,7 +289,7 @@ fn release_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Addres
 /// burns the unpaid share of the pledged collateral, drops the pledger's fidelity
 /// cohort by that amount, and deposits the equivalent value into the Promis Reserve.
 ///
-/// Nothing is market-sold and nothing is collected — the written-off principal and its
+/// Nothing is market-sold and nothing is collected - the written-off principal and its
 /// accrued interest simply cease to exist, and the burned collateral becomes invest-side
 /// capacity instead.
 pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
@@ -322,7 +322,7 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(void.gratis_burned)?;
 
-    // The originating CCA's stake is burned with the collateral it matched — that is
+    // The originating CCA's stake is burned with the collateral it matched - that is
     // what makes origination accountable rather than free.
     burn_cca_stake(&storage, position_id, void.cca)?;
 

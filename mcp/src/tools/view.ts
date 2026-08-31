@@ -123,6 +123,29 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
+    "gem_position_get",
+    "Parked-Intex position terms by id: merchant, source series, remaining capacity, " +
+      "the entry/floor prices its gems are anchored to, both currencies and when it was parked.",
+    { id: z.string().describe("Position token id (decimal or 0x hex)") },
+    handler(async ({ id }) =>
+      ok(await view(ctx, "gemfactory", "getPosition", [BigInt(id)])),
+    ),
+  );
+
+  server.tool(
+    "gem_settle_quote",
+    "What settling a gem with a given asset costs, and which of the gem's two currencies " +
+      "that asset settles on. `payableUnits` is in the asset's own minor units.",
+    {
+      id: z.string().describe("Gem token id (decimal or 0x hex)"),
+      asset: addr.describe("Settlement stablecoin the holder intends to pay with"),
+    },
+    handler(async ({ id, asset }) =>
+      ok(await view(ctx, "gemfactory", "quoteSettlement", [BigInt(id), asset])),
+    ),
+  );
+
+  server.tool(
     "gems_by_owner",
     "List Gems owned by an address with decoded status for each (Gem has no bulk getter, " +
       "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
@@ -161,7 +184,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   // Per-account fidelity index is now encrypted and owner-signature-gated, so a
   // read-only MCP tool cannot fetch it. Expose the public synthetic-max ceiling
-  // (`maxFidelityIndexAt`) instead — the upper bound on any account's RCFI at a
+  // (`maxFidelityIndexAt`) instead - the upper bound on any account's RCFI at a
   // given time, in decayed days.
   server.tool(
     "fidelity_max_index",
@@ -303,7 +326,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     }),
   );
 
-  // --- Governance (canon, meta-canon, OIP, GIP) — read-only -----------------
+  // --- Governance (canon, meta-canon, OIP, GIP) - read-only -----------------
   server.tool(
     "metacanon_get",
     "The meta-canon: current text + version + keccak hash (constitutional layer regulating the canon).",
@@ -338,12 +361,12 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
     ),
   );
 
-  // Index-backed, PAGINATED listing (metadata only — omits the full text).
+  // Index-backed, PAGINATED listing (metadata only - omits the full text).
   // Exactly one of `author` / `status` must be given; each maps to a dedicated
   // on-chain index (get*ByAuthor / get*ByStatus). Returns `total` (the whole
   // bucket size) plus the requested `[offset, offset+limit)` page.
   const listFilter = {
-    author: z.string().optional().describe("0x address — list this author's proposals"),
+    author: z.string().optional().describe("0x address - list this author's proposals"),
     status: z
       .enum(PROPOSAL_STATUS)
       .optional()
@@ -378,7 +401,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "oip_list",
-    "List OIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+    "List OIPs by index, paginated (metadata only - omits the full text). Give `author` " +
       "(their OIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
@@ -389,7 +412,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "gip_list",
-    "List GIPs by index, paginated (metadata only — omits the full text). Give `author` " +
+    "List GIPs by index, paginated (metadata only - omits the full text). Give `author` " +
       "(their GIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {

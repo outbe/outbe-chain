@@ -236,7 +236,7 @@ mod l2_zk_gate {
     /// `worldwideDay` and `tributeCurrency` are cleartext ABI arguments precisely
     /// so a bad one costs no enclave round trip. These fixtures configure no
     /// enclave client at all, so reaching the sidecar would surface as
-    /// `tee_sidecar_unavailable` — the assertions below are what prove the host
+    /// `tee_sidecar_unavailable` - the assertions below are what prove the host
     /// rejected first.
     #[test]
     fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
@@ -259,7 +259,7 @@ mod l2_zk_gate {
     }
 
     /// The day check runs before the currency check, so this case needs the day to
-    /// be OFFERING first — which these fixtures cannot arrange. Assert the ordering
+    /// be OFFERING first - which these fixtures cannot arrange. Assert the ordering
     /// instead: an unregistered currency paired with a non-OFFERING day still
     /// reports the day, proving the currency lookup is not reached and therefore
     /// that neither reaches the enclave.

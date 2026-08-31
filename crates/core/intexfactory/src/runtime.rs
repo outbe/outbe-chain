@@ -321,7 +321,7 @@ pub fn set_authorized_settler(
 /// paid once every winning chain has routed its proceeds (or the fan-in deadline
 /// passes); the payout itself runs in the begin-block drain. Because proceeds
 /// arrive once per winning chain (loopback same-block, remote minutes later),
-/// the credit only accumulates — it never reverts on a repeat or ownerless day,
+/// the credit only accumulates - it never reverts on a repeat or ownerless day,
 /// which would strand that chain's delivery.
 pub fn distribute(
     storage: &StorageHandle<'_>,
@@ -368,7 +368,7 @@ pub(crate) fn try_settle_proceeds(
         return Ok(());
     }
     // Batches drain a certified round, not this sweep, and a day gets exactly
-    // one — anything arriving after it opened missed the window.
+    // one - anything arriving after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, worldwide_day.value())?.is_some() {
         let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
         if !late.is_zero() {
@@ -378,7 +378,7 @@ pub(crate) fn try_settle_proceeds(
     }
     let deadline = outbe_intex::api::proceeds_deadline(storage, worldwide_day)?;
     if deadline == 0 {
-        // Never armed — or already finalized. A certified day past finalization
+        // Never armed - or already finalized. A certified day past finalization
         // (an ownerless one never opens a round) treats any re-delivery as late.
         if outbe_intex::api::certified_contributor_generation(storage, worldwide_day)?.is_some() {
             let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
@@ -704,7 +704,7 @@ pub(crate) fn pay_chunk(
             // A straggler (or a chain sending its proceeds in parts) can top the
             // pot up while this final round drains. finalize clears the map, so
             // pay any such top-up over it first and finalize only once the pot is
-            // empty — otherwise the top-up is later burned as ownerless.
+            // empty - otherwise the top-up is later burned as ownerless.
             let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
             if pot.is_zero() {
                 outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
@@ -786,7 +786,7 @@ pub fn settle(
     }
 
     // Dual-wallet authorization: only the holder or its authorized settler.
-    let mut factory = IntexFactoryContract::new(storage.clone());
+    let factory = IntexFactoryContract::new(storage.clone());
     if intex_holder != settler
         && factory.read_authorized_settler(intex_holder, series_id)? != settler
     {
@@ -849,7 +849,9 @@ pub fn settle(
         .into(),
     )?;
 
-    factory.bump_settle_count(series_id)?;
+    let settled_units = u32::try_from(amount)
+        .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+    outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
     emit_event(
         storage,

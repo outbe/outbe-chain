@@ -6,11 +6,11 @@ import { PRECOMPILE_ABI as ABI } from "./abi.js";
  *
  * Addresses: crates/blockchain/primitives/src/addresses.rs
  * Dispatch:  crates/blockchain/evm/src/precompiles.rs::outbe_dispatch_fn
- * ABIs:      generated from contracts/precompiles/src/I*.sol — see ./abi.ts.
+ * ABIs:      generated from contracts/precompiles/src/I*.sol - see ./abi.ts.
  *
  * Each entry pairs an address with the whole generated ABI of its interface, so
- * the signatures — and the output parameter names `humanize()` in format.ts
- * keys off — always come from the Solidity, never from a hand-written string.
+ * the signatures - and the output parameter names `humanize()` in format.ts
+ * keys off - always come from the Solidity, never from a hand-written string.
  */
 
 export interface ContractEntry {
@@ -43,13 +43,13 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis — confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
+    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
     abi: ABI.IGratis,
   },
 
   promis: {
     address: A("0x0000000000000000000000000000000000001337"),
-    note: "Promis — confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
+    note: "Promis - confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
     abi: ABI.IPromis,
   },
 
@@ -195,7 +195,7 @@ export function proposalStatusCode(name: ProposalStatusName): number {
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).
 export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled"] as const;
 
-// ISO 4217 numeric → symbol. Chain currently accepts 840 (USD) only; the rest
+// ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only; the rest
 // are convenience labels for display.
 export const ISO_4217: Record<number, string> = {
   840: "USD",

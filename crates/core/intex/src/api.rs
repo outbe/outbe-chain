@@ -23,6 +23,7 @@ use crate::payout::{
     encode_contributor_leaf, verify_contributor_leaf_range, ContributorLeafData,
     CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
 };
+use crate::schema::SeriesRecordEntryExt;
 use crate::schema::{
     CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
     DistProgress, IntexContract, IntexState, SeriesId, SeriesRecord,
@@ -103,6 +104,127 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     record.state = IntexState::Called as u8;
     record.called_at = called_at;
     registry.update_series_record(&record)
+}
+
+/// What a series forfeited when its call window closed.
+pub struct Forfeited {
+    pub units: u32,
+    pub promis_load_minor: U256,
+}
+
+/// `Called -> Expired`. Every unit still unsettled and unparked is forfeited, and
+/// its load is the caller's to return to the pool.
+pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut record = registry.load_series(series_id)?;
+    if record.lifecycle_state()? != IntexState::Called {
+        return Err(IntexError::InvalidState {
+            expected: IntexState::Called as u8,
+            actual: record.state,
+        }
+        .into());
+    }
+
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+    // Checked: an underflow is corrupt state, not "nothing owed".
+    let forfeited = record
+        .issued_intex_count
+        .checked_sub(settled)
+        .and_then(|left| left.checked_sub(parked))
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+
+    record.state = IntexState::Expired as u8;
+    let promis_load_minor = record.promis_load_minor;
+    registry.update_series_record(&record)?;
+    Ok(Forfeited {
+        units: forfeited,
+        promis_load_minor,
+    })
+}
+
+/// Record `units` settled: their load belongs to the settler from now on.
+pub fn record_settled_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realized_units(storage, series_id, units, RealizedKind::Settled)
+}
+
+/// Record `units` parked: their load moved into the Gem position.
+pub fn record_parked_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realized_units(storage, series_id, units, RealizedKind::Parked)
+}
+
+/// Units settled so far against `series_id`.
+pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .settled_units
+        .read(&series_id)
+}
+
+/// Units parked into Gem positions from `series_id`.
+pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .parked_units
+        .read(&series_id)
+}
+
+enum RealizedKind {
+    Settled,
+    Parked,
+}
+
+fn add_realized_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+    kind: RealizedKind,
+) -> Result<()> {
+    if units == 0 {
+        return Ok(());
+    }
+    let registry = IntexContract::new(storage.clone());
+    // One slot, not the whole record: this runs on every settle.
+    let issued = registry
+        .series
+        .entry(series_id)
+        .issued_intex_count()
+        .read()?;
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+
+    let (settled, parked) = match kind {
+        RealizedKind::Settled => (
+            settled
+                .checked_add(units)
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
+            parked,
+        ),
+        RealizedKind::Parked => (
+            settled,
+            parked
+                .checked_add(units)
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
+        ),
+    };
+    // Crossing the issued count means the two ledgers disagree.
+    if settled
+        .checked_add(parked)
+        .is_none_or(|realized| realized > issued)
+    {
+        return Err(IntexError::RealizedUnitsOverflow.into());
+    }
+
+    match kind {
+        RealizedKind::Settled => registry.settled_units.write(&series_id, settled),
+        RealizedKind::Parked => registry.parked_units.write(&series_id, parked),
+    }
 }
 
 /// Backdate a series' issuance stamp. Test-only: the Called sweep counts breach
@@ -232,7 +354,7 @@ pub fn open_certified_payout_round(
 
 /// Rejects a batch whose leaves were already paid.
 ///
-/// This is the cheapest possible gate — one word read — so a racing duplicate
+/// This is the cheapest possible gate - one word read - so a racing duplicate
 /// costs a single SLOAD instead of a full proof verification.
 pub fn require_certified_leaves_unpaid(
     storage: &StorageHandle<'_>,
@@ -340,7 +462,7 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 
 /// Record the (pre-deduplicated) legacy contributor list for a series. Called
 /// once per series by legacy Lysis, before the tributes are burned. Each entry
-/// is `(tribute owner, Σ nominal_amount_minor)`. A certified generation closes
+/// is `(tribute owner, sum nominal_amount_minor)`. A certified generation closes
 /// this path for that exact series identity.
 pub fn record_contributors(
     storage: &StorageHandle<'_>,
@@ -364,7 +486,7 @@ pub fn contributor_count(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     IntexContract::new(storage.clone()).read_contributor_count(worldwide_day)
 }
 
-/// Σ of all contributor nominals for a series (the proportionality denominator).
+/// sum of all contributor nominals for a series (the proportionality denominator).
 pub fn contributor_total(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
     IntexContract::new(storage.clone()).read_contributor_total(worldwide_day)
 }
@@ -562,7 +684,7 @@ pub fn proceeds_finalize_on_done(
 
 /// Finalize proceeds aggregation for a series: clear the pot/deadline/counters,
 /// drop it from the awaiting set, and clear the (now spent) contributor map.
-/// The per-(series, chain) flags are left as harmless dead entries — a series id
+/// The per-(series, chain) flags are left as harmless dead entries - a series id
 /// (the worldwide day) never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());

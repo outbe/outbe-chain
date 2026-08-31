@@ -41,7 +41,7 @@ impl<'a> Sh<'a> {
     /// Run `outbe-cli <args>` (caller supplies global `--rpc-url` / `--private-key`)
     /// and capture stdout.
     ///
-    /// A non-zero exit is **not** an error — callers parse stdout and several
+    /// A non-zero exit is **not** an error - callers parse stdout and several
     /// treat an empty result as "not available". But it is always reported, with
     /// the command and both streams, so a failing send is never silent. (It used
     /// to discard stderr unless `--debug`, which left the caller failing later

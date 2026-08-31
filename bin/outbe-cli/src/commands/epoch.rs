@@ -268,7 +268,7 @@ async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
                 at_height
             );
         }
-        // Skip EpochTransition and ConsensusSetUpdated — those are in `history`
+        // Skip EpochTransition and ConsensusSetUpdated - those are in `history`
     }
 
     Ok(())

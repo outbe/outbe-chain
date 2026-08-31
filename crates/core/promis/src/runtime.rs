@@ -41,7 +41,7 @@ fn base_request(op: PromisOp, chain_id: B256, account: Address, amount: U256) ->
 }
 
 /// Reject unless the supplied op-nonce equals the account's current on-chain
-/// counter — this is what makes a captured modify-auth non-replayable.
+/// counter - this is what makes a captured modify-auth non-replayable.
 fn check_op_nonce(promis: &Promis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = promis.op_nonce_of(account)?;
     if provided != current {

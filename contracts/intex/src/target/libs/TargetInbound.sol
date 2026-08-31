@@ -31,7 +31,7 @@ interface ITargetRouterShims {
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
-    /// @dev An auction the day already has (same terms → duplicate, other terms → conflict), a schedule the day
+    /// @dev An auction the day already has (same terms -> duplicate, other terms -> conflict), a schedule the day
     ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
     ///      such a START applicable. Anything else propagates so the bridge redelivers.
     function handleAuctionStageStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
@@ -111,7 +111,7 @@ library TargetInbound {
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
-    /// @dev A result the day already holds (same → duplicate, other → conflict), a cancelled or unknown day and a
+    /// @dev A result the day already holds (same -> duplicate, other -> conflict), a cancelled or unknown day and a
     ///      result that fails the auction's permanent sanity bounds are acknowledged without effect. A day whose
     ///      reveal stage has not closed yet (clock skew) propagates so the bridge redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
@@ -222,8 +222,8 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        // Nothing of a chunk is applied when it names a series under other terms — held on-chain or earlier
-        // in this same chunk — or a series with no supply: the chunk index stays free for a corrected resend.
+        // Nothing of a chunk is applied when it names a series under other terms - held on-chain or earlier
+        // in this same chunk - or a series with no supply: the chunk index stays free for a corrected resend.
         // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
@@ -464,8 +464,11 @@ library TargetInbound {
         catch (bytes memory reason) {
             if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) {
                 IIntexNFT1155.IntexState state = $.intex.readData(seriesId).state;
-                bool already = (msgType == BridgeMsgCodec.MSG_MARK_CALLED && state == IIntexNFT1155.IntexState.Called)
-                    || (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED && state == IIntexNFT1155.IntexState.Qualified);
+                // `Expired` is a called series past its notice period, still a duplicate.
+                bool already =
+                    (msgType == BridgeMsgCodec.MSG_MARK_CALLED
+                            && (state == IIntexNFT1155.IntexState.Called || state == IIntexNFT1155.IntexState.Expired))
+                        || (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED && state == IIntexNFT1155.IntexState.Qualified);
                 _ignore(srcChainId, msgType, seriesId, already ? InboundReason.DUPLICATE : InboundReason.OBSOLETE);
                 return;
             }

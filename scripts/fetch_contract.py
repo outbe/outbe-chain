@@ -19,7 +19,7 @@ Storage is fetched via debug_storageRangeAt (geth/erigon-style). If the RPC
 does not expose that method, an empty state file is written and a warning is
 logged. eth_getCode returning "0x" is treated as a hard error (not a contract).
 
-Stdlib only — no external dependencies.
+Stdlib only - no external dependencies.
 """
 
 from __future__ import annotations

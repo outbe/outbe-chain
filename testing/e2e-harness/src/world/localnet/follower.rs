@@ -301,7 +301,7 @@ impl Localnet {
             .is_some_and(|guard| !guard.exited())
     }
 
-    /// Stop all follower nodes (drop owned handles → kill + reap).
+    /// Stop all follower nodes (drop owned handles -> kill + reap).
     pub fn stop_followers(&mut self) -> Result<()> {
         self.followers.clear();
         Ok(())

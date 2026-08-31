@@ -85,7 +85,7 @@ fn ocomp_registration(
     (registration, encoded)
 }
 
-/// Hand-rolled legacy `hash_active_set` (addresses-only) — kept verbatim from
+/// Hand-rolled legacy `hash_active_set` (addresses-only) - kept verbatim from
 /// `crates/blockchain/consensus/src/dkg_manager.rs::hash_active_set` so the
 /// distinctness assertion in
 /// `committee_set_hash_v2_never_equals_legacy_active_set_hash_for_same_addresses`
@@ -466,7 +466,7 @@ fn committee_snapshot_storage_key_test_vector_matches_plan() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Formula coverage — domain + epoch + len + addresses + pubkeys + vrf_material.
+// 4. Formula coverage - domain + epoch + len + addresses + pubkeys + vrf_material.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -491,7 +491,7 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
     // Domain: changing the domain string changes the hash. We exercise this by
     // hashing a synthetic input that mirrors `committee_set_hash_v2` but with
     // an alternate domain; if the function didn't include the domain prefix,
-    // it would equal the recomputed value below — and we assert it does NOT.
+    // it would equal the recomputed value below - and we assert it does NOT.
     let mut alt_domain_buf = Vec::new();
     alt_domain_buf.extend_from_slice(b"DIFFERENT_DOMAIN_V2");
     alt_domain_buf.extend_from_slice(&5u64.to_be_bytes());
@@ -513,7 +513,7 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
         "epoch is included"
     );
 
-    // Length (and therefore order/count) is included — drop one entry.
+    // Length (and therefore order/count) is included - drop one entry.
     let shorter = CommitteeSnapshot {
         committee: vec![base.committee[0].clone()],
         ..base.clone()
@@ -524,7 +524,7 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
         "committee length is included"
     );
 
-    // Addresses are included — flip one address.
+    // Addresses are included - flip one address.
     let mut altered = base.clone();
     altered.committee[0].address = address!("0xDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF");
     assert_ne!(
@@ -533,7 +533,7 @@ fn committee_set_hash_formula_includes_domain_epoch_len_addresses_pubkeys_and_vr
         "validator addresses are included"
     );
 
-    // Pubkeys are included — flip one pubkey while keeping addresses.
+    // Pubkeys are included - flip one pubkey while keeping addresses.
     let mut altered = base.clone();
     altered.committee[0].consensus_pubkey = pubkey_filled(0x99);
     assert_ne!(
@@ -663,7 +663,7 @@ fn committee_snapshot_order_matches_commonware_public_key_order_not_address_orde
 }
 
 // ---------------------------------------------------------------------------
-// 7. Boundary atomicity — both outgoing and incoming snapshots are written.
+// 7. Boundary atomicity - both outgoing and incoming snapshots are written.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -831,7 +831,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             .expect("val_b requests exit before the second freeze");
         drop(vs);
 
-        // A second (later) reshare from epoch 18 → 19 that rotates validators.
+        // A second (later) reshare from epoch 18 -> 19 that rotates validators.
         let next_outgoing = incoming_snapshot.clone();
         let next_incoming = CommitteeSnapshot {
             committee: vec![CommitteeEntry {
@@ -1020,7 +1020,7 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
 //
 // Behavioural test for the AC: drive `activate_boundary_atomic` through the
 // fail-closed membership check with an unregistered artifact participant, then
-// prove that the journal is reverted end-to-end — neither outgoing nor incoming
+// prove that the journal is reverted end-to-end - neither outgoing nor incoming
 // snapshot is reachable, and `active_consensus_set_hash` is unchanged. This
 // turns the previously mechanism-only argument (CheckpointGuard::Drop semantics
 // + exists-last write ordering) into a runtime assertion.
@@ -1101,7 +1101,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
 
         // the outgoing snapshot was the FIRST thing written, and the
         // `exists` flag for it would normally be set by the time the failure
-        // happens. The CheckpointGuard drop path must revert that write —
+        // happens. The CheckpointGuard drop path must revert that write -
         // reading the snapshot back through the public API returns None.
         assert!(
             read_committee_snapshot(storage.clone(), outgoing_key)
@@ -1109,7 +1109,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
                 .is_none(),
             "outgoing snapshot must NOT be reachable after rollback",
         );
-        // Same for the incoming snapshot — that path never executes because
+        // Same for the incoming snapshot - that path never executes because
         // the activation step fails first, but we check it anyway to lock
         // the invariant.
         assert!(
@@ -1137,7 +1137,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
 }
 
 // ---------------------------------------------------------------------------
-// Prune ring: state-growth bound — only the last RETAIN epochs stay live.
+// Prune ring: state-growth bound - only the last RETAIN epochs stay live.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1174,7 +1174,7 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             .collect();
 
         // The oldest (total - retain) epochs are evicted: snapshot gone, exists
-        // flag cleared, length zeroed — their slots are reclaimed.
+        // flag cleared, length zeroed - their slots are reclaimed.
         for epoch in 0..(total - retain) {
             let key = keys[epoch as usize];
             assert!(

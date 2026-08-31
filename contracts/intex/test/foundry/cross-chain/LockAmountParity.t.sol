@@ -35,7 +35,7 @@ contract LockAmountParityTest is Test {
         assertEq(this.bnbLockAmount(quantity, basis, rate), this.desisLockAmount(quantity, basis, rate));
     }
 
-    /// @dev Outside the range BNB rejects, so the bid never locks and never reaches Outbe clearing —
+    /// @dev Outside the range BNB rejects, so the bid never locks and never reaches Outbe clearing -
     ///      the Outbe saturating path is unreachable for any bid that actually escrowed.
     function testFuzz_BnbRejectsOverflow(uint16 quantity, uint128 basis, uint32 rate) public {
         uint256 wide = uint256(quantity) * basis * rate / SCALE_1E6;
@@ -46,7 +46,7 @@ contract LockAmountParityTest is Test {
 
     /// @dev At the real per-Intex escrow basis (`promis_load`) both sides agree and stay well inside uint128.
     function test_Parity_AtPromisLoadBasis() public view {
-        // qty = uint16 max, rate = 1e6 (100% of basis) → the largest live lock at this basis.
+        // qty = uint16 max, rate = 1e6 (100% of basis) -> the largest live lock at this basis.
         uint128 expected = uint128(uint256(type(uint16).max) * PROMIS_LOAD_MINOR);
         assertEq(
             this.bnbLockAmount(type(uint16).max, PROMIS_LOAD_MINOR, SCALE_1E6),
@@ -57,7 +57,7 @@ contract LockAmountParityTest is Test {
 
     /// @dev Boundary: the largest product that still fits `uint128` agrees and does not revert.
     function test_Parity_AtUint128Boundary() public view {
-        // basis = uint128 max, qty = 1, rate = 1e6 → product = basis, the boundary value.
+        // basis = uint128 max, qty = 1, rate = 1e6 -> product = basis, the boundary value.
         assertEq(
             this.bnbLockAmount(1, type(uint128).max, SCALE_1E6), this.desisLockAmount(1, type(uint128).max, SCALE_1E6)
         );

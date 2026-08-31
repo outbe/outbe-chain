@@ -28,7 +28,7 @@ impl AddressPair {
 
     /// The `COEN/<iso>` pair, e.g. `new_coen_to(840)` for COEN/USD.
     ///
-    /// COEN base, ISO quote — the orientation these pairs are registered in.
+    /// COEN base, ISO quote - the orientation these pairs are registered in.
     /// COEN is also the zero address, so this is the canonical key form too.
     pub fn new_coen_to(iso_code: u16) -> Self {
         AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))

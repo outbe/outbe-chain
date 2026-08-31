@@ -10,6 +10,7 @@ outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-intex.workspace = true
+outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true

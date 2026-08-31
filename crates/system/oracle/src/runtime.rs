@@ -16,7 +16,7 @@ use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 
-/// `(pairs, values, lookbacks)` — one row per active vote-target pair, each
+/// `(pairs, values, lookbacks)` - one row per active vote-target pair, each
 /// carrying the orientation it was registered in.
 type PairSeries = (Vec<AddressPair>, Vec<U256>, Vec<u64>);
 
@@ -128,7 +128,7 @@ impl OracleContract<'_> {
         }
 
         // Resolve every quoted pair up front. `require_pair` rejects an
-        // unregistered pair and one quoted against the registered direction —
+        // unregistered pair and one quoted against the registered direction -
         // the rate is a bare scalar, so a flipped quote would otherwise feed an
         // uninverted price into the tally median with nothing downstream able to
         // notice.
@@ -534,7 +534,7 @@ impl OracleContract<'_> {
 
     /// Calculates VWAPs for the given WorldwideDay window and stores them in
     /// oracle state. Returns `false` when the window held no oracle data, in
-    /// which case nothing is written — a deterministic no-op, not an error.
+    /// which case nothing is written - a deterministic no-op, not an error.
     pub fn store_worldwide_day_vwap_snapshot(
         &mut self,
         worldwide_day: WorldwideDay,
@@ -603,7 +603,7 @@ impl OracleContract<'_> {
     }
 
     /// Computes and persists the VWAP of every active vote-target pair for the
-    /// fully-closed UTC calendar day `utc_day` (yyyymmdd UTC — *not* a
+    /// fully-closed UTC calendar day `utc_day` (yyyymmdd UTC - *not* a
     /// WorldwideDay, which is UTC+14). The window is the canonical
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
@@ -611,7 +611,7 @@ impl OracleContract<'_> {
     /// if no pair has data, nothing is written, so the day stays empty and is
     /// told apart from an unfinalized one by the `utc_day_vwap_last_finalized`
     /// watermark. Emits one `VwapCalculated` event per written pair in
-    /// registration order. The method overwrites unconditionally — the
+    /// registration order. The method overwrites unconditionally - the
     /// caller gates re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
@@ -626,7 +626,7 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        // No vote-target pair had data for the day — leave it unwritten so the
+        // No vote-target pair had data for the day - leave it unwritten so the
         // day reads as finalized-empty against the watermark.
         let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
             return Ok(());

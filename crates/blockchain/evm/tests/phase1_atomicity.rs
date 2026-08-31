@@ -1,4 +1,4 @@
-//! — Phase 1 atomicity, cursor semantics, and soft-receipt
+//! - Phase 1 atomicity, cursor semantics, and soft-receipt
 //! narrowing.
 //!
 //! cursor is the sole phase-routing driver, cursor is
@@ -15,7 +15,7 @@ use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
 
-/// — block 1 body-index map starts at CycleTick (no Phase 1), then
+/// - block 1 body-index map starts at CycleTick (no Phase 1), then
 /// RewardsGemDelivery, optional BoundaryOutcome (mandatory at block 1 under
 /// V2), then Oracle.
 #[test]
@@ -41,8 +41,8 @@ fn block_1_body_index_map_is_cycle_rewards_boundary_oracle() {
 #[test]
 fn oracle_slash_window_body_index_follows_optional_boundary_outcome() {
     // inserts LateFinalizeCredits (body_index 1) after Phase 1, shifting
-    // the rest: Phase1(0) → LateFinalizeCredits(1) → CycleTick(2) →
-    // RewardsGemDelivery(3) → BoundaryOutcome(4) → OracleSlashWindow(5).
+    // the rest: Phase1(0) -> LateFinalizeCredits(1) -> CycleTick(2) ->
+    // RewardsGemDelivery(3) -> BoundaryOutcome(4) -> OracleSlashWindow(5).
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late = phase1.advance_after_commit(true, false);
     let cycle = late.advance_after_commit(true, false);
@@ -54,8 +54,8 @@ fn oracle_slash_window_body_index_follows_optional_boundary_outcome() {
         oracle,
         SystemTxPhase::OracleSlashWindow { body_index: 5 }
     ));
-    // When boundary is absent: Phase1(0) → Late(1) → CycleTick(2) →
-    // RewardsGemDelivery(3) → Oracle(4).
+    // When boundary is absent: Phase1(0) -> Late(1) -> CycleTick(2) ->
+    // RewardsGemDelivery(3) -> Oracle(4).
     let phase1b = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late_b = phase1b.advance_after_commit(false, false);
     let cycle_b = late_b.advance_after_commit(false, false);
@@ -68,7 +68,7 @@ fn oracle_slash_window_body_index_follows_optional_boundary_outcome() {
     assert_eq!(oracle_b, SystemTxPhase::OracleSlashWindow { body_index: 4 });
 }
 
-/// Sanity: cursor advance from UserTxs is idempotent — there is no "post
+/// Sanity: cursor advance from UserTxs is idempotent - there is no "post
 /// user txs" phase, and the cursor must not regress to a system phase.
 #[test]
 fn debug_assert_system_tx_phase_cursor_after_preexec_for_block1_and_phase1() {

@@ -16,7 +16,7 @@ const SCURVE_PEAK_DAY_BASE_SLOT: u64 = 36;
 const SCURVE_PEAK_PRICE_BASE_SLOT: u64 = 37;
 const SCURVE_OLDEST_SLOT: u64 = 38;
 const WWD_VWAP_EXISTS_BASE_SLOT: u64 = 47;
-// Slots 50 and 51 held the day's pair count and its entry-ordinal → pair
+// Slots 50 and 51 held the day's pair count and its entry-ordinal -> pair
 // column. Both are retired: the value column below is keyed by the registry
 // index, so `pair_to_index` names the entry and nothing has to be enumerated.
 const WWD_VWAP_VALUE_BASE_SLOT: u64 = 52;
@@ -69,7 +69,7 @@ impl OracleOpeningEvaluationV1 {
 /// the day-VWAP column is keyed by the registry index, so round two cannot
 /// address a pair's value slot until that index has been read. The pair hash for
 /// an ISO is derived rather than stored, so these slots need no on-chain count
-/// to enumerate — which is exactly why they can be opened this early.
+/// to enumerate - which is exactly why they can be opened this early.
 pub fn oracle_count_slot_plan_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
@@ -114,7 +114,7 @@ fn checked_pair(base_word: U256, quote_word: U256) -> AddressPair {
 
 /// Round two: the full plan, addressed by the values round one returned.
 ///
-/// `pair_indices` is parallel to `reference_isos` — entry `i` is the registry
+/// `pair_indices` is parallel to `reference_isos` - entry `i` is the registry
 /// index `pair_to_index` holds for `COEN/reference_isos[i]`, as read from the
 /// round-one opening. A zero index means the pair is unregistered; it has no
 /// value slot to open, and `evaluate_oracle_opening_v1` rejects it.
@@ -289,7 +289,7 @@ pub fn evaluate_oracle_opening_v1(
             return Err(OracleOcompError::PairNotRegistered { iso });
         }
         // `pair_to_index` is keyed by the sorted pair, so a market registered as
-        // `<iso>/COEN` resolves to the same index and prices identically —
+        // `<iso>/COEN` resolves to the same index and prices identically -
         // direction-insensitivity now comes from the key, not from a scan.
         let vwap = if worldwide_day_exists.is_zero() {
             U256::ZERO

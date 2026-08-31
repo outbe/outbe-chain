@@ -57,6 +57,17 @@ pub fn dispatch(
                 })
             }),
 
+            quoteSettlement(c) => metadata::<IGemFactory::quoteSettlementCall>(|| {
+                let (settlement_currency, amount) =
+                    runtime::quote_settlement(&storage, c.gemId, c.asset)?;
+                Ok(IGemFactory::quoteSettlementReturn {
+                    settlementCurrency: settlement_currency,
+                    payableUnits: amount,
+                })
+            }),
+
+            getPosition(c) => view(c, |c| runtime::position_data(&storage, c.positionId)),
+
             balanceOf(c) => view(c, |c| {
                 GemFactoryContract::new(storage.clone())
                     .balance_of(c.owner)

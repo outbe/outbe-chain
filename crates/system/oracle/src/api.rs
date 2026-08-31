@@ -395,7 +395,7 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
 /// This is the single entry point for the day-rate decision: pair resolution and
 /// the snapshot lookup live here, behind one typed interface, so callers never
 /// touch the oracle's internal `pair_index` map. Genuine storage faults
-/// propagate as `Err`, keeping "no data yet" (`Ok(None)` → caller's RED fallback)
+/// propagate as `Err`, keeping "no data yet" (`Ok(None)` -> caller's RED fallback)
 /// distinct from "oracle broken".
 pub fn day_type_pair_vwap(
     storage: StorageHandle,

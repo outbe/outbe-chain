@@ -1,8 +1,8 @@
 //! Host-side TEE DKG ceremony coordinator.
 //!
 //! This is the TEE-native equivalent of the consensus DKG actor
-//! (`crates/blockchain/consensus/src/dkg_actor`): the public protocol — P2P
-//! gossip, ceremony bookkeeping, message shaping — runs on the host, while every
+//! (`crates/blockchain/consensus/src/dkg_actor`): the public protocol - P2P
+//! gossip, ceremony bookkeeping, message shaping - runs on the host, while every
 //! secret-touching operation is delegated to the enclave over the Noise-IK
 //! channel (the [`EnclaveChannel`] / `EnclaveClient` protocol). Unlike a literal
 //! clone of the consensus actor, no `Dealer`/`Player` ever runs on the host, so
@@ -10,10 +10,10 @@
 //!
 //! The coordinator exposes the ceremony as explicit phase methods that each (a)
 //! call the enclave seam and (b) shape the resulting host wire messages. A driver
-//! — the production commonware-P2P event loop, or the in-process e2e test harness
-//! — routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between peers
+//! - the production commonware-P2P event loop, or the in-process e2e test harness
+//! - routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between peers
 //! and feeds them back into the matching phase method. The wire messages carry
-//! only opaque bytes (the host never decodes Commonware types — the enclave does).
+//! only opaque bytes (the host never decodes Commonware types - the enclave does).
 //!
 //! Production note: the threshold/timeout/retry event loop that drives these
 //! phases over real commonware P2P gossip is the remaining host-integration piece
@@ -86,7 +86,7 @@ pub struct FinalizedLog {
 }
 
 /// A TEE DKG gossip message, carried over the consensus P2P layer. All fields are
-/// opaque bytes (the host never decodes Commonware types — the enclave does).
+/// opaque bytes (the host never decodes Commonware types - the enclave does).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DkgWireMessage {
     DealerBundle(DealerBundle),
@@ -223,7 +223,7 @@ pub trait DkgGossip {
 ///
 /// Returns this node's [`CeremonyOutcome`] (public group key + share commitment).
 /// Mirrors the consensus DKG actor's event loop, but no `Dealer`/`Player` runs on
-/// the host — every seam crosses to the enclave.
+/// the host - every seam crosses to the enclave.
 pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     coord: &CeremonyCoordinator,
     enclave: &mut C,
@@ -326,7 +326,7 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
         }
     }
 
-    // Seam E: every dealer log collected — recover this node's threshold share.
+    // Seam E: every dealer log collected - recover this node's threshold share.
     let ordered: Vec<FinalizedLog> = logs.into_values().collect();
     let mut outcome = coord.finalize_player(enclave, &ordered)?;
 
@@ -344,7 +344,7 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     let my_sealed = coord.tribute_offer_partials_sealed(enclave)?;
     for (recipient_bls, blob) in my_sealed {
         if recipient_bls == me_bls {
-            // The ciphertext sealed to my own enclave — keep it locally.
+            // The ciphertext sealed to my own enclave - keep it locally.
             sealed_for_me.insert(me_bls.clone(), blob);
         } else {
             gossip
@@ -404,7 +404,7 @@ pub struct CeremonyOutcome {
     /// for all honest parties; clients encrypt offers to it. Set by
     /// [`run_tee_dkg_ceremony`]; `[0u8; 32]` until Seam F completes.
     pub tribute_offer_public: [u8; 32],
-    /// The committee's DKG group public KEY (constant term, encoded) — the public
+    /// The committee's DKG group public KEY (constant term, encoded) - the public
     /// verification key for its threshold group signatures. Set alongside
     /// `tribute_offer_public` at Seam F; carried into the bootstrap payload so a
     /// later reshare endorsement verifies against this committee's key.

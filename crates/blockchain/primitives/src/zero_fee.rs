@@ -18,14 +18,14 @@ use crate::addresses::{
 /// (zero-fee) path enabled by [`crate::addresses::ZEROFEE_ADDRESS`].
 ///
 /// Sponsored transactions are restricted to protocol-defined system
-/// precompiles — they cannot enter arbitrary EVM execution. The
+/// precompiles - they cannot enter arbitrary EVM execution. The
 /// whitelist replaces a global per-block sponsored-tx cap by
 /// structurally limiting the reachable code paths: an attacker with N
 /// pre-funded addresses can still burn 8 free txs each, but each tx
 /// can only invoke one of these audited entrypoints. The set is a
 /// strict subset of the registered outbe precompile table because
 /// validator-only entrypoints (rewards/staking/oracle) are not
-/// reachable through the sponsored path — those have dedicated
+/// reachable through the sponsored path - those have dedicated
 /// authorization flows. Editing this list is part of the protocol
 /// contract.
 pub const SPONSORED_TARGET_WHITELIST: &[Address] = &[
@@ -56,7 +56,7 @@ const _: () = {
     while i < list.len() {
         let mut j = i + 1;
         while j < list.len() {
-            // Compare the underlying 20-byte arrays — `Address` is
+            // Compare the underlying 20-byte arrays - `Address` is
             // `repr(transparent)` over `[u8; 20]`.
             let a = list[i].0 .0;
             let b = list[j].0 .0;

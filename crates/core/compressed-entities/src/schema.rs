@@ -247,7 +247,7 @@ fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError
 /// must not be reused as direct commitment mappings.
 ///
 /// Slot 10 changed meaning when identities narrowed to 32 bytes: it held a
-/// 38-byte dynamic `bytes` record (three slots — a length word plus two data
+/// 38-byte dynamic `bytes` record (three slots - a length word plus two data
 /// words) and now holds the identity in one word, with slot 13 carrying the
 /// collection byte that record used to include. Repointing a live slot is
 /// normally forbidden; it is admissible only because that change ships as a
@@ -285,7 +285,7 @@ pub(crate) struct CompressedEntitiesSchema {
     /// for it: `Collection::from_id` rejects 0, so a zero here means absent.
     /// Kept out of slot 10 because a collection plus a full-width identity does
     /// not fit one word, and stored at all because the cleanup and sealing scans
-    /// recover the collection from the value — the locator key is hashed and
+    /// recover the collection from the value - the locator key is hashed and
     /// cannot be inverted.
     pub body_identity_collection: Mapping<B256, u8>,
 }

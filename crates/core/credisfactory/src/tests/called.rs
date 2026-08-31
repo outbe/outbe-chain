@@ -149,7 +149,7 @@ fn missing_days_do_not_count_as_breaches() {
         advance_to(&storage, at);
 
         // Publish one day short of the threshold and leave the rest of the window
-        // unpublished. §11.3's placeholder: a day with no reference price is not
+        // unpublished. section 11.3's placeholder: a day with no reference price is not
         // a breach, so it can only delay a call.
         for i in 0..CALL_BREACH_DAYS - 1 {
             set_vwap(&storage, day_back(at, i), at_call());
@@ -289,7 +289,7 @@ fn each_currency_prices_off_its_own_daily_series() {
         {
             let credis = CredisContract::new(storage.clone());
             let mut position = credis.get_position(position_id).unwrap();
-            position.issuance_currency = 978; // EUR — no COEN pair registered
+            position.issuance_currency = 978; // EUR - no COEN pair registered
             credis.positions.update(&position).unwrap();
         }
 
@@ -434,7 +434,7 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
             .collect();
 
         // `ids[0]` sits at active index 0, so the descending walk reaches it
-        // LAST — after the void budget is already spent. Leave it Open; the rest
+        // LAST - after the void budget is already spent. Leave it Open; the rest
         // become called-and-lapsed.
         let called_at = CREATED_AT;
         {
@@ -456,7 +456,7 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         );
 
         // A void costs two enclave round-trips, so the run stops voiding at the
-        // budget — but it must keep walking. The Open position behind the
+        // budget - but it must keep walking. The Open position behind the
         // exhausted budget is still called in this same run.
         assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
         assert_eq!(

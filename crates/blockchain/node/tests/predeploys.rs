@@ -4,22 +4,22 @@
 //! (`scripts/seed_genesis.py` consuming `seed-testnet.json:contracts[]`, which
 //! references the bytecode/state triplet under `scripts/contracts/` produced
 //! by `scripts/fetch_contract.py`). They are ordinary EVM accounts holding
-//! canonical third-party (or Outbe-internal) runtime bytecode — not Outbe
+//! canonical third-party (or Outbe-internal) runtime bytecode - not Outbe
 //! stateful precompiles.
 //!
 //! Coverage:
-//!  * `predeployed_bytecode_matches_vendored_artifacts` — the test genesis
+//!  * `predeployed_bytecode_matches_vendored_artifacts` - the test genesis
 //!    `alloc` carries byte-identical bytecode to the canonical `*.code.hex`
 //!    files under `scripts/contracts/`. The corresponding `*.meta.json`
 //!    is cross-checked against the address constant in `addresses.rs`,
 //!    catching artifacts fetched from the wrong address.
-//!  * `entrypoint_v07_inlines_sender_creator_immutable` — the SenderCreator
+//!  * `entrypoint_v07_inlines_sender_creator_immutable` - the SenderCreator
 //!    address is encoded as an immutable inside EntryPoint v0.7's runtime
 //!    bytecode. Catches the v0.7 constructor side-effect gotcha: if the
 //!    SenderCreator we pre-deploy lives at a different address than the one
 //!    EntryPoint expects, UserOperation `initCode` flows would silently
 //!    revert.
-//!  * `handleops_end_to_end` (`#[ignore]`) — stretch goal tracked.
+//!  * `handleops_end_to_end` (`#[ignore]`) - stretch goal tracked.
 
 use alloy_primitives::Address;
 use outbe_primitives::addresses::{
@@ -158,7 +158,7 @@ fn entrypoint_v07_inlines_sender_creator_immutable() {
     assert!(
         occurrences > 0,
         "SenderCreator v0.7 address {SENDER_CREATOR_V07_ADDRESS:?} not found inside EntryPoint v0.7 runtime bytecode \
-         — pre-deployed SenderCreator address does not match EntryPoint's compiled immutable. \
+         - pre-deployed SenderCreator address does not match EntryPoint's compiled immutable. \
          Verify the address derivation: keccak256(rlp([entrypoint, 1]))[12:]"
     );
 }

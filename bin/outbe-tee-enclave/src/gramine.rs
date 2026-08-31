@@ -1,10 +1,10 @@
 //! Real Gramine attestation surface (`/dev/attestation/*`).
 //!
-//! This is the genuine SGX integration — no mock constants. Under `gramine-sgx`
+//! This is the genuine SGX integration - no mock constants. Under `gramine-sgx`
 //! these pseudo-files are backed by hardware: `quote` is a real DCAP quote and
 //! the keys under `keys/` come from `EGETKEY`. Under `gramine-direct` there is no
 //! SGX hardware, so `attestation_type` reads `none`, `quote` is unavailable, and
-//! `keys/` does not exist — this module reports that honestly (no fabricated
+//! `keys/` does not exist - this module reports that honestly (no fabricated
 //! quote, no fixed sealing key). Outside Gramine entirely (bare process) every
 //! pseudo-file is absent and every call returns the "unavailable" path.
 //!
@@ -14,7 +14,7 @@
 //! [`AttestationType::SgxNoAttest`]) so a real-SGX run is never mislabeled "no SGX".
 //!
 //! Hardware MRENCLAVE/MRSIGNER/ISVSVN are parsed out of the real quote's embedded
-//! SGX report body — they are never hardcoded.
+//! SGX report body - they are never hardcoded.
 
 use std::fs;
 
@@ -34,7 +34,7 @@ pub enum AttestationType {
     /// has no `sgx.remote_attestation = "dcap"`/`"epid"`), so
     /// `/dev/attestation/attestation_type` reads `none`. SGX hardware IS present:
     /// EGETKEY sealing keys (`keys/_sgx_mrsigner`) derive. This is NOT
-    /// remote-attested — it cannot produce a DCAP quote — but it is confidential
+    /// remote-attested - it cannot produce a DCAP quote - but it is confidential
     /// at rest. Distinguished from [`None`] by EGETKEY availability.
     SgxNoAttest,
     /// `gramine-sgx` with DCAP remote attestation.
@@ -53,7 +53,7 @@ impl AttestationType {
         matches!(self, AttestationType::Dcap | AttestationType::Epid)
     }
 
-    /// True when real SGX hardware is present — including [`SgxNoAttest`], which
+    /// True when real SGX hardware is present - including [`SgxNoAttest`], which
     /// has EGETKEY sealing but no remote attestation. Distinct from
     /// [`is_hardware`](Self::is_hardware), which is narrower: "remote-attestation
     /// capable" (a real quote can be produced). Use this for "is there SGX at all"
@@ -69,7 +69,7 @@ impl AttestationType {
         match self {
             AttestationType::None => "none (gramine-direct / no SGX)".to_string(),
             AttestationType::SgxNoAttest => {
-                "none (gramine-sgx; remote attestation disabled — EGETKEY sealing available)"
+                "none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)"
                     .to_string()
             }
             AttestationType::Dcap => "dcap (gramine-sgx)".to_string(),
@@ -104,8 +104,8 @@ fn classify_none(egetkey_available: bool) -> AttestationType {
 /// A `none` type file is ambiguous: it appears both under `gramine-direct` and
 /// under real `gramine-sgx` whose manifest did not enable remote attestation. We
 /// resolve it via EGETKEY availability (`sealing_key_raw` reading
-/// `keys/_sgx_mrsigner`) — real SGX → [`AttestationType::SgxNoAttest`],
-/// gramine-direct → [`AttestationType::None`]. See [`classify_none`].
+/// `keys/_sgx_mrsigner`) - real SGX -> [`AttestationType::SgxNoAttest`],
+/// gramine-direct -> [`AttestationType::None`]. See [`classify_none`].
 pub fn attestation_type() -> AttestationType {
     if let Ok(s) = fs::read_to_string(format!("{ATTEST_DIR}/attestation_type")) {
         return match s.trim() {
@@ -193,13 +193,13 @@ pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result
 
 /// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
 /// SGX report (`/dev/attestation/report`), which Gramine produces via EREPORT with
-/// NO DCAP/PCCS provisioning — so it works under `gramine-sgx` even when remote
+/// NO DCAP/PCCS provisioning - so it works under `gramine-sgx` even when remote
 /// attestation is disabled (manifest `sgx.remote_attestation = "none"`). EREPORT
 /// needs a target enclave; for a self-report we target THIS enclave by copying
 /// `my_target_info` into `target_info`. `report_data` is written so the local
 /// report still commits to the enclave's cleartext keys. Returns `Err` under
 /// `gramine-direct`/bare (no `/dev/attestation/report`), where the caller falls
-/// back to zero (unmeasured) — never fabricated.
+/// back to zero (unmeasured) - never fabricated.
 pub fn local_report_measurements(report_data: &[u8; 64]) -> Result<ReportMeasurements, String> {
     let mti = format!("{ATTEST_DIR}/my_target_info");
     let ti = format!("{ATTEST_DIR}/target_info");
@@ -240,14 +240,14 @@ pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
 /// EGETKEY key. This is the production sealing-key source: it ties the sealed
 /// root seed to MRSIGNER (survives a same-signer enclave update). Returns `Err`
 /// when no SGX hardware is present (gramine-direct/bare), where there is no
-/// confidential at-rest persistence — the caller must not silently substitute a
+/// confidential at-rest persistence - the caller must not silently substitute a
 /// fixed key.
 pub fn sealing_key_256(mrsigner_policy: bool) -> Result<[u8; 32], String> {
     let raw = sealing_key_raw(mrsigner_policy)?;
     crate::crypto::hkdf_sha256(&raw, b"", b"outbe/tee/seal-key/v1").map_err(|e| e.to_string())
 }
 
-/// Diagnostic dump of the whole attestation surface — used by the
+/// Diagnostic dump of the whole attestation surface - used by the
 /// `--probe-attestation` startup mode to observe real Gramine behaviour instead
 /// of guessing it. Prints to stderr; performs no secret-revealing reads (the
 /// sealing key bytes are summarised by length only).
@@ -325,9 +325,9 @@ mod tests {
 
     #[test]
     fn classify_none_uses_egetkey_as_discriminator() {
-        // EGETKEY derives → real SGX with attestation disabled.
+        // EGETKEY derives -> real SGX with attestation disabled.
         assert_eq!(classify_none(true), AttestationType::SgxNoAttest);
-        // EGETKEY absent → gramine-direct / no SGX.
+        // EGETKEY absent -> gramine-direct / no SGX.
         assert_eq!(classify_none(false), AttestationType::None);
     }
 

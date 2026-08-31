@@ -1,4 +1,4 @@
-//! Steps for `features/txpool_eviction.feature` — pool lifetime bounds.
+//! Steps for `features/txpool_eviction.feature` - pool lifetime bounds.
 
 use std::thread::sleep;
 use std::time::Duration;

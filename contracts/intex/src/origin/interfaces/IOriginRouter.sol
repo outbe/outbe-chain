@@ -8,7 +8,7 @@ pragma solidity 0.8.30;
 /// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. The target set is
 ///      a registry (see {addTarget}); it is snapshotted per day at STAGE_START so a mid-day membership change never
 ///      reshapes an in-flight auction. Broadcast sends fan out over the snapshot; addressed sends carry a leading
-///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) — a single failing leg
+///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) - a single failing leg
 ///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
 ///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
@@ -148,7 +148,7 @@ interface IOriginRouter {
         uint32 minIntexBidRate;
         /// @notice Entry, floor and call price of every currency the day can clear in.
         ReferenceCurrencyPrice[] prices;
-        /// @notice Called→deadline window in seconds (0 = default).
+        /// @notice Called->deadline window in seconds (0 = default).
         uint32 callNoticePeriod;
         /// @notice Call-trigger observation window in seconds.
         uint32 callWindow;
@@ -210,7 +210,7 @@ interface IOriginRouter {
     /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param msgType Codec message type.
-    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, ...) as the handler keys it.
     /// @param reason One of the `InboundReason` codes.
     event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
 
@@ -226,7 +226,7 @@ interface IOriginRouter {
 
     // --- Admin ---
     /// @notice Wire contract dependencies and grant the demand/supply roles.
-    /// @param desis Desis contract — must advertise `IDesis` via ERC-165; granted `DESIS_ROLE`.
+    /// @param desis Desis contract - must advertise `IDesis` via ERC-165; granted `DESIS_ROLE`.
     /// @param intexFactory IntexFactory precompile; granted `INTEX_FACTORY_ROLE`.
     function wire(address desis, address intexFactory) external;
 
@@ -249,7 +249,7 @@ interface IOriginRouter {
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be ≤ contract balance.
+    /// @param amount Amount in wei to sweep; must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
     // --- Quote ---

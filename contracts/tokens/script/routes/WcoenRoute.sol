@@ -5,7 +5,7 @@ import {RouteSpec, BaseRoute} from "./BaseRoute.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 
-/// @dev The WCOEN route: canonical WCOEN on Outbe, ERC-7802 synthetic on the external chain — the mirror image of
+/// @dev The WCOEN route: canonical WCOEN on Outbe, ERC-7802 synthetic on the external chain - the mirror image of
 ///      the USDT route. Everything specific to WCOEN lives here.
 abstract contract WcoenRoute is BaseRoute {
     /// @dev Labels are part of the CREATE3 address. Changing either string relocates every WCOEN deployment.

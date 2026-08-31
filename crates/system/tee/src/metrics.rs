@@ -1,5 +1,5 @@
 //! Prometheus series for the node-side enclave channel, emitted through the
-//! global `metrics` recorder (exposed by reth's `--metrics` exporter — same
+//! global `metrics` recorder (exposed by reth's `--metrics` exporter - same
 //! pattern as `outbe-consensus`'s metrics module).
 
 use std::time::Duration;
@@ -8,7 +8,7 @@ use metrics::{counter, gauge, histogram};
 
 /// One attempt's round-trip duration, labelled by the request's stable
 /// [`crate::protocol::EnclaveRequest::label`]. A retried request records two
-/// samples — one per attempt.
+/// samples - one per attempt.
 pub(crate) fn record_request_duration(request: &'static str, duration: Duration) {
     histogram!("outbe_tee_request_duration_ms", "request" => request)
         .record(duration.as_secs_f64() * 1000.0);

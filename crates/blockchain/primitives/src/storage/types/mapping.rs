@@ -36,7 +36,7 @@ impl<'storage, K, V> Mapping<'storage, K, V> {
     }
 }
 
-// Mapping<K, V> where V is a simple Storable type → returns Slot<V>
+// Mapping<K, V> where V is a simple Storable type -> returns Slot<V>
 impl<'storage, K: StorageKey, V: Storable> Mapping<'storage, K, V> {
     /// Returns a `Slot<V>` for the given key.
     pub fn get(&self, key: &K) -> Slot<'storage, V> {
@@ -55,7 +55,7 @@ impl<'storage, K: StorageKey, V: Storable> Mapping<'storage, K, V> {
     }
 }
 
-// Mapping<K, Mapping<K2, V>> → nested mapping support
+// Mapping<K, Mapping<K2, V>> -> nested mapping support
 impl<'storage, K: StorageKey, K2, V> Mapping<'storage, K, Mapping<'storage, K2, V>> {
     /// Returns the inner `Mapping<K2, V>` for the given outer key.
     pub fn get_nested(&self, key: &K) -> Mapping<'storage, K2, V> {
@@ -64,7 +64,7 @@ impl<'storage, K: StorageKey, K2, V> Mapping<'storage, K, Mapping<'storage, K2, 
     }
 }
 
-// Mapping<K, StorageBytes> → dynamic bytes/string support
+// Mapping<K, StorageBytes> -> dynamic bytes/string support
 impl<'storage, K: StorageKey> Mapping<'storage, K, StorageBytes<'storage>> {
     /// Returns a `StorageBytes` value for the given key.
     pub fn get_bytes(&self, key: &K) -> StorageBytes<'storage> {
@@ -83,7 +83,7 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, StorageBytes<'storage>> {
     }
 }
 
-// Mapping<K, AddressPair> → a two-word value, laid out exactly like a Solidity
+// Mapping<K, AddressPair> -> a two-word value, laid out exactly like a Solidity
 // `mapping(K => struct { address base; address quote; })`: base at the key's
 // mapping slot, quote at the next one. `AddressPair` is 40 bytes so it cannot be
 // `Storable`, which is what keeps it off the single-word `read`/`write` above.
@@ -116,7 +116,7 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, AddressPair> {
     }
 }
 
-// Mapping<K, StorageSet<T>> → an enumerable set per key (OZ `mapping(key =>
+// Mapping<K, StorageSet<T>> -> an enumerable set per key (OZ `mapping(key =>
 // EnumerableSet)` pattern). The inner set is rooted at the key's mapping slot.
 impl<'storage, K: StorageKey, T: Storable + StorageKey>
     Mapping<'storage, K, StorageSet<'storage, T>>
@@ -201,7 +201,7 @@ mod tests {
         let storage = StorageHandle::new(&mut provider);
         let mapping: Mapping<u32, AddressPair> = Mapping::new(U256::from(43), contract, storage);
 
-        // Unwritten reads back as the zero pair, not as an error — the zero
+        // Unwritten reads back as the zero pair, not as an error - the zero
         // address is a legitimate asset, so absence is decided elsewhere.
         assert_eq!(mapping.read_pair(&1).unwrap(), AddressPair::ZERO);
 

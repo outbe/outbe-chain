@@ -50,26 +50,26 @@ async function main(): Promise<void> {
   console.log(`Token    : ${erc20Address} (${tokenSymbol}, ${tokenDecimals} decimals)`);
   console.log(`Factory  : ${smartAccountFactoryAddress}`);
 
-  // ── Step 1: Predict smart account address ─────────────────────────────────
+  // -- Step 1: Predict smart account address ---------------------------------
 
   console.log("\n[1] Predicting smart account address...");
   const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
-  console.log(`    → ${accountAddr}`);
+  console.log(`    -> ${accountAddr}`);
 
-  // ── Step 2: Deploy if not exists ──────────────────────────────────────────
+  // -- Step 2: Deploy if not exists ------------------------------------------
 
   console.log("\n[2] Checking if account exists...");
   const code = await provider.getCode(accountAddr);
   if (code === "0x") {
-    console.log("    Account not deployed — creating...");
+    console.log("    Account not deployed - creating...");
     const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
     const receipt = await tx.wait();
     console.log(`    Deployed at block ${receipt!.blockNumber}, tx: ${tx.hash}`);
   } else {
-    console.log("    Already deployed — skipping");
+    console.log("    Already deployed - skipping");
   }
 
-  // ── Step 3: Transfer ERC20 to smart account ──────────────────────────────
+  // -- Step 3: Transfer ERC20 to smart account ------------------------------
 
   console.log("\n[3] Checking smart account ERC20 balance...");
   const accountBal = await token.balanceOf(accountAddr);
@@ -78,12 +78,12 @@ async function main(): Promise<void> {
     const tx = await token.transfer(accountAddr, TRANSFER_AMOUNT);
     await tx.wait();
     const newBal = await token.balanceOf(accountAddr);
-    console.log(`    TopUp ${formatToken(TRANSFER_AMOUNT, tokenDecimals, tokenSymbol)} → account balance: ${formatToken(newBal, tokenDecimals, tokenSymbol)}`);
+    console.log(`    TopUp ${formatToken(TRANSFER_AMOUNT, tokenDecimals, tokenSymbol)} -> account balance: ${formatToken(newBal, tokenDecimals, tokenSymbol)}`);
   } else {
-    console.log(`    Balance sufficient (${formatToken(accountBal, tokenDecimals, tokenSymbol)}) — skipping transfer`);
+    console.log(`    Balance sufficient (${formatToken(accountBal, tokenDecimals, tokenSymbol)}) - skipping transfer`);
   }
 
-  console.log("\n✓ Done");
+  console.log("\n[OK] Done");
 }
 
 main().catch((err: unknown) => {

@@ -5,7 +5,7 @@
 //!
 //! Function names mirror the Solidity verbatim. Note that
 //! `get_id_from_price` **saturates** instead of reverting on out-of-range
-//! cast — see inline comment for the rationale.
+//! cast - see inline comment for the rationale.
 
 use alloy_primitives::{I256, U256};
 
@@ -42,7 +42,7 @@ pub fn get_price_from_id(id: u32, bin_step: u16) -> Result<U256> {
 }
 
 /// Mirrors `PriceHelper.getIdFromPrice(uint256, uint16)`
-/// (PriceHelper.sol L29-37) — but **saturates** instead of reverting on
+/// (PriceHelper.sol L29-37) - but **saturates** instead of reverting on
 /// out-of-range cast (LB uses `safe24`). Saturation rationale: reverting
 /// would brick downstream callers that need a deterministic id for any
 /// finite 128.128 price.
@@ -118,16 +118,16 @@ mod tests {
 
     #[test]
     fn get_id_from_price_one_is_real_id_shift() {
-        // Price = 1.0 → bin_id = REAL_ID_SHIFT.
+        // Price = 1.0 -> bin_id = REAL_ID_SHIFT.
         let id = get_id_from_price(SCALE_1_128_128, BIN_STEP_BP).unwrap();
         assert_eq!(id, REAL_ID_SHIFT as u32);
     }
 
     #[test]
     fn get_id_from_price_does_not_underflow() {
-        // U256::ONE in 128.128 represents 2^-128 — log2 special-cased to -128
-        // (raw, NOT 128.128-encoded — see Uint128x128Math.sol L37). After
-        // dividing by `log2(base)` ≈ 1.225e36, the quotient rounds to 0, so
+        // U256::ONE in 128.128 represents 2^-128 - log2 special-cased to -128
+        // (raw, NOT 128.128-encoded - see Uint128x128Math.sol L37). After
+        // dividing by `log2(base)` ~= 1.225e36, the quotient rounds to 0, so
         // `id == REAL_ID_SHIFT` rather than 0. With BIN_STEP_BP = 25 the
         // saturate-to-0 branch is unreachable for any non-zero U256.
         let id = get_id_from_price(U256::ONE, BIN_STEP_BP).unwrap();
@@ -137,8 +137,8 @@ mod tests {
     #[test]
     fn get_id_from_price_does_not_overflow() {
         // The full 128.128 dynamic range (up to U256::MAX) gives log2 in
-        // [-128, +128]; divided by log2(base) ≈ 1.225e36 (in 128.128) the
-        // quotient stays in roughly ±35_000 around REAL_ID_SHIFT. So
+        // [-128, +128]; divided by log2(base) ~= 1.225e36 (in 128.128) the
+        // quotient stays in roughly +/-35_000 around REAL_ID_SHIFT. So
         // U256::MAX maps to ~REAL_ID_SHIFT + 35_533, well below MAX_BIN_ID.
         // Saturation branches exist defensively for future BIN_STEP_BP
         // values where the bin range could overflow.

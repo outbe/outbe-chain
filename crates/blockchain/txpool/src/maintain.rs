@@ -1,7 +1,7 @@
 //! Outbe-owned pool maintenance: two-snapshot pending staleness eviction.
 //!
 //! Incident background (2026-08-22, `outbe-plan/txpool_stuck_tx_livelock_22-08-2026.md`):
-//! pending transactions have no lifetime bound in the upstream pool — only the
+//! pending transactions have no lifetime bound in the upstream pool - only the
 //! parked subpools age out. A transaction that keeps landing in proposals that
 //! fail to finalize is re-injected by the reorg path and re-selected by every
 //! payload build, indefinitely. This task bounds pending residency node-locally.
@@ -10,7 +10,7 @@
 //! interval (measured in canonical tip block TIMESTAMPS, not wall clock), take
 //! a snapshot of the pending-tx hash set. A hash present in two CONSECUTIVE
 //! snapshots has been pending for at least one full interval without being
-//! mined — evict it (with descendants). Mined or dropped transactions simply
+//! mined - evict it (with descendants). Mined or dropped transactions simply
 //! vanish from the next snapshot; a re-added transaction starts a fresh cycle.
 //! Effective pending TTL is therefore one to two intervals.
 //!
@@ -64,7 +64,7 @@ impl PendingStalenessTracker {
     }
 
     /// Feed the current pending set at canonical tip time `tip_timestamp`
-    /// (unix seconds from the block header — deterministic input, never wall
+    /// (unix seconds from the block header - deterministic input, never wall
     /// clock). Returns the hashes to evict: transactions present both in the
     /// previous snapshot and in this one.
     ///
@@ -157,7 +157,7 @@ where
 /// Long-running maintenance loop: subscribes to the canonical-state stream
 /// (alongside the upstream maintenance task, which keeps owning nonce/balance
 /// pruning and reorg handling) and applies pending staleness eviction. Runs on
-/// every node mode — full nodes are the RPC ingress and need it most.
+/// every node mode - full nodes are the RPC ingress and need it most.
 pub async fn maintain_outbe_pool<Provider, Pool>(
     provider: Provider,
     pool: Pool,

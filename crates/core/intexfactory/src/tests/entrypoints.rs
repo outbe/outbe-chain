@@ -135,12 +135,12 @@ fn config_unknown_selector_errors() {
     });
 }
 
-/// Pin the selector slot index: the seeder writes raw slot 13, so the schema
-/// must map `config_profile` there.
+/// Pin the selector slot index: the seeder writes a raw slot, so the schema must
+/// map `config_profile` to the same one.
 #[test]
 fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.config_profile.slot(), U256::from(13));
+        assert_eq!(f.config_profile.slot(), U256::from(10));
     });
 }

@@ -42,7 +42,7 @@ pub fn canonical_signer_set_hash(signer_bitmap: &[u8]) -> B256 {
 
 /// Canonical hash of a [`VrfProof`].
 ///
-/// Defined as `keccak256(commonware_codec::Encode::encode(proof))` — this is
+/// Defined as `keccak256(commonware_codec::Encode::encode(proof))` - this is
 /// the AC6 contract: the helper is **exactly** keccak256 over the encoded
 /// proof, with no additional framing. Used by Rewards/Slash V2 fingerprints
 /// and `invalid_vrf_evidence_hash_v2`.
@@ -63,7 +63,7 @@ pub fn canonical_vrf_proof_hash_v2<V: Variant>(proof: &VrfProof<V>) -> B256 {
 ///. Two evidence submissions targeting the same `(child_hash,
 /// phase1_tx_hash)` are the same logical event.
 ///
-/// # Design — no version domain separator
+/// # Design - no version domain separator
 ///
 /// The preimage is intentionally minimal: it does NOT include a
 /// version-specific prefix such as `"OUTBE_INVALID_VRF_EVIDENCE_V2"`.
@@ -71,7 +71,7 @@ pub fn canonical_vrf_proof_hash_v2<V: Variant>(proof: &VrfProof<V>) -> B256 {
 /// endpoint with a richer evidence struct) produce a different dedup
 /// hash for the same real offence, which would let the same
 /// `(child_hash, phase1_tx_hash)` be slashed twice across versions and
-/// directly violate ` — one slash per (child_hash, phase1_tx_hash)`.
+/// directly violate ` - one slash per (child_hash, phase1_tx_hash)`.
 /// Keeping the preimage version-independent guarantees cross-version
 /// idempotency without state migration. The `_v2` suffix in the function
 /// name reflects the V2 protocol family, NOT the hash-formula version.

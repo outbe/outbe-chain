@@ -63,7 +63,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("chainId:", chainId.toString());
   console.log("verifyingContract:", verifyingContract);
 
-  // EIP-712 typed data — must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the contract's
+  // EIP-712 typed data - must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the contract's
   // EIP712("IntexAuction", "1") domain.
   const signature = await account.signTypedData({
     domain: {

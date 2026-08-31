@@ -5,7 +5,7 @@ import {Scope} from "../types/Scope.sol";
 import {ResetPeriod} from "../types/ResetPeriod.sol";
 
 /**
- * @title The Compact — Minimal Interface
+ * @title The Compact - Minimal Interface
  * @notice Minimal interface for The Compact protocol, compatible with Uniswap The Compact.
  * @dev This is a minimal subset of the full ITheCompact interface. Full interface available at:
  *      https://github.com/Uniswap/the-compact/blob/main/src/interfaces/ITheCompact.sol

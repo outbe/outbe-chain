@@ -33,7 +33,7 @@ pub struct AgentRewardContract {
     #[attribute(order = 3)]
     pub waa_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // slot 4: WAA address list — key = keccak(day, index), value = address
+    // slot 4: WAA address list - key = keccak(day, index), value = address
     #[attribute(order = 4)]
     pub waa_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
 
@@ -41,7 +41,7 @@ pub struct AgentRewardContract {
     #[attribute(order = 5)]
     pub sra_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // slot 6: SRA address list — key = keccak(day, index), value = address
+    // slot 6: SRA address list - key = keccak(day, index), value = address
     #[attribute(order = 6)]
     pub sra_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
 }

@@ -55,7 +55,7 @@ contract IntexAuction is
         /// @dev Revealed bids per series.
         mapping(uint32 worldwideDay => IIntexAuction.SubmittedBidData[]) revealedBids;
         /// @dev Cleared marker per series. Set once by `executeAuctionClearing` and the sole
-        ///      `Completed`-stage signal — so a no-sale clearing (issuedIntexCount == 0,
+        ///      `Completed`-stage signal - so a no-sale clearing (issuedIntexCount == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 worldwideDay => bool) cleared;
     }
@@ -246,12 +246,12 @@ contract IntexAuction is
 
         // No-sale (issuedIntexCount == 0): supply was exhausted/zero, nothing is minted and every
         // bidder is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained
-        // — it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
+        // - it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
         // must carry a real clearing rate at or above the floor.
         if (issuedIntexCount > 0 && auctionClearingRate == 0) revert ZeroValue("auctionClearingRate");
 
         // Canonical clearing runs on Outbe; this only sanity-bounds the relayer-supplied result
-        // against on-chain counters — winners cannot exceed revealed bids, and a sale's clearing
+        // against on-chain counters - winners cannot exceed revealed bids, and a sale's clearing
         // rate cannot fall below the configured minimum. It is not a full re-computation.
         uint32 revealed = $.auctionRunningCounts[worldwideDay].revealedBidsCount;
         if (wonBidsCount > revealed) revert WonBidsExceedRevealed(wonBidsCount, revealed);
@@ -292,7 +292,7 @@ contract IntexAuction is
 
         emit BidCommitted(worldwideDay, msg.sender, commitHash);
 
-        // Interactions: take the entry bond (CEI — commit state is already recorded; a lock
+        // Interactions: take the entry bond (CEI - commit state is already recorded; a lock
         // revert rolls back the whole tx). Requires prior WCOEN approval on the escrow.
         uint128 bond = a.params.commitBondMinor;
         if (bond > 0) {
@@ -316,7 +316,7 @@ contract IntexAuction is
 
         emit CommitCancelled(worldwideDay, msg.sender);
 
-        // Interactions: an un-committed bid owes no bond — return it immediately.
+        // Interactions: an un-committed bid owes no bond - return it immediately.
         if (a.params.commitBondMinor > 0) {
             $.escrowContract.releaseCommitBond(worldwideDay, msg.sender);
         }
@@ -426,7 +426,7 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = $.auctions[worldwideDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
-        // Red day cancels the auction before anyone can reveal — no fault, immediate return.
+        // Red day cancels the auction before anyone can reveal - no fault, immediate return.
         // Every other outcome (revealed bidders have no bond; cancel is the in-window path)
         // is a no-reveal on a live auction: the bond waits out the penalty window anchored
         // at the (possibly snapped-forward) `revealEnd`.
@@ -514,7 +514,7 @@ contract IntexAuction is
     /// @notice Compute the current auction stage from the schedule and worldwide-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Red day short-circuits to
     ///      `Cancelled`; a cleared auction short-circuits to `Completed` (the `cleared` flag, set by
-    ///      `executeAuctionClearing` — covers a no-sale clearing whose rate is 0); otherwise the
+    ///      `executeAuctionClearing` - covers a no-sale clearing whose rate is 0); otherwise the
     ///      stage follows the stored schedule timestamps.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return Current auction stage.

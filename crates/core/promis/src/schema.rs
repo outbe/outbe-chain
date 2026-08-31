@@ -20,10 +20,10 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// slot and a stale pre-encryption DB can never be misread as ciphertext.
 ///
 /// Storage slots:
-///   0: total_supply (U256, plaintext aggregate — feeds `PromisMinted/Burned`)
-///   1: deprecated_balances — RESERVED (old plaintext balances; unused)
-///   2: mapping(address => bytes) — encrypted balance blob
-///   3: mapping(address => u64)   — modify-auth replay counter (monotonic)
+///   0: total_supply (U256, plaintext aggregate - feeds `PromisMinted/Burned`)
+///   1: deprecated_balances - RESERVED (old plaintext balances; unused)
+///   2: mapping(address => bytes) - encrypted balance blob
+///   3: mapping(address => u64)   - modify-auth replay counter (monotonic)
 #[contract(addr = PROMIS_ADDRESS)]
 pub struct Promis {
     pub total_supply: Slot<U256>,
