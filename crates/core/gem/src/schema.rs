@@ -15,7 +15,7 @@ pub enum GemState {
 pub struct GemAddParams {
     pub owner: Address,
     pub gem_type: u8,
-    pub gem_load_minor: U256,
+    pub promis_load_minor: U256,
     pub entry_price_minor: U256,
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
@@ -40,7 +40,7 @@ pub struct GemData {
     pub gem_type: u8,
 
     #[attribute(order = 2)]
-    pub gem_load_minor: U256,
+    pub promis_load_minor: U256,
 
     #[attribute(order = 3)]
     pub entry_price_minor: U256,
@@ -166,7 +166,7 @@ pub struct GemContract {
 
 impl GemContract<'_> {
     /// `gem_id = keccak256("gem" ‖ owner ‖ amount_be ‖ block_number_be)`.
-    /// `amount` is the gem's `gem_load_minor` (reward principal).
+    /// `amount` is the gem's `promis_load_minor` (reward principal).
     pub fn generate_gem_id(owner: Address, amount: U256, block_number: u64) -> U256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 3 + 20 + 32 + 8];

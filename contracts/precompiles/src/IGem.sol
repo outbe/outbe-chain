@@ -7,7 +7,7 @@ interface IGem {
         address owner;
         uint8 gemType;
         uint8 state;
-        uint256 gemLoad;
+        uint256 promisLoad;
         uint256 entryPrice;
         uint256 floorPrice;
         uint16 issuanceCurrency;
@@ -43,5 +43,5 @@ interface IGem {
     /// @notice Qualified gem force-called by the daily Call scan.
     event GemCalled(uint256 indexed gemId, uint64 calledAt);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
+    event GemBurned(uint256 indexed gemId, address owner, uint256 promisLoad);
 }

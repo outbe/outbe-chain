@@ -41,7 +41,7 @@ pub const INTEX_ADDRESS: Address = address!("0x000000000000000000000000000000000
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
 /// Gem factory precompile address (orchestrator: `mint_gem` via cross-module
-/// API, `settleGem` / `mineGemPromis` on the ABI). Per-Gem state lives at
+/// API, `settleGem` / `minePromis` on the ABI). Per-Gem state lives at
 /// [`GEM_ADDRESS`]; GemFactory carries module-stats storage.
 pub const GEM_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002013");
 

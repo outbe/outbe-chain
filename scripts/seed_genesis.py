@@ -758,7 +758,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
 
       slot 0:      total_supply (u64)
       slots 1-17:  gem_items Map<U256, GemData> record fields keyed by gem_id:
-                     1 owner              2 gem_type           3 gem_load_minor
+                     1 owner              2 gem_type           3 promis_load_minor
                      4 entry_price_minor  5 floor_price_minor  6 issuance_currency
                      7 reference_currency 8 state              9 issued_at
                      10 call_price_minor  11 called_at         12 call_notice_period

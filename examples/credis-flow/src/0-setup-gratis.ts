@@ -32,7 +32,7 @@ import {
 // to bootstrap; it defaults to the full gem load. Neither Gratis nor Promis can be
 // plaintext-seeded at genesis anymore (both are TEE-encrypted at rest), so genesis
 // seeds the user a Settled *gem* instead. This script burns that gem for confidential
-// Promis (`mineGemPromis`), then converts the Promis 1:1 into confidential Gratis
+// Promis (`minePromis`), then converts the Promis 1:1 into confidential Gratis
 // (`mineGratis`) — leaving the user real, enclave-encrypted Gratis to pledge.
 const amountArg = process.argv[2];
 const envName = process.argv[3] || DEFAULT_ENV;
@@ -80,21 +80,21 @@ async function main() {
   }
   const gemId = await gem.tokenOfOwnerByIndex(userAddress, 0);
   const gemStatus = await gem.getGemStatus(gemId);
-  const gemLoad = gemStatus.gemLoad;
+  const promisLoad = gemStatus.promisLoad;
   if (Number(gemStatus.state) !== GEM_STATE_SETTLED) {
     console.error(
       `Gem ${gemId} is in state ${gemStatus.state}, not Settled (${GEM_STATE_SETTLED}); ` +
-        `mineGemPromis requires a Settled gem.`,
+        `minePromis requires a Settled gem.`,
     );
     process.exit(1);
   }
 
   // Amount of Promis to convert to Gratis (defaults to the whole gem load).
-  const amount = amountArg ? ethers.parseUnits(amountArg, promisMeta.decimals) : gemLoad;
-  if (amount > gemLoad) {
+  const amount = amountArg ? ethers.parseUnits(amountArg, promisMeta.decimals) : promisLoad;
+  if (amount > promisLoad) {
     console.error(
       `Requested ${formatToken(amount, promisMeta.decimals, promisMeta.symbol)} exceeds the ` +
-        `gem load ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}.`,
+        `gem load ${formatToken(promisLoad, promisMeta.decimals, promisMeta.symbol)}.`,
     );
     process.exit(1);
   }
@@ -116,15 +116,15 @@ async function main() {
   console.log(`Promis:         ${promisAddress} (${promisMeta.symbol})`);
   console.log(`PromisFactory:  ${promisFactoryAddress}`);
   console.log(`Gratis:         ${gratisAddress} (${gratisMeta.symbol})`);
-  console.log(`Gem load:       ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
+  console.log(`Gem load:       ${formatToken(promisLoad, promisMeta.decimals, promisMeta.symbol)}`);
   console.log(`Convert amount: ${formatToken(amount, promisMeta.decimals, promisMeta.symbol)}`);
 
   console.log("\n=== State BEFORE ===");
   console.log(`  Promis:   ${formatToken(promisBefore, promisMeta.decimals, promisMeta.symbol)} (decrypted)`);
   console.log(`  Gratis:   ${formatToken(gratisBefore, gratisMeta.decimals, gratisMeta.symbol)} (decrypted)`);
 
-  // Step 1 — Gem → Promis: burn the gem, minting `gemLoad` confidential Promis to
-  // the owner. The Promis mint MAC binds the minted amount (= gemLoad) and the
+  // Step 1 — Gem → Promis: burn the gem, minting `promisLoad` confidential Promis to
+  // the owner. The Promis mint MAC binds the minted amount (= promisLoad) and the
   // caller's current Promis op-nonce. PoW gates the burn (difficulty 1).
   const powNonce = findPowNonce(gemId);
   const promisMintNonce = await promis.opNonceOf(userAddress);
@@ -132,17 +132,17 @@ async function main() {
     promisKeys.modifyKey,
     userAddress,
     PromisOp.Mint,
-    gemLoad,
+    promisLoad,
     promisMintNonce,
     chainId,
     "Promis",
   );
-  console.log("\nStep 1: mineGemPromis(gemId, powNonce, mac, opNonce)...");
-  const tx1 = await gemFactory.mineGemPromis(gemId, powNonce, promisMintMac, promisMintNonce);
+  console.log("\nStep 1: minePromis(gemId, powNonce, mac, opNonce)...");
+  const tx1 = await gemFactory.minePromis(gemId, powNonce, promisMintMac, promisMintNonce);
   console.log(`  TX hash: ${tx1.hash}`);
   const receipt1 = await tx1.wait();
-  if (!receipt1) throw new Error("mineGemPromis tx receipt missing");
-  console.log(`  Block:   ${receipt1.blockNumber} — minted ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
+  if (!receipt1) throw new Error("minePromis tx receipt missing");
+  console.log(`  Block:   ${receipt1.blockNumber} — minted ${formatToken(promisLoad, promisMeta.decimals, promisMeta.symbol)}`);
 
   // Step 2 — Promis → Gratis: burn `amount` Promis and mint `amount` Gratis. Both
   // ledgers are confidential, so mineGratis takes TWO modify authorizations, each

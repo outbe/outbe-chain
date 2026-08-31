@@ -417,7 +417,7 @@ fn mint_at_live_rate(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
-    gem_load: U256,
+    promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
 ) -> outbe_primitives::error::Result<U256> {
@@ -426,7 +426,7 @@ fn mint_at_live_rate(
         storage,
         owner,
         gem_type,
-        gem_load,
+        promis_load,
         issuance_currency,
         reference_currency,
         price,
@@ -875,7 +875,7 @@ fn settle_rejects_non_qualified_state() {
 }
 
 #[test]
-fn mine_gem_promis_full_genesis_flow() {
+fn mine_promis_full_genesis_flow() {
     outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -890,7 +890,7 @@ fn mine_gem_promis_full_genesis_flow() {
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
         let minted =
-            runtime::mine_gem_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
+            runtime::mine_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
                 .unwrap();
         assert_eq!(minted, load);
 
@@ -914,7 +914,7 @@ fn mine_gem_promis_full_genesis_flow() {
 // covered on localnet with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
 
 #[test]
-fn mine_gem_promis_rejects_non_settled() {
+fn mine_promis_rejects_non_settled() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -927,13 +927,13 @@ fn mine_gem_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled — mine should reject before PoW.
-        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, 0, no_auth());
+        let res = runtime::mine_promis(storage, ALICE, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
 
 #[test]
-fn mine_gem_promis_rejects_non_owner() {
+fn mine_promis_rejects_non_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -945,8 +945,8 @@ fn mine_gem_promis_rejects_non_owner() {
             840,
         )
         .unwrap();
-        // mine_gem_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_gem_promis(storage, BOB, gem_id, 0, no_auth());
+        // mine_promis checks ownership before state, so no settle needed.
+        let res = runtime::mine_promis(storage, BOB, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("not gem owner"));
     });
 }

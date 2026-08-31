@@ -716,7 +716,7 @@ mod tests {
                 outbe_gem::api::get_gem(&ctx.storage, gem_id)
                     .unwrap()
                     .unwrap()
-                    .gem_load_minor
+                    .promis_load_minor
             })
             .collect()
     }

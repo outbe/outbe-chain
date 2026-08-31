@@ -74,7 +74,7 @@ fn validator_receives_reward_gem(world: &mut World) {
         gem.gemType
     );
     assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
-    assert!(!gem.gemLoad.is_zero(), "reward Gem load must be non-zero");
+    assert!(!gem.promisLoad.is_zero(), "reward Gem load must be non-zero");
     assert!(
         !gem.costAmount.is_zero(),
         "reward Gem cost must be non-zero"
@@ -83,7 +83,7 @@ fn validator_receives_reward_gem(world: &mut World) {
         .expect("reward Gem must be emitted by canonical CycleTick -> RewardsGemDelivery");
     eprintln!(
         "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} cost={} delivery_block_number={delivery_block_number}",
-        gem.gemLoad, gem.costAmount,
+        gem.promisLoad, gem.costAmount,
     );
 }
 
@@ -395,7 +395,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Mint,
-        gem.gemLoad,
+        gem.promisLoad,
         promis_nonce,
         chain_id,
     );
@@ -404,7 +404,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::mineGemPromisCall {
+        &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
             mac: B256::from(mint_mac),
@@ -416,7 +416,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
     assert_eq!(
         promis_balance(&url, owner, &keys.view),
-        promis_before + gem.gemLoad,
+        promis_before + gem.promisLoad,
         "Gem load was not minted exactly into validator Promis"
     );
 
@@ -430,7 +430,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Burn,
-        gem.gemLoad,
+        gem.promisLoad,
         burn_nonce,
         chain_id,
     );
@@ -439,7 +439,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &key,
         addresses::PROMIS_FACTORY_ADDR,
         &eth::IPromisFactory::mineCoenCall {
-            amount: gem.gemLoad,
+            amount: gem.promisLoad,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -453,7 +453,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let native_after = eth::balance(&url, owner).expect("native balance after Promis burn");
     assert_eq!(promis_balance(&url, owner, &keys.view), promis_before);
     assert_eq!(
-        native_after, gem.gemLoad,
+        native_after, gem.promisLoad,
         "three sponsored calls must charge no native fee to the validator"
     );
     let counter_after = eth::read_call(
@@ -464,11 +464,11 @@ fn validator_redeems_reward_gem(world: &mut World) {
     .expect("ZeroFee counter after Gem redemption");
     assert_eq!(
         counter_after.count, 3,
-        "settleGem, mineGemPromis, and mineCoen must consume three of eight sponsored slots"
+        "settleGem, minePromis, and mineCoen must consume three of eight sponsored slots"
     );
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
-        fixture.asset, fixture.vault, gem.gemLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
+        fixture.asset, fixture.vault, gem.promisLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
     );
 }
 

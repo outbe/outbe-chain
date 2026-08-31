@@ -25,7 +25,7 @@ pub fn mint_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
-    gem_load: U256,
+    promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
     entry_price: U256,
@@ -48,13 +48,13 @@ pub fn mint_gem(
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (floor_price, initial_state) = compute_params(gem_type, gem_load, entry_price)?;
+    let (floor_price, initial_state) = compute_params(gem_type, promis_load, entry_price)?;
     let call_price = derived_call_price(entry_price)?;
 
     let params = GemAddParams {
         owner,
         gem_type: gem_type as u8,
-        gem_load_minor: gem_load,
+        promis_load_minor: promis_load,
         entry_price_minor: entry_price,
         floor_price_minor: floor_price,
         call_price_minor: call_price,
@@ -81,7 +81,7 @@ pub fn mint_gem(
             gemId: gem_id,
             gemType: gem_type as u8,
             owner,
-            gemLoad: gem_load,
+            promisLoad: promis_load,
             entryPrice: entry_price,
             floorPrice: floor_price,
             issuanceCurrency: issuance_currency,
@@ -184,7 +184,7 @@ pub fn mint_merchant_gem(
     caller: Address,
     position_id: U256,
     owner: Address,
-    gem_load: U256,
+    promis_load: U256,
 ) -> Result<U256> {
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -205,13 +205,13 @@ pub fn mint_merchant_gem(
     }
     let remaining = record
         .remaining_capacity
-        .checked_sub(gem_load)
+        .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
-    compute_cost(entry_price, gem_load, 100)?;
+    compute_cost(entry_price, promis_load, 100)?;
     let floor_price = derived_floor(entry_price)?.max(record.source_floor_price);
     let call_price = derived_call_price(entry_price)?;
 
@@ -220,7 +220,7 @@ pub fn mint_merchant_gem(
         GemAddParams {
             owner,
             gem_type: GemTypes::Merchant as u8,
-            gem_load_minor: gem_load,
+            promis_load_minor: promis_load,
             entry_price_minor: entry_price,
             floor_price_minor: floor_price,
             call_price_minor: call_price,
@@ -249,7 +249,7 @@ pub fn mint_merchant_gem(
             gemId: gem_id,
             gemType: GemTypes::Merchant as u8,
             owner,
-            gemLoad: gem_load,
+            promisLoad: promis_load,
             entryPrice: entry_price,
             floorPrice: floor_price,
             issuanceCurrency: record.issuance_currency,
@@ -424,7 +424,7 @@ fn cost_in_token(
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
     compute_cost(
         item.entry_price_minor,
-        item.gem_load_minor,
+        item.promis_load_minor,
         cost_rate(item.gem_type),
     )
 }
@@ -525,7 +525,7 @@ pub fn position_data(
     })
 }
 
-pub fn mine_gem_promis(
+pub fn mine_promis(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
@@ -546,19 +546,19 @@ pub fn mine_gem_promis(
 
     // The Promis is confidential: the mint runs inside the enclave, authorized by
     // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
-    // minted amount (`item.gem_load_minor`), so the client precomputes it.
-    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load_minor, auth)?;
+    // minted amount (`item.promis_load_minor`), so the client precomputes it.
+    outbe_promisfactory::api::mint(storage.clone(), caller, item.promis_load_minor, auth)?;
 
     emit_event(
         storage,
         GemBurned {
             gemId: gem_id,
             owner: caller,
-            gemLoad: item.gem_load_minor,
+            promisLoad: item.promis_load_minor,
         },
     )?;
 
-    Ok(item.gem_load_minor)
+    Ok(item.promis_load_minor)
 }
 
 /// Looks up the COEN/`reference_currency` rate via Oracle's derived pair
@@ -575,7 +575,7 @@ fn read_reference_oracle_rate(
     Ok(rate)
 }
 
-fn compute_params(gem_type: GemTypes, gem_load: U256, coen_rate: U256) -> Result<(U256, GemState)> {
+fn compute_params(gem_type: GemTypes, promis_load: U256, coen_rate: U256) -> Result<(U256, GemState)> {
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let (floor_price, initial_state) = match gem_type {
@@ -584,17 +584,17 @@ fn compute_params(gem_type: GemTypes, gem_load: U256, coen_rate: U256) -> Result
         // class: cost = entry × load, floor = rate × 1.08. settleGem moves
         // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
-            compute_cost(coen_rate, gem_load, 100)?;
+            compute_cost(coen_rate, promis_load, 100)?;
             (derived_floor(coen_rate)?, GemState::Qualified)
         }
         GemTypes::Sra => {
-            compute_cost(coen_rate, gem_load, SRA_RATE)?;
+            compute_cost(coen_rate, promis_load, SRA_RATE)?;
             (derived_floor(coen_rate)?, GemState::Issued)
         }
         // Validator (post-genesis), Wallet, Cca — standard agent-class flow:
         // cost = entry × load, floor = rate × 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
-            compute_cost(coen_rate, gem_load, 100)?;
+            compute_cost(coen_rate, promis_load, 100)?;
             (derived_floor(coen_rate)?, GemState::Issued)
         }
         // Merchant gems are minted via `mint_merchant_gem` against a GemPosition,
@@ -645,7 +645,7 @@ fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> 
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// PoW gate for `mine_gem_promis`, delegating to the shared
+/// PoW gate for `mine_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
 pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())

@@ -26,7 +26,7 @@ fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
         gem_type: 2, // WALLET
-        gem_load_minor: U256::from(1_000_000u64),
+        promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         floor_price_minor: U256::from(540_000u64),
         call_price_minor: U256::from(1_140_000u64),
@@ -85,7 +85,7 @@ fn enumerable_returns_only_owned_gems() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load_minor = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let p3 = sample_params(BOB);
         let _g3 = api::add_gem(storage, p3).unwrap();
@@ -128,10 +128,10 @@ fn burn_compacts_owner_index() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load_minor = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let mut p3 = sample_params(ALICE);
-        p3.gem_load_minor = U256::from(3u64);
+        p3.promis_load_minor = U256::from(3u64);
         let g3 = api::add_gem(storage, p3).unwrap();
 
         api::set_state(storage, g1, GemState::Settled).unwrap();
@@ -364,7 +364,7 @@ fn a_spent_budget_defers_the_rest_of_the_currency_list_to_the_next_block() {
         // this one sweep spends everything the block had.
         for i in 0..=crate::constants::MAX_GEM_QUALIFICATIONS_PER_BLOCK {
             let mut p = sample_params(ALICE);
-            p.gem_load_minor = U256::from(1_000_000u64 + u64::from(i));
+            p.promis_load_minor = U256::from(1_000_000u64 + u64::from(i));
             api::add_gem(storage, p).unwrap();
         }
         let eur_id = eur_gem(storage);

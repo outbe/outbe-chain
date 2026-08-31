@@ -8,7 +8,7 @@ interface IGemFactory {
     function mintGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
-    function mintMerchantGem(uint256 positionId, address owner, uint256 gemLoad) external returns (uint256 gemId);
+    function mintMerchantGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
     /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
     ///         settlement stablecoin supplied by the caller).
@@ -19,7 +19,7 @@ interface IGemFactory {
     ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
-    function mineGemPromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
     ///         Promis unit ever parked; it is not reduced when a position drains
     ///         or expires.
@@ -66,7 +66,7 @@ interface IGemFactory {
         uint256 indexed gemId,
         uint8 gemType,
         address owner,
-        uint256 gemLoad,
+        uint256 promisLoad,
         uint256 entryPrice,
         uint256 floorPrice,
         uint16 issuanceCurrency,
@@ -76,5 +76,5 @@ interface IGemFactory {
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
     /// @notice A settled gem was burned to mine confidential Promis.
-    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
+    event GemBurned(uint256 indexed gemId, address owner, uint256 promisLoad);
 }

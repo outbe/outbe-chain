@@ -1162,7 +1162,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
         let load_before = outbe_gem::api::get_gem(&ctx.storage, gem_id)
             .unwrap()
             .unwrap()
-            .gem_load_minor;
+            .promis_load_minor;
 
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         run_emission_limit_daily(&ctx).unwrap();
@@ -1172,7 +1172,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
             outbe_gem::api::get_gem(&ctx.storage, gem_id)
                 .unwrap()
                 .unwrap()
-                .gem_load_minor,
+                .promis_load_minor,
             load_before,
             "the prior Gem must remain unchanged"
         );
