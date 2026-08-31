@@ -100,7 +100,10 @@ impl GemFactoryContract<'_> {
     /// Take a position out of the live queue, leaving its slot empty.
     pub(crate) fn remove_live_position(&mut self, position_id: U256) -> Result<()> {
         let index = self.live_queue_index.read(&position_id)?;
-        self.live_queue_at.clear(&index)?;
+        // A position that never queued reads index 0; only clear a slot it owns.
+        if self.live_queue_at.read(&index)? == position_id {
+            self.live_queue_at.clear(&index)?;
+        }
         self.live_queue_index.clear(&position_id)
     }
 

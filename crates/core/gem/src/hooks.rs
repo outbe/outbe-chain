@@ -220,12 +220,10 @@ pub(crate) fn call_currency(
                 }
             };
 
-        // Snapshot the bin: calling a gem removes it and shifts the rest.
+        // Snapshot the bin: calling a gem removes it and shifts the rest. Whole
+        // bins go at once, so the cursor never advances past a gem it skipped.
         for gem_id in gem.qualified_bin_gems_at(iso_code, next)? {
-            if *budget == 0 {
-                break;
-            }
-            *budget -= 1;
+            *budget = budget.saturating_sub(1);
             match ctx
                 .storage
                 .with_checkpoint(|| gem.trigger_call(window, gem_id, now))

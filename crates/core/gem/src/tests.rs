@@ -729,6 +729,64 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
     });
 }
 
+/// The budget cuts between bins, never inside one: a bin left half-visited would
+/// be stepped over by the cursor and wait for a full wrap to be seen again.
+#[test]
+fn a_bin_wider_than_the_budget_is_not_left_half_called() {
+    with_storage(|storage| {
+        let mut ids = Vec::new();
+        for owner in [ALICE, BOB] {
+            let mut params = sample_params(owner);
+            params.issued_at = T_NOW - 100 * 86_400;
+            params.call_price_minor = U256::from(100_000u64);
+            let id = api::add_gem(storage, params).unwrap();
+            api::set_state(storage, id, GemState::Qualified).unwrap();
+            ids.push(id);
+        }
+
+        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let mut day = last_closed_day;
+        for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair, U256::from(300_000u64))
+                .unwrap();
+            day = previous_date_key(day);
+        }
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        let ctx = block_ctx(storage);
+        let mut budget = 1u32;
+        let window = vec![
+            (last_closed_day, Some(U256::from(300_000u64)));
+            (crate::constants::CALL_WINDOW / 86_400) as usize
+        ];
+        assert_eq!(
+            crate::hooks::call_currency(
+                &ctx,
+                840,
+                &window,
+                outbe_primitives::math::constants::MAX_BIN_ID,
+                &mut budget
+            )
+            .unwrap(),
+            2
+        );
+        for id in ids {
+            assert_eq!(
+                api::get_gem(storage, id).unwrap().unwrap().state,
+                GemState::Called as u8
+            );
+        }
+    });
+}
+
 /// A queue entry the sweep cannot retire is announced on chain once it has failed
 /// enough times running, rather than only in a node's log.
 #[test]

@@ -320,7 +320,10 @@ impl GemContract<'_> {
     /// Take a gem out of the deadline queue, leaving its slot empty.
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
         let index = self.called_queue_index.read(&gem_id)?;
-        self.called_queue_at.clear(&index)?;
+        // A gem that never queued reads index 0; only clear a slot it owns.
+        if self.called_queue_at.read(&index)? == gem_id {
+            self.called_queue_at.clear(&index)?;
+        }
         self.called_queue_index.clear(&gem_id)?;
         self.called_deadline.clear(&gem_id)
     }
