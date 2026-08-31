@@ -261,6 +261,7 @@ fn discharge_cost(
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
     let cost = nod_api::cost_amount_minor(entry_price_minor, item.gratis_load_minor)?;
+    // todo remove this check and add support for u256 in the circuit.
     let cost_minor =
         u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
 
