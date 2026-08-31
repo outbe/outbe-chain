@@ -96,6 +96,7 @@ message NodItemBody {
   uint32 issuance_currency = 9;          // <= u16::MAX
   uint32 reference_currency = 10;        // <= u16::MAX
   uint64 issued_at = 11;
+  bool is_settled = 12;
 }
 
 message NodBucketBody {
@@ -105,6 +106,7 @@ message NodBucketBody {
   bool is_qualified = 4;
   uint64 total_nods = 5;
   bytes entry_price_minor = 6;           // U256 BE32
+  uint32 reference_currency = 7;         // ISO 4217 numeric, omitted when zero
 }
 ```
 

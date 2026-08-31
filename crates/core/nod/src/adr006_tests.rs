@@ -30,6 +30,8 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
+use outbe_oracle::api::AddressPair;
+
 use crate::{
     api, NodCertifiedGenerationProjection, NodContract, NodItemState, NodRepositoryReader,
 };
@@ -270,43 +272,160 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
     });
 }
 
-/// An unregistered COEN/<qualifier ISO> pair must skip the block's qualification
-/// scan, not halt the block. Before the ISO migration this path propagated
-/// `Revert("pair not registered")` out of `begin_block`; it now soft-skips like
-/// the gem and intexfactory qualifiers.
+/// Seeds one unqualified bucket denominated in `iso` and returns its identity.
+fn seed_bucket(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    owner: Address,
+    iso: u16,
+) -> outbe_compressed_entities::EntityId36 {
+    let mut body = item(owner);
+    body.reference_currency = iso;
+    body.bucket_key = NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, iso);
+    api::add_nod(storage, scope, parent, &body, U256::from(5)).unwrap();
+    outbe_compressed_entities::EntityId36::new(body.worldwide_day, body.bucket_key.0)
+}
+
+fn is_qualified(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &NodRepositoryReader,
+    bucket_id: outbe_compressed_entities::EntityId36,
+) -> bool {
+    api::get_bucket(storage, scope, parent, bucket_id)
+        .unwrap()
+        .unwrap()
+        .is_qualified
+}
+
+/// A reference currency whose COEN pair was never registered must skip the
+/// block's scan, not halt it — the registry lists currencies independently of
+/// whether their pair has been priced. The bucket stays parked, ready for the
+/// block after the pair appears.
 #[test]
-fn qualify_nods_skips_the_block_when_the_settlement_pair_is_unregistered() {
+fn an_unregistered_reference_pair_is_skipped_without_halting_the_block() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
             storage.clone(),
         );
-        // Oracle storage is untouched, so ISO 840 has no settlement pair.
         crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
     });
 }
 
-/// A registered pair with no published rate must also skip rather than qualify
-/// every bucket against a zero rate.
+/// A registered pair carrying no published rate must also skip, rather than
+/// qualify every bucket against a zero rate.
 #[test]
-fn qualify_nods_skips_the_block_when_the_pair_has_no_published_rate() {
+fn a_registered_reference_pair_with_no_published_rate_is_skipped() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        // Registered, but `exchange_rate` is left at zero.
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 1)
+            .unwrap();
+        let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
             storage.clone(),
         );
         crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
+    });
+}
+
+/// One unpriceable currency must not stop the currencies after it. This fails
+/// if the soft read is implemented as an early return instead of a per-currency
+/// `continue`.
+#[test]
+fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        // 978 comes first and is never priced; 840 follows and is.
+        oracle.reference_currencies.push(978).unwrap();
+        oracle.reference_currencies.push(840).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(840), 1)
+            .unwrap();
+        oracle.exchange_rate.write(&1, U256::from(14)).unwrap();
+
+        let unpriced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+        let priced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x77), 840);
+
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(is_qualified(&storage, &scope, &parent, priced));
+        assert!(!is_qualified(&storage, &scope, &parent, unpriced));
+    });
+}
+
+/// A bucket denominated in a currency absent from the oracle registry is never
+/// visited: it stays parked and intact rather than being qualified against
+/// some other currency's rate, and it never faults the block. This is the
+/// accepted consequence of not validating `reference_currency` against mutable
+/// oracle state at issue time.
+#[test]
+fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(840).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(840), 1)
+            .unwrap();
+        oracle.exchange_rate.write(&1, U256::from(14)).unwrap();
+
+        let unlisted = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        for _ in 0..3 {
+            crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        }
+        assert!(!is_qualified(&storage, &scope, &parent, unlisted));
+
+        let nod = NodContract::new(storage.clone());
+        let bin = NodContract::price_to_bin(U256::from(13)).unwrap();
+        assert_eq!(
+            nod.unqualified_bin_count
+                .read(&NodContract::scoped(978, bin))
+                .unwrap(),
+            1,
+            "the unlisted currency's bin entry must survive untouched"
+        );
     });
 }
 

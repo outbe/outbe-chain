@@ -257,6 +257,41 @@ fn projection_session_owns_item_prior_state_and_rejects_untracked_identity() {
     ));
 }
 
+/// An unsettled body must encode exactly as it did before `is_settled` existed,
+/// so no stored Nod needs migrating; settling only appends field 12.
+#[test]
+fn settlement_only_appends_to_the_canonical_nod_payload() {
+    let mut body = nod(
+        entity(U256::from(7), WorldwideDay::new(20_260_715)),
+        Address::repeat_byte(0x77),
+    );
+    body.is_settled = false;
+    let unsettled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+    body.is_settled = true;
+    let settled = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+
+    assert_eq!(settled, [unsettled.as_slice(), &[0x60, 0x01]].concat());
+}
+
+/// The bucket's `reference_currency` is likewise append-only and omitted on
+/// zero, so every bucket body written before the field existed keeps its exact
+/// prior bytes — which is what keeps the pinned `ces1-noble-poseidon` bucket
+/// payload and its leaf commitment unchanged.
+#[test]
+fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
+    let mut body = bucket(bucket_id(
+        B256::repeat_byte(0x21),
+        WorldwideDay::new(20_260_715),
+    ));
+    body.reference_currency = 0;
+    let unpriced = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+    body.reference_currency = 840;
+    let priced = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+
+    // Tag = (7 << 3) | 0 = 0x38; 840 as a varint = 0xC8 0x06.
+    assert_eq!(priced, [unpriced.as_slice(), &[0x38, 0xC8, 0x06]].concat());
+}
+
 #[test]
 fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [

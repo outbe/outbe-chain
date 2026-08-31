@@ -496,12 +496,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "isQualified",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
         "name": "referenceCurrency",
         "type": "uint16",
         "indexed": false,
