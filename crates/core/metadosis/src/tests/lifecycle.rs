@@ -3373,27 +3373,24 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
         // A cold oracle prices nothing, and the empty table is load-bearing: it
         // is how Desis is told the day is unpriced, so it cancels the auction and
         // refunds the supply instead of opening one at a zero entry price.
-        assert!(
-            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, U256::ZERO)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
+            .unwrap()
+            .is_empty());
 
         // The COEN/USD pair is not registered here, so the rule the settlement
         // path used to carry of its own — which resolved every row through
         // `require_coen_pair` — could never price this day at all.
         assert!(outbe_oracle::api::require_coen_pair(storage.clone(), 840).is_err());
 
-        let current_vwap = U256::from(110_u64);
-        let table =
-            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, current_vwap).unwrap();
-        let projection = outbe_oracle::api::ocomp_pre_admission_projection(
-            storage.clone(),
-            wwd,
-            current_vwap,
-            ctx.block.timestamp,
-        )
-        .unwrap();
+        // The day carries a WorldwideDay VWAP of its own and it is still not an
+        // entry price: an auction is priced from the last closed UTC day alone.
+        metadosis.set_wwd_vwap(wwd, U256::from(110_u64)).unwrap();
+        let table = crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd).unwrap();
+        assert!(table.is_empty());
+
+        let projection =
+            outbe_oracle::api::ocomp_pre_admission_projection(storage.clone(), ctx.block.timestamp)
+                .unwrap();
 
         // One rule prices every day: the settlement table is the projection's,
         // less rows the oracle could not put a price on.
@@ -3409,11 +3406,6 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
                 .map(|row| (row.reference_currency, row.entry_price_minor))
                 .collect::<Vec<_>>()
         );
-        let day_type_row = table
-            .iter()
-            .find(|row| row.iso_code == 840)
-            .expect("the day-type currency is priced from the day's own VWAP");
-        assert_eq!(day_type_row.entry_price_minor, current_vwap);
     });
 }
 

@@ -184,12 +184,8 @@ fn build_and_commit_request(
     let candidate_tribute_projection =
         candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-    let oracle = outbe_oracle::api::ocomp_pre_admission_projection(
-        ctx.storage.clone(),
-        wwd,
-        current_vwap,
-        ctx.block.timestamp,
-    )?;
+    let oracle =
+        outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone(), ctx.block.timestamp)?;
     // The per-owner league snapshot and its root were committed during the
     // active-phase prepare step (`build_fidelity_league_snapshot`). This terminal
     // request runs after the provisional seal and cannot enumerate tributes, so
@@ -236,8 +232,6 @@ fn build_and_commit_request(
             fidelity_league_snapshot_root: snapshot_root,
             oracle: outbe_oracle::api::ocomp_pre_admission_projection(
                 ctx.storage.clone(),
-                wwd,
-                current_vwap,
                 ctx.block.timestamp,
             )?,
         },

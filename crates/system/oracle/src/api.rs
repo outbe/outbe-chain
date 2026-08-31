@@ -25,6 +25,7 @@ use outbe_primitives::{
 #[repr(u8)]
 pub enum OcompAuctionEntryPriceSource {
     LastClosedDayVwap = 1,
+    /// No longer produced; the discriminant is part of a hashed wire enum.
     CurrentVwapFallback = 2,
 }
 
@@ -307,11 +308,10 @@ pub fn get_worldwide_day_vwap_for_pair(
 
 /// Selects the already-stored auction entry prices and the authenticated collection counts;
 /// never invokes calculation. One price per reference currency, so the read walks the
-/// registry; only the day-type currency keeps the current-VWAP fallback.
+/// registry; a currency the last closed UTC day carries no price for is omitted, the
+/// day-type currency included.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    current_vwap: U256,
     block_timestamp: u64,
 ) -> Result<OcompOraclePreAdmissionProjection> {
     let oracle = OracleContract::new(storage);
@@ -322,26 +322,15 @@ pub fn ocomp_pre_admission_projection(
         .then(|| oracle.ocomp_day_type_vwap_by_utc_day.read(&last_closed_day))
         .transpose()?
         .filter(|value| !value.is_zero());
-    let (day_type_price, day_type_source, day_type_source_day) =
-        if let Some(vwap) = last_closed_vwap {
-            (
-                vwap,
-                OcompAuctionEntryPriceSource::LastClosedDayVwap,
-                last_closed_day,
-            )
-        } else {
-            (
-                current_vwap,
-                OcompAuctionEntryPriceSource::CurrentVwapFallback,
-                worldwide_day.value(),
-            )
-        };
-    let mut auction_entry_prices = vec![OcompReferenceEntryPrice {
-        reference_currency: DAY_TYPE_ISO,
-        entry_price_minor: day_type_price,
-        source: day_type_source,
-        source_day: day_type_source_day,
-    }];
+    let mut auction_entry_prices = Vec::new();
+    if let Some(vwap) = last_closed_vwap {
+        auction_entry_prices.push(OcompReferenceEntryPrice {
+            reference_currency: DAY_TYPE_ISO,
+            entry_price_minor: vwap,
+            source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
+            source_day: last_closed_day,
+        });
+    }
     for iso_code in oracle.reference_currencies.read_all()? {
         if iso_code == DAY_TYPE_ISO {
             continue;

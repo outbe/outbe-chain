@@ -213,7 +213,6 @@ fn process_local_terminal_outcome(
                 day_type,
                 wwd,
                 day_limit,
-                current.current_vwap,
             )?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             TributeContract::new(metadosis.storage.clone())
@@ -240,7 +239,6 @@ fn process_local_terminal_outcome(
                 day_type,
                 wwd,
                 remainder,
-                current.current_vwap,
             )?;
             promis_limit.add_to_total_unallocated(to_promis)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
@@ -266,9 +264,8 @@ fn dispatch_brief(
     dtype: WwdDayType,
     wwd: WorldwideDay,
     supply: U256,
-    current_vwap: U256,
 ) -> Result<U256> {
-    let reference_prices = day_entry_prices(metadosis, ctx, wwd, current_vwap)?;
+    let reference_prices = day_entry_prices(metadosis, ctx, wwd)?;
     let is_green = dtype == WwdDayType::Green;
     let brief_supply = if is_green { supply } else { U256::ZERO };
     let receipt = outbe_desis::api::dispatch_auction_brief(
@@ -304,26 +301,17 @@ fn dispatch_brief(
 }
 
 /// The day's entry prices, from the same projection the OCOMP request seals into
-/// its envelope: the previous closed UTC day's VWAP per pair, with a current-VWAP
-/// fallback for the day-type currency alone. A currency the projection cannot
-/// price is announced and left out.
+/// its envelope: the previous closed UTC day's VWAP per pair. A currency the
+/// projection cannot price is announced and left out.
 pub(crate) fn day_entry_prices(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
-    current_vwap: U256,
 ) -> Result<Vec<ReferenceCurrencyPrice>> {
-    let projection = outbe_oracle::api::ocomp_pre_admission_projection(
-        ctx.storage.clone(),
-        wwd,
-        current_vwap,
-        ctx.block.timestamp,
-    )?;
-    // A zero price is not a price. The projection carries the day-type row even
-    // when the oracle has nothing for it, so that the OCOMP envelope always has
-    // one currency; here an empty table is load-bearing in the other direction —
-    // it is how Desis is told the day is unpriced, and it cancels and refunds on
-    // it rather than opening an auction nobody can bid in.
+    let projection =
+        outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone(), ctx.block.timestamp)?;
+    // An empty table is how Desis is told the day is unpriced: it cancels and
+    // refunds rather than opening an auction nobody can bid in.
     let priced: Vec<_> = projection
         .auction_entry_prices
         .into_iter()
