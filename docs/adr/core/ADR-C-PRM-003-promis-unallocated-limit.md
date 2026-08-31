@@ -32,14 +32,27 @@ The Metadosis Citadel path admits exactly three new typed contribution sources:
    rejection receipt.
 
 Normal RED-day auction-base routing, certified OCOMP unused-Lysis routing and
-Desis unused-clearing returns retain their existing semantics. IntexFactory adds one
-more accepted `add` source: the Promis load of Intex units nobody realised by the
-time their call window closed. It is symmetric with the returns above — capacity a
-clearing consumed and no holder ever mined — and is credited once per called group,
-carrying the day, the reference currency and the forfeited unit count for
-reconciliation. Tribute nominal
-or issuance value is never converted into this accumulator. Every source is
-enumerable; raw `set` is not a generic setter.
+Desis unused-clearing returns retain their existing semantics.
+
+IntexFactory adds one more accepted `add` source: the Promis load of Intex units
+nobody realised by the time their call window closed. It is symmetric with the
+returns above — capacity a clearing consumed and no holder ever mined — and is
+credited once per called group, carrying the day, the reference currency and the
+forfeited unit count for reconciliation.
+
+Gem and GemFactory add two, on the same footing. A gem whose Call Notice Period
+lapsed unsettled returns its Promis load, credited in the checkpoint that burns it;
+a merchant position that reached the end of its validity returns whatever capacity
+it never issued, credited as its remainder is zeroed. Both loads reach a gem out of
+a daily emission sink — Merchant Gems through a parked Intex, reward Gems out of the
+Validator sink — so a forfeit is the same allocated-but-unrealised capacity the
+sink remainders already return. Each is credited at most once: the burn removes the
+record and its queue slot together, and a retired position leaves the queue with a
+zero remainder. Both events carry what expired — gem id, owner and load; position
+id, merchant, source Intex and returned capacity — so provenance stays derivable.
+
+Tribute nominal or issuance value is never converted into this accumulator. Every
+source is enumerable; raw `set` is not a generic setter.
 
 ## Invariants and authority
 
