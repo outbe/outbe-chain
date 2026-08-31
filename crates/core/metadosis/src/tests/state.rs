@@ -142,8 +142,8 @@ fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() 
             assert_eq!(
                 calculation
                     .gratis_allocation
-                    .checked_add(calculation.metadosis_limit_remainder),
-                Some(U256::MAX)
+                    .checked_add(calculation.auction_base),
+                Some(total)
             );
             assert!(calculation.gratis_allocation <= calculation.gratis_supply);
         }
@@ -329,9 +329,32 @@ fn test_calculate_metadosis_green_day() {
         //   demand     = 10_000 * 32 / 100 = 3_200
         //   limit      = day_limit         = 5_000
         //   allocation = min(demand, limit) = 3_200
-        //   remainder  = day_limit - allocation = 1_800
+        //   auction    = min(total, limit) - allocation = 1_800
         assert_eq!(calc.gratis_allocation, U256::from(3_200u64));
-        assert_eq!(calc.metadosis_limit_remainder, U256::from(1_800u64));
+        assert_eq!(calc.auction_base, U256::from(1_800u64));
+    });
+}
+
+#[test]
+fn test_calculate_metadosis_green_day_below_the_limit() {
+    with_contract(|m| {
+        let wwd = WwdKey::new(20241220);
+        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
+        m.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
+
+        let tribute_total = U256::from(1_000u64);
+        let day_limit = U256::from(10_000u64);
+
+        let calc = m
+            .calculate_metadosis(wwd, tribute_total, day_limit)
+            .unwrap();
+
+        // The day earned less than the limit, so the limit does not bind:
+        //   allocation = 1_000 * 32 / 100                  = 320
+        //   auction    = min(1_000, 10_000) - 320          = 680
+        //   unissued   = 10_000 - 320 - 680                = 9_000
+        assert_eq!(calc.gratis_allocation, U256::from(320u64));
+        assert_eq!(calc.auction_base, U256::from(680u64));
     });
 }
 
@@ -348,15 +371,15 @@ fn test_calculate_metadosis_red_day() {
         let calc = m
             .calculate_metadosis(wwd, tribute_total, day_limit)
             .unwrap();
-        let (allocation, remainder) = (calc.gratis_allocation, calc.metadosis_limit_remainder);
+        let (allocation, auction_base) = (calc.gratis_allocation, calc.auction_base);
 
         // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
         //   demand     = 10_000 * 32 / 100 / 8 = 400
         //   limit      = day_limit / 8         = 625
         //   allocation = min(demand, limit)     = 400
-        //   remainder  = day_limit - allocation = 4_600
+        //   auction    = min(total, day_limit) - allocation = 4_600
         assert_eq!(allocation, U256::from(400u64));
-        assert_eq!(remainder, U256::from(4_600u64));
+        assert_eq!(auction_base, U256::from(4_600u64));
     });
 }
 

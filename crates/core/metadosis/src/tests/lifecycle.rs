@@ -895,7 +895,7 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
         0,
         U256::ZERO,
         status::COMPLETED,
-        U256::from(777),
+        U256::ZERO,
     );
 }
 
@@ -1073,7 +1073,7 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
 
     run_start_command(&mut provider, &scope, &parent, 2, scheduled).unwrap();
     assert_eq!(tree.calls.load(Ordering::SeqCst), 2);
-    assert_local_terminal_completed(&mut provider, wwd, day_limit);
+    assert_local_terminal_completed(&mut provider, wwd, U256::ZERO);
     end_persistent_active_scope(&mut provider, &scope);
 }
 
@@ -2695,7 +2695,7 @@ fn test_ready_processing_zero_limit_fails() {
 }
 
 #[test]
-fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
+fn test_ready_processing_no_tributes_carries_nothing_to_promis() {
     with_storage(|storage| {
         let wwd_raw = 20260312u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
@@ -2728,7 +2728,8 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a supply-less brief; the limit stays in PROMIS.
+        // A red day is recorded as a supply-less brief; a day with no tributes
+        // earned nothing, so its limit is issued by nobody.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
@@ -2742,7 +2743,7 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         );
 
         let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
     });
 }
 
@@ -2855,7 +2856,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            day_limit
+            U256::ZERO
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(
@@ -2869,9 +2870,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
-    use alloy_sol_types::SolEvent;
-
+fn green_empty_day_briefs_no_supply_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
@@ -2886,35 +2885,17 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd).unwrap()).unwrap(),
-            outbe_desis::AuctionStage::None
+            outbe_desis::AuctionStage::Briefed
         );
-        assert_eq!(desis.sched_active_count.read().unwrap(), 0);
+        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
+        assert_eq!(desis.pending_supply_promis.read(&wwd).unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
                 .unwrap(),
-            U256::MAX
+            U256::ZERO
         );
     });
-
-    let signature =
-        outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::SIGNATURE_HASH;
-    let events = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    let rejection = events
-        .iter()
-        .filter(|event| event.topics().first() == Some(&signature))
-        .map(|event| {
-            outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(event)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(rejection.len(), 1);
-    assert_eq!(rejection[0].supply, U256::MAX);
-    assert_eq!(rejection[0].maxAccepted, U256::from(u128::MAX));
-    assert_eq!(
-        rejection[0].reasonCode,
-        outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
-    );
 }
 
 #[test]
@@ -3184,7 +3165,7 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
 }
 
 #[test]
-fn no_tributes_green_day_briefs_the_full_limit() {
+fn no_tributes_green_day_briefs_no_supply_and_carries_nothing() {
     with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
@@ -3224,17 +3205,17 @@ fn no_tributes_green_day_briefs_the_full_limit() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 1);
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_supply_promis.read(&series).unwrap(),
-            day_limit
+            U256::ZERO
         );
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(
             promis.get_total_unallocated().unwrap(),
             U256::ZERO,
-            "a green brief takes the whole no-tributes limit"
+            "a day that earned nothing neither auctions nor carries the limit"
         );
     });
 }

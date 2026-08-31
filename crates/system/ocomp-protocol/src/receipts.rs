@@ -421,7 +421,7 @@ impl RequestBudgetSplitReceiptV1 {
                 what: "request budget split",
             },
         )?;
-        require(split_total == self.day_limit, "request budget split")?;
+        require(split_total <= self.day_limit, "request budget split")?;
         let green = self.day_type == DayType::Green
             && self.destination == BudgetSplitDestination::DesisAuction
             && self.desis_brief_hash.is_some()

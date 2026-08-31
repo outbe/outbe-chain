@@ -277,7 +277,8 @@ fn build_and_commit_request(
         day_limit,
     )?;
     let lysis_budget = calculation.gratis_allocation;
-    let split = RequestBudgetSplit::derive(day_limit, lysis_budget)?;
+    let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
+    let split = RequestBudgetSplit::derive(day_limit, lysis_budget, nominal_total)?;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
     let effect = RequestBudgetEffect {
         protocol_bundle_hash: profile.protocol_bundle_hash,
@@ -286,6 +287,7 @@ fn build_and_commit_request(
         day_type: protocol_day_type,
         day_limit,
         lysis_budget,
+        nominal_total,
         auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
     };
@@ -504,6 +506,7 @@ fn build_and_commit_retry(
         day_type: old_frozen.day_type,
         day_limit: old_frozen.day_limit,
         lysis_budget: old_frozen.lysis_budget,
+        nominal_total: previous.intent.authenticated_day_nominal,
         auction_entry_prices: old_frozen.auction_entry_prices.clone(),
         logical_anchor: receipt.logical_anchor,
     };

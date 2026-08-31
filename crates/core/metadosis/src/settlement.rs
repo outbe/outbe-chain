@@ -24,7 +24,7 @@ pub(crate) struct MetadosisCalculation {
     pub(crate) gratis_demand: U256,
     pub(crate) gratis_supply: U256,
     pub(crate) gratis_allocation: U256,
-    pub(crate) metadosis_limit_remainder: U256,
+    pub(crate) auction_base: U256,
 }
 
 impl MetadosisContract<'_> {
@@ -64,19 +64,29 @@ impl MetadosisContract<'_> {
             }
         }
         let allocation = demand.min(supply);
-        let remainder = wwd_metadosis_limit.checked_sub(allocation).ok_or_else(|| {
-            crate::errors::storage_corruption("Metadosis allocation exceeds the day limit".into())
-        })?;
-        if allocation.checked_add(remainder) != Some(wwd_metadosis_limit) {
+        // The day sells what it earned beyond the symbolic share, and the limit
+        // only caps it: the headroom a weak day leaves is not issued at all.
+        let auction_base = tribute_nominal_total
+            .min(wwd_metadosis_limit)
+            .checked_sub(allocation)
+            .ok_or_else(|| {
+                crate::errors::storage_corruption(
+                    "Metadosis allocation exceeds the day's nominal".into(),
+                )
+            })?;
+        let split_total = allocation
+            .checked_add(auction_base)
+            .ok_or_else(|| crate::errors::storage_corruption("Metadosis split overflow".into()))?;
+        if split_total > wwd_metadosis_limit {
             return Err(crate::errors::storage_corruption(
-                "Metadosis allocation conservation failed".into(),
+                "Metadosis split exceeds the day limit".into(),
             ));
         }
         Ok(MetadosisCalculation {
             gratis_demand: demand,
             gratis_supply: supply,
             gratis_allocation: allocation,
-            metadosis_limit_remainder: remainder,
+            auction_base,
         })
     }
 }
@@ -212,7 +222,7 @@ fn process_local_terminal_outcome(
                 metadosis,
                 day_type,
                 wwd,
-                day_limit,
+                U256::ZERO,
                 current.current_vwap,
             )?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
@@ -233,13 +243,13 @@ fn process_local_terminal_outcome(
             tribute_nominal_total,
             calculation,
         } => {
-            let remainder = calculation.metadosis_limit_remainder;
+            let auction_base = calculation.auction_base;
             let to_promis = dispatch_brief(
                 ctx,
                 metadosis,
                 day_type,
                 wwd,
-                remainder,
+                auction_base,
                 current.current_vwap,
             )?;
             promis_limit.add_to_total_unallocated(to_promis)?;
@@ -252,7 +262,7 @@ fn process_local_terminal_outcome(
                 dayGratisAllocation: U256::ZERO,
                 dayGratisAllocationRemainder: U256::ZERO,
                 netDayGratisAllocation: U256::ZERO,
-                dayMetadosisLimitRemainder: remainder,
+                dayMetadosisLimitRemainder: auction_base,
                 status: "COMPLETED".into(),
                 blockNumber: ctx.block.block_number,
             })
@@ -269,7 +279,9 @@ fn dispatch_brief(
     current_vwap: U256,
 ) -> Result<U256> {
     let reference_prices = day_entry_prices(metadosis, ctx, wwd, current_vwap)?;
-    let is_green = dtype == WwdDayType::Green;
+    // A day with nothing to sell is briefed as cancelled: an auction opened over
+    // zero supply would run its whole cross-chain cycle with no winner possible.
+    let is_green = dtype == WwdDayType::Green && !supply.is_zero();
     let brief_supply = if is_green { supply } else { U256::ZERO };
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),

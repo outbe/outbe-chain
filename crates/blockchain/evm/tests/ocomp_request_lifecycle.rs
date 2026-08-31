@@ -718,14 +718,21 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
                 .expected_status,
             outbe_ocomp_protocol::intent::MetadosisExpectedStatus::OffchainPending
         );
+        let frozen = &record.intent.frozen_metadosis_values;
         assert_eq!(
-            record.intent.frozen_metadosis_values.day_limit,
-            record
-                .intent
-                .frozen_metadosis_values
-                .lysis_budget
-                .checked_add(record.intent.frozen_metadosis_values.auction_base)
+            frozen.auction_base,
+            prepared
+                .nominal
+                .min(frozen.day_limit)
+                .checked_sub(frozen.lysis_budget)
                 .unwrap()
+        );
+        assert!(
+            frozen
+                .lysis_budget
+                .checked_add(frozen.auction_base)
+                .unwrap()
+                <= frozen.day_limit
         );
         assert!(!record.intent.frozen_metadosis_values.lysis_budget.is_zero());
         assert_ne!(

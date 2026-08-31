@@ -19,6 +19,7 @@ pub(crate) struct RequestBudgetEffect {
     pub day_type: DayType,
     pub day_limit: U256,
     pub lysis_budget: U256,
+    pub nominal_total: U256,
     pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }
@@ -31,26 +32,20 @@ pub(crate) struct RequestBudgetSplit {
 }
 
 impl RequestBudgetSplit {
-    pub(crate) fn derive(day_limit: U256, lysis_budget: U256) -> Result<Self> {
-        let auction_base =
-            day_limit
-                .checked_sub(lysis_budget)
-                .ok_or(MetadosisError::InvalidOcompBudgetSplit {
-                    day_limit,
-                    lysis_budget,
-                })?;
-        let reconstructed = lysis_budget.checked_add(auction_base).ok_or(
-            MetadosisError::InvalidOcompBudgetSplit {
-                day_limit,
-                lysis_budget,
-            },
-        )?;
-        if reconstructed != day_limit {
-            return Err(MetadosisError::InvalidOcompBudgetSplit {
-                day_limit,
-                lysis_budget,
-            }
-            .into());
+    /// The day auctions what it earned beyond the symbolic share, capped by the
+    /// day limit. Limit headroom a weak day leaves over is issued by nobody.
+    pub(crate) fn derive(day_limit: U256, lysis_budget: U256, nominal_total: U256) -> Result<Self> {
+        let invalid = || MetadosisError::InvalidOcompBudgetSplit {
+            day_limit,
+            lysis_budget,
+        };
+        let auction_base = nominal_total
+            .min(day_limit)
+            .checked_sub(lysis_budget)
+            .ok_or_else(invalid)?;
+        let split_total = lysis_budget.checked_add(auction_base).ok_or_else(invalid)?;
+        if split_total > day_limit {
+            return Err(invalid().into());
         }
         Ok(Self {
             day_limit,
@@ -70,7 +65,11 @@ pub(crate) fn apply_fresh_request_budget_effect(
     storage: StorageHandle<'_>,
     request: RequestBudgetEffect,
 ) -> Result<RequestBudgetSplitReceiptV1> {
-    let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
+    let split = RequestBudgetSplit::derive(
+        request.day_limit,
+        request.lysis_budget,
+        request.nominal_total,
+    )?;
     let receipt = expected_receipt(&request, split, request.pending_nonce)?;
     let green = request.day_type == DayType::Green;
     // One checkpoint: a red day writes both the brief and the carry-over, and
@@ -117,7 +116,11 @@ pub(crate) fn validate_replayed_request_budget_effect(
         }
         .into());
     }
-    let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
+    let split = RequestBudgetSplit::derive(
+        request.day_limit,
+        request.lysis_budget,
+        request.nominal_total,
+    )?;
     let expected = expected_receipt(&request, split, existing.pending_nonce)?;
     if existing != &expected {
         return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
