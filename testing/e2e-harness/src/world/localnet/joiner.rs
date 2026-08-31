@@ -9,6 +9,7 @@ use std::process::Command;
 use alloy_primitives::{hex, Address, Bytes, B256};
 use eyre::{eyre, Result};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::TransportError;
 use serde::Deserialize;
 
 use crate::internal::{
@@ -23,6 +24,14 @@ use crate::internal::{
 use crate::world::validators::RegistrationIdentity;
 
 use super::Localnet;
+
+const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+
+fn retry_node_offer_read(real_sgx: bool, attempt: usize, error: &TransportError) -> bool {
+    real_sgx
+        && attempt.saturating_add(1) < REAL_SGX_OFFER_READ_ATTEMPTS
+        && matches!(error, TransportError::IoTimeout { .. })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ManualRenewalObservationV1 {
@@ -670,29 +679,56 @@ impl Localnet {
                 .map_err(|_| eyre!("node manifest chain id has invalid width"))?,
         );
         let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
-        let unexpected_reinitialize =
-            |_| Err("committed node unexpectedly required reinitialization".to_owned());
-        let mut client = outbe_tee::connect_or_initialize_node_host_enclave(
-            &endpoint,
-            &node_data_dir,
-            outbe_tee::NodeHostIdentityV1 {
-                chain_id,
-                genesis_hash: manifest.genesis_hash,
-                reth_p2p_public: manifest.node_id.reth_p2p_public,
-            },
-            unexpected_reinitialize,
-        )
-        .map_err(|error| eyre!("authenticated node enclave reopen failed: {error}"))?;
-        match client.request(&EnclaveRequest::GetPublicKeys)? {
-            EnclaveResponse::PublicKeys {
-                offer_key_ready: true,
-                recipient_x25519_pub,
-                ..
-            } => Ok(recipient_x25519_pub),
-            other => Err(eyre!(
-                "authenticated node enclave has no permanent offer key: {other:?}"
-            )),
+        let real_sgx = self.cfg.tee_mode.passes_sgx_devices();
+        let attempts = if real_sgx {
+            REAL_SGX_OFFER_READ_ATTEMPTS
+        } else {
+            1
+        };
+        for attempt in 0..attempts {
+            let unexpected_reinitialize =
+                |_| Err("committed node unexpectedly required reinitialization".to_owned());
+            let mut client = match outbe_tee::connect_or_initialize_node_host_enclave(
+                &endpoint,
+                &node_data_dir,
+                outbe_tee::NodeHostIdentityV1 {
+                    chain_id,
+                    genesis_hash: manifest.genesis_hash,
+                    reth_p2p_public: manifest.node_id.reth_p2p_public,
+                },
+                unexpected_reinitialize,
+            ) {
+                Ok(client) => client,
+                Err(error) if retry_node_offer_read(real_sgx, attempt, &error) => {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(eyre!("authenticated node enclave reopen failed: {error}"));
+                }
+            };
+            let response = match client.request(&EnclaveRequest::GetPublicKeys) {
+                Ok(response) => response,
+                Err(error) if retry_node_offer_read(real_sgx, attempt, &error) => {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            match response {
+                EnclaveResponse::PublicKeys {
+                    offer_key_ready: true,
+                    recipient_x25519_pub,
+                    ..
+                } => return Ok(recipient_x25519_pub),
+                other => {
+                    return Err(eyre!(
+                        "authenticated node enclave has no permanent offer key: {other:?}"
+                    ));
+                }
+            }
         }
+        unreachable!("the bounded authenticated offer-key read loop always returns")
     }
 
     pub(super) fn start_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -845,6 +881,49 @@ impl Localnet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_sgx_offer_read_retries_only_bounded_io_timeouts() {
+        assert!(retry_node_offer_read(
+            true,
+            0,
+            &TransportError::IoTimeout {
+                operation: "Noise handshake response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(retry_node_offer_read(
+            true,
+            1,
+            &TransportError::IoTimeout {
+                operation: "request response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            true,
+            2,
+            &TransportError::IoTimeout {
+                operation: "request response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            false,
+            0,
+            &TransportError::IoTimeout {
+                operation: "Noise handshake response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            true,
+            0,
+            &TransportError::Handshake(
+                "wrapper mentioned enclave io timeout but this is policy".to_owned()
+            )
+        ));
+    }
 
     #[test]
     fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
