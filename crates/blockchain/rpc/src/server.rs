@@ -759,10 +759,10 @@ where
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
         let is_validator = self.is_validator;
-        let status = self
+        let (status, has_threshold_shares) = self
             .bridge
             .as_ref()
-            .map(|b| b.consensus_status())
+            .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
             .unwrap_or_default();
         let projection = projection_status_info(
             self.projection_readiness.current(),
@@ -777,7 +777,7 @@ where
             current_view: status.current_view,
             connected_peers: status.connected_peers,
             is_active: status.is_active(),
-            has_threshold_shares: status.has_threshold_shares(),
+            has_threshold_shares,
             last_finalized_block: status.last_finalized_block,
             last_vrf_seed: status.last_vrf_seed,
             randomness_status: status.randomness_status,

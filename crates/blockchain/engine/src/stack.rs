@@ -1280,6 +1280,27 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
     bridge.set_consensus_status(status);
 }
 
+/// Couples the active VRF provider transition with the bridge's process-local
+/// authority report. Publication is ordered fail-safe: adding a
+/// share becomes visible only after provider installation, while removing one
+/// becomes visible before provider demotion.
+fn activate_vrf_material_and_publish_local_share(
+    bridge: &ConsensusExecutionBridge,
+    vrf_materials: &VrfMaterialProvider<MinSig>,
+    version: u64,
+    polynomial: Sharing<MinSig>,
+    signing_share: Option<Share>,
+) {
+    let local_share_present = signing_share.is_some();
+    if !local_share_present {
+        bridge.set_local_threshold_share_present(false);
+    }
+    vrf_materials.activate(version, polynomial, signing_share);
+    if local_share_present {
+        bridge.set_local_threshold_share_present(true);
+    }
+}
+
 #[derive(Clone, Debug)]
 struct FrozenDkgTarget {
     dkg_cycle: u64,
@@ -4181,6 +4202,7 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    bridge.set_local_threshold_share_present(signing_share.is_some());
     // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
     // live committee anchored its rotation schedule on), NOT the commit height of
     // the artifact-carrying block: finalized BoundaryOutcome recovery normalizes
@@ -4888,7 +4910,9 @@ where
                 polynomial = canonical_output.public().clone();
                 last_dkg_output = Some(canonical_output.clone());
                 vrf_material_version = activated_vrf_material_version;
-                vrf_materials.activate(
+                activate_vrf_material_and_publish_local_share(
+                    &bridge,
+                    &vrf_materials,
                     vrf_material_version,
                     polynomial.clone(),
                     signing_share.clone(),
@@ -5861,7 +5885,9 @@ where
                             polynomial = activated_polynomial;
                             last_dkg_output = Some(canonical_output.clone());
                             signing_share = activated_signing_share;
-                            vrf_materials.activate(
+                            activate_vrf_material_and_publish_local_share(
+                                &bridge,
+                                &vrf_materials,
                                 vrf_material_version,
                                 polynomial.clone(),
                                 signing_share.clone(),
@@ -6144,7 +6170,9 @@ where
                                 participants = activated_participants;
                                 vrf_material_version = new_vrf_material_version;
                                 dkg_cycle = target.dkg_cycle.saturating_add(1);
-                                vrf_materials.activate(
+                                activate_vrf_material_and_publish_local_share(
+                                    &bridge,
+                                    &vrf_materials,
                                     vrf_material_version,
                                     polynomial.clone(),
                                     None,

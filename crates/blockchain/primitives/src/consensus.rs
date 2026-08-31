@@ -317,7 +317,8 @@ impl RandomnessStatus {
         !matches!(self, Self::Unknown | Self::Expired)
     }
 
-    /// Whether usable threshold/VRF shares should be reported as available.
+    /// Whether this network-level VRF state permits use of a locally present
+    /// threshold share. This does not prove that the local process owns one.
     pub const fn has_threshold_shares(self) -> bool {
         matches!(
             self,
@@ -357,8 +358,11 @@ impl ConsensusStatus {
         self.randomness_status.is_consensus_active()
     }
 
-    /// Whether usable DKG/threshold shares are present. Derived from
-    /// `randomness_status`; see [`ConsensusStatus::is_active`].
+    /// Whether the network-level randomness state permits threshold-share use.
+    ///
+    /// This compatibility helper does not prove that the local process owns a
+    /// private share. RPC callers must use
+    /// [`ConsensusExecutionBridge::consensus_status_with_threshold_shares`].
     pub fn has_threshold_shares(&self) -> bool {
         self.randomness_status.has_threshold_shares()
     }
@@ -381,6 +385,9 @@ pub struct ConsensusExecutionBridge {
 struct BridgeState {
     genesis_validators: Option<GenesisValidators>,
     consensus_status: ConsensusStatus,
+    /// Process-local authority fact derived from the active in-memory DKG
+    /// material. It is deliberately not persisted or consensus-visible.
+    local_threshold_share_present: bool,
     execution_summary_cache: VecDeque<ExecutionSummaryCacheEntry>,
     /// One-time TEE bootstrap payload produced by the consensus-thread TEE DKG
     /// coordination, handed to the payload builder so every block-1 proposal
@@ -589,6 +596,32 @@ impl ConsensusExecutionBridge {
         state.consensus_status.clone()
     }
 
+    /// Publishes whether the active in-memory DKG material contains this
+    /// process's private threshold share.
+    pub fn set_local_threshold_share_present(&self, present: bool) {
+        self.lock_state().local_threshold_share_present = present;
+    }
+
+    /// Whether the local process currently has a usable active threshold share.
+    ///
+    /// Local share possession and network-level VRF safety are independent
+    /// facts: a shareless verifier can observe healthy public material, while a
+    /// signer can retain a private share that is unusable after expiry.
+    pub fn has_threshold_shares(&self) -> bool {
+        let state = self.lock_state();
+        local_threshold_share_is_usable(&state)
+    }
+
+    /// Returns the consensus snapshot and its derived local-share report under
+    /// one lock so RPC cannot combine values from different transitions.
+    pub fn consensus_status_with_threshold_shares(&self) -> (ConsensusStatus, bool) {
+        let state = self.lock_state();
+        (
+            state.consensus_status.clone(),
+            local_threshold_share_is_usable(&state),
+        )
+    }
+
     /// Installs the finalization fetcher channel. Called once at marshal-start
     /// (validator and follower paths both register one) with the sender; the
     /// consensus thread drains the matching [`FinalizationFetcherRx`] and answers
@@ -615,6 +648,14 @@ impl ConsensusExecutionBridge {
         sender.send((height, reply_tx)).ok()?;
         reply_rx.await.ok().flatten()
     }
+}
+
+fn local_threshold_share_is_usable(state: &BridgeState) -> bool {
+    state.local_threshold_share_present
+        && state
+            .consensus_status
+            .randomness_status
+            .has_threshold_shares()
 }
 
 impl Default for ConsensusExecutionBridge {
@@ -689,5 +730,46 @@ mod tests {
         // Handler updates the real block number after.
         bridge.set_last_finalized_block_number(99);
         assert_eq!(bridge.consensus_status().last_finalized_block, 99);
+    }
+
+    #[test]
+    fn bridge_reports_only_usable_active_local_threshold_share() {
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_consensus_status(ConsensusStatus {
+            randomness_status: RandomnessStatus::Healthy,
+            ..Default::default()
+        });
+        assert!(
+            !bridge.has_threshold_shares(),
+            "global Healthy status must not imply a local private share"
+        );
+
+        bridge.set_local_threshold_share_present(true);
+        assert!(bridge.has_threshold_shares());
+
+        for (status, expected) in [
+            (RandomnessStatus::Preparing, true),
+            (RandomnessStatus::PendingActivation, true),
+            (RandomnessStatus::Grace, true),
+            (RandomnessStatus::Degraded, false),
+            (RandomnessStatus::Expired, false),
+            (RandomnessStatus::Unknown, false),
+            (RandomnessStatus::Healthy, true),
+        ] {
+            bridge.set_consensus_status(ConsensusStatus {
+                randomness_status: status,
+                ..Default::default()
+            });
+            assert_eq!(bridge.has_threshold_shares(), expected, "{status:?}");
+            let (snapshot, snapshot_has_share) = bridge.consensus_status_with_threshold_shares();
+            assert_eq!(snapshot.randomness_status, status);
+            assert_eq!(
+                snapshot_has_share, expected,
+                "atomic snapshot for {status:?}"
+            );
+        }
+
+        bridge.set_local_threshold_share_present(false);
+        assert!(!bridge.has_threshold_shares());
     }
 }

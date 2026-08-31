@@ -4062,6 +4062,44 @@ fn test_dkg_activation_always_advances_consensus_epoch() {
 }
 
 #[test]
+fn active_vrf_material_and_local_share_status_change_together() {
+    let (keys, participants, _output, share, polynomial) = run_test_dkg_complete();
+    let bridge = outbe_primitives::consensus::ConsensusExecutionBridge::new();
+    bridge.set_consensus_status(outbe_primitives::consensus::ConsensusStatus {
+        randomness_status: outbe_primitives::consensus::RandomnessStatus::Healthy,
+        ..Default::default()
+    });
+    let vrf_materials = VrfMaterialProvider::new(0, polynomial.clone(), None);
+    assert!(!bridge.has_threshold_shares());
+
+    activate_vrf_material_and_publish_local_share(
+        &bridge,
+        &vrf_materials,
+        1,
+        polynomial.clone(),
+        Some(share),
+    );
+    assert!(bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants.clone(),
+        keys[0].clone(),
+        vrf_materials.clone(),
+    )
+    .is_some());
+
+    activate_vrf_material_and_publish_local_share(&bridge, &vrf_materials, 2, polynomial, None);
+    assert!(!bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants,
+        keys[0].clone(),
+        vrf_materials,
+    )
+    .is_none());
+}
+
+#[test]
 fn test_missing_freeze_block_hash_retries_only_before_planned_activation() {
     assert_eq!(
         pending_freeze_block_hash_decision(119, 120),
