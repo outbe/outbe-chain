@@ -4,7 +4,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::distribution::{calculate_distribution_with_cap, distribute_daily, PoolKind};
-use crate::schema::AgentRewardContract;
+use crate::schema::{AgentRewardContract, RewardPool};
 
 const CHAIN_ID: u64 = 1;
 
@@ -277,7 +277,7 @@ fn test_claim_reward() {
             .unwrap();
 
         contract
-            .add_claimable_reward(alice, U256::from(500u64))
+            .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
             .unwrap();
 
         let claimed = contract.claim_reward(alice, U256::from(200u64)).unwrap();
@@ -306,7 +306,7 @@ fn test_claim_all_with_amount_zero() {
             )
             .unwrap();
         contract
-            .add_claimable_reward(alice, U256::from(1000u64))
+            .add_claimable_reward(RewardPool::Waa, alice, U256::from(1000u64))
             .unwrap();
 
         // Claim with amount=0 should claim full balance (handled at precompile layer).
@@ -328,10 +328,12 @@ fn test_add_claimable_reward_rejects_overflow() {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let near_max = U256::MAX - U256::from(10u64);
 
-        contract.add_claimable_reward(alice, near_max).unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, near_max)
+            .unwrap();
 
         let err = contract
-            .add_claimable_reward(alice, U256::from(100u64))
+            .add_claimable_reward(RewardPool::Waa, alice, U256::from(100u64))
             .unwrap_err();
         assert!(err.to_string().contains("overflow"));
 
@@ -597,6 +599,7 @@ fn iagentreward_sol_matches_contract_public_annotations() {
     const SOL: &str = include_str!("../../../../contracts/precompiles/src/IAgentReward.sol");
     let expected = [
         ("getClaimableBalance", "address", true, "uint256"),
+        ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
         ("claimReward", "uint256", false, "uint256"),
     ];
     for (name, args_types, is_view, ret_types) in expected {

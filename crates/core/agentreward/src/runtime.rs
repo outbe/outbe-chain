@@ -1,4 +1,4 @@
-use crate::schema::AgentRewardContract;
+use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -40,30 +40,67 @@ impl AgentRewardContract<'_> {
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
-    /// Gets claimable reward balance for an address.
+    /// Gets the total claimable reward balance for an address across both pools.
     pub fn get_claimable_reward(&self, address: Address) -> Result<U256> {
-        self.claimable_rewards.read(&address)
+        let waa = self.get_pool_claimable_reward(RewardPool::Waa, address)?;
+        let sra = self.get_pool_claimable_reward(RewardPool::Sra, address)?;
+        checked_add(waa, sra, "agentreward claimable total overflow")
     }
 
-    /// Adds amount to claimable reward for an address.
-    pub fn add_claimable_reward(&mut self, address: Address, amount: U256) -> Result<()> {
-        let current = self.claimable_rewards.read(&address)?;
-        self.claimable_rewards.write(
-            &address,
-            checked_add(current, amount, "agentreward claimable_rewards overflow")?,
-        )
+    /// Gets the claimable reward balance an address holds in one pool.
+    pub fn get_pool_claimable_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
+        match pool {
+            RewardPool::Waa => self.waa_claimable_rewards.read(&address),
+            RewardPool::Sra => self.sra_claimable_rewards.read(&address),
+        }
     }
 
-    /// Claims reward: subtracts amount from claimable balance and transfers
-    /// real native tokens from the contract address to the caller.
+    /// Adds amount to an address's claimable reward in one pool.
+    pub fn add_claimable_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        let current = self.get_pool_claimable_reward(pool, address)?;
+        let next = checked_add(current, amount, "agentreward claimable_rewards overflow")?;
+        self.write_pool_claimable_reward(pool, address, next)
+    }
+
+    fn write_pool_claimable_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        match pool {
+            RewardPool::Waa => self.waa_claimable_rewards.write(&address, amount),
+            RewardPool::Sra => self.sra_claimable_rewards.write(&address, amount),
+        }
+    }
+
+    /// Claims reward: subtracts amount from the claimable balances and transfers
+    /// real native tokens from the contract address to the caller. WAA drains
+    /// before SRA.
     pub fn claim_reward(&mut self, address: Address, amount: U256) -> Result<U256> {
-        let balance = self.claimable_rewards.read(&address)?;
-        if amount > balance {
+        if amount > self.get_claimable_reward(address)? {
             return Err(outbe_primitives::error::PrecompileError::Revert(
                 "insufficient claimable balance".into(),
             ));
         }
-        self.claimable_rewards.write(&address, balance - amount)?;
+        let mut remaining = amount;
+        for pool in [RewardPool::Waa, RewardPool::Sra] {
+            if remaining.is_zero() {
+                break;
+            }
+            let balance = self.get_pool_claimable_reward(pool, address)?;
+            let taken = balance.min(remaining);
+            if taken.is_zero() {
+                continue;
+            }
+            self.write_pool_claimable_reward(pool, address, balance - taken)?;
+            remaining -= taken;
+        }
 
         // Transfer real tokens from contract to claimant.
         self.storage.transfer_balance(

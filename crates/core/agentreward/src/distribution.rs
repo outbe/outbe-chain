@@ -1,4 +1,4 @@
-use crate::schema::AgentRewardContract;
+use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
@@ -250,10 +250,15 @@ fn distribute_capped(
         return Ok(amount);
     }
 
+    let reward_pool = match kind {
+        PoolKind::Waa => RewardPool::Waa,
+        PoolKind::Sra => RewardPool::Sra,
+        _ => unreachable!(),
+    };
     let (rewards, excess) = calculate_distribution_with_cap(amount, &counts);
     for r in &rewards {
         if !r.reward_amount.is_zero() {
-            contract.add_claimable_reward(r.address, r.reward_amount)?;
+            contract.add_claimable_reward(reward_pool, r.address, r.reward_amount)?;
         }
     }
     if !excess.is_zero() {
