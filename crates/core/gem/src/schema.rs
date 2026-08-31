@@ -161,6 +161,11 @@ pub struct GemContract {
     /// while a sweep was cut short by the per-block budget.
     #[attribute(order = 13)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Where the next qualify scan starts, so a heavy currency cannot starve the
+    /// ones behind it when the per-block budget runs out.
+    #[attribute(order = 14)]
+    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

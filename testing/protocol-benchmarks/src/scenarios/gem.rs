@@ -225,6 +225,9 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             U256::from(10) * six_decimal_unit(),
             840,
             840,
+            // The reward path resolves the price for the gem's own day; the
+            // benchmark measures the mint, so the seeded rate stands in for it.
+            U256::from(2) * six_decimal_unit(),
         )
         .map_err(|error| error.to_string()),
         PreparedGemPath::Position => outbe_gemfactory::api::mint_gem_position(

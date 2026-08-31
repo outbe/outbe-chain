@@ -801,8 +801,9 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
         # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (7 days, in seconds).
         storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 7 * 24 * 3600)))
-        # call_rate: add_gem snapshots GEM_CALL_MARKUP_PERCENT (228).
-        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 228)))
+        # call_rate: the markup above 100%, so call_price = entry x (100 + rate)/100.
+        # `add_gem` snapshots CALL_RATE (128), which is the 2.28x the docs quote.
+        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 128)))
         # call_window: add_gem snapshots CALL_WINDOW (28 days, in seconds).
         storage.set_mapping(15, gem_id, parse_int(gem.get("call_window", 28 * 24 * 3600)))
         # call_threshold: add_gem snapshots CALL_THRESHOLD (21 days, in seconds).

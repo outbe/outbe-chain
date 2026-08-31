@@ -500,11 +500,15 @@ fn deliver_oldest_reward_gem_batch_inner(
             ))
         },
     )?;
-    if outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?
-        .is_none()
-    {
+    let Some(entry_price) = resolve_reward_entry_price(ctx, reward_utc_day, reference_currency)?
+    else {
+        tracing::warn!(
+            target: "outbe::rewards",
+            reward_utc_day,
+            "validator reward Gem batch has no usable price yet, staying queued"
+        );
         return Ok(RewardGemDeliveryOutcome::PendingRate { reward_utc_day });
-    }
+    };
 
     for (owner, load) in recipients {
         outbe_gemfactory::api::mint_gem(
@@ -514,6 +518,7 @@ fn deliver_oldest_reward_gem_batch_inner(
             load,
             issuance_currency,
             reference_currency,
+            entry_price,
         )?;
     }
     for index in 0..recipient_count {
@@ -540,6 +545,35 @@ fn deliver_oldest_reward_gem_batch_inner(
         recipient_count,
         delivered_gem_load_amount,
     })
+}
+
+/// The COEN price a batch for `reward_utc_day` mints at.
+///
+/// The reward belongs to its day, so that day's finalized VWAP is the answer.
+/// A day the oracle closed empty falls back to the live quote — today's rule —
+/// so no reward is ever lost to a day that carries no price. `None` means the
+/// day is not closed yet: the batch waits, exactly as it does today.
+fn resolve_reward_entry_price(
+    ctx: &BlockRuntimeContext,
+    reward_utc_day: u32,
+    reference_currency: u16,
+) -> Result<Option<U256>> {
+    let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
+    if reward_utc_day > oracle.utc_day_vwap_last_finalized.read()? {
+        return Ok(None);
+    }
+
+    if let Some(index) =
+        outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), reference_currency)?
+    {
+        if let Some(vwap) =
+            outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), reward_utc_day, index)?
+        {
+            return Ok(Some(vwap));
+        }
+    }
+
+    outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)
 }
 
 fn reward_gem_batch_digest(
@@ -662,6 +696,9 @@ mod tests {
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
+        // Close every reward day these tests use: none carries a VWAP, so
+        // delivery takes the live quote seeded above.
+        oracle.utc_day_vwap_last_finalized.write(29991231).unwrap();
     }
 
     fn one_coen840() -> U256 {

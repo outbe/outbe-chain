@@ -44,27 +44,23 @@ pub enum GemFactoryError {
     #[error("invalid asset")]
     InvalidAsset,
 
-    #[error("settlement asset {asset} is not registered for settlement currency {expected}")]
-    SettlementCurrencyMismatch {
-        asset: alloy_primitives::Address,
-        expected: u16,
-    },
+    #[error("settlement asset {asset} has no registered vault")]
+    SettlementAssetNotRegistered { asset: alloy_primitives::Address },
+
+    #[error("settlement asset currency {iso_code} does not match the gem")]
+    SettlementCurrencyMismatch { iso_code: u16 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("issuance currency {iso_code} is not registered")]
-    IssuanceCurrencyNotRegistered { iso_code: u16 },
-
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("settlement asset {asset} has {decimals} decimals, expected {expected}")]
-    SettlementDecimalsMismatch {
-        asset: alloy_primitives::Address,
-        decimals: u8,
-        expected: u8,
-    },
+    #[error("settlement asset has unsupported decimals {0}")]
+    UnsupportedPaymentDecimals(u8),
+
+    #[error("vault returned zero shares for the settlement")]
+    ZeroSharesReceived,
 
     #[error("oracle nominal unavailable")]
     OracleUnavailable,

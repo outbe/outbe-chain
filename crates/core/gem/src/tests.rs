@@ -332,6 +332,62 @@ fn scan_qualifies_each_currency_against_its_own_rate() {
     });
 }
 
+/// The issuance currency is a settlement label and must never reach a lifecycle
+/// decision: a gem whose two currencies differ is judged by its reference alone.
+#[test]
+fn a_gem_is_qualified_by_its_reference_currency_not_its_issuance_one() {
+    with_storage(|storage| {
+        let mut p = sample_params(ALICE);
+        p.issuance_currency = EUR;
+        let gem_id = api::add_gem(storage, p).unwrap();
+        let floor = sample_params(ALICE).floor_price_minor;
+
+        // The issuance currency is well above the floor, the reference one below.
+        // Reading the wrong code would promote this gem.
+        seed_currency(storage, 840, Some(floor - U256::from(1u64)));
+        seed_currency(storage, EUR, Some(floor + U256::from(1u64)));
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
+}
+
+/// One currency filling the whole per-block budget must not starve the ones
+/// behind it: the sweep resumes where it stopped instead of restarting.
+#[test]
+fn a_spent_budget_defers_the_rest_of_the_currency_list_to_the_next_block() {
+    with_storage(|storage| {
+        let floor = sample_params(ALICE).floor_price_minor;
+        // Fill USD's bin past the budget. Whole bins are processed atomically, so
+        // this one sweep spends everything the block had.
+        for i in 0..=crate::constants::MAX_GEM_QUALIFICATIONS_PER_BLOCK {
+            let mut p = sample_params(ALICE);
+            p.gem_load_minor = U256::from(1_000_000u64 + u64::from(i));
+            api::add_gem(storage, p).unwrap();
+        }
+        let eur_id = eur_gem(storage);
+        seed_currency(storage, 840, Some(floor + U256::from(1u64)));
+        seed_currency(storage, EUR, Some(floor + U256::from(1u64)));
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Issued as u8,
+            "USD spent the budget, so EUR was not reached this block"
+        );
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Qualified as u8,
+            "the next block resumes at EUR rather than restarting at USD"
+        );
+    });
+}
+
 /// A registry entry whose COEN pair is unregistered must skip that currency for
 /// the block, not halt the scan for the currencies that are priced.
 #[test]
