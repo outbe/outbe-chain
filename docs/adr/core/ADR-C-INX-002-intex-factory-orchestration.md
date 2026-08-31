@@ -37,6 +37,14 @@ call_window/call_threshold to transition eligible Issued or Qualified series to
 Called and remove/update indexes. Each candidate is checkpoint-isolated, but deterministic
 errors and retry/skip policy must be explicit.
 
+A called group leaves the price index and waits in a queue ordered by the deadline
+its call time fixed. A begin-block sweep takes it once that deadline is strictly
+past — the same boundary settlement stops at, so the two can never both count a
+unit — expires every member, and credits the Promis load of everything unrealised
+to the unallocated limit in one write per group. The sweep is budgeted per block,
+because a single price breach calls every eligible group of a currency at once and
+they expire together.
+
 ### Settlement
 
 Settlement is allowed in Qualified, or in Called no later than
@@ -128,26 +136,24 @@ module-level module audit profile.
    and recoverable across bridge failure/finality without duplicates.
 3. Define exact authorization of internal issuance; add structural caller and
    deployment-role tests for Desis and router/NFT addresses.
-4. Reconcile Rust and ERC-1155 lifecycle/expiry behavior with a cross-contract
-   generated model.
-5. Qualification/call scans need explicit maximum candidates/work per block,
+4. Qualification/call scans need explicit maximum candidates/work per block,
    deterministic continuation cursor and fairness.
-6. Candidate checkpoint errors are logged and skipped/retried. Classify transient
+5. Candidate checkpoint errors are logged and skipped/retried. Classify transient
    versus invariant failures and add bounded alert/halt policy.
-7. `assetAt(0)` and single-currency assumptions block safe multi-currency support.
-8. Fee-on-transfer settlement measures received delta but economic policy for a
+6. `assetAt(0)` and single-currency assumptions block safe multi-currency support.
+7. Fee-on-transfer settlement measures received delta but economic policy for a
    payer receiving fewer effective units is not explicitly accepted; validate vault
    shares/balance delta too.
-9. Approvals need strict ERC-20 safe-call, reset and nonstandard-token policy.
-10. Distribution cursor uses saturation and final share subtracts `paid`; corrupted
+8. Approvals need strict ERC-20 safe-call, reset and nonstandard-token policy.
+9. Distribution cursor uses saturation and final share subtracts `paid`; corrupted
     progress can mask/underflow. Use checked invariant validation.
-11. A distribution with corrupt contributor state retries forever every begin block.
+10. A distribution with corrupt contributor state retries forever every begin block.
     Add durable diagnostics and approved repair/escrow policy without redirection.
-12. Define duplicate/repeated proceeds semantics. Contributor cleanup after first
+11. Define duplicate/repeated proceeds semantics. Contributor cleanup after first
     payout currently prevents safe later deliveries.
-13. Pin PoW difficulty/preimage with independent vectors and activation rules;
+12. Pin PoW difficulty/preimage with independent vectors and activation rules;
     prove sequence increment rolls back on NFT/Promis failures.
-14. Add PFS-004 e2e covering real bridge, Oracle scan, dual-wallet settlement,
+13. Add PFS-004 e2e covering real bridge, Oracle scan, dual-wallet settlement,
     VaultRouter, mining, replay, failures and restart.
-15. Prove native IntexFactory balance always equals aggregate unfinished
+14. Prove native IntexFactory balance always equals aggregate unfinished
     distributions and parked/unclaimed obligations.

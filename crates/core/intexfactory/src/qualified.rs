@@ -41,6 +41,7 @@ impl BlockLifecycle for IntexLifecycle {
         // proceeds fan-in deadline has passed.
         crate::runtime::drain_distributions(&ctx.storage)?;
         crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
+        crate::expired::sweep_expiry_deadlines(ctx)?;
         Ok(())
     }
 

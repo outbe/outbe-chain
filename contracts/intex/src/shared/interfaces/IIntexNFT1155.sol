@@ -28,12 +28,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called. Expiry is not a distinct on-chain
-    ///      state; it is derived from `calledAt + callNoticePeriod` against the clock.
+    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is read-only:
+    ///      storage keeps `Called` so the transfer and bridge freezes, which compare the
+    ///      stored field, keep applying.
     enum IntexState {
         Issued,
         Qualified,
-        Called
+        Called,
+        Expired
     }
 
     /// @notice Per-token classification within a series.

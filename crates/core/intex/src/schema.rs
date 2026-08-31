@@ -12,13 +12,15 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Qualified -> Called`.
+/// Series lifecycle state. `Issued -> Qualified -> Called -> Expired`, where
+/// `Expired` means the call window closed, not that anything burned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
     Qualified = 1,
     Called = 2,
+    Expired = 3,
 }
 
 impl IntexState {
@@ -27,6 +29,7 @@ impl IntexState {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
+            3 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -478,6 +481,16 @@ pub struct IntexContract {
     /// keccak256(wwd_be32 ++ word_index_be32) -> 256 paid flags, one per leaf.
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // Cumulative: a series forfeits `issued_intex_count - settled - parked` at its
+    // deadline. Not on `SeriesRecord` because a record write rewrites every field.
+    /// series_id -> units settled so far.
+    #[attribute(order = 27)]
+    pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    /// series_id -> units parked into Gem positions.
+    #[attribute(order = 28)]
+    pub parked_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 }
 
 impl IntexContract<'_> {

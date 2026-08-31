@@ -28,15 +28,14 @@ library IntexMetadata {
     }
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
-    /// @param data Series record for the token id (Issued or Settled class).
-    /// @param timestamp Current block timestamp.
+    /// @param data Series record for the token id, with its effective state — the
+    ///        caller derives `Expired`, so this library never re-derives it.
     /// @return Token URI; the collection document when the record does not exist (`issuedAt == 0`).
-    function tokenURI(IIntexNFT1155.SeriesData memory data, uint256 timestamp) external pure returns (string memory) {
+    function tokenURI(IIntexNFT1155.SeriesData memory data) external pure returns (string memory) {
         if (data.issuedAt == 0) return _collectionURI();
 
         bool settled = data.status == IIntexNFT1155.IntexStatus.Settled;
-        bool expired = !settled && data.state == IIntexNFT1155.IntexState.Called
-            && timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
+        bool expired = !settled && data.state == IIntexNFT1155.IntexState.Expired;
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
@@ -46,7 +45,7 @@ library IntexMetadata {
             "\",\"description\":\"",
             DESCRIPTION,
             "\",\"image\":\"data:image/svg+xml;base64,",
-            Base64.encode(bytes(_generateSVG(data, displayId, settled, expired))),
+            Base64.encode(bytes(_generateSVG(data, displayId, settled))),
             "\",\"attributes\":",
             _buildAttributes(data, settled, expired),
             "}"
@@ -83,9 +82,7 @@ library IntexMetadata {
             "\"},",
             settled
                 ? ""
-                : string.concat(
-                    "{\"trait_type\":\"Series State\",\"value\":\"", _stateString(data.state, expired), "\"},"
-                ),
+                : string.concat("{\"trait_type\":\"Series State\",\"value\":\"", _stateString(data.state), "\"},"),
             "{\"trait_type\":\"Worldwide Day\",\"value\":",
             Strings.toString(data.worldwideDay),
             ",\"display_type\":\"number\"},",
@@ -131,7 +128,7 @@ library IntexMetadata {
         return string.concat(head, economics, callRows, "]");
     }
 
-    function _generateSVG(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled, bool expired)
+    function _generateSVG(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
         private
         pure
         returns (string memory)
@@ -140,8 +137,6 @@ library IntexMetadata {
         string memory statusColor;
         if (settled) {
             (statusText, statusColor) = ("SETTLED", "#a855f7");
-        } else if (expired) {
-            (statusText, statusColor) = ("EXPIRED", "#6b7280");
         } else {
             (statusText, statusColor) = _stateInfo(data.state);
         }
@@ -152,6 +147,7 @@ library IntexMetadata {
     function _stateInfo(IIntexNFT1155.IntexState state_) private pure returns (string memory, string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return ("ISSUED", "#2563eb");
         if (state_ == IIntexNFT1155.IntexState.Qualified) return ("QUALIFIED", "#16a34a");
+        if (state_ == IIntexNFT1155.IntexState.Expired) return ("EXPIRED", "#6b7280");
         return ("CALLED", "#f97316");
     }
 
@@ -215,10 +211,10 @@ library IntexMetadata {
         );
     }
 
-    function _stateString(IIntexNFT1155.IntexState state_, bool expired) private pure returns (string memory) {
-        if (expired) return "Expired";
+    function _stateString(IIntexNFT1155.IntexState state_) private pure returns (string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return "Issued";
         if (state_ == IIntexNFT1155.IntexState.Qualified) return "Qualified";
+        if (state_ == IIntexNFT1155.IntexState.Expired) return "Expired";
         return "Called";
     }
 

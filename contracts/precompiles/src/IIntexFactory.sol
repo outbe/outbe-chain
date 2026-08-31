@@ -100,6 +100,10 @@ interface IIntexFactory {
     /// @notice The series was force-called (Qualified → Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
+    /// @notice The series' settlement window closed. Both are zero when every unit
+    ///         was realized in time.
+    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
+
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain
     ///         routing its proceeds in parts emits once per part.

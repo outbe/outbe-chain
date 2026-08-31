@@ -23,6 +23,7 @@ use crate::payout::{
     encode_contributor_leaf, verify_contributor_leaf_range, ContributorLeafData,
     CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
 };
+use crate::schema::SeriesRecordEntryExt;
 use crate::schema::{
     CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
     DistProgress, IntexContract, IntexState, SeriesId, SeriesRecord,
@@ -103,6 +104,127 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     record.state = IntexState::Called as u8;
     record.called_at = called_at;
     registry.update_series_record(&record)
+}
+
+/// What a series forfeited when its call window closed.
+pub struct Forfeited {
+    pub units: u32,
+    pub promis_load_minor: U256,
+}
+
+/// `Called -> Expired`. Every unit still unsettled and unparked is forfeited, and
+/// its load is the caller's to return to the pool.
+pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut record = registry.load_series(series_id)?;
+    if record.lifecycle_state()? != IntexState::Called {
+        return Err(IntexError::InvalidState {
+            expected: IntexState::Called as u8,
+            actual: record.state,
+        }
+        .into());
+    }
+
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+    // Checked: an underflow is corrupt state, not "nothing owed".
+    let forfeited = record
+        .issued_intex_count
+        .checked_sub(settled)
+        .and_then(|left| left.checked_sub(parked))
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
+
+    record.state = IntexState::Expired as u8;
+    let promis_load_minor = record.promis_load_minor;
+    registry.update_series_record(&record)?;
+    Ok(Forfeited {
+        units: forfeited,
+        promis_load_minor,
+    })
+}
+
+/// Record `units` settled: their load belongs to the settler from now on.
+pub fn record_settled_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realized_units(storage, series_id, units, RealizedKind::Settled)
+}
+
+/// Record `units` parked: their load moved into the Gem position.
+pub fn record_parked_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realized_units(storage, series_id, units, RealizedKind::Parked)
+}
+
+/// Units settled so far against `series_id`.
+pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .settled_units
+        .read(&series_id)
+}
+
+/// Units parked into Gem positions from `series_id`.
+pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .parked_units
+        .read(&series_id)
+}
+
+enum RealizedKind {
+    Settled,
+    Parked,
+}
+
+fn add_realized_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+    kind: RealizedKind,
+) -> Result<()> {
+    if units == 0 {
+        return Ok(());
+    }
+    let registry = IntexContract::new(storage.clone());
+    // One slot, not the whole record: this runs on every settle.
+    let issued = registry
+        .series
+        .entry(series_id)
+        .issued_intex_count()
+        .read()?;
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+
+    let (settled, parked) = match kind {
+        RealizedKind::Settled => (
+            settled
+                .checked_add(units)
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
+            parked,
+        ),
+        RealizedKind::Parked => (
+            settled,
+            parked
+                .checked_add(units)
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
+        ),
+    };
+    // Crossing the issued count means the two ledgers disagree.
+    if settled
+        .checked_add(parked)
+        .is_none_or(|realized| realized > issued)
+    {
+        return Err(IntexError::RealizedUnitsOverflow.into());
+    }
+
+    match kind {
+        RealizedKind::Settled => registry.settled_units.write(&series_id, settled),
+        RealizedKind::Parked => registry.parked_units.write(&series_id, parked),
+    }
 }
 
 /// Backdate a series' issuance stamp. Test-only: the Called sweep counts breach
