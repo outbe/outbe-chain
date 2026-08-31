@@ -875,16 +875,24 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-/// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
-/// minor units. Rejects a token the series does not accept.
-pub fn quote_cost_amount(
+/// What settling one Intex of `series_id` with `payment_token` costs, and which of
+/// the series' two currencies that token settles on. Rejects a token the series
+/// does not accept.
+pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     payment_token: Address,
-) -> Result<U256> {
+) -> Result<(u16, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     let currency = accept_payment_token(storage, payment_token, &series)?;
-    cost_in_token(storage, &series, payment_token, currency)
+    let settlement_currency = match currency {
+        PaymentCurrency::Reference => series.reference_currency,
+        PaymentCurrency::Issuance => series.issuance_currency,
+    };
+    Ok((
+        settlement_currency,
+        cost_in_token(storage, &series, payment_token, currency)?,
+    ))
 }
 
 /// Which of the series' two currencies a payment token is denominated in.

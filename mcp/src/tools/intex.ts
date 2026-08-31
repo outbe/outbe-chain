@@ -194,7 +194,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /**
    * Payment tokens a series accepts: the vault router's assets for either of its
    * currencies. An issuance-currency token only settles while both COEN rates are
-   * published and fresh, which `quoteCostAmount` is the one to answer.
+   * published and fresh, which `quoteSettlement` is the one to answer.
    */
   async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
@@ -221,14 +221,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return [...seen];
   }
 
-  /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
-  async function quoteCostAmount(n: Network, series: Hex, token: `0x${string}`): Promise<bigint> {
-    return (await n.client.readContract({
+  /**
+   * What settling one Intex of `series` with `token` costs, in that token's minor
+   * units, and the ISO 4217 code the payment is denominated in.
+   */
+  async function quoteSettlement(
+    n: Network,
+    series: Hex,
+    token: `0x${string}`,
+  ): Promise<{ settlementCurrency: number; payableUnits: bigint }> {
+    const [settlementCurrency, payableUnits] = (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
-      functionName: "quoteCostAmount",
+      functionName: "quoteSettlement",
       args: [series, token],
-    })) as bigint;
+    })) as [number, bigint];
+    return { settlementCurrency: Number(settlementCurrency), payableUnits };
   }
 
   /** ERC-20 decimals + symbol of an arbitrary settlement token. */
@@ -303,7 +311,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         parkedUnits: Number(d.parkedUnits),
         // Unrealized units lose their load to the pool when the call window closes.
         unrealizedUnits: Number(d.issuedIntexCount) - Number(d.settledUnits) - Number(d.parkedUnits),
-        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
@@ -1073,12 +1080,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         }
         token = tokens[0];
       }
-      const [costAmountMinor, { decimals: tokenDec, symbol: tokenSymbol }] = await Promise.all([
-        quoteCostAmount(n, series, token),
-        tokenMeta(n, token),
-      ]);
+      const [{ settlementCurrency, payableUnits }, { decimals: tokenDec, symbol: tokenSymbol }] =
+        await Promise.all([quoteSettlement(n, series, token), tokenMeta(n, token)]);
       const factory = addr(n, "factory");
-      const total = costAmountMinor * BigInt(amount);
+      const total = payableUnits * BigInt(amount);
 
       const allowance = (await n.client.readContract({
         address: token,
@@ -1109,7 +1114,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         intexHolder,
         amount,
         paymentToken: { address: token, symbol: tokenSymbol, decimals: tokenDec },
-        costAmount: { raw: costAmountMinor.toString(), value: formatUnits(costAmountMinor, tokenDec) },
+        settlementCurrency,
+        perUnit: { raw: payableUnits.toString(), value: formatUnits(payableUnits, tokenDec) },
         total: { raw: total.toString(), value: formatUnits(total, tokenDec) },
         autoApprove,
         self: intexHolder === account.address,
@@ -1135,10 +1141,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const base = { token, symbol: symbol as string, decimals: Number(decimals) };
           // A refused issuance-currency quote is this token's answer, not the list's.
           try {
-            const cost = await quoteCostAmount(n, series, token);
+            const { settlementCurrency, payableUnits } = await quoteSettlement(n, series, token);
             return {
               ...base,
-              costAmount: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
+              settlementCurrency,
+              perUnit: { raw: payableUnits.toString(), value: formatUnits(payableUnits, Number(decimals)) },
             };
           } catch (error) {
             return { ...base, unavailable: (error as Error).message };

@@ -16,9 +16,15 @@ interface IIntexFactory {
     ///         series' currencies; the issuance one converts through COEN and needs fresh rates.
     function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
 
-    /// @notice Per-Intex cost of settling `seriesId` in `paymentToken`, in that
-    ///         token's minor units. Reverts if the series does not accept it.
-    function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
+    /// @notice What settling one Intex of `seriesId` with `paymentToken` costs, and
+    ///         which of the series' two currencies that token settles on. Reverts
+    ///         for a token the series does not accept.
+    /// @return settlementCurrency ISO 4217 code the payment is denominated in.
+    /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
+    function quoteSettlement(bytes14 seriesId, address paymentToken)
+        external
+        view
+        returns (uint16 settlementCurrency, uint256 payableUnits);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Caller is the holder. Authorized by the
