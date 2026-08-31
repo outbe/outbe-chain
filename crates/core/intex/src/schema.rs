@@ -7,7 +7,6 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::units::SCALE_1E6_U256;
 use std::fmt;
 
 use crate::errors::IntexError;
@@ -262,10 +261,6 @@ impl SeriesRecord {
         IntexState::from_u8(self.state)
     }
 
-    pub fn cost_amount_minor(&self) -> Result<U256, IntexError> {
-        cost_amount_minor(self.entry_price_minor, self.promis_load_minor)
-    }
-
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
             call_window: self.call_window,
@@ -273,21 +268,6 @@ impl SeriesRecord {
             call_notice_period: self.call_notice_period,
         }
     }
-}
-
-/// Cost of one Intex in reference ISO stable-units (1e6). Entry price and PROMIS load
-/// both use scale 1e6, so removing the PROMIS denominator leaves the
-/// reference-currency price at scale 1e6.
-/// Settling converts this into the chosen token's minor units — see
-/// `intexfactory::runtime::quote_cost_amount`.
-pub fn cost_amount_minor(
-    entry_price_minor: U256,
-    promis_load_minor: U256,
-) -> Result<U256, IntexError> {
-    entry_price_minor
-        .checked_mul(promis_load_minor)
-        .map(|v| v / SCALE_1E6_U256)
-        .ok_or(IntexError::CostAmountOverflow)
 }
 
 /// Paginated creator-reward distribution progress for a worldwide day. Exists

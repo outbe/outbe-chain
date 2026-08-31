@@ -76,14 +76,14 @@ fn validator_receives_reward_gem(world: &mut World) {
     assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
     assert!(!gem.promisLoad.is_zero(), "reward Gem load must be non-zero");
     assert!(
-        !gem.costAmount.is_zero(),
-        "reward Gem cost must be non-zero"
+        !gem.entryPrice.is_zero(),
+        "reward Gem entry price must be non-zero"
     );
     let delivery_block_number = find_canonical_reward_gem_delivery_block_number(world, gem_id)
         .expect("reward Gem must be emitted by canonical CycleTick -> RewardsGemDelivery");
     eprintln!(
-        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} cost={} delivery_block_number={delivery_block_number}",
-        gem.promisLoad, gem.costAmount,
+        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} entry={} delivery_block_number={delivery_block_number}",
+        gem.promisLoad, gem.entryPrice,
     );
 }
 
@@ -307,16 +307,27 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let payer = eth::address_of(&payer_key).expect("validator 1 payer address");
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
+    let url = world.rpc.url(world.validators.primary_port());
+    // The cost is derived, so what to fund is the factory's own quote — already in
+    // the settlement asset's units, which the reference amount never was.
+    let payable = eth::read_call(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::quoteSettlementCall {
+            gemId: gem_id,
+            asset: fixture.asset,
+        },
+    )
+    .expect("quote settling the reward Gem")
+    .payableUnits;
     fund_and_approve(
         world,
         fixture.asset,
         &key,
         owner,
         addresses::GEM_FACTORY_ADDR,
-        gem.costAmount,
+        payable,
     );
-
-    let url = world.rpc.url(world.validators.primary_port());
     let keys =
         eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
 
@@ -379,7 +390,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(gem.costAmount),
+        Some(payable),
         "reserve vault did not receive exact Gem cost"
     );
 

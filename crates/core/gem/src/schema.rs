@@ -147,20 +147,20 @@ pub struct GemContract {
     // a gem is listed iff its state is Qualified or Called. Maintained by
     // add_gem / set_state / burn. `callable_gem_index` maps gem_id -> position
     // for O(1) swap-remove.
-    #[attribute(order = 10)]
+    #[attribute(order = 11)]
     pub callable_gems: outbe_primitives::storage::dsl::List<U256>,
 
-    #[attribute(order = 11)]
+    #[attribute(order = 12)]
     pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Next bin the qualify scan visits, per reference currency. Non-zero only
     /// while a sweep was cut short by the per-block budget.
-    #[attribute(order = 12)]
+    #[attribute(order = 13)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Where the next qualify scan starts, so a heavy currency cannot starve the
     /// ones behind it when the per-block budget runs out.
-    #[attribute(order = 13)]
+    #[attribute(order = 14)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
