@@ -177,8 +177,26 @@ mineable. Stranded rather than lost, with no expiry on either side.
 
 ### Not in scope
 
-Leave the arbitrary-payer rule as is. Third-party settlement is deliberate in
-both Nod and Credis and is unrelated to this defect.
+**Arbitrary payer.** Leave the rule as is. Third-party settlement is deliberate
+in both Nod and Credis and is unrelated to this defect.
+
+**No CCA slashing.** The fix must not introduce an agent penalty on the Nod
+forfeit or settlement path. Credis escrows an originating CCA's stake at
+`request_credis` (`credisfactory/src/runtime.rs:134`), releases it when the
+position closes (`release_cca_stake`, `:262`) and burns it on void
+(`burn_cca_stake`, `:334`) — "what makes origination accountable rather than
+free".
+
+That symmetry does not carry over. A Credis position is *originated* by an agent
+who underwrites it with matched stake, so a default is an origination failure
+with an accountable party. A Nod is produced by Lysis from the owner's own
+Tribute: no agent originates it, no stake is escrowed against it, and no `cca` is
+recorded on the item or its bucket. There is nobody to hold accountable, and a
+forfeit reflects owner inaction or price movement rather than anyone's
+underwriting.
+
+Adding a CCA penalty here would also require inventing the binding and the
+escrow, neither of which exists in `nod` or `nodfactory` today.
 
 ## Tests to add
 
