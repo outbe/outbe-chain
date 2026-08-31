@@ -4,13 +4,13 @@ import {
   IGemFactory__factory,
   IGratis__factory,
   IPromis__factory,
-  IGratisFactory__factory,
+  IPromisFactory__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GEM_ADDRESS,
   DEFAULT_GEM_FACTORY_ADDRESS,
   DEFAULT_GRATIS_ADDRESS,
-  DEFAULT_GRATIS_FACTORY_ADDRESS,
+  DEFAULT_PROMIS_FACTORY_ADDRESS,
   DEFAULT_PROMIS_ADDRESS,
   formatToken,
   formatTokenDiff,
@@ -33,7 +33,7 @@ import {
 // plaintext-seeded at genesis anymore (both are TEE-encrypted at rest), so genesis
 // seeds the user a Settled *gem* instead. This script burns that gem for confidential
 // Promis (`mineGemPromis`), then converts the Promis 1:1 into confidential Gratis
-// (`mineFromPromis`) — leaving the user real, enclave-encrypted Gratis to pledge.
+// (`mineGratis`) — leaving the user real, enclave-encrypted Gratis to pledge.
 const amountArg = process.argv[2];
 const envName = process.argv[3] || DEFAULT_ENV;
 
@@ -46,7 +46,7 @@ const gemAddress = process.env["GEM_ADDRESS"] || DEFAULT_GEM_ADDRESS;
 const gemFactoryAddress = process.env["GEM_FACTORY_ADDRESS"] || DEFAULT_GEM_FACTORY_ADDRESS;
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const promisAddress = process.env["PROMIS_ADDRESS"] || DEFAULT_PROMIS_ADDRESS;
-const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
+const promisFactoryAddress = process.env["PROMIS_FACTORY_ADDRESS"] || DEFAULT_PROMIS_FACTORY_ADDRESS;
 
 const GEM_STATE_SETTLED = 3;
 
@@ -57,7 +57,7 @@ async function main() {
   const gemFactory = IGemFactory__factory.connect(gemFactoryAddress, wallet);
   const gratis = IGratis__factory.connect(gratisAddress, wallet);
   const promis = IPromis__factory.connect(promisAddress, wallet);
-  const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
+  const promisFactory = IPromisFactory__factory.connect(promisFactoryAddress, wallet);
 
   const gratisMeta = await fetchTokenMeta(gratis);
   const promisMeta = await fetchTokenMeta(promis);
@@ -114,7 +114,7 @@ async function main() {
   console.log(`Gem:            ${gemAddress} (id ${gemId})`);
   console.log(`GemFactory:     ${gemFactoryAddress}`);
   console.log(`Promis:         ${promisAddress} (${promisMeta.symbol})`);
-  console.log(`GratisFactory:  ${gratisFactoryAddress}`);
+  console.log(`PromisFactory:  ${promisFactoryAddress}`);
   console.log(`Gratis:         ${gratisAddress} (${gratisMeta.symbol})`);
   console.log(`Gem load:       ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
   console.log(`Convert amount: ${formatToken(amount, promisMeta.decimals, promisMeta.symbol)}`);
@@ -145,10 +145,10 @@ async function main() {
   console.log(`  Block:   ${receipt1.blockNumber} — minted ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
 
   // Step 2 — Promis → Gratis: burn `amount` Promis and mint `amount` Gratis. Both
-  // ledgers are confidential, so mineFromPromis takes TWO modify authorizations,
-  // each bound to its own ledger's current op-nonce: the Gratis MINT auth
-  // (GratisOp.Mint) and the Promis BURN auth (PromisOp.Burn). The Promis op-nonce
-  // has advanced to 1 after the mint above.
+  // ledgers are confidential, so mineGratis takes TWO modify authorizations, each
+  // bound to its own ledger's current op-nonce: the Promis BURN auth (PromisOp.Burn)
+  // and the Gratis MINT auth (GratisOp.Mint). The Promis op-nonce has advanced to 1
+  // after the mint above.
   const gratisMintNonce = await gratis.opNonceOf(userAddress);
   const gratisMintMac = modifyMac(
     gratisKeys.modifyKey,
@@ -169,17 +169,17 @@ async function main() {
     chainId,
     "Promis",
   );
-  console.log("\nStep 2: mineFromPromis(amount, gratisMac, gratisOpNonce, promisMac, promisOpNonce)...");
-  const tx2 = await gratisFactory.mineFromPromis(
+  console.log("\nStep 2: mineGratis(amount, promisMac, promisOpNonce, gratisMac, gratisOpNonce)...");
+  const tx2 = await promisFactory.mineGratis(
     amount,
-    gratisMintMac,
-    gratisMintNonce,
     promisBurnMac,
     promisBurnNonce,
+    gratisMintMac,
+    gratisMintNonce,
   );
   console.log(`  TX hash: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
-  if (!receipt2) throw new Error("mineFromPromis tx receipt missing");
+  if (!receipt2) throw new Error("mineGratis tx receipt missing");
   console.log(`  Block:   ${receipt2.blockNumber}`);
 
   const promisAfter = decryptBalance(
