@@ -1407,6 +1407,36 @@ impl Rpc {
         })
     }
 
+    /// The full `validatorByAddress` record at one exact canonical block.
+    pub fn validator_record_at(
+        &self,
+        port: u16,
+        addr: &str,
+        block_number: u64,
+    ) -> Option<ValidatorRecord> {
+        let v: Address = addr.parse().ok()?;
+        let record = eth::read_call_at(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorByAddressCall { addr: v },
+            block_number,
+        )?;
+        Some(ValidatorRecord {
+            address: record.validatorAddress,
+            consensus_pubkey: record.consensusPubkey,
+            stake: record.stake,
+            status: record.status,
+            slash_count: record.slashCount,
+            missed_blocks: record.missedBlocks,
+            missed_votes: record.missedVotes,
+            blocks_proposed: record.blocksProposed,
+            joined_at_height: record.joinedAtHeight,
+            deactivated_at_height: record.deactivatedAtHeight,
+            unbonding_end: record.unbondingEnd,
+            has_bls_share: record.hasBLSShare,
+        })
+    }
+
     /// The full record at the one-based dense ValidatorSet index.
     pub fn validator_record_by_index(&self, port: u16, index: u64) -> Option<ValidatorRecord> {
         let record = eth::read_call(

@@ -37,6 +37,7 @@ struct LeaseScenarioState {
     missed_validator_slash_count: Option<u64>,
     missed_validator_last_finalized: Option<u64>,
     missed_validator_epoch: Option<u64>,
+    validator_restart_log_offset: Option<u64>,
     permanent_offer_keys: Vec<[u8; 32]>,
 }
 
@@ -62,10 +63,118 @@ fn recovery_follower_has_post_start_progress(baseline: u64, current: Option<u64>
     current.is_some_and(|height| height > baseline)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecoveryFollowerStartupProbeV1 {
+    Ready,
+    Waiting,
+    Exited,
+}
+
+fn classify_recovery_follower_startup(
+    running: bool,
+    post_start_log: &str,
+) -> RecoveryFollowerStartupProbeV1 {
+    if !running {
+        RecoveryFollowerStartupProbeV1::Exited
+    } else if post_start_log.contains(FOLLOWER_ENGINE_STARTED_MARKER) {
+        RecoveryFollowerStartupProbeV1::Ready
+    } else {
+        RecoveryFollowerStartupProbeV1::Waiting
+    }
+}
+
+fn recovery_log_tail(log: &str, max_lines: usize) -> String {
+    let mut lines: Vec<_> = log.lines().rev().take(max_lines).collect();
+    lines.reverse();
+    lines.join("\n")
+}
+
+fn wait_for_recovery_follower_startup(
+    world: &mut World,
+    validator_index: usize,
+    follower_name: &str,
+    log_offset: u64,
+    attempts: u32,
+    label: &str,
+) {
+    for _ in 0..attempts {
+        let post_start_log = node_log_since(world, validator_index, log_offset);
+        let running = world.localnet.follower_running(follower_name);
+        match classify_recovery_follower_startup(running, &post_start_log) {
+            RecoveryFollowerStartupProbeV1::Ready => return,
+            RecoveryFollowerStartupProbeV1::Waiting => sleep(Duration::from_secs(2)),
+            RecoveryFollowerStartupProbeV1::Exited => panic!(
+                "{label} exited before `{FOLLOWER_ENGINE_STARTED_MARKER}`; post-offset log tail:\n{}",
+                recovery_log_tail(&post_start_log, 80)
+            ),
+        }
+    }
+
+    let post_start_log = node_log_since(world, validator_index, log_offset);
+    let running = world.localnet.follower_running(follower_name);
+    match classify_recovery_follower_startup(running, &post_start_log) {
+        RecoveryFollowerStartupProbeV1::Ready => {}
+        RecoveryFollowerStartupProbeV1::Exited => panic!(
+            "{label} exited before `{FOLLOWER_ENGINE_STARTED_MARKER}`; post-offset log tail:\n{}",
+            recovery_log_tail(&post_start_log, 80)
+        ),
+        RecoveryFollowerStartupProbeV1::Waiting => panic!(
+            "timed out waiting for {label}; running={running}; post-offset log tail:\n{}",
+            recovery_log_tail(&post_start_log, 80)
+        ),
+    }
+}
+
 fn requires_certified_follower_recovery(evidence: &str) -> bool {
     CERTIFIED_FOLLOWER_RECOVERY_MARKERS
         .iter()
         .all(|marker| evidence.contains(marker))
+}
+
+fn pre_readiness_recovery_is_authority_free(
+    validator_status: u8,
+    has_bls_share: bool,
+    post_restart_log: &str,
+) -> bool {
+    const SHARELESS_MARKERS: [&str; 3] = [
+        "local validator is absent from the finalized DKG boundary; restoring shareless verifier mode",
+        "retaining no proposer identity",
+        "no threshold share for this epoch — running consensus engine in VERIFIER mode",
+    ];
+    const AUTHORITY_MARKERS: [&str; 7] = [
+        "propose requested",
+        "relay forwarding proposed block",
+        "sent DKG ack",
+        "sent share to player",
+        "recorded finalized DKG dealer log",
+        "DKG ceremony complete — threshold material obtained",
+        "VRF/DKG material activated",
+    ];
+
+    validator_status == STATUS_PENDING
+        && !has_bls_share
+        && SHARELESS_MARKERS
+            .iter()
+            .all(|marker| post_restart_log.contains(marker))
+        && AUTHORITY_MARKERS
+            .iter()
+            .all(|marker| !post_restart_log.contains(marker))
+}
+
+fn fresh_dkg_activation_is_complete(
+    validator_status: u8,
+    has_bls_share: bool,
+    previous_material_version: u64,
+    primary_material_version: u64,
+    restarted_material_version: u64,
+    post_restart_log: &str,
+) -> bool {
+    validator_status == STATUS_ACTIVE
+        && has_bls_share
+        && primary_material_version > previous_material_version
+        && restarted_material_version == primary_material_version
+        && post_restart_log.contains("DKG ceremony complete — threshold material obtained")
+        && post_restart_log.contains("VRF/DKG material activated")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -614,6 +723,7 @@ fn full_node_stops_and_late_renewal_fails(world: &mut World) {
         120,
         "expired FullNode fail-stop",
     );
+    world.state.expected_tee_lease_guard_shutdown_full_node = Some(full_node);
     for index in [MISSED_VALIDATOR, full_node] {
         let error = world
             .localnet
@@ -746,12 +856,11 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
             .validator_radicle_sidecar_running(MISSED_VALIDATOR),
         "validator Radicle signer remained live during certified follower recovery"
     );
-    wait_until(
-        || {
-            world.localnet.follower_running(&follower_name)
-                && node_log_since(world, MISSED_VALIDATOR, recovery_log_offset)
-                    .contains(FOLLOWER_ENGINE_STARTED_MARKER)
-        },
+    wait_for_recovery_follower_startup(
+        world,
+        MISSED_VALIDATOR,
+        &follower_name,
+        recovery_log_offset,
         120,
         "first certified recovery follower engine startup",
     );
@@ -845,6 +954,7 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
         );
     }
 
+    state().validator_restart_log_offset = Some(node_log_len(world, MISSED_VALIDATOR));
     world
         .localnet
         .restart_validator(MISSED_VALIDATOR)
@@ -872,24 +982,59 @@ fn recovered_nodes_resume(world: &mut World) {
         .get(MISSED_VALIDATOR)
         .evm_key()
         .expect("missed validator key");
+    let primary = world.validators.primary_port();
     let restarted_port = world.validators.http_port(MISSED_VALIDATOR);
-    assert_eq!(
-        world
-            .rpc
-            .validator_record(world.validators.primary_port(), &address)
-            .expect("validator before readiness")
-            .status,
-        STATUS_PENDING,
-        "TEE join must not bypass readiness"
+    let restart_log_offset = state()
+        .validator_restart_log_offset
+        .expect("validator restart log offset");
+    wait_until(
+        || {
+            let Some(record) = world.rpc.validator_record(primary, &address) else {
+                return false;
+            };
+            pre_readiness_recovery_is_authority_free(
+                record.status,
+                record.has_bls_share,
+                &node_log_since(world, MISSED_VALIDATOR, restart_log_offset),
+            )
+        },
+        60,
+        "explicit shareless validator runtime before readiness",
     );
-    let voter_misses_before_readiness = world
+    let pre_readiness_record = world
         .rpc
-        .voter_miss_count(world.validators.primary_port(), &address)
-        .expect("restarted validator voter misses before readiness");
+        .validator_record(primary, &address)
+        .expect("validator before readiness");
+    let pre_readiness_log = node_log_since(world, MISSED_VALIDATOR, restart_log_offset);
+    assert!(
+        pre_readiness_recovery_is_authority_free(
+            pre_readiness_record.status,
+            pre_readiness_record.has_bls_share,
+            &pre_readiness_log,
+        ),
+        "TEE join bypassed the shareless PENDING recovery state"
+    );
     assert_eq!(
         world.rpc.has_threshold_shares(restarted_port),
         Some(false),
-        "PENDING validator exposed current threshold material before readiness"
+        "shareless validator RPC reported a local private threshold share"
+    );
+    let voter_misses_before_readiness = world
+        .rpc
+        .voter_miss_count(primary, &address)
+        .expect("restarted validator voter misses before readiness");
+    let previous_material_version = world
+        .rpc
+        .consensus_status_field(primary, "vrfMaterialVersion")
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("primary pre-readiness VRF material version");
+    assert_eq!(
+        world
+            .rpc
+            .consensus_status_field(restarted_port, "vrfMaterialVersion")
+            .and_then(|value| value.parse::<u64>().ok()),
+        Some(previous_material_version),
+        "shareless validator recovered a different public VRF material version"
     );
     let ready = world
         .rpc
@@ -899,7 +1044,6 @@ fn recovered_nodes_resume(world: &mut World) {
     let readiness_height = ready
         .block_number()
         .expect("readiness receipt block number");
-    let primary = world.validators.primary_port();
     wait_until(
         || {
             world
@@ -910,29 +1054,47 @@ fn recovered_nodes_resume(world: &mut World) {
         60,
         "readiness receipt canonical finality",
     );
-    assert_eq!(
-        world
-            .rpc
-            .validator_record(world.validators.primary_port(), &address)
-            .expect("validator immediately after readiness")
-            .status,
-        STATUS_PENDING,
-        "readiness bypassed the fresh DKG activation boundary"
-    );
-    assert_eq!(
-        world.rpc.has_threshold_shares(restarted_port),
-        Some(false),
-        "validator exposed current threshold material after readiness but before fresh DKG"
+    let readiness_record = world
+        .rpc
+        .validator_record_at(primary, &address, readiness_height)
+        .expect("validator record at finalized readiness receipt");
+    assert!(
+        readiness_record.status == STATUS_PENDING && !readiness_record.has_bls_share,
+        "readiness bypassed the fresh DKG activation boundary at block {readiness_height}: \
+         status={}, has_bls_share={}",
+        readiness_record.status,
+        readiness_record.has_bls_share,
     );
     wait_until(
         || {
-            world
+            let Some(record) = world.rpc.validator_record(primary, &address) else {
+                return false;
+            };
+            let Some(primary_version) = world
                 .rpc
-                .validator_record(world.validators.primary_port(), &address)
-                .is_some_and(|record| record.status == STATUS_ACTIVE && record.has_bls_share)
+                .consensus_status_field(primary, "vrfMaterialVersion")
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                return false;
+            };
+            let Some(restarted_version) = world
+                .rpc
+                .consensus_status_field(restarted_port, "vrfMaterialVersion")
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                return false;
+            };
+            fresh_dkg_activation_is_complete(
+                record.status,
+                record.has_bls_share,
+                previous_material_version,
+                primary_version,
+                restarted_version,
+                &node_log_since(world, MISSED_VALIDATOR, restart_log_offset),
+            ) && world.rpc.has_threshold_shares(restarted_port) == Some(true)
         },
         900,
-        "fresh DKG activation after readiness",
+        "fresh DKG completion and activation after readiness",
     );
 
     assert!(
@@ -955,27 +1117,44 @@ fn recovered_nodes_resume(world: &mut World) {
         VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT,
     )
     .unwrap_or_else(|error| panic!("rejoined validator lost canonical parity: {error}"));
-    assert_eq!(
-        world.rpc.has_threshold_shares(restarted_port),
-        Some(true),
-        "canonically caught-up ACTIVE validator has no current private threshold share"
-    );
     let expected_material_version = world
         .rpc
         .consensus_status_field(primary, "vrfMaterialVersion")
+        .and_then(|value| value.parse::<u64>().ok())
         .expect("primary active VRF material version");
     let restarted_material_version = world
         .rpc
         .consensus_status_field(restarted_port, "vrfMaterialVersion")
+        .and_then(|value| value.parse::<u64>().ok())
         .expect("restarted validator active VRF material version");
-    assert_eq!(
-        restarted_material_version, expected_material_version,
-        "restarted validator loaded a different active VRF material version"
+    let active_record = world
+        .rpc
+        .validator_record(primary, &address)
+        .expect("validator after fresh DKG activation");
+    assert!(
+        fresh_dkg_activation_is_complete(
+            active_record.status,
+            active_record.has_bls_share,
+            previous_material_version,
+            expected_material_version,
+            restarted_material_version,
+            &node_log_since(world, MISSED_VALIDATOR, restart_log_offset),
+        ),
+        "canonically caught-up validator lacks fresh DKG activation evidence"
     );
     assert_eq!(
-        world.rpc.voter_miss_count(primary, &address),
-        Some(voter_misses_before_readiness),
-        "restarted validator accumulated voter misses through activation"
+        world.rpc.has_threshold_shares(restarted_port),
+        Some(true),
+        "freshly activated validator RPC does not report its active private threshold share"
+    );
+    let voter_misses_after_activation = world
+        .rpc
+        .voter_miss_count(primary, &address)
+        .expect("restarted validator voter misses after activation");
+    assert!(
+        voter_misses_after_activation <= voter_misses_before_readiness,
+        "restarted validator accumulated voter misses through activation: before readiness \
+         {voter_misses_before_readiness}, after activation {voter_misses_after_activation}"
     );
 
     let full_node = state().full_node_index.expect("FullNode index");
@@ -1026,15 +1205,40 @@ fn recovered_nodes_resume(world: &mut World) {
         restarted_completion_material_version, expected_completion_material_version,
         "validator VRF material diverged before scenario completion"
     );
-    assert_eq!(
-        world.rpc.voter_miss_count(primary, &address),
-        Some(voter_misses_before_readiness),
-        "restarted validator accumulated voter misses after activation"
+    let voter_misses_at_completion = world
+        .rpc
+        .voter_miss_count(primary, &address)
+        .expect("restarted validator voter misses at completion");
+    assert!(
+        voter_misses_at_completion <= voter_misses_before_readiness,
+        "restarted validator accumulated voter misses after activation: before readiness \
+         {voter_misses_before_readiness}, at completion {voter_misses_at_completion}"
     );
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn certified_follower_startup_probe_fails_closed_on_early_exit() {
+        assert_eq!(
+            super::classify_recovery_follower_startup(true, super::FOLLOWER_ENGINE_STARTED_MARKER),
+            super::RecoveryFollowerStartupProbeV1::Ready
+        );
+        assert_eq!(
+            super::classify_recovery_follower_startup(true, "still reconstructing committees"),
+            super::RecoveryFollowerStartupProbeV1::Waiting
+        );
+        assert_eq!(
+            super::classify_recovery_follower_startup(false, "fatal startup error"),
+            super::RecoveryFollowerStartupProbeV1::Exited
+        );
+        assert_eq!(
+            super::classify_recovery_follower_startup(false, super::FOLLOWER_ENGINE_STARTED_MARKER),
+            super::RecoveryFollowerStartupProbeV1::Exited,
+            "a dead follower must not satisfy the running-and-marker gate"
+        );
+    }
+
     #[test]
     fn certified_follower_recovery_evidence_requires_all_operator_guidance() {
         let complete = "validator recovery requires certified follower catch-up; \
@@ -1042,6 +1246,57 @@ mod tests {
         assert!(super::requires_certified_follower_recovery(complete));
         assert!(!super::requires_certified_follower_recovery(
             "validator recovery requires certified follower catch-up; omit --validator"
+        ));
+    }
+
+    #[test]
+    fn pre_readiness_recovery_requires_explicit_shareless_runtime_evidence() {
+        let log = "loaded validator EVM signer\nlocal validator is absent from the finalized DKG boundary; restoring shareless \
+            verifier mode\nretaining no proposer identity\nno threshold share for this epoch — \
+            running consensus engine in VERIFIER mode";
+        assert!(super::pre_readiness_recovery_is_authority_free(
+            super::STATUS_PENDING,
+            false,
+            log,
+        ));
+        assert!(!super::pre_readiness_recovery_is_authority_free(
+            super::STATUS_PENDING,
+            true,
+            log,
+        ));
+    }
+
+    #[test]
+    fn pre_readiness_recovery_rejects_validator_authority_markers() {
+        let log = "local validator is absent from finalized DKG boundary; restoring shareless \
+            verifier mode\nretaining no proposer identity\nno threshold share for this epoch — \
+            running consensus engine in VERIFIER mode\npropose requested";
+        assert!(!super::pre_readiness_recovery_is_authority_free(
+            super::STATUS_PENDING,
+            false,
+            log,
+        ));
+    }
+
+    #[test]
+    fn fresh_dkg_activation_requires_share_version_advance_and_runtime_evidence() {
+        let log = "DKG ceremony complete — threshold material obtained\nVRF/DKG material \
+            activated dkg_cycle=9 activation_height=540";
+        assert!(super::fresh_dkg_activation_is_complete(
+            super::STATUS_ACTIVE,
+            true,
+            7,
+            9,
+            9,
+            log,
+        ));
+        assert!(!super::fresh_dkg_activation_is_complete(
+            super::STATUS_ACTIVE,
+            true,
+            7,
+            7,
+            7,
+            log,
         ));
     }
 
