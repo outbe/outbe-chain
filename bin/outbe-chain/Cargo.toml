@@ -51,6 +51,7 @@ reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true
+commonware-macros.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true

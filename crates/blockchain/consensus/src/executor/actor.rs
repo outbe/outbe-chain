@@ -25,6 +25,7 @@ use outbe_primitives::{
     projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
+use reth_ethereum::node::api::BeaconForkChoiceUpdateError;
 use reth_node_builder::ConsensusEngineHandle;
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +42,20 @@ pub struct FinalizedCeBlock {
     pub height: u64,
     pub block_hash: B256,
     pub parent_block_hash: B256,
+}
+
+/// Result of one startup-only replay of a recovered finalized forkchoice.
+///
+/// The caller owns timeout, retry, and durable provider readback. Keeping those
+/// concerns out of the actor preserves a single owner for Engine FCU types
+/// without turning startup recovery into a second actor lifecycle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecoveredForkchoiceAttempt {
+    Valid,
+    Syncing,
+    Invalid(String),
+    Retryable(String),
+    Fatal(String),
 }
 
 /// Finalization barrier installed by the node integration.
@@ -374,6 +389,55 @@ where
     pub fn with_finalized_ce_committer(mut self, committer: Arc<dyn FinalizedCeCommitter>) -> Self {
         self.finalized_ce_committer = Some(committer);
         self
+    }
+
+    /// Replay the exact recovered forkchoice once before this actor is started.
+    ///
+    /// This method neither mutates actor state nor starts mailbox or heartbeat
+    /// processing. A caller must confirm the durable provider identity before
+    /// allowing any downstream startup side effect.
+    pub fn replay_recovered_forkchoice_once(
+        &self,
+        expected: ProjectionCheckpoint,
+    ) -> BoxFuture<'static, RecoveredForkchoiceAttempt> {
+        let expected_height = Height::new(expected.block_number);
+        let forkchoice = self.state.forkchoice;
+        if self.state.head_height != expected_height
+            || self.state.finalized_height != expected_height
+            || forkchoice.head_block_hash != expected.block_hash
+            || forkchoice.safe_block_hash != expected.block_hash
+            || forkchoice.finalized_block_hash != expected.block_hash
+        {
+            return Box::pin(async move {
+                RecoveredForkchoiceAttempt::Fatal(format!(
+                    "executor recovered state does not match startup anchor {}:{}",
+                    expected.block_number, expected.block_hash
+                ))
+            });
+        }
+
+        let engine = self.engine.clone();
+        Box::pin(async move {
+            match engine.fork_choice_updated(forkchoice, None).await {
+                Ok(response) if response.is_valid() => RecoveredForkchoiceAttempt::Valid,
+                Ok(response) if response.is_syncing() => RecoveredForkchoiceAttempt::Syncing,
+                Ok(response) if response.is_invalid() => {
+                    RecoveredForkchoiceAttempt::Invalid(format!("{response:?}"))
+                }
+                Ok(response) => RecoveredForkchoiceAttempt::Fatal(format!(
+                    "unexpected recovered forkchoice response: {response:?}"
+                )),
+                Err(BeaconForkChoiceUpdateError::EngineUnavailable) => {
+                    RecoveredForkchoiceAttempt::Retryable(
+                        "beacon consensus engine task stopped before its FCU response".to_string(),
+                    )
+                }
+                Err(error @ BeaconForkChoiceUpdateError::ForkchoiceUpdateError(_))
+                | Err(error @ BeaconForkChoiceUpdateError::Internal(_)) => {
+                    RecoveredForkchoiceAttempt::Fatal(error.to_string())
+                }
+            }
+        })
     }
 
     /// Start the executor under the Commonware runtime supervision tree.
@@ -1338,6 +1402,267 @@ mod tests {
             });
 
             actor.send_fcu_heartbeat().await;
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attributes() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(message) = engine_rx.recv().await else {
+                    panic!("recovered forkchoice attempt must send an FCU message");
+                };
+                match message {
+                    BeaconEngineMessage::ForkchoiceUpdated {
+                        state,
+                        payload_attrs,
+                        tx,
+                    } => {
+                        assert_eq!(state.head_block_hash, recovered.block_hash);
+                        assert_eq!(state.safe_block_hash, recovered.block_hash);
+                        assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                        assert!(payload_attrs.is_none());
+                        tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))))
+                        .expect("test engine response receiver must be alive");
+                    }
+                    other => panic!("unexpected engine message: {other:?}"),
+                }
+            });
+
+            let outcome = actor.replay_recovered_forkchoice_once(recovered).await;
+            assert_eq!(outcome, super::RecoveredForkchoiceAttempt::Valid);
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_rejects_anchor_mismatch_before_engine_io() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let expected = ProjectionCheckpoint {
+                block_number: 8,
+                block_hash: B256::repeat_byte(0x88),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context,
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let outcome = actor.replay_recovered_forkchoice_once(expected).await;
+
+            assert!(matches!(
+                outcome,
+                super::RecoveredForkchoiceAttempt::Fatal(message)
+                    if message.contains("does not match startup anchor")
+            ));
+            assert!(engine_rx.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                for syncing in [true, false] {
+                    let Some(BeaconEngineMessage::ForkchoiceUpdated {
+                        state,
+                        payload_attrs,
+                        tx,
+                    }) = engine_rx.recv().await
+                    else {
+                        panic!("expected recovered FCU attempt");
+                    };
+                    assert_eq!(state.head_block_hash, recovered.block_hash);
+                    assert_eq!(state.safe_block_hash, recovered.block_hash);
+                    assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                    assert!(payload_attrs.is_none());
+                    let response = if syncing {
+                        OnForkChoiceUpdated::syncing()
+                    } else {
+                        OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))
+                    };
+                    tx.send(Ok(response))
+                        .expect("test engine response receiver must be alive");
+                }
+            });
+
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Syncing,
+            );
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Valid,
+            );
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_distinguishes_payload_invalid_from_hard_error() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected payload-invalid recovered FCU attempt");
+                };
+                tx.send(Ok(OnForkChoiceUpdated::with_invalid(
+                    PayloadStatus::from_status(PayloadStatusEnum::Invalid {
+                        validation_error: "test invalid payload".to_string(),
+                    }),
+                )))
+                .expect("test engine response receiver must be alive");
+
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected invalid-state recovered FCU attempt");
+                };
+                tx.send(Ok(OnForkChoiceUpdated::invalid_state()))
+                    .expect("test engine response receiver must be alive");
+            });
+
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Invalid(message)
+                    if message.contains("test invalid payload")
+            ));
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Fatal(message)
+                    if message.contains("invalid forkchoice state")
+            ));
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_can_repeat_after_lost_response() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { state, tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected recovered FCU attempt with lost response");
+                };
+                assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                drop(tx);
+
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { state, tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected repeated recovered FCU attempt");
+                };
+                assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                    PayloadStatusEnum::Valid,
+                ))))
+                .expect("test engine response receiver must be alive");
+            });
+
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Retryable(_)
+            ));
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Valid,
+            );
             engine_task.await.expect("engine task must complete");
         });
     }

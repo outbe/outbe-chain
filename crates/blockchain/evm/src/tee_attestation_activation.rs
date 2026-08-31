@@ -1,8 +1,8 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
-//! Every runnable chain must carry this field. Testnet may explicitly select
-//! `DcapRequired` or `GramineDirectDev`; devnet selects `GramineDirectDev`.
-//! Both use OST3, and neither can fall back at runtime.
+//! Every runnable chain must carry this field. Devnet and testnet may
+//! explicitly select `DcapRequired` or `GramineDirectDev`; mainnet requires
+//! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
 
@@ -14,8 +14,8 @@ use outbe_primitives::{
         TeeAttestationManifestV1, TeePolicyScheduleV1, TeePolicyV1, MAX_TEE_POLICY_SCHEDULE_BYTES,
     },
     tee_genesis_v1::{
-        initial_tee_policy_v1, is_dcap_required_chain_id, is_gramine_direct_dev_chain_id,
-        InitialTeeProfileV1, ProductionSgxMeasurementV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
+        initial_tee_policy_v1, is_attestation_mode_allowed_for_chain_id, InitialTeeProfileV1,
+        ProductionSgxMeasurementV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
     },
     OutbeHeader,
 };
@@ -246,23 +246,15 @@ fn validate_activation(
     let initial_policy = policy_schedule
         .active_policy(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(|error| format!("TEE schedule has no block-1 policy: {error}"))?;
-    match initial_policy.attestation_mode {
-        AttestationMode::DcapRequired if chain_id == GRAMINE_DIRECT_DEV_CHAIN_ID => {
-            return Err(format!(
-                "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
-            ));
-        }
-        AttestationMode::DcapRequired if !is_dcap_required_chain_id(chain_id) => {
-            return Err(format!(
-                "DcapRequired requires testnet or mainnet chain ID ({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID})"
-            ));
-        }
-        AttestationMode::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
-            return Err(format!(
+    if !is_attestation_mode_allowed_for_chain_id(chain_id, initial_policy.attestation_mode) {
+        return Err(match initial_policy.attestation_mode {
+            AttestationMode::DcapRequired => format!(
+                "DcapRequired requires devnet, testnet, or mainnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
+            ),
+            AttestationMode::GramineDirectDev => format!(
                 "GramineDirectDev requires devnet or testnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID} or {TESTNET_CHAIN_ID})"
-            ));
-        }
-        AttestationMode::DcapRequired | AttestationMode::GramineDirectDev => {}
+            ),
+        });
     }
     if initial_policy.resource_schedule_hash != raw.resource_schedule_hash {
         return Err("initial TEE policy does not bind the manifest resource schedule".into());
@@ -620,17 +612,20 @@ mod tests {
         .unwrap_err()
         .contains("devnet or testnet chain ID"));
 
-        assert!(validate_activation(
+        let devnet_dcap = validate_activation(
             activation(
                 dev_chain_id,
                 dev_genesis_hash,
-                AttestationMode::DcapRequired
+                AttestationMode::DcapRequired,
             ),
             dev_chain_id,
             dev_genesis_hash,
         )
-        .unwrap_err()
-        .contains("may not use reserved GramineDirectDev chain ID"));
+        .unwrap();
+        assert_eq!(
+            devnet_dcap.policy_at(1).unwrap().attestation_mode,
+            AttestationMode::DcapRequired
+        );
 
         assert!(validate_activation(
             activation(
@@ -642,7 +637,7 @@ mod tests {
             dev_genesis_hash,
         )
         .unwrap_err()
-        .contains("testnet or mainnet chain ID"));
+        .contains("devnet, testnet, or mainnet chain ID"));
     }
 
     #[test]

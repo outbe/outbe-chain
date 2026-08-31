@@ -78,7 +78,7 @@ use outbe_consensus::{
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::{ExecutorActor, FinalizedCeCommitter},
+    executor::actor::{ExecutorActor, FinalizedCeCommitter, RecoveredForkchoiceAttempt},
     finalization::{
         actor::{FinalizationActor, FinalizationActorDeps},
         block_cache::BlockCache,
@@ -102,15 +102,10 @@ fn radicle_channel_config() -> (u64, u32, usize) {
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StackShutdownOrNetworkExit {
-    GlobalStop,
-    NetworkExit,
-}
-
 #[derive(Debug)]
 enum EpochLoopOutcome {
     RestartEpoch,
+    ReplaceSigner,
     GlobalStop,
     EngineExit(Result<(), commonware_runtime::Error>),
     StackExit,
@@ -119,6 +114,7 @@ enum EpochLoopOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EpochLoopAction {
     RestartEpoch,
+    ReplaceSigner,
     ExitStack,
 }
 
@@ -209,6 +205,11 @@ where
 {
     match outcome {
         Ok(EpochLoopOutcome::RestartEpoch) => Ok(EpochLoopAction::RestartEpoch),
+        Ok(EpochLoopOutcome::ReplaceSigner) => {
+            engine.abort();
+            let _ = (&mut *engine).await;
+            Ok(EpochLoopAction::ReplaceSigner)
+        }
         Ok(EpochLoopOutcome::GlobalStop) => {
             drain_engine_with_deadline(ctx, engine).await?;
             Ok(EpochLoopAction::ExitStack)
@@ -230,23 +231,6 @@ where
             Err(error),
             signal_global_stop_and_drain_engine(ctx, engine).await,
         ),
-    }
-}
-
-/// Give global shutdown ownership of the current Simplex engine before a
-/// sibling network exit can tear down the stack subtree.
-async fn wait_for_stack_shutdown_or_network_exit<S, N>(
-    shutdown: &mut S,
-    network: &mut N,
-) -> StackShutdownOrNetworkExit
-where
-    S: Future + Unpin,
-    N: Future + Unpin,
-{
-    tokio::select! {
-        biased;
-        _ = shutdown => StackShutdownOrNetworkExit::GlobalStop,
-        _ = network => StackShutdownOrNetworkExit::NetworkExit,
     }
 }
 
@@ -286,7 +270,7 @@ use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
-    projection::ProjectionReadinessHandle,
+    projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
@@ -294,7 +278,7 @@ use outbe_primitives::{
     system_tx::OcompLifecycleActivation,
     OutbeHeader, OutbePayloadTypes,
 };
-use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
+use reth_ethereum::storage::{BlockIdReader, BlockNumReader, BlockReader, TransactionVariant};
 
 /// Type alias for the engine handle.
 type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
@@ -359,6 +343,11 @@ const FINALIZED_ROUND_RECOVERY_ATTEMPTS: usize = 5;
 const FINALIZED_ROUND_RECOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const FINALIZED_ROUND_RECOVERY_RETRY_DELAY: std::time::Duration =
     std::time::Duration::from_millis(100);
+const CERTIFIED_FOLLOWER_FCU_ATTEMPTS: usize = 30;
+const CERTIFIED_FOLLOWER_FCU_ATTEMPT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(1);
+const CERTIFIED_FOLLOWER_FCU_RETRY_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(100);
 /// reth's canonical head can lead consensus finalization by the in-flight block
 /// (steady state: `head_height = finalized_height + 1`; a few during a
 /// finalization hiccup). On a plain restart in that window the head has no
@@ -383,6 +372,327 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
 fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
     last_execution_height.min(finalized_tip)
 }
+
+/// Inclusive suffix that must be authenticated before a certified follower's
+/// Marshal actor can repair or dispatch durable consensus records.
+fn certified_follower_replay_suffix_bounds(
+    archive_finalization_tip: u64,
+    archive_block_tip: u64,
+    execution_tip: u64,
+) -> (u64, u64) {
+    (
+        archive_finalization_tip
+            .min(archive_block_tip)
+            .min(execution_tip),
+        archive_finalization_tip.max(archive_block_tip),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CertifiedFollowerRecoveryFloors {
+    marshal_processed: u64,
+    archive_finalization_tip: u64,
+    archive_block_tip: u64,
+    execution_tip: u64,
+    reth_finalized: u64,
+}
+
+/// Select the only height that can still become the certified follower startup
+/// anchor before exact identity and certificate verification. Heights merely
+/// bound the candidate: they never authorize it without the later hash and
+/// certificate checks.
+fn select_certified_follower_recovery_height(
+    floors: CertifiedFollowerRecoveryFloors,
+) -> Result<u64> {
+    let anchor = floors
+        .archive_finalization_tip
+        .min(floors.archive_block_tip)
+        .min(floors.execution_tip);
+    ensure!(
+        floors.marshal_processed <= anchor,
+        "Marshal processed floor {} exceeds certified follower recovery anchor {anchor}",
+        floors.marshal_processed,
+    );
+    ensure!(
+        anchor <= floors.marshal_processed.saturating_add(1),
+        "certified follower recovery anchor {anchor} exceeds Marshal processed floor {} by more than one block",
+        floors.marshal_processed,
+    );
+    ensure!(
+        floors.reth_finalized <= anchor,
+        "Reth finalized height {} exceeds recovery anchor {anchor}",
+        floors.reth_finalized,
+    );
+    Ok(anchor)
+}
+
+#[derive(Clone, Debug)]
+struct CertifiedFollowerRecoveryAnchor {
+    checkpoint: ProjectionCheckpoint,
+    finalization: Option<outbe_consensus::marshal_types::Finalization>,
+    block: outbe_consensus::block::ConsensusBlock,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_certified_follower_recovery_record(
+    height: u64,
+    canonical_hash: B256,
+    local_finalization: &outbe_consensus::marshal_types::Finalization,
+    local_block: &outbe_consensus::block::ConsensusBlock,
+    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
+    upstream_block: &outbe_consensus::block::ConsensusBlock,
+    schemes: &HybridSchemeProvider<MinSig>,
+) -> Result<CertifiedFollowerRecoveryAnchor> {
+    use commonware_cryptography::certificate::Provider as _;
+
+    ensure!(
+        local_block.number() == height,
+        "local archived block reports height {}, expected {height}",
+        local_block.number(),
+    );
+    ensure!(
+        upstream_block.number() == height,
+        "upstream certified block reports height {}, expected {height}",
+        upstream_block.number(),
+    );
+    ensure!(
+        local_block.block_hash() == canonical_hash,
+        "local archived block hash {} differs from canonical Reth hash {canonical_hash} at height {height}",
+        local_block.block_hash(),
+    );
+    ensure!(
+        upstream_block.block_hash() == canonical_hash,
+        "upstream certified block hash {} differs from canonical Reth hash {canonical_hash} at height {height}",
+        upstream_block.block_hash(),
+    );
+    ensure!(
+        local_finalization.proposal.payload.0 == canonical_hash,
+        "local archived finalization payload {} differs from canonical Reth hash {canonical_hash} at height {height}",
+        local_finalization.proposal.payload.0,
+    );
+    ensure!(
+        upstream_finalization.proposal.payload.0 == canonical_hash,
+        "upstream finalization payload {} differs from canonical Reth hash {canonical_hash} at height {height}",
+        upstream_finalization.proposal.payload.0,
+    );
+    let local_epoch = local_finalization.proposal.round.epoch();
+    let upstream_epoch = upstream_finalization.proposal.round.epoch();
+    ensure!(
+        local_epoch == upstream_epoch,
+        "local archived finalization epoch {} differs from authenticated upstream epoch {} at height {height}",
+        local_epoch.get(),
+        upstream_epoch.get(),
+    );
+    let scheme = schemes.scoped(local_epoch).ok_or_else(|| {
+        eyre::eyre!(
+            "certified follower has no verifier scheme for recovery epoch {}",
+            local_epoch.get()
+        )
+    })?;
+    let mut local_rng = rand_core::OsRng;
+    ensure!(
+        local_finalization.verify(
+            &mut local_rng,
+            scheme.as_ref(),
+            &commonware_parallel::Sequential,
+        ),
+        "local archived finalization certificate failed verification at height {height}",
+    );
+    let mut upstream_rng = rand_core::OsRng;
+    ensure!(
+        upstream_finalization.verify(
+            &mut upstream_rng,
+            scheme.as_ref(),
+            &commonware_parallel::Sequential,
+        ),
+        "upstream finalization certificate failed verification at height {height}",
+    );
+
+    Ok(CertifiedFollowerRecoveryAnchor {
+        checkpoint: ProjectionCheckpoint {
+            block_number: height,
+            block_hash: canonical_hash,
+        },
+        finalization: Some(local_finalization.clone()),
+        block: local_block.clone(),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecoveredFcuAction {
+    Complete,
+    Retry,
+    Fatal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecoveredRethForkchoice {
+    head: ProjectionCheckpoint,
+    safe: Option<ProjectionCheckpoint>,
+    finalized: Option<ProjectionCheckpoint>,
+}
+
+impl RecoveredRethForkchoice {
+    fn is_exact(self, anchor: ProjectionCheckpoint) -> bool {
+        self.head == anchor && self.safe == Some(anchor) && self.finalized == Some(anchor)
+    }
+}
+
+fn classify_recovered_fcu_attempt(
+    anchor: ProjectionCheckpoint,
+    response: &RecoveredForkchoiceAttempt,
+    readback: RecoveredRethForkchoice,
+) -> RecoveredFcuAction {
+    if matches!(
+        response,
+        RecoveredForkchoiceAttempt::Invalid(_) | RecoveredForkchoiceAttempt::Fatal(_)
+    ) {
+        return RecoveredFcuAction::Fatal;
+    }
+    let finalized_conflict = readback.finalized.is_some_and(|observed| {
+        observed.block_number > anchor.block_number
+            || (observed.block_number == anchor.block_number
+                && observed.block_hash != anchor.block_hash)
+    });
+    let exact_height_conflict = [Some(readback.head), readback.safe, readback.finalized]
+        .into_iter()
+        .flatten()
+        .any(|observed| {
+            observed.block_number == anchor.block_number && observed.block_hash != anchor.block_hash
+        });
+    if finalized_conflict || exact_height_conflict {
+        return RecoveredFcuAction::Fatal;
+    }
+    if matches!(
+        response,
+        RecoveredForkchoiceAttempt::Valid | RecoveredForkchoiceAttempt::Retryable(_)
+    ) && readback.is_exact(anchor)
+    {
+        RecoveredFcuAction::Complete
+    } else {
+        RecoveredFcuAction::Retry
+    }
+}
+
+async fn confirm_recovered_forkchoice<C, Attempt, AttemptFuture, ReadProvider>(
+    clock: C,
+    anchor: ProjectionCheckpoint,
+    mut attempt: Attempt,
+    mut read_provider: ReadProvider,
+) -> Result<()>
+where
+    C: Clock,
+    Attempt: FnMut() -> AttemptFuture,
+    AttemptFuture: Future<Output = RecoveredForkchoiceAttempt> + Send + 'static,
+    ReadProvider: FnMut() -> Result<RecoveredRethForkchoice>,
+{
+    let initially_observed = read_provider()?;
+    match classify_recovered_fcu_attempt(
+        anchor,
+        &RecoveredForkchoiceAttempt::Valid,
+        initially_observed,
+    ) {
+        RecoveredFcuAction::Complete => return Ok(()),
+        RecoveredFcuAction::Fatal => {
+            return Err(eyre::eyre!(
+                "Reth finalized identity {initially_observed:?} conflicts with certified follower recovery anchor {anchor:?}"
+            ));
+        }
+        RecoveredFcuAction::Retry => {}
+    }
+
+    for attempt_number in 1..=CERTIFIED_FOLLOWER_FCU_ATTEMPTS {
+        let outcome = match clock
+            .timeout(CERTIFIED_FOLLOWER_FCU_ATTEMPT_TIMEOUT, attempt())
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => RecoveredForkchoiceAttempt::Retryable(format!(
+                "recovered FCU attempt {attempt_number} timed out"
+            )),
+        };
+        let observed = read_provider()?;
+        match classify_recovered_fcu_attempt(anchor, &outcome, observed) {
+            RecoveredFcuAction::Complete => return Ok(()),
+            RecoveredFcuAction::Fatal => {
+                return Err(eyre::eyre!(
+                    "recovered FCU failed closed for anchor {anchor:?}: outcome={outcome:?}, provider={observed:?}"
+                ));
+            }
+            RecoveredFcuAction::Retry if attempt_number < CERTIFIED_FOLLOWER_FCU_ATTEMPTS => {
+                clock.sleep(CERTIFIED_FOLLOWER_FCU_RETRY_DELAY).await;
+            }
+            RecoveredFcuAction::Retry => {
+                return Err(eyre::eyre!(
+                    "recovered FCU did not converge on anchor {anchor:?} after {CERTIFIED_FOLLOWER_FCU_ATTEMPTS} attempts: last outcome={outcome:?}, provider={observed:?}"
+                ));
+            }
+        }
+    }
+    unreachable!("certified follower FCU attempt budget is non-zero")
+}
+
+fn read_reth_recovery_forkchoice(node: &OutbeFullNode) -> Result<RecoveredRethForkchoice> {
+    let head_number = node
+        .provider
+        .last_block_number()
+        .map_err(|error| eyre::eyre!("failed to read Reth canonical head number: {error}"))?;
+    let head_hash = node
+        .provider
+        .block_hash(head_number)
+        .map_err(|error| {
+            eyre::eyre!("failed to read Reth canonical head hash at {head_number}: {error}")
+        })?
+        .ok_or_else(|| eyre::eyre!("Reth canonical head {head_number} has no block hash"))?;
+    let safe = node
+        .provider
+        .safe_block_num_hash()
+        .map_err(|error| eyre::eyre!("failed to read Reth safe identity: {error}"))?
+        .map(|checkpoint| ProjectionCheckpoint {
+            block_number: checkpoint.number,
+            block_hash: checkpoint.hash,
+        });
+    let finalized = node
+        .provider
+        .finalized_block_num_hash()
+        .map_err(|error| eyre::eyre!("failed to read Reth finalized identity: {error}"))?
+        .map(|checkpoint| ProjectionCheckpoint {
+            block_number: checkpoint.number,
+            block_hash: checkpoint.hash,
+        });
+    Ok(RecoveredRethForkchoice {
+        head: ProjectionCheckpoint {
+            block_number: head_number,
+            block_hash: head_hash,
+        },
+        safe,
+        finalized,
+    })
+}
+
+async fn wait_for_recovered_projection(
+    name: &str,
+    readiness: ProjectionReadinessHandle,
+    anchor: ProjectionCheckpoint,
+) -> Result<()> {
+    match readiness.wait_for(anchor, std::future::pending()).await {
+        WaitOutcome::Ready => Ok(()),
+        WaitOutcome::BudgetExpired => Err(eyre::eyre!(
+            "{name} recovery readiness expired without a request budget"
+        )),
+        WaitOutcome::ProjectionAhead => Err(eyre::eyre!(
+            "{name} projection is ahead of certified follower recovery anchor {}:{}",
+            anchor.block_number,
+            anchor.block_hash,
+        )),
+        WaitOutcome::Fatal(failure) => Err(eyre::eyre!(
+            "{name} recovery readiness failed ({:?}): {}",
+            failure.class,
+            failure.message,
+        )),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RecoveredApplicationFinalization {
     round: Round,
@@ -859,11 +1169,11 @@ async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesis
 
 #[allow(clippy::too_many_arguments)]
 async fn resolve_startup_dkg_snapshot<E>(
-    ctx: &E,
+    ctx: E,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    signing_key: &bls12381::PrivateKey,
+    local_pk: bls12381::PublicKey,
     validator_set: &validators::ValidatorSet,
     genesis_hash: B256,
     dkg_rotation_params: DkgRotationParams,
@@ -872,7 +1182,6 @@ async fn resolve_startup_dkg_snapshot<E>(
 where
     E: Clock,
 {
-    let local_pk = commonware_cryptography::Signer::public_key(signing_key);
     let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
         .public_keys
         .clone()
@@ -969,6 +1278,27 @@ fn publish_randomness_status(bridge: &ConsensusExecutionBridge, vrf_safety: &Vrf
         "VRF/DKG safety status updated"
     );
     bridge.set_consensus_status(status);
+}
+
+/// Couples the active VRF provider transition with the bridge's process-local
+/// authority report. Publication is ordered fail-safe: adding a
+/// share becomes visible only after provider installation, while removing one
+/// becomes visible before provider demotion.
+fn activate_vrf_material_and_publish_local_share(
+    bridge: &ConsensusExecutionBridge,
+    vrf_materials: &VrfMaterialProvider<MinSig>,
+    version: u64,
+    polynomial: Sharing<MinSig>,
+    signing_share: Option<Share>,
+) {
+    let local_share_present = signing_share.is_some();
+    if !local_share_present {
+        bridge.set_local_threshold_share_present(false);
+    }
+    vrf_materials.activate(version, polynomial, signing_share);
+    if local_share_present {
+        bridge.set_local_threshold_share_present(true);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1153,9 +1483,9 @@ fn validate_offer_key_before_threshold_work(
 fn should_coordinate_genesis_tee_bootstrap(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
-    verifier_join: bool,
+    shareless_verifier: bool,
 ) -> bool {
-    !verifier_join
+    !shareless_verifier
         && startup_dkg_mode(context, local_key_in_current_consensus_set)
             == StartupDkgMode::InitialGenesisDkg
 }
@@ -1922,12 +2252,12 @@ fn validate_validator_evm_signer(
     args: &ConsensusArgs,
     signing_key: &bls12381::PrivateKey,
     consensus_validator_set: &validators::ValidatorSet,
-    active_validator_set: &validators::ValidatorSet,
+    reshare_target_validator_set: &validators::ValidatorSet,
     recovered_committee: Option<(
         &commonware_utils::ordered::Set<bls12381::PublicKey>,
         &DkgBoundaryArtifact,
     )>,
-    verifier_join: bool,
+    shareless_verifier: bool,
 ) -> Result<Option<EthAddress>> {
     let Some(evm_key_path) = args.effective_validator_evm_key()? else {
         return Ok(None);
@@ -1947,14 +2277,40 @@ fn validate_validator_evm_signer(
                 .wrap_err("failed to validate recovered DKG boundary committee for EVM signer")?;
         let local_public_key = signing_key.public_key();
         let Some(participant_index) = participants.position(&local_public_key) else {
-            if verifier_join {
+            if shareless_verifier {
+                let Some(target_index) = reshare_target_validator_set
+                    .addresses
+                    .iter()
+                    .position(|address| *address == signer_address)
+                else {
+                    info!(
+                        %signer_address,
+                        epoch = boundary.epoch,
+                        "shareless verifier is not yet in the canonical reshare target; retaining no proposer identity"
+                    );
+                    return Ok(None);
+                };
+                let target_public_key = reshare_target_validator_set
+                    .public_keys
+                    .get(target_index)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "current reshare target is missing the BLS public key for EVM address {}",
+                            signer_address
+                        )
+                    })?;
+                ensure!(
+                    target_public_key == &local_public_key,
+                    "validator EVM key address {} belongs to a different BLS consensus key in the current reshare target",
+                    signer_address
+                );
                 info!(
                     %signer_address,
                     epoch = boundary.epoch,
-                    "verifier-join: local BLS key is not in the recovered DKG boundary committee; \
-                     the node syncs as a verifier"
+                    "shareless validator identity matches the canonical reshare target; \
+                     the node remains authority-free until DKG grants its threshold share"
                 );
-                return Ok(None);
+                return Ok(Some(signer_address));
             }
             eyre::bail!(
                 "local BLS key is not in recovered DKG boundary committee for epoch {}; \
@@ -1995,20 +2351,20 @@ fn validate_validator_evm_signer(
             )
         })
         .or_else(|| {
-            active_validator_set
+            reshare_target_validator_set
                 .addresses
                 .iter()
                 .position(|address| *address == signer_address)
                 .map(|index| {
                     (
-                        &active_validator_set.public_keys,
+                        &reshare_target_validator_set.public_keys,
                         index,
-                        "active validator set",
+                        "current reshare target",
                     )
                 })
         });
     let Some((public_keys, index, source_set)) = authorized else {
-        if verifier_join {
+        if shareless_verifier {
             info!(
                 %signer_address,
                 "verifier-join: EVM signer is not yet in the on-chain validator set; the node \
@@ -2062,7 +2418,7 @@ fn validate_validator_evm_signer(
 /// consensus engine. Selected by `--upstream`.
 #[allow(clippy::too_many_arguments)]
 async fn run_follow_stack<E>(
-    ctx: &E,
+    ctx: E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -2217,9 +2573,6 @@ async fn reconcile_certified_follower_height(
     retention: &Arc<outbe_node::ocomp::retention::OcompRetentionCoordinator>,
     height: u64,
 ) -> Result<outbe_consensus::block::ConsensusBlock> {
-    use commonware_cryptography::certificate::Provider as _;
-    use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
-
     let finalization = marshal_mailbox
         .get_finalization(Height::new(height))
         .await
@@ -2242,6 +2595,28 @@ async fn reconcile_certified_follower_height(
         block.number(),
     );
 
+    reconcile_certified_follower_record(
+        node,
+        certificate_scheme_provider,
+        parent_cert_store,
+        retention,
+        &finalization,
+        &block,
+    )?;
+    Ok(block)
+}
+
+fn reconcile_certified_follower_record(
+    node: &OutbeFullNode,
+    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    parent_cert_store: &outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    retention: &Arc<outbe_node::ocomp::retention::OcompRetentionCoordinator>,
+    finalization: &outbe_consensus::marshal_types::Finalization,
+    block: &outbe_consensus::block::ConsensusBlock,
+) -> Result<()> {
+    use commonware_cryptography::certificate::Provider as _;
+    use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
+
     let epoch = finalization.proposal.round.epoch();
     let scheme = certificate_scheme_provider.scoped(epoch).ok_or_else(|| {
         eyre::eyre!(
@@ -2256,8 +2631,9 @@ async fn reconcile_certified_follower_height(
                 epoch.get()
             )
         })?;
+    let height = block.number();
     let record =
-        build_certified_follower_parent_record(&finalization, &block, &snapshot, scheme.as_ref())?;
+        build_certified_follower_parent_record(finalization, block, &snapshot, scheme.as_ref())?;
     parent_cert_store
         .put_finalization(record)
         .wrap_err_with(|| format!("failed to persist follower finalization at height {height}"))?;
@@ -2267,10 +2643,13 @@ async fn reconcile_certified_follower_height(
         )
         .wrap_err("failed to prune follower finalized parent certificates")?;
 
-    retention.reconcile_finalized(&block).map_err(|error| {
-        eyre::eyre!("certified FullNode OCOMP retention failed at height {height}: {error}")
+    retention.reconcile_finalized(block).map_err(|error| {
+        eyre::eyre!(
+            "certified FullNode OCOMP retention failed at height {}: {error}",
+            block.number()
+        )
     })?;
-    Ok(block)
+    Ok(())
 }
 
 /// Genesis is the trusted follower anchor, not a block carrying a certified
@@ -2288,7 +2667,7 @@ const fn follower_height_has_certified_finalization(height: u64) -> bool {
 /// each against the per-epoch committee derived from the trusted anchor.
 #[allow(clippy::too_many_arguments)]
 async fn run_certified_follow_stack<E>(
-    ctx: &E,
+    ctx: E,
     anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -2316,7 +2695,9 @@ where
     use commonware_consensus::marshal;
     use commonware_cryptography::certificate::Scheme as _;
     use commonware_storage::archive::immutable;
-    use outbe_consensus::follow::{run_follow_engine, CommitteeChain, FollowEngineConfig};
+    use outbe_consensus::follow::{
+        run_follow_engine, CommitteeChain, FinalizedSource as _, FollowEngineConfig,
+    };
     use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
     use std::sync::{Arc, Mutex};
 
@@ -2326,18 +2707,7 @@ where
         .provider
         .last_block_number()
         .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
-    let last_execution_hash = if last_execution_height > 0 {
-        node.provider
-            .block_hash(last_execution_height)
-            .map_err(|e| {
-                eyre::eyre!("failed to get block hash for height {last_execution_height}: {e}")
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!("missing block hash for execution height {last_execution_height}")
-            })?
-    } else {
-        genesis_hash
-    };
+    let initial_reth_forkchoice = read_reth_recovery_forkchoice(&node)?;
 
     // -- 1. Committee chain anchored on the trusted identity --------------
     // The marshal verifies finalization certs against THIS chain's per-epoch
@@ -2352,14 +2722,14 @@ where
 
     // -- 2. Page cache + marshal archives (mirrors run_consensus_stack) ---
     let page_cache = CacheRef::from_pooler(
-        ctx,
+        &ctx,
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
 
     let partition_prefix = "outbe-marshal".to_string();
 
-    let finalizations_archive = immutable::Archive::init(
+    let mut finalizations_archive = immutable::Archive::init(
         ctx.child("marshal_finalizations"),
         immutable::Config {
             metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
@@ -2396,7 +2766,7 @@ where
     .await
     .wrap_err("failed to initialize finalizations archive")?;
 
-    let blocks_archive = immutable::Archive::init(
+    let mut blocks_archive = immutable::Archive::init(
         ctx.child("marshal_blocks"),
         immutable::Config {
             metadata_partition: format!("{partition_prefix}-blocks-metadata"),
@@ -2447,6 +2817,87 @@ where
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
 
+    let initial_archive_finalization_tip =
+        marshal::store::Certificates::last_index(&finalizations_archive).map_or(0, Height::get);
+    let initial_archive_block_tip =
+        marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
+    let (replay_suffix_lower, replay_suffix_upper) = certified_follower_replay_suffix_bounds(
+        initial_archive_finalization_tip,
+        initial_archive_block_tip,
+        last_execution_height,
+    );
+    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    if replay_suffix_upper > 0 {
+        outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &upstream_client,
+            &epocher,
+            anchor_epoch,
+            Height::new(replay_suffix_lower),
+            Height::new(replay_suffix_upper),
+            &mut finalizations_archive,
+            &mut blocks_archive,
+        )
+        .await
+        .wrap_err("failed to authenticate and normalize follower replay suffix")?;
+    }
+
+    let archive_finalization_tip =
+        marshal::store::Certificates::last_index(&finalizations_archive).map_or(0, Height::get);
+    let archive_block_tip =
+        marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
+    ensure!(
+        archive_finalization_tip == replay_suffix_upper
+            && archive_block_tip == replay_suffix_upper,
+        "certified follower replay normalization did not pair archive tips at height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
+    );
+    let preselected_anchor_height = archive_finalization_tip
+        .min(archive_block_tip)
+        .min(last_execution_height);
+    let archived_finalization = if preselected_anchor_height == 0 {
+        None
+    } else {
+        Some(
+            marshal::store::Certificates::get(
+                &finalizations_archive,
+                commonware_storage::archive::Identifier::Index(preselected_anchor_height),
+            )
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "failed to read archived follower finalization at height {preselected_anchor_height}"
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "follower finalization archive tip includes height {preselected_anchor_height} but its exact record is missing"
+                )
+            })?,
+        )
+    };
+    let archived_block = if preselected_anchor_height == 0 {
+        None
+    } else {
+        Some(
+            marshal::store::Blocks::get(
+                &blocks_archive,
+                commonware_storage::archive::Identifier::Index(preselected_anchor_height),
+            )
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "failed to read archived follower block at height {preselected_anchor_height}"
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "follower block archive tip includes height {preselected_anchor_height} but its exact record is missing"
+                )
+            })?,
+        )
+    };
+
     let marshal_genesis_anchor = genesis_consensus_block(&node)?;
     let (marshal_actor, marshal_mailbox, last_consensus_finalized_opt) =
         marshal::core::Actor::init(
@@ -2456,7 +2907,7 @@ where
             marshal::Config {
                 provider: certificate_scheme_provider.clone(),
                 epocher: epocher.clone(),
-                start: marshal::Start::Genesis(marshal_genesis_anchor),
+                start: marshal::Start::Genesis(marshal_genesis_anchor.clone()),
                 partition_prefix: partition_prefix.clone(),
                 mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
                 view_retention_timeout: ViewDelta::new(view_retention_timeout),
@@ -2485,17 +2936,101 @@ where
         )
         .await;
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
-    let recovered_ce_marker = ce_startup_recovery
-        .recover_before_participation(last_consensus_finalized.get())
-        .wrap_err("compressed-tree startup recovery failed before follower participation")?;
-    info!(
-        last_consensus_finalized = last_consensus_finalized.get(),
-        ce_marker_height = recovered_ce_marker.height,
-        last_execution_height,
-        "follower marshal initialized"
+    let recovery_height =
+        select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+            marshal_processed: last_consensus_finalized.get(),
+            archive_finalization_tip,
+            archive_block_tip,
+            execution_tip: last_execution_height,
+            reth_finalized: initial_reth_forkchoice
+                .finalized
+                .map_or(0, |checkpoint| checkpoint.block_number),
+        })?;
+    ensure!(
+        recovery_height == preselected_anchor_height,
+        "certified follower recovery height changed while Marshal archives were initialized: inspected {preselected_anchor_height}, selected {recovery_height}",
     );
+    let recovery_hash = if recovery_height == 0 {
+        genesis_hash
+    } else {
+        node.provider
+            .block_hash(recovery_height)
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to read canonical Reth hash at recovery height {recovery_height}: {error}"
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "canonical Reth block is missing at recovery height {recovery_height}"
+                )
+            })?
+    };
 
-    // -- 2b. Mandatory keyless OCOMP retention plane -----------------
+    // -- 3. Authenticate the immutable recovered anchor ------------------
+    let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
+    let recovery_anchor = if recovery_height == 0 {
+        CertifiedFollowerRecoveryAnchor {
+            checkpoint: ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: genesis_hash,
+            },
+            finalization: None,
+            block: marshal_genesis_anchor,
+        }
+    } else {
+        let local_finalization = archived_finalization.as_ref().ok_or_else(|| {
+            eyre::eyre!("missing local finalization for recovery height {recovery_height}")
+        })?;
+        let local_block = archived_block.as_ref().ok_or_else(|| {
+            eyre::eyre!("missing local block for recovery height {recovery_height}")
+        })?;
+        let upstream = upstream_client
+            .get_finalization(Height::new(recovery_height))
+            .await
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "upstream did not return exact recovery finalization at height {recovery_height}"
+                )
+            })?;
+        validate_certified_follower_recovery_record(
+            recovery_height,
+            recovery_hash,
+            local_finalization,
+            local_block,
+            &upstream.finalization,
+            &upstream.block,
+            &certificate_scheme_provider,
+        )?
+    };
+
+    // -- 4. Closed startup barrier: FCU -> CE -> retention -> projections -
+    let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
+    let (execution_finalized_height_tx, mut execution_finalized_height_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
+    let (executor_actor, executor_mailbox) = ExecutorActor::new(
+        ctx.child("executor"),
+        engine_handle,
+        genesis_hash,
+        recovery_anchor.checkpoint.block_number,
+        recovery_anchor.checkpoint.block_hash,
+        projection_readiness.clone(),
+        Some(execution_finalized_height_tx),
+    );
+    let fcu_provider_node = node.clone();
+    confirm_recovered_forkchoice(
+        ctx.child("recovered_forkchoice"),
+        recovery_anchor.checkpoint,
+        || executor_actor.replay_recovered_forkchoice_once(recovery_anchor.checkpoint),
+        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+    )
+    .await
+    .wrap_err("failed to confirm recovered Reth forkchoice before follower startup")?;
+
+    let recovered_ce_marker = ce_startup_recovery
+        .recover_before_participation(recovery_anchor.checkpoint.block_number)
+        .wrap_err("compressed-tree startup recovery failed before follower participation")?;
+
     let ocomp_fork_install =
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
     let install = ocomp_fork_install.as_ref();
@@ -2511,9 +3046,8 @@ where
             )
         })?;
     finalized_parent_cert_store
-        .prune_above_height(last_consensus_finalized.get())
-        .wrap_err("failed to prune follower parent certificates above marshal finality")?;
-
+        .prune_above_height(recovery_anchor.checkpoint.block_number)
+        .wrap_err("failed to prune follower parent certificates above recovery anchor")?;
     let pending_receipts_provider = node.provider.clone();
     let ocomp_proof_source = Arc::new(
         outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
@@ -2539,42 +3073,37 @@ where
             ocomp_proof_source,
         ),
     );
-
-    // -- 3. Transports ----------------------------------------------------
-    let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
-    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
-    // Separate cheap client handle for tip discovery (engine takes the
-    // `FinalizedSource` and `TipSource` as distinct values).
-    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
-
-    // A recovered marshal archive may already be caught up, so rebuild the
-    // authenticated committee chain and exact observed boundary map through its
-    // durable height before either concurrent subsystem is polled. This is
-    // idempotent; `run_follow_engine` repeats the same check for embeddings that
-    // do not use this production stack.
-    outbe_consensus::follow::engine::prepare_committee_chain(
-        &chain,
-        &upstream_client,
-        &epocher,
-        anchor_epoch,
-        last_consensus_finalized,
+    if let Some(finalization) = recovery_anchor.finalization.as_ref() {
+        reconcile_certified_follower_record(
+            &node,
+            &certificate_scheme_provider,
+            &finalized_parent_cert_store,
+            &ocomp_retention_coordinator,
+            finalization,
+            &recovery_anchor.block,
+        )
+        .wrap_err("failed to reconcile recovered certified follower parent")?;
+    }
+    wait_for_recovered_projection(
+        "offchain-data",
+        projection_readiness.clone(),
+        recovery_anchor.checkpoint,
     )
-    .await
-    .wrap_err("failed to rebuild authenticated follower committee chain on restart")?;
+    .await?;
+    if let Some(readiness) = ocomp_readiness.clone() {
+        wait_for_recovered_projection("OCOMP", readiness, recovery_anchor.checkpoint).await?;
+    }
+    bridge.set_last_finalized_block_number(recovery_anchor.checkpoint.block_number);
 
-    // -- 4. Executor (REUSED verbatim) - drives the EL via FCU+newPayload --
-    let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
-    let (execution_finalized_height_tx, mut execution_finalized_height_rx) =
-        tokio::sync::mpsc::unbounded_channel::<u64>();
-    let (executor_actor, executor_mailbox) = ExecutorActor::new(
-        ctx.child("executor"),
-        engine_handle,
-        genesis_hash,
+    info!(
+        marshal_processed = last_consensus_finalized.get(),
+        recovery_height = recovery_anchor.checkpoint.block_number,
+        recovery_hash = %recovery_anchor.checkpoint.block_hash,
+        ce_marker_height = recovered_ce_marker.height,
         last_execution_height,
-        last_execution_hash,
-        projection_readiness,
-        Some(execution_finalized_height_tx),
+        "certified follower startup recovery barrier completed"
     );
+
     let executor_actor = executor_actor.with_finalized_ce_committer(finalized_ce_committer);
     let executor_actor = match ocomp_readiness {
         Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
@@ -2585,7 +3114,7 @@ where
     // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
     // retention both succeed. --------------------------------------
-    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 
     // -- 5. Assemble + run the follower engine ----------------------------
     let observer_mailbox = marshal_mailbox.clone();
@@ -2595,20 +3124,6 @@ where
     let observer_retention = ocomp_retention_coordinator.clone();
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
-        let recovered_height = last_consensus_finalized.get();
-        if follower_height_has_certified_finalization(recovered_height) {
-            reconcile_certified_follower_height(
-                &observer_node,
-                &observer_mailbox,
-                &observer_schemes,
-                &observer_store,
-                &observer_retention,
-                recovered_height,
-            )
-            .await
-            .wrap_err("failed to recover FullNode OCOMP finality on restart")?;
-            observer_bridge.set_last_finalized_block_number(recovered_height);
-        }
         while let Some(height) = execution_finalized_height_rx.recv().await {
             if !follower_height_has_certified_finalization(height) {
                 continue;
@@ -2686,8 +3201,31 @@ fn ocomp_p2p_namespace(install_hash: Option<B256>) -> Vec<u8> {
     alloy_primitives::keccak256(preimage).to_vec()
 }
 
-pub async fn run_consensus_stack<E>(
-    ctx: &E,
+pub fn run_consensus_stack<E>(
+    ctx: E,
+    args: ConsensusArgs,
+    node: OutbeFullNode,
+    bridge: ConsensusExecutionBridge,
+    services: ConsensusStackServices,
+) -> impl Future<Output = Result<()>> + Send
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    run_consensus_stack_inner(ctx, args, node, bridge, services)
+}
+
+async fn run_consensus_stack_inner<E>(
+    ctx: E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -2988,7 +3526,7 @@ where
 
     // -- 5b. Pre-compute page cache (shared across marshal + epochs) -----
     let page_cache = CacheRef::from_pooler(
-        ctx,
+        &ctx,
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
@@ -3139,12 +3677,13 @@ where
         "marshal actor initialized; exact archive/Reth recovery reconciliation pending"
     );
 
+    let local_consensus_key = signing_key.public_key();
     let startup_snapshot = resolve_startup_dkg_snapshot(
-        ctx,
+        ctx.child("startup_dkg_snapshot"),
         &node,
         &args,
         &key_backend,
-        &signing_key,
+        local_consensus_key.clone(),
         &validator_set,
         genesis_hash,
         dkg_rotation_params,
@@ -3164,7 +3703,6 @@ where
     let verifier_join = args.signing_share.is_none()
         && args.public_polynomial.is_some()
         && args.dkg_output.is_some();
-    let local_consensus_key = signing_key.public_key();
     let local_key_in_current_consensus_set = validator_set
         .public_keys
         .iter()
@@ -3212,10 +3750,10 @@ where
         }
     } else {
         obtain_threshold_material(
-            ctx,
+            ctx.child("initial_dkg_material"),
             &args,
             &key_backend,
-            &signing_key,
+            signing_key.clone(),
             &validator_set,
             startup_dkg_context,
             dkg_init_tx,
@@ -3241,6 +3779,10 @@ where
                 last_dkg_output,
             } => (None, polynomial, last_dkg_output, false),
         };
+    // Threshold material, not CLI file presence, owns consensus authority. A
+    // recovered validator excluded from the current boundary is VerifierOnly even
+    // when its original signing-share path is still configured on disk.
+    let shareless_verifier = signing_share.is_none();
 
     // Verifier-join supplies public threshold material without a signing share.
     // Its local database can still be at height zero while it joins an already
@@ -3248,7 +3790,7 @@ where
     let coordinate_genesis_bootstrap = should_coordinate_genesis_tee_bootstrap(
         startup_dkg_context,
         local_key_in_current_consensus_set,
-        verifier_join,
+        shareless_verifier,
     );
 
     // Block 1 carries `BoundaryOutcome` before `TeeBootstrap`. Only a proven
@@ -3292,8 +3834,14 @@ where
                 .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
         };
 
-    let active_validator_set = validators::read_validators_at_latest(&node.provider)
-        .wrap_err("failed to load active validator set for EVM signer validation")?;
+    let reshare_target_validator_set = {
+        let state = node
+            .provider
+            .latest()
+            .wrap_err("failed to load latest state for EVM signer validation")?;
+        validators::read_reshare_target_from_state(&state)
+            .wrap_err("failed to load current reshare target for EVM signer validation")?
+    };
     let recovered_committee_for_signer = recovered_boundary
         .as_ref()
         .map(|(_, boundary)| (&participants, boundary));
@@ -3301,9 +3849,9 @@ where
         &args,
         &signing_key,
         &validator_set,
-        &active_validator_set,
+        &reshare_target_validator_set,
         recovered_committee_for_signer,
-        verifier_join,
+        shareless_verifier,
     )?;
 
     // -- 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) --
@@ -3543,11 +4091,12 @@ where
                 "mandatory OST3 bootstrap coordinated - payload ready for block 1"
             );
             bridge.set_pending_tee_bootstrap(payload);
-        } else if verifier_join {
+        } else if shareless_verifier {
             // The permissionless V1 onboarding transaction must have installed
-            // the permanent key before this process was launched. A share-less
-            // verifier joins only to certify and replay the existing chain; it
-            // neither has a proposer identity yet nor reproduces genesis OST3.
+            // the permanent key before this process was launched. A shareless
+            // validator certifies and replays the existing chain without threshold
+            // authority and never reproduces genesis OST3. Its canonical EVM/BLS
+            // identity may already be retained for the later DKG activation.
             let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
                 "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
             )?;
@@ -3653,6 +4202,7 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    bridge.set_local_threshold_share_present(signing_share.is_some());
     // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
     // live committee anchored its rotation schedule on), NOT the commit height of
     // the artifact-carrying block: finalized BoundaryOutcome recovery normalizes
@@ -3889,11 +4439,15 @@ where
 
     // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
     // can backfill + verify finalized blocks from this validator.
-    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 
     let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
-        match recover_application_finalized_round(ctx, &marshal_mailbox, last_execution_height)
-            .await
+        match recover_application_finalized_round(
+            ctx.child("recover_application_finalized_round"),
+            marshal_mailbox.clone(),
+            last_execution_height,
+        )
+        .await
         {
             Ok(recovered) => reconcile_recovered_execution_head(
                 last_execution_height,
@@ -3926,8 +4480,12 @@ where
                 if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
                     return Err(head_error);
                 }
-                let Ok(recovered_finalization) =
-                    recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+                let Ok(recovered_finalization) = recover_application_finalized_round(
+                    ctx.child("recover_application_finalized_tip"),
+                    marshal_mailbox.clone(),
+                    finalized_tip,
+                )
+                .await
                 else {
                     return Err(head_error);
                 };
@@ -4352,7 +4910,9 @@ where
                 polynomial = canonical_output.public().clone();
                 last_dkg_output = Some(canonical_output.clone());
                 vrf_material_version = activated_vrf_material_version;
-                vrf_materials.activate(
+                activate_vrf_material_and_publish_local_share(
+                    &bridge,
+                    &vrf_materials,
                     vrf_material_version,
                     polynomial.clone(),
                     signing_share.clone(),
@@ -4666,24 +5226,24 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
-            tokio::select! {
-                biased;
-
-                lifecycle = wait_for_stack_shutdown_or_network_exit(
-                    &mut stack_shutdown,
-                    &mut network_handle,
-                ) => {
-                    match lifecycle {
-                        StackShutdownOrNetworkExit::GlobalStop => {
-                            info!(epoch = %current_epoch, "global stop received; draining simplex engine");
-                            return Ok(EpochLoopOutcome::GlobalStop);
-                        }
-                        StackShutdownOrNetworkExit::NetworkExit => {
-                            info!("P2P network exited");
-                            return Ok(EpochLoopOutcome::StackExit);
-                        }
-                    }
+            let reshare_active = reshare_in_progress;
+            let wait_for_execution_finalized_height = async {
+                if reshare_active {
+                    std::future::pending::<Option<u64>>().await
+                } else {
+                    execution_finalized_height_rx.recv().await
                 }
+            };
+            commonware_macros::select! {
+                _ = &mut stack_shutdown => {
+                    info!(epoch = %current_epoch, "global stop received; draining simplex engine");
+                    return Ok(EpochLoopOutcome::GlobalStop);
+                },
+
+                _ = &mut network_handle => {
+                    info!("P2P network exited");
+                    return Ok(EpochLoopOutcome::StackExit);
+                },
 
                 desired_signer = wait_for_radicle_role_change(
                     &mut radicle_updates,
@@ -4697,33 +5257,14 @@ where
                         desired_signer,
                         "canonical Radicle voting gate changed; replacing same-epoch Simplex role"
                     );
-                    engine_handle_task.abort();
-                    let _ = (&mut engine_handle_task).await;
-                    replacement_epoch_subchannels = Some(
-                        outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
-                            current_epoch,
-                            ctx,
-                            Duration::from_secs(5),
-                            Duration::from_millis(10),
-                            &mut vote_mux,
-                            &mut cert_mux,
-                            &mut res_mux,
-                        )
-                        .await
-                        .wrap_err_with(|| {
-                            format!(
-                                "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
-                            )
-                        })?,
-                    );
-                    return Ok(EpochLoopOutcome::RestartEpoch);
+                    return Ok(EpochLoopOutcome::ReplaceSigner);
                 },
 
                 // Engine exit -> clean shutdown.
                 result = &mut engine_handle_task => {
                     info!(epoch = %current_epoch, "simplex engine exited");
                     return Ok(EpochLoopOutcome::EngineExit(result));
-                }
+                },
 
                 // DKG reshare completed (from background task).
                 Some(dkg_result) = dkg_result_rx.recv() => {
@@ -4950,7 +5491,7 @@ where
                             retry_frozen_dkg = true;
                         }
                     }
-                }
+                },
 
                 Some(progress) = dkg_progress_rx.recv() => {
                     match progress {
@@ -4965,7 +5506,7 @@ where
                             }
                         }
                     }
-                }
+                },
 
                 _ = &mut execution_watchdog_timer => {
                     execution_watchdog_timer =
@@ -5134,7 +5675,7 @@ where
                             ));
                         }
                     }
-                }
+                },
 
                 consensus_tip_changed = consensus_tip_rx.changed() => {
                     match consensus_tip_changed {
@@ -5148,19 +5689,19 @@ where
                             warn!(%error, "consensus tip watch channel closed");
                         }
                     }
-                }
+                },
 
-                _ = &mut provider_ready_retry_timer, if pending_provider_ready_height.is_some() => {
+                _ = &mut provider_ready_retry_timer => {
                     provider_ready_retry_timer = Box::pin(std::future::pending());
                     if let Some(current_height) = pending_provider_ready_height {
                         let _ = execution_finalized_height_tx.send(current_height);
                     }
-                }
+                },
 
                 // Block-height based DKG/VRF rotation. This is driven by execution-finalized
                 // height notifications after successful new_payload + FCU, not wall-clock
                 // polling or raw consensus finalization.
-                Some(current_height) = execution_finalized_height_rx.recv(), if !reshare_in_progress => {
+                Some(current_height) = wait_for_execution_finalized_height => {
                     match latest_consensus_tip {
                         Some(tip) => {
                             if !provider_matches_consensus_tip(&node.provider, tip, current_height)? {
@@ -5344,7 +5885,9 @@ where
                             polynomial = activated_polynomial;
                             last_dkg_output = Some(canonical_output.clone());
                             signing_share = activated_signing_share;
-                            vrf_materials.activate(
+                            activate_vrf_material_and_publish_local_share(
+                                &bridge,
+                                &vrf_materials,
                                 vrf_material_version,
                                 polynomial.clone(),
                                 signing_share.clone(),
@@ -5627,7 +6170,9 @@ where
                                 participants = activated_participants;
                                 vrf_material_version = new_vrf_material_version;
                                 dkg_cycle = target.dkg_cycle.saturating_add(1);
-                                vrf_materials.activate(
+                                activate_vrf_material_and_publish_local_share(
+                                    &bridge,
+                                    &vrf_materials,
                                     vrf_material_version,
                                     polynomial.clone(),
                                     None,
@@ -6171,7 +6716,7 @@ where
                             "DKG rotation freeze height not reached"
                         );
                     }
-                }
+                },
 
                 // Component exits -> fatal.
                 result = &mut executor_handle_task => {
@@ -6180,26 +6725,26 @@ where
                         .map_err(|e| eyre::eyre!("executor actor task failed: {e:?}"))?;
                     executor_result.wrap_err("executor actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut handler_handle => {
                     info!("application handler exited");
                     let application_result = result
                         .map_err(|e| eyre::eyre!("application handler task failed: {e:?}"))?;
                     application_result.wrap_err("application handler returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut finalization_handle => {
                     info!("finalization actor exited");
                     let finalization_result = result
                         .map_err(|e| eyre::eyre!("finalization actor task failed: {e:?}"))?;
                     finalization_result.wrap_err("finalization actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut peer_manager_handle_task => {
                     info!("peer manager actor exited");
                     result.map_err(|e| eyre::eyre!("peer manager actor exited: {e:?}"))?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 // SSA-8: the marshal actor is consensus-liveness-critical (block
                 // availability, finalized-block delivery to the executor). With
                 // `catch_panics`, a marshal panic (e.g. an unacknowledged Exact,
@@ -6212,7 +6757,7 @@ where
                     info!("marshal actor exited");
                     result.map_err(|e| eyre::eyre!("marshal actor exited: {e:?}"))?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 // The broadcast (buffered dissemination) handle remains managed by
                 // the Commonware runtime; its failure degrades to the marshal
                 // pull/serve path rather than a consensus stall.
@@ -6221,8 +6766,28 @@ where
         }
         .await;
 
-        match supervise_epoch_loop_result(ctx, epoch_loop_result, &mut engine_handle_task).await? {
+        match supervise_epoch_loop_result(&ctx, epoch_loop_result, &mut engine_handle_task).await? {
             EpochLoopAction::RestartEpoch => continue 'epoch_loop,
+            EpochLoopAction::ReplaceSigner => {
+                replacement_epoch_subchannels = Some(
+                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                        current_epoch,
+                        &ctx,
+                        Duration::from_secs(5),
+                        Duration::from_millis(10),
+                        &mut vote_mux,
+                        &mut cert_mux,
+                        &mut res_mux,
+                    )
+                    .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
+                        )
+                    })?,
+                );
+                continue 'epoch_loop;
+            }
             EpochLoopAction::ExitStack => break 'epoch_loop,
         }
     }
@@ -6237,11 +6802,14 @@ where
 // Helper functions
 // ===========================================================================
 
-async fn recover_application_finalized_round(
-    clock: &impl Clock,
-    marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+async fn recover_application_finalized_round<C>(
+    clock: C,
+    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
-) -> Result<Option<RecoveredApplicationFinalization>> {
+) -> Result<Option<RecoveredApplicationFinalization>>
+where
+    C: Clock,
+{
     if last_execution_height == 0 {
         return Ok(None);
     }
@@ -7098,16 +7666,19 @@ fn collect_finalized_dealer_logs(
 /// `bootstrap_from_live_dkg` is `true` only when this startup actually ran the
 /// interactive initial DKG ceremony (path 3).
 #[allow(clippy::too_many_arguments)]
-async fn obtain_threshold_material(
-    clock: &impl Clock,
+async fn obtain_threshold_material<C>(
+    clock: C,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    signing_key: &bls12381::PrivateKey,
+    signing_key: bls12381::PrivateKey,
     validator_set: &validators::ValidatorSet,
     startup_dkg_context: StartupDkgContext,
     dkg_sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     dkg_receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
-) -> Result<ThresholdMaterial> {
+) -> Result<ThresholdMaterial>
+where
+    C: Clock,
+{
     // Path 1: Try loading saved DKG state from keys_dir (restart precedence).
     // On ordinary restart, saved local DKG state wins over CLI bootstrap material.
     if let Some(ref keys_dir) = args.keys_dir {
@@ -7314,7 +7885,7 @@ async fn obtain_threshold_material(
     }
 
     // Path 3: Run interactive DKG ceremony.
-    let local_pk = commonware_cryptography::Signer::public_key(signing_key);
+    let local_pk = signing_key.public_key();
     let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
         .public_keys
         .clone()
@@ -7340,8 +7911,8 @@ async fn obtain_threshold_material(
     info!("no threshold material available - running DKG ceremony (NO BLOCKS until complete)");
 
     let dkg_result = dkg_actor::run_initial_dkg_durable(
-        clock,
-        signing_key.clone(),
+        &clock,
+        signing_key,
         startup_participants,
         None, // initial: no previous output
         None, // initial: no previous share
@@ -7527,32 +8098,11 @@ fn refresh_validator_set_at_height(
         .provider
         .state_by_block_hash(block_hash)
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
-    // The reshare TARGET (next_players) is ACTIVE-union-PENDING: ACTIVE members stay and
-    // PENDING joiners are activated by this ceremony. EXITING validators are excluded
-    // (the reshare removes them). Using the reshare-target reader - not the ACTIVE-only
-    // voting reader - is what lets a staked PENDING joiner receive a share.
-    let tee_attestation =
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            node.chain_spec().as_ref(),
-        );
-    let activation = tee_attestation
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-    let attestation_mode = activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(eyre::Report::msg)?
-        .attestation_mode;
-    let filtered = validators::read_tee_filtered_reshare_target_from_state(
-        &state,
-        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
-            chain_id: node.chain_spec().chain().id(),
-            genesis_hash: genesis_hash(node)?,
-            block_number: freeze_height,
-            timestamp: header.header().inner.timestamp,
-        },
-        attestation_mode,
-    )
-    .wrap_err("failed to apply TEE readiness to frozen reshare target")?;
+    // CycleTick has already moved every overdue ACTIVE validator into the jailed
+    // lifecycle before this exact freeze state. The ordinary reshare target is
+    // therefore authoritative; legacy boundary expiry fields remain empty.
+    let filtered = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
+        .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
     let new_set = filtered.validator_set;
 
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = new_set
