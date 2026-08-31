@@ -248,10 +248,12 @@ where
 /// Authenticate and normalize every durable follower record that Marshal can
 /// consume after restart before its actor is initialized or started.
 ///
-/// The range is inclusive. Existing local records must match the exact
-/// authenticated upstream record; a missing certificate or block is repaired
-/// from that record. Committee and boundary state advances through the same
-/// transition used by live resolver delivery.
+/// The range is inclusive. Existing local blocks and finalized proposals must
+/// match the authenticated upstream record. A local finalization certificate
+/// is verified independently because honest nodes may retain different quorum
+/// subsets for the same proposal. A missing certificate or block is repaired
+/// from the authenticated record. Committee and boundary state advances
+/// through the same transition used by live resolver delivery.
 #[allow(clippy::too_many_arguments)]
 pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
     chain: &Arc<Mutex<CommitteeChain>>,
@@ -304,11 +306,24 @@ where
                     height.get()
                 )
             })? {
-            Some(local) => ensure!(
-                local.encode() == certified.finalization.encode(),
-                "local follower replay finalization differs from authenticated upstream at height {}",
-                height.get()
-            ),
+            Some(local) => {
+                ensure!(
+                    local.proposal == certified.finalization.proposal,
+                    "local follower replay finalization proposal differs from authenticated upstream at height {}",
+                    height.get()
+                );
+                let epoch = local.proposal.round.epoch();
+                chain
+                    .lock()
+                    .expect("committee chain mutex poisoned")
+                    .verify_finalization(epoch, &local)
+                    .map_err(|error| {
+                        eyre!(
+                            "local follower replay finalization certificate failed verification at height {}: {error}",
+                            height.get()
+                        )
+                    })?;
+            }
             None => {
                 certificates
                     .put(height, digest, certified.finalization.clone())

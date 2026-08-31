@@ -2128,6 +2128,37 @@ fn certified_follower_recovery_anchor_is_bounded_by_exact_archive_and_execution(
 }
 
 #[test]
+fn certified_follower_replay_suffix_covers_both_archive_tips_without_advancing_execution() {
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(428, 428, 366),
+        (366, 428)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(421, 420, 366),
+        (366, 421)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(420, 421, 366),
+        (366, 421)
+    );
+    assert_eq!(certified_follower_replay_suffix_bounds(0, 0, 0), (0, 0));
+}
+
+#[test]
+fn certified_follower_normalized_archive_does_not_promote_observed_execution_anchor() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 366,
+        archive_finalization_tip: 428,
+        archive_block_tip: 428,
+        execution_tip: 366,
+        reth_finalized: 366,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 366);
+}
+
+#[test]
 fn certified_follower_recovery_anchor_rejects_unexplained_ack_gap() {
     let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
         marshal_processed: 357,

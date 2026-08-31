@@ -373,6 +373,21 @@ fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64
     last_execution_height.min(finalized_tip)
 }
 
+/// Inclusive suffix that must be authenticated before a certified follower's
+/// Marshal actor can repair or dispatch durable consensus records.
+fn certified_follower_replay_suffix_bounds(
+    archive_finalization_tip: u64,
+    archive_block_tip: u64,
+    execution_tip: u64,
+) -> (u64, u64) {
+    (
+        archive_finalization_tip
+            .min(archive_block_tip)
+            .min(execution_tip),
+        archive_finalization_tip.max(archive_block_tip),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CertifiedFollowerRecoveryFloors {
     marshal_processed: u64,
@@ -2667,7 +2682,7 @@ where
 
     let partition_prefix = "outbe-marshal".to_string();
 
-    let finalizations_archive = immutable::Archive::init(
+    let mut finalizations_archive = immutable::Archive::init(
         ctx.child("marshal_finalizations"),
         immutable::Config {
             metadata_partition: format!("{partition_prefix}-finalizations-metadata"),
@@ -2704,7 +2719,7 @@ where
     .await
     .wrap_err("failed to initialize finalizations archive")?;
 
-    let blocks_archive = immutable::Archive::init(
+    let mut blocks_archive = immutable::Archive::init(
         ctx.child("marshal_blocks"),
         immutable::Config {
             metadata_partition: format!("{partition_prefix}-blocks-metadata"),
@@ -2755,10 +2770,41 @@ where
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
 
+    let initial_archive_finalization_tip =
+        marshal::store::Certificates::last_index(&finalizations_archive).map_or(0, Height::get);
+    let initial_archive_block_tip =
+        marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
+    let (replay_suffix_lower, replay_suffix_upper) = certified_follower_replay_suffix_bounds(
+        initial_archive_finalization_tip,
+        initial_archive_block_tip,
+        last_execution_height,
+    );
+    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
+    if replay_suffix_upper > 0 {
+        outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &upstream_client,
+            &epocher,
+            anchor_epoch,
+            Height::new(replay_suffix_lower),
+            Height::new(replay_suffix_upper),
+            &mut finalizations_archive,
+            &mut blocks_archive,
+        )
+        .await
+        .wrap_err("failed to authenticate and normalize follower replay suffix")?;
+    }
+
     let archive_finalization_tip =
         marshal::store::Certificates::last_index(&finalizations_archive).map_or(0, Height::get);
     let archive_block_tip =
         marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
+    ensure!(
+        archive_finalization_tip == replay_suffix_upper
+            && archive_block_tip == replay_suffix_upper,
+        "certified follower replay normalization did not pair archive tips at height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
+    );
     let preselected_anchor_height = archive_finalization_tip
         .min(archive_block_tip)
         .min(last_execution_height);
@@ -2876,19 +2922,6 @@ where
 
     // ── 3. Authenticate the immutable recovered anchor ──────────────────
     let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
-    let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
-    let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
-    if recovery_height > 0 {
-        outbe_consensus::follow::engine::prepare_committee_chain(
-            &chain,
-            &upstream_client,
-            &epocher,
-            anchor_epoch,
-            Height::new(recovery_height),
-        )
-        .await
-        .wrap_err("failed to rebuild authenticated follower committee chain on restart")?;
-    }
     let recovery_anchor = if recovery_height == 0 {
         CertifiedFollowerRecoveryAnchor {
             checkpoint: ProjectionCheckpoint {

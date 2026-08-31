@@ -380,11 +380,31 @@ mod tests {
             epoch: Epoch,
             digest: Digest,
         ) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let signer_indices: Vec<_> = (0..self.keys.len()).collect();
+            self.finalization_for_signers(epoch, digest, &signer_indices)
+        }
+
+        fn finalization_for_signers(
+            &self,
+            epoch: Epoch,
+            digest: Digest,
+            signer_indices: &[usize],
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
+            self.finalization_for_proposal(epoch, proposal, signer_indices)
+        }
+
+        fn finalization_for_proposal(
+            &self,
+            verifier_epoch: Epoch,
+            proposal: Proposal<Digest>,
+            signer_indices: &[usize],
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
             let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &ns,
                 self.participants.clone(),
-                VrfMaterialProvider::new(epoch.get(), self.dkg.polynomial.clone(), None),
+                VrfMaterialProvider::new(verifier_epoch.get(), self.dkg.polynomial.clone(), None),
             )
             .unwrap();
             let signers: Vec<HybridScheme<MinSig>> = self
@@ -397,7 +417,7 @@ mod tests {
                         self.participants.clone(),
                         key.clone(),
                         VrfMaterialProvider::new(
-                            epoch.get(),
+                            verifier_epoch.get(),
                             self.dkg.polynomial.clone(),
                             Some(self.dkg.shares[idx.get() as usize].clone()),
                         ),
@@ -405,13 +425,12 @@ mod tests {
                     .unwrap()
                 })
                 .collect();
-            let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
             let subject = Subject::Finalize {
                 proposal: &proposal,
             };
-            let attestations: Vec<_> = signers
+            let attestations: Vec<_> = signer_indices
                 .iter()
-                .map(|s| s.sign::<Digest>(subject).unwrap())
+                .map(|index| signers[*index].sign::<Digest>(subject).unwrap())
                 .collect();
             let certificate = verifier
                 .assemble::<_, N3f1>(attestations, &Sequential)
@@ -1029,8 +1048,79 @@ mod tests {
     }
 
     #[test]
-    fn restart_replay_suffix_rejects_local_finalization_conflict() {
+    fn restart_replay_suffix_accepts_distinct_valid_quorum_for_same_proposal() {
         let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut height_nine = certified_block(&c0, e0, 9, Vec::new());
+        height_nine.finalization =
+            c0.finalization_for_signers(e0, height_nine.block.digest(), &[0, 1, 2]);
+        let local_finalization =
+            c0.finalization_for_signers(e0, height_nine.block.digest(), &[1, 2, 3]);
+        assert_eq!(
+            local_finalization.proposal,
+            height_nine.finalization.proposal
+        );
+        assert_ne!(
+            local_finalization.encode(),
+            height_nine.finalization.encode()
+        );
+
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, height_nine),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        certificates.by_height.insert(9, local_finalization.clone());
+        blocks.by_height.insert(9, records[&9].block.clone());
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("distinct valid quorum certificates for one proposal must reconcile");
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("restarting with the retained alternate certificate must be idempotent");
+
+        assert_eq!(
+            certificates.by_height[&9].encode(),
+            local_finalization.encode(),
+            "reconciliation must retain the already-valid local certificate"
+        );
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_invalid_local_certificate_for_same_proposal() {
+        let c0 = committee(10);
+        let attacker = committee(50);
         let e0 = Epoch::new(0);
         let epocher = FollowerEpocher::new(10, 0);
         let mut records = BTreeMap::from([
@@ -1050,9 +1140,9 @@ mod tests {
         )));
         let mut certificates = MemoryCertificates::default();
         let mut blocks = MemoryBlocks::default();
-        certificates
-            .by_height
-            .insert(9, certified_block(&c0, e0, 8, Vec::new()).finalization);
+        let forged = attacker.finalization_for(e0, records[&9].block.digest());
+        assert_eq!(forged.proposal, records[&9].finalization.proposal);
+        certificates.by_height.insert(9, forged);
         blocks.by_height.insert(9, records[&9].block.clone());
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1070,10 +1160,96 @@ mod tests {
 
         assert!(
             error.contains(
-                "local follower replay finalization differs from authenticated upstream at height 9"
+                "local follower replay finalization certificate failed verification at height 9"
             ),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_local_finalization_conflict() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let digest = records[&9].block.digest();
+        let signer_indices: Vec<_> = (0..c0.keys.len()).collect();
+        let conflicts = [
+            (
+                "payload",
+                certified_block(&c0, e0, 8, Vec::new()).finalization,
+            ),
+            (
+                "parent view",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(Round::new(e0, View::new(2)), View::new(0), digest),
+                    &signer_indices,
+                ),
+            ),
+            (
+                "round view",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(Round::new(e0, View::new(3)), View::new(1), digest),
+                    &signer_indices,
+                ),
+            ),
+            (
+                "epoch",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(
+                        Round::new(Epoch::new(1), View::new(2)),
+                        View::new(1),
+                        digest,
+                    ),
+                    &signer_indices,
+                ),
+            ),
+        ];
+
+        for (name, conflict) in conflicts {
+            let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+                e0,
+                c0.participants.clone(),
+            )));
+            let epocher = FollowerEpocher::new(10, 0);
+            let mut certificates = MemoryCertificates::default();
+            let mut blocks = MemoryBlocks::default();
+            certificates.by_height.insert(9, conflict);
+            blocks.by_height.insert(9, records[&9].block.clone());
+
+            let error =
+                futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+                    &chain,
+                    &source,
+                    &epocher,
+                    e0,
+                    Height::new(9),
+                    Height::new(9),
+                    &mut certificates,
+                    &mut blocks,
+                ))
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                error.contains(
+                    "local follower replay finalization proposal differs from authenticated upstream at height 9"
+                ),
+                "{name}: unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
