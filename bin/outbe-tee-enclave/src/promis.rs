@@ -1,7 +1,7 @@
 //! Enclave-side Promis confidential balance engine (secret-bearing).
 //!
 //! The Promis analogue of [`crate::gratis`], restricted to Mint/Burn over an
-//! encrypted per-account balance — Promis has no pledge/credis machinery. All key
+//! encrypted per-account balance - Promis has no pledge/credis machinery. All key
 //! derivation, amount AEAD, and modify-auth verification is the shared
 //! [`crate::confidential`] core under the [`crate::confidential::PROMIS`] domain,
 //! so Promis keys are cryptographically independent from Gratis's. Every function
@@ -33,7 +33,7 @@ pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 
     PROMIS.derive_modify_key(state_key, account)
 }
 
-/// `HMAC-SHA256(modify_key, preimage)` — the write authorization the client sends
+/// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client sends
 /// and the enclave re-checks. See [`crate::confidential::Domain::modify_mac`].
 pub fn modify_mac(
     modify_key: &[u8; 32],
@@ -77,7 +77,7 @@ fn reject(reason: impl Into<String>) -> PromisOpResult {
 /// Apply a Promis op over encrypted state. Pure and deterministic given
 /// `state_key` + `req`. Sets `inputs_canonical_hash`; the caller (dispatch) signs
 /// and fills `attestation_tag`. Business rejections come back as
-/// `PromisOpStatus::Rejected` (→ precompile revert), never a panic.
+/// `PromisOpStatus::Rejected` (-> precompile revert), never a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
     let inputs_canonical_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
@@ -88,7 +88,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
     result
 }
 
-/// Mint/Burn — modify-key gated and keyed by `req.account`.
+/// Mint/Burn - modify-key gated and keyed by `req.account`.
 fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisOpResult> {
     if req.amount.is_zero() {
         return Ok(reject("amount must be positive"));

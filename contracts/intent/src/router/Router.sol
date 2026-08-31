@@ -18,8 +18,8 @@ import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
  *      ({setGateway} there); this router never changes. All settlement logic is inherited from {BaseRouter}; only the
  *      cross-chain wiring lives here:
  *        - outbound: {_dispatchSettleCrossChain}/{_dispatchRefundCrossChain} via `bridge.sendMessage`;
- *        - inbound: {receiveMessage} (called by the bridge) → {_handleSettleOrder}/{_handleRefundOrder};
- *        - `domain == chainId`, so no protocol id translation lives here (the hub's adapters map chainId↔eid/domain).
+ *        - inbound: {receiveMessage} (called by the bridge) -> {_handleSettleOrder}/{_handleRefundOrder};
+ *        - `domain == chainId`, so no protocol id translation lives here (the hub's adapters map chainId<->eid/domain).
  *
  *      The matching Router on each destination must be registered via {setRemoteRouter} (explicit per-chain wiring,
  *      like LayerZero peers / Hyperlane enrolled routers); sending to an unregistered domain reverts.
@@ -62,7 +62,7 @@ contract Router is BaseRouter, IERC7786Recipient {
         emit RemoteRouterRegistered(domain, interop);
     }
 
-    // ============ Messaging — outbound ============
+    // ============ Messaging - outbound ============
 
     function _dispatchSettleCrossChain(
         uint32 _originDomain,
@@ -81,7 +81,7 @@ contract Router is BaseRouter, IERC7786Recipient {
         return IGatewayQuote(address(bridge)).quote(_remoteRouter(_destinationDomain), payload);
     }
 
-    // ============ Messaging — inbound ============
+    // ============ Messaging - inbound ============
 
     /// @inheritdoc IERC7786Recipient
     /// @dev Called by {bridge} with a message from the matching Router on the source chain. `sender` is the ERC-7930

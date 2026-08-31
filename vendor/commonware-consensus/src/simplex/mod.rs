@@ -30,7 +30,7 @@
 //!
 //! Upon entering view `v`:
 //! * Determine leader `l` for view `v`
-//! * Set timer for leader proposal `t_l = 2Δ` and advance `t_a = 3Δ`
+//! * Set timer for leader proposal `t_l = 2delta` and advance `t_a = 3delta`
 //!     * If leader `l` has not been active in last `r` views, set `t_l` to 0.
 //! * If leader `l`, broadcast `notarize(c,v)`
 //!   * If can't propose container in view `v` because missing notarization/nullification for a

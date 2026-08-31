@@ -38,7 +38,7 @@ const START: u64 = 1_800_000_000;
 const WWD: u32 = 20_270_115;
 
 /// Entry price every bucket here is issued at: 2.0 at scale 1e6. The call price
-/// is therefore `2.0 × 2.56 = 5.12`.
+/// is therefore `2.0 x 2.56 = 5.12`.
 fn entry_price() -> U256 {
     U256::from(2_000_000u64)
 }
@@ -215,7 +215,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
             stored,
             entry_price() * U256::from(CALL_RATE_PCT) / U256::from(100)
         );
-        assert_eq!(stored, at_call(), "2.0 × 256% == 5.12");
+        assert_eq!(stored, at_call(), "2.0 x 256% == 5.12");
     });
 }
 

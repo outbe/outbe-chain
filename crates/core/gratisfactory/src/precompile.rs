@@ -1,4 +1,4 @@
-//! Gratisfactory precompile at `0x2003`. ABI dispatch only — the Gratis balance
+//! Gratisfactory precompile at `0x2003`. ABI dispatch only - the Gratis balance
 //! movement + Fidelity bookkeeping lives in [`crate::runtime`]. Writes are
 //! authorized by the caller's Gratis modify key (`mac` + `opNonce`).
 

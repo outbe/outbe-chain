@@ -1,4 +1,4 @@
-//! End-to-end vote → governance flow: validator quorum materializes Approved OIP/GIP.
+//! End-to-end vote -> governance flow: validator quorum materializes Approved OIP/GIP.
 //!
 //! Complements crate-local vote_dispatch tests by using the node-level
 //! `handlers::vote::registry()` (Update + Governance targets).

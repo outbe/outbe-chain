@@ -237,7 +237,7 @@ fn stablecoin_class_dispatch(
 
     let Some(factory_token_id) = registered else {
         // Reserving the address class must not make native value unspendable at
-        // an address the Factory never issued — an externally owned account
+        // an address the Factory never issued - an externally owned account
         // whose address happens to fall in the prefix must still receive plain
         // transfers. This uses only revm's ordinary CALL balance semantics; it
         // invokes no token ABI and falls through to no account bytecode.

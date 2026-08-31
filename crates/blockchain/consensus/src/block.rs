@@ -19,12 +19,12 @@ use crate::digest::Digest;
 /// so blocks can flow through the Simplex engine.
 ///
 /// the inner `SealedBlock` is `Arc`-backed so that cloning a
-/// `ConsensusBlock` — which happens on every propose/verify/finalize hop, in the
-/// shared block cache, and across mailbox channels — is a cheap refcount bump
+/// `ConsensusBlock` - which happens on every propose/verify/finalize hop, in the
+/// shared block cache, and across mailbox channels - is a cheap refcount bump
 /// instead of a full deep block copy. `Clone`/`PartialEq`/`Eq`/`Debug` keep
 /// value semantics (`Arc`'s `PartialEq` compares the pointed-to value, and the
 /// codec encodes the inner block), so this is observationally identical to the
-/// previous by-value wrapper — only cheaper. A genuine owned `SealedBlock` is
+/// previous by-value wrapper - only cheaper. A genuine owned `SealedBlock` is
 /// still recoverable via [`ConsensusBlock::into_inner`] (which clones only when
 /// the `Arc` is shared).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +95,7 @@ impl Write for ConsensusBlock {
     fn write(&self, buf: &mut impl BufMut) {
         use alloy_rlp::Encodable as _;
         // Encode the inner SealedBlock explicitly (not the Arc wrapper) so the
-        // wire bytes are byte-identical to the pre-Arc wrapper — consensus codec
+        // wire bytes are byte-identical to the pre-Arc wrapper - consensus codec
         // determinism.
         self.0.as_ref().encode(buf);
     }
@@ -203,7 +203,7 @@ mod tests {
             assert_eq!(
                 decoded.digest(),
                 original.digest(),
-                "codec round-trip must preserve digest — marshal ensure_genesis_anchor \
+                "codec round-trip must preserve digest - marshal ensure_genesis_anchor \
                  compares this commitment and panics on mismatch (second boot)"
             );
             assert_eq!(decoded.commitment(), original.commitment());

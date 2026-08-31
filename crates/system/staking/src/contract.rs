@@ -27,9 +27,9 @@ pub struct Staking {
     pub unbonding_amount: Mapping<u32, U256>,
     // slot 8: mapping(index => complete timestamp) for unbonding queue
     pub unbonding_complete_time: Mapping<u32, u64>,
-    // slot 9: per-validator linked list head — stored as idx+1 (0 = empty)
+    // slot 9: per-validator linked list head - stored as idx+1 (0 = empty)
     pub per_val_unbonding_head: Mapping<Address, u32>,
-    // slot 10: next pointer for unbonding linked list — stored as idx+1 (0 = end)
+    // slot 10: next pointer for unbonding linked list - stored as idx+1 (0 = end)
     pub unbonding_next: Mapping<u32, u32>,
     // slot 11: withdrawability delay for slashed validators. 0 = default to 2x unbonding_period.
     pub config_slashed_withdrawal_delay: Slot<u64>,

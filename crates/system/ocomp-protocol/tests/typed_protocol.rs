@@ -1889,7 +1889,7 @@ fn desis_request_brief_hash_commits_every_frozen_request_field() {
         hash_framed(HashDomain::DesisRequestBrief, &preimage).unwrap()
     );
 
-    // Every frozen field moves the digest, the price table included — its length,
+    // Every frozen field moves the digest, the price table included - its length,
     // its prices and which currency each belongs to.
     let two_rows = {
         let mut rows = prices(2, 840);

@@ -4,6 +4,9 @@ use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use std::collections::{BTreeMap, HashMap};
 
+#[cfg(feature = "bench-utils")]
+use serde::{Deserialize, Serialize};
+
 use crate::error::PrecompileError;
 
 use crate::error::Result;
@@ -12,10 +15,27 @@ use crate::storage::{
     StorageHandle, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
 };
 
+#[cfg(feature = "bench-utils")]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageTraceKind {
+    Read,
+    Write,
+}
+
+#[cfg(feature = "bench-utils")]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StorageTraceOperation {
+    pub address: Address,
+    pub slot: U256,
+    pub kind: StorageTraceKind,
+}
+
 /// In-memory storage provider for unit testing.
 ///
 /// Gas is unlimited by default; tests may install a limit and inspect exact
 /// deductions to exercise deterministic out-of-gas behavior.
+#[cfg_attr(feature = "bench-utils", derive(Clone))]
 pub struct HashMapStorageProvider {
     pub storage: HashMap<(Address, U256), U256>,
     transient: HashMap<(Address, U256), U256>,
@@ -44,7 +64,7 @@ pub struct HashMapStorageProvider {
     snapshots: Vec<Snapshot>,
     /// When true, `sub_call` returns `SubCallOutput::default_success()`
     /// instead of the trait default `Err(SubCallError::NotAvailable)`. Tests
-    /// that exercise runtime paths which issue Rust → Solidity sub-calls but
+    /// that exercise runtime paths which issue Rust -> Solidity sub-calls but
     /// don't assert child-frame state opt in via [`Self::enable_sub_call_stub`].
     sub_call_stub: bool,
     /// Per-address return data stubs. Entries registered via
@@ -58,13 +78,20 @@ pub struct HashMapStorageProvider {
     lysis_activation_call_id: Option<B256>,
     metadosis_mutation_entitlements: MetadosisMutationEntitlements,
     metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
+    #[cfg(feature = "bench-utils")]
+    storage_trace_enabled: bool,
+    #[cfg(feature = "bench-utils")]
+    storage_trace: Vec<StorageTraceOperation>,
 }
 
+#[cfg_attr(feature = "bench-utils", derive(Clone))]
 struct Snapshot {
     storage: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
     ordered_events: Vec<Log>,
+    #[cfg(feature = "bench-utils")]
+    storage_trace_len: usize,
 }
 
 impl HashMapStorageProvider {
@@ -106,6 +133,35 @@ impl HashMapStorageProvider {
             lysis_activation_call_id: None,
             metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
             metadosis_mutation_active: None,
+            #[cfg(feature = "bench-utils")]
+            storage_trace_enabled: false,
+            #[cfg(feature = "bench-utils")]
+            storage_trace: Vec::new(),
+        }
+    }
+
+    /// Starts a benchmark-only persistent storage trace and discards any prior
+    /// trace. Production providers and default builds do not contain this path.
+    #[cfg(feature = "bench-utils")]
+    pub fn enable_storage_trace(&mut self) {
+        self.storage_trace.clear();
+        self.storage_trace_enabled = true;
+    }
+
+    /// Returns successful persistent storage operations since tracing began.
+    #[cfg(feature = "bench-utils")]
+    pub fn storage_trace(&self) -> &[StorageTraceOperation] {
+        &self.storage_trace
+    }
+
+    #[cfg(feature = "bench-utils")]
+    fn trace_storage(&mut self, address: Address, slot: U256, kind: StorageTraceKind) {
+        if self.storage_trace_enabled {
+            self.storage_trace.push(StorageTraceOperation {
+                address,
+                slot,
+                kind,
+            });
         }
     }
 
@@ -150,7 +206,7 @@ impl HashMapStorageProvider {
     /// returns [`SubCallOutput::default_success`] (success with empty
     /// returndata) instead of [`SubCallError::NotAvailable`].
     ///
-    /// Use only in tests whose runtime now issues Rust → Solidity sub-calls
+    /// Use only in tests whose runtime now issues Rust -> Solidity sub-calls
     /// but do not assert vault/EVM state on the child frame.
     pub fn enable_sub_call_stub(&mut self) {
         self.sub_call_stub = true;
@@ -453,11 +509,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             self.deduct_gas(WARM_STORAGE_READ_COST)?;
             self.metered_storage_reads = self.metered_storage_reads.saturating_add(1);
         }
-        Ok(self
+        let value = self
             .storage
             .get(&(address, key))
             .copied()
-            .unwrap_or(U256::ZERO))
+            .unwrap_or(U256::ZERO);
+        #[cfg(feature = "bench-utils")]
+        self.trace_storage(address, key, StorageTraceKind::Read);
+        Ok(value)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -475,7 +534,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         self.before_mutation(address)?;
         self.storage.insert((address, key), value);
-        self.after_mutation()
+        self.after_mutation()?;
+        #[cfg(feature = "bench-utils")]
+        self.trace_storage(address, key, StorageTraceKind::Write);
+        Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
@@ -529,6 +591,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             accounts: self.accounts.clone(),
             events: self.events.clone(),
             ordered_events: self.ordered_events.clone(),
+            #[cfg(feature = "bench-utils")]
+            storage_trace_len: self.storage_trace.len(),
         });
         JournalCheckpoint {
             log_i: 0,
@@ -547,6 +611,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
             self.ordered_events = snapshot.ordered_events;
+            #[cfg(feature = "bench-utils")]
+            self.storage_trace.truncate(snapshot.storage_trace_len);
         }
     }
 

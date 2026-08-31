@@ -37,7 +37,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same
-    // block; a lagging watermark means the ordering broke — skip loudly
+    // block; a lagging watermark means the ordering broke - skip loudly
     // instead of misreading an unfinalized day as empty.
     // todo use api.rs
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
@@ -358,8 +358,8 @@ pub(crate) fn try_call_group(
     {
         trigger < window.p_star
     } else {
-        // A shorter window than the scan's — issued inside it, or different stored
-        // parameters — so its own days are counted. Wider stored parameters are only
+        // A shorter window than the scan's - issued inside it, or different stored
+        // parameters - so its own days are counted. Wider stored parameters are only
         // reached under `p_star`; only a profile change on a live chain parts them.
         count_breaches(
             oracle,
@@ -380,7 +380,14 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
+    // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
+    factory.push_called_group(
+        group.iso_code,
+        group.worldwide_day,
+        u64::from(called_at) + u64::from(series.call_notice_period),
+        &group.members,
+    )?;
 
     // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
     // the `intex_notify` trigger. Each carries its own series: the group has left the index by then.

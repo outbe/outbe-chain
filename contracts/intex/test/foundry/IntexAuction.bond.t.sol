@@ -181,7 +181,7 @@ contract IntexAuctionBondTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
-        // Bond came back, the bid escrow went out — net position is just the bid lock.
+        // Bond came back, the bid escrow went out - net position is just the bid lock.
         assertEq(paymentToken.balanceOf(iba1), 1000e6 - LOCK_AMOUNT, "net = bid lock only");
         assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
         assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");

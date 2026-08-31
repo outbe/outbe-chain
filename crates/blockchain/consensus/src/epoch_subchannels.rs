@@ -5,7 +5,7 @@
 //! and registers a per-epoch sub-channel on each of three Muxers
 //! (vote, cert, resolver). Without pre-registration, sub-channel
 //! registration on the *receiver side* happens only when the new
-//! epoch's `'epoch_loop` iteration starts — which can lag a faster
+//! epoch's `'epoch_loop` iteration starts - which can lag a faster
 //! peer's broadcast for the same epoch. Because production uses
 //! `Muxer::new(...)` (no `.with_backup()`), any vote/cert message
 //! arriving on an unregistered sub-channel is **dropped silently**
@@ -25,7 +25,7 @@
 //! exercise the same registration code path that production runs.
 //!
 //! Error path: any failure in this module is fail-fast through
-//! `eyre::Result`. There is no silent fallback to lazy registration —
+//! `eyre::Result`. There is no silent fallback to lazy registration -
 //! a Mux that cannot register a sub-channel is in a state we cannot
 //! safely paper over from a consensus runtime path.
 
@@ -179,7 +179,7 @@ where
 /// iteration. Three branches:
 ///
 /// * `Some(stash)` with `stash.epoch == epoch`: the expected case
-///   under the production fix — DKG completion pre-registered for
+///   under the production fix - DKG completion pre-registered for
 ///   this epoch and the activation handler advanced into it.
 ///   Consume the stash.
 /// * `Some(stash)` with `stash.epoch != epoch`: a state-machine
@@ -188,7 +188,7 @@ where
 ///   re-registering would mask the bug. Drop the stash (its
 ///   `SubReceiver`s' `Drop` deregisters the wrong-epoch routes from
 ///   the Muxes) and surface the error.
-/// * `None`: genesis bootstrap or restart — there was no prior DKG
+/// * `None`: genesis bootstrap or restart - there was no prior DKG
 ///   completion to pre-register from. Register fresh.
 pub async fn take_or_register_current<S, R>(
     epoch: Epoch,

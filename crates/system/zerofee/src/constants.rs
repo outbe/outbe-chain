@@ -1,18 +1,18 @@
 //! Constants for the zero-fee paymaster sponsorship policy.
 //!
-//! These are part of the protocol contract — changing them is a hard-fork
+//! These are part of the protocol contract - changing them is a hard-fork
 //! event. Fee shape errors share the generic `FeeCapTooLow` (code 105)
 //! with the oracle hook because both paths require `priority_fee == 0`
 //! and `max_fee >= MIN_PROTOCOL_BASE_FEE`. All other free-tx-specific
 //! reasons occupy dedicated codes 110..=116:
 //!
-//! - 110 `FreeTxDailyExhausted` — daily quota burned
-//! - 111 retired — formerly rejected zero-balance signers; MUST NOT be reused
-//! - 112 `FreeTxDailyContractCreationForbidden` — `to == None`
-//! - 113 `FreeTxDailyValueNotZero` — `msg.value != 0`
-//! - 114 `FreeTxDailyGasLimitExceeded` — `gas_limit > FREE_TX_DAILY_GAS_LIMIT`
-//! - 115 `FreeTxDailyCalldataTooLarge` — `calldata > FREE_TX_DAILY_CALLDATA_BYTES`
-//! - 116 `FreeTxDailyTargetNotWhitelisted` — `to ∉ SPONSORED_TARGET_WHITELIST`
+//! - 110 `FreeTxDailyExhausted` - daily quota burned
+//! - 111 retired - formerly rejected zero-balance signers; MUST NOT be reused
+//! - 112 `FreeTxDailyContractCreationForbidden` - `to == None`
+//! - 113 `FreeTxDailyValueNotZero` - `msg.value != 0`
+//! - 114 `FreeTxDailyGasLimitExceeded` - `gas_limit > FREE_TX_DAILY_GAS_LIMIT`
+//! - 115 `FreeTxDailyCalldataTooLarge` - `calldata > FREE_TX_DAILY_CALLDATA_BYTES`
+//! - 116 `FreeTxDailyTargetNotWhitelisted` - `to not in SPONSORED_TARGET_WHITELIST`
 //!
 //! See `hooks.rs::ZeroFeePolicyError::code` for the authoritative mapping.
 
@@ -23,7 +23,7 @@ pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 
 /// Maximum `gas_limit` accepted for a sponsored free transaction.
 ///
-/// Caps the per-tx compute budget so 8 × N sybil-funded addresses cannot
+/// Caps the per-tx compute budget so 8 x N sybil-funded addresses cannot
 /// exhaust a block on the sponsored path. 500_000 covers ERC-20 transfer
 /// plus a small log, matching the typical onboarding interaction. The
 /// TributeFactory has a separate, narrowly scoped limit because a ZK-enabled

@@ -6,16 +6,16 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///
 /// Tracks per-trigger execution state: the timestamp of the slot most
 /// recently processed and the block number that processed it. The slot
-/// timestamp is canonical — `last_executed_at` is set to the
+/// timestamp is canonical - `last_executed_at` is set to the
 /// `next_fire_at` value chosen by the dispatcher, not to
 /// `block.timestamp`, so that a clock-jump that crosses several slots
 /// records the latest covered slot rather than the dispatching block's
 /// wall time.
 ///
 /// Storage slots:
-///   0:  last_executed_at             — mapping(uint32 => uint64)
-///   1:  last_executed_block_number   — mapping(uint32 => uint64)
-///   2:  active_utc_day                — uint32
+///   0:  last_executed_at             - mapping(uint32 => uint64)
+///   1:  last_executed_block_number   - mapping(uint32 => uint64)
+///   2:  active_utc_day                - uint32
 #[contract(addr = CYCLE_ADDRESS)]
 pub struct Cycle {
     /// Per-trigger last-fired slot timestamp. Stored as the slot value

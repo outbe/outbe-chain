@@ -42,7 +42,7 @@ pub const BLOCK_GUARD_RETAIN: u64 = 64;
 ///
 /// Without this, `block_metadata_counted`, `metadata_fingerprint_for_block`,
 /// `fee_dust_counted_for_block`, and `fee_settled` grow by one entry per
-/// finalized block forever. The evicted block is `BLOCK_GUARD_RETAIN` ≫ K
+/// finalized block forever. The evicted block is `BLOCK_GUARD_RETAIN` >> K
 /// blocks old, so it can no longer be re-counted or settled and clearing its
 /// guards cannot weaken replay protection for any block still in the window.
 /// The nested `participation_counted_for_block[fb_hash]` map is freed at
@@ -153,7 +153,7 @@ pub fn on_finalized_metadata(
         if !participation_guard.read(voter)? {
             let prev_count = day_participation.read(voter)?;
             if prev_count == 0 {
-                // First time we see this voter for this day → append to
+                // First time we see this voter for this day -> append to
                 // the deterministic ordered voter list.
                 let idx = rewards.daily_voter_count.read(&fb_day)?;
                 day_voter_at.write(&idx, *voter)?;
@@ -278,7 +278,7 @@ mod tests {
             )
             .unwrap();
 
-            // fees are ESCROWED, not paid eagerly — voter balances stay
+            // fees are ESCROWED, not paid eagerly - voter balances stay
             // zero and the full fee remains on REWARDS until settle at N+K.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
             assert_eq!(ctx.storage.balance(VAL_Y).unwrap(), U256::ZERO);
@@ -412,7 +412,7 @@ mod tests {
             .unwrap();
 
             let rewards = ctx.storage.contract::<Rewards>();
-            // Both blocks contributed 100 → 200 raw (emission-cap input).
+            // Both blocks contributed 100 -> 200 raw (emission-cap input).
             assert_eq!(
                 rewards.daily_fee_sum_raw.read(&20240101).unwrap(),
                 U256::from(200u64)
@@ -426,10 +426,10 @@ mod tests {
                 rewards.pending_fees.read(&FB_HASH_B).unwrap(),
                 U256::from(100u64)
             );
-            // No eager payouts — fees stay escrowed until settle.
+            // No eager payouts - fees stay escrowed until settle.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
             assert_eq!(ctx.storage.balance(VAL_Y).unwrap(), U256::ZERO);
-            // Participation: 2 blocks × 2 voters = 4.
+            // Participation: 2 blocks x 2 voters = 4.
             assert_eq!(
                 rewards.daily_total_participation.read(&20240101).unwrap(),
                 4
@@ -529,7 +529,7 @@ mod tests {
                 rewards.daily_fee_sum_raw.read(&20240101).unwrap(),
                 U256::from(100u64)
             );
-            // Whole fee escrowed; no base voters → the entire pool becomes
+            // Whole fee escrowed; no base voters -> the entire pool becomes
             // burnable residue at settle.
             assert_eq!(
                 rewards.pending_fees.read(&FB_HASH_A).unwrap(),
@@ -593,7 +593,7 @@ mod tests {
         });
     }
 
-    // ── Step 23: idempotency property test ─────────────────────────────
+    // -- Step 23: idempotency property test -----------------------------
     //
     // Replay-safety contract: applying a canonical sequence of finalized
     // metadata events, then re-applying any subset of those events any
@@ -859,7 +859,7 @@ mod tests {
                 prune_block_guards(&rewards, fb(1000 + i)).unwrap();
             }
 
-            // Victim evicted → every guard reset to its default.
+            // Victim evicted -> every guard reset to its default.
             assert!(!rewards.block_metadata_counted.read(&victim).unwrap());
             assert_eq!(
                 rewards
@@ -871,7 +871,7 @@ mod tests {
             assert!(!rewards.fee_dust_counted_for_block.read(&victim).unwrap());
             assert!(!rewards.fee_settled.read(&victim).unwrap());
 
-            // Survivor is still inside the window → guards intact.
+            // Survivor is still inside the window -> guards intact.
             assert!(rewards.block_metadata_counted.read(&survivor).unwrap());
             assert!(rewards.fee_settled.read(&survivor).unwrap());
         });

@@ -1,4 +1,4 @@
-//! — full-DKG failure-class tests for the metadata-bound
+//! - full-DKG failure-class tests for the metadata-bound
 //! `verify_v2_proof` entry (audit-001 closure).
 //!
 //! Each test builds a real DKG fixture, constructs a real BLS-signed
@@ -52,7 +52,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::OsRng;
 
-// ── Shared fixture ────────────────────────────────────────────────────────
+// -- Shared fixture --------------------------------------------------------
 
 const FINALIZED_EPOCH: u64 = 3;
 const FINALIZED_VIEW: u64 = 100;
@@ -223,11 +223,11 @@ fn build_metadata(
     }
 }
 
-// ── Happy-path baseline (sanity) ───────────────────────────────────────────
+// -- Happy-path baseline (sanity) -------------------------------------------
 
 #[test]
 fn cluster_happy_path_quorum_certificate_verifies() {
-    // Baseline: real cert against real metadata + snapshot → verify_v2_proof
+    // Baseline: real cert against real metadata + snapshot -> verify_v2_proof
     // returns Ok. Proves the fixture is well-formed; any failure-class test
     // that adjusts ONE field can attribute the rejection to that change.
     let dkg = build_dkg(4);
@@ -345,7 +345,7 @@ fn assembled_finalization_passes_hybrid_and_phase1_verification() {
     assert_eq!(verified.vrf_material_version, VRF_MATERIAL_VERSION);
 }
 
-// ── wrong_bls_domain_rejects ─────────────────────────────────────
+// -- wrong_bls_domain_rejects -------------------------------------
 
 #[test]
 fn wrong_bls_domain_rejects() {
@@ -389,7 +389,7 @@ fn wrong_bls_domain_rejects() {
     assert!(matches!(err, V2VerifyError::BlsAggregateInvalid), "{err:?}");
 }
 
-// ── proof_trailing_bytes_rejects ─────────────────────────────────
+// -- proof_trailing_bytes_rejects ---------------------------------
 
 #[test]
 fn proof_trailing_bytes_rejects() {
@@ -420,11 +420,11 @@ fn proof_trailing_bytes_rejects() {
     assert!(matches!(err, V2VerifyError::TrailingBytes), "{err:?}");
 }
 
-// ── proof_codec_wrong_committee_size_rejects ─────────────────────
+// -- proof_codec_wrong_committee_size_rejects ---------------------
 
 #[test]
 fn proof_codec_wrong_committee_size_rejects() {
-    // Cert built for 4 participants, snapshot has 3 → metadata.ordered_committee
+    // Cert built for 4 participants, snapshot has 3 -> metadata.ordered_committee
     // length mismatch with snapshot.committee length triggers BitmapMismatch
     // before the inner decoder sees the cert.
     let dkg_4 = build_dkg(4);
@@ -452,7 +452,7 @@ fn proof_codec_wrong_committee_size_rejects() {
     );
 }
 
-// ── non_hybrid_certificate_encoding_rejects ──────────────────────
+// -- non_hybrid_certificate_encoding_rejects ----------------------
 
 #[test]
 fn non_hybrid_certificate_encoding_rejects() {
@@ -491,7 +491,7 @@ fn non_hybrid_certificate_encoding_rejects() {
     );
 }
 
-// ── hybrid_signer_length_mismatch_rejects ────────────────────────
+// -- hybrid_signer_length_mismatch_rejects ------------------------
 
 #[test]
 fn hybrid_signer_length_mismatch_rejects() {
@@ -531,13 +531,13 @@ fn hybrid_signer_length_mismatch_rejects() {
     );
 }
 
-// ── hybrid_signer_duplicate_or_out_of_range_rejects ──────────────
+// -- hybrid_signer_duplicate_or_out_of_range_rejects --------------
 
 #[test]
 fn hybrid_signer_duplicate_or_out_of_range_rejects() {
     // Build cert; tamper metadata.signer_bitmap to be 1 byte too short.
     // This is the "signer index out of range / bitmap mismatch" failure
-    // class — the inner decoder + the metadata bitmap reconciliation
+    // class - the inner decoder + the metadata bitmap reconciliation
     // both catch it.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -556,7 +556,7 @@ fn hybrid_signer_duplicate_or_out_of_range_rejects() {
         parent_hash,
         ParentParticipationProof::Finalization,
     );
-    // Truncate bitmap → length now != committee size.
+    // Truncate bitmap -> length now != committee size.
     metadata.signer_bitmap.pop();
     let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
         .expect_err("bitmap length mismatch must reject");
@@ -566,7 +566,7 @@ fn hybrid_signer_duplicate_or_out_of_range_rejects() {
     );
 }
 
-// ── signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order
+// -- signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order
 
 #[test]
 fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
@@ -597,7 +597,7 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
     assert_eq!(verified.signer_bitmap, metadata.signer_bitmap);
 }
 
-// ── missing_vrf_proof_rejects ────────────────────────────────────
+// -- missing_vrf_proof_rejects ------------------------------------
 
 #[test]
 fn truncated_mandatory_vrf_proof_rejects() {
@@ -624,7 +624,7 @@ fn truncated_mandatory_vrf_proof_rejects() {
     assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
-// ── wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects ───
+// -- wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects ---
 
 #[test]
 fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
@@ -657,13 +657,13 @@ fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
     assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
-// ── malformed_vrf_proof_encoding_rejects ─────────────────────────
+// -- malformed_vrf_proof_encoding_rejects -------------------------
 
 #[test]
 fn malformed_vrf_proof_encoding_rejects() {
     // Corrupt the VRF threshold signature bytes inside the encoded cert.
     // The decoder may accept the bytes (length matches) but the verify
-    // step fails — yielding InvalidVrfSignature.
+    // step fails - yielding InvalidVrfSignature.
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
     let parent_hash = B256::with_last_byte(0xAA);
@@ -686,7 +686,7 @@ fn malformed_vrf_proof_encoding_rejects() {
     );
     let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
         .expect_err("malformed VRF proof bytes must reject");
-    // Either decode failure or VRF verify failure — both prove the verifier
+    // Either decode failure or VRF verify failure - both prove the verifier
     // rejected without panic.
     assert!(
         matches!(
@@ -699,7 +699,7 @@ fn malformed_vrf_proof_encoding_rejects() {
     );
 }
 
-// ── wrong_vrf_seed_round_rejects ─────────────────────────────────
+// -- wrong_vrf_seed_round_rejects ---------------------------------
 
 #[test]
 fn wrong_vrf_seed_round_rejects() {
@@ -750,13 +750,13 @@ fn wrong_vrf_seed_round_rejects() {
     assert!(matches!(err, V2VerifyError::InvalidVrfSignature), "{err:?}");
 }
 
-// ── invalid_vrf_signature_rejects_before_state_change ────────────
+// -- invalid_vrf_signature_rejects_before_state_change ------------
 
 #[test]
 fn invalid_vrf_signature_rejects_before_state_change() {
     // Replace threshold signature with one signed under a completely
     // different namespace; VRF verify fails. Verifier returns Err before
-    // VerifiedProof is constructed → no state mutation, no proof-less
+    // VerifiedProof is constructed -> no state mutation, no proof-less
     // metadata leak ( in spirit, applied at the verifier layer).
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
@@ -796,7 +796,7 @@ fn invalid_vrf_signature_rejects_before_state_change() {
     assert!(matches!(err, V2VerifyError::InvalidVrfSignature), "{err:?}");
 }
 
-// ── activity_envelope_notarization_rejected_as_system_tx_proof ──
+// -- activity_envelope_notarization_rejected_as_system_tx_proof --
 
 #[test]
 fn activity_envelope_notarization_rejected_as_system_tx_proof() {
@@ -834,7 +834,7 @@ fn activity_envelope_notarization_rejected_as_system_tx_proof() {
     );
 }
 
-// ── certified_notarization_proof_rejected_for_non_parent_ancestor ──
+// -- certified_notarization_proof_rejected_for_non_parent_ancestor --
 
 #[test]
 fn certified_notarization_proof_rejected_for_non_parent_ancestor() {

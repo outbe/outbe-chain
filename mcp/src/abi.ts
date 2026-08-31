@@ -5,7 +5,7 @@ import type { Abi } from "viem";
  *
  * Source of truth is `contracts/precompiles/src/I*.sol`; these JSON artifacts
  * are produced by `mise run export-abi` and checked for staleness in CI.
- * Nothing here is hand-written — a signature can only change by changing the
+ * Nothing here is hand-written - a signature can only change by changing the
  * Solidity. Each ABI is used whole; the registry does not filter it.
  */
 import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";

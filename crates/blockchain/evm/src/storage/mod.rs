@@ -10,7 +10,7 @@
 //! `&mut ctx` to `run_sub_call_impl(ctx, ...)`. The outer dispatch path
 //! borrows `CtxStorageProvider` through
 //! [`outbe_primitives::storage::StorageHandle::with_provider`] which uses
-//! `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` — releasing the inner
+//! `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` - releasing the inner
 //! borrow as soon as the scope ends.
 
 pub mod ctx_provider;

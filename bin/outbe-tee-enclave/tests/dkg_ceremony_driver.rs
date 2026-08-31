@@ -1,7 +1,7 @@
 //! End-to-end TEE DKG ceremony driven by the async [`run_tee_dkg_ceremony`]
 //! event loop over an in-memory gossip bus, with N separate real enclaves over
 //! UDS + Noise-IK. This exercises the host-side ceremony driver the consensus
-//! stack will run (one task per node, messages routed by BLS pubkey) — the same
+//! stack will run (one task per node, messages routed by BLS pubkey) - the same
 //! loop that, in the node, runs over the commonware P2P channel.
 
 use std::collections::BTreeMap;

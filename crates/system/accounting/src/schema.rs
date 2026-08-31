@@ -3,7 +3,7 @@
 //! ## Storage layout (`ACCOUNTING_PROGRESS_ADDRESS`)
 //!
 //! ```text
-//! slot  0: last_accounted_block_number — u64
+//! slot  0: last_accounted_block_number - u64
 //! slot  1..=15: reserved (genesis zero; do not reuse)
 //! ```
 //!

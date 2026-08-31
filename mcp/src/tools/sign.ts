@@ -77,7 +77,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         abi: tee.abi,
         functionName: "isBootstrapped",
       });
-      if (!bootstrapped) throw new Error("TeeRegistry not bootstrapped — no offer key yet");
+      if (!bootstrapped) throw new Error("TeeRegistry not bootstrapped - no offer key yet");
 
       const offerKeyU256 = (await ctx.publicClient.readContract({
         address: tee.address,
@@ -111,7 +111,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         enc.ephemeralPubkey,
         day, // worldwideDay
         cur, // tributeCurrency
-        cur, // referenceCurrency — a separate axis, same value here
+        cur, // referenceCurrency - a separate axis, same value here
         excludeFromIntex,
         "0x" as Hex,
         "0x" as Hex,
@@ -175,7 +175,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- agentreward -----------------------------------------------------------
-  // The Rewards precompile (EE03) exposes no callable methods — validator
+  // The Rewards precompile (EE03) exposes no callable methods - validator
   // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",

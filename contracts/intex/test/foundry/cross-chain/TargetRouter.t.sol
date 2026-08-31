@@ -36,7 +36,7 @@ contract TargetRouterTest is CrossChainTest {
     address private admin = address(this);
     address private user = address(0x1);
 
-    // Stand-in Desis recipient that advertises `IDesis` via ERC-165 — declared in setUp().
+    // Stand-in Desis recipient that advertises `IDesis` via ERC-165 - declared in setUp().
     address private desis;
 
     uint32 private constant SERIES_ID_DAY = 20250115;

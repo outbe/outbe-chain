@@ -33,7 +33,7 @@ contract OriginSettlerForTest is OriginSettler {
         return _compactAddr;
     }
 
-    // Zero lockTag — lower 160 bits = token address, claimant lower 160 bits = recipient
+    // Zero lockTag - lower 160 bits = token address, claimant lower 160 bits = recipient
     function _lockTag() internal pure override returns (bytes12) {
         return bytes12(0);
     }

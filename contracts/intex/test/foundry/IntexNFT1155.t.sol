@@ -10,7 +10,7 @@ import {Test} from "forge-std/Test.sol";
 
 /// @dev ERC1155 receiver that, during the `onERC1155Received` callback, snapshots
 ///      `totalSupply(tokenId)` against `balanceOf(self, tokenId)`. After the mint
-///      returns, the test asserts the two were equal mid-callback — which holds iff
+///      returns, the test asserts the two were equal mid-callback - which holds iff
 ///      the contract writes `totalSupply` before `_mint` (the read-only-reentrancy guarantee).
 contract MidCallbackSnapshotReceiver is IERC1155Receiver {
     IntexNFT1155 public immutable nft;
@@ -33,7 +33,7 @@ contract MidCallbackSnapshotReceiver is IERC1155Receiver {
         external
         returns (bytes4)
     {
-        // Snapshot the last id in the batch — the mid-callback inconsistency exists
+        // Snapshot the last id in the batch - the mid-callback inconsistency exists
         // after the full _mint loop, before the post-loop totalSupply write.
         uint256 last = ids[ids.length - 1];
         observedTotalSupply = nft.totalSupply(last);
@@ -681,7 +681,7 @@ contract IntexNFT1155Test is Test {
 
     function test_Settle_OnlySettlementRole() public {
         _createSeries(SERIES_ID_1_DAY, 0);
-        // Bridger has RELAYER_ROLE only — settle must reject.
+        // Bridger has RELAYER_ROLE only - settle must reject.
         vm.expectRevert();
         vm.prank(bridger);
         nft.settle(SERIES_ID_1, user, user, 1);
@@ -1321,7 +1321,7 @@ contract IntexNFT1155Test is Test {
         assertEq(receiver.observedBalance(), 4, "settled balance updated mid-callback");
         assertEq(receiver.observedTotalSupply(), 4, "settled totalSupply must equal balance mid-callback");
 
-        // And the Issued burn must have happened before the Settled mint — so the
+        // And the Issued burn must have happened before the Settled mint - so the
         // Issued totalSupply read inside the callback would also be consistent.
         assertEq(nft.totalSupply(TOKEN_ID_1), iTokSupplyBefore - 4, "issued totalSupply decreased before settled mint");
         assertEq(nft.totalSupply(sTok), 4);

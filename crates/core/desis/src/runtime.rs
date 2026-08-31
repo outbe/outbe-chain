@@ -96,7 +96,7 @@ const _: () = assert!(
     "the strike must be a power of ten; the ladder only steps by decades"
 );
 
-/// Digits `load_minor × rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
+/// Digits `load_minor x rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
 /// the strike's own, plus the six each of the load and the rate.
 const PROMIS_LOAD_STRIKE_DIGITS: u32 =
     PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * NATIVE_TOKEN_DECIMALS as u32;
@@ -201,8 +201,8 @@ fn step_promis_load(
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most
-/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths — which
-/// collect prices in different orders — resolve a day to the same table.
+/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths - which
+/// collect prices in different orders - resolve a day to the same table.
 fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -338,7 +338,7 @@ fn send_stage_start(
 // ---------------------------------------------------------------------------
 
 /// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
-/// runs in its own checkpoint — an Err rolls that day back (retried next slot).
+/// runs in its own checkpoint - an Err rolls that day back (retried next slot).
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
@@ -454,7 +454,7 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    // A day nobody could price cannot hold an auction, and ends as a red day does — but
+    // A day nobody could price cannot hold an auction, and ends as a red day does - but
     // unlike a red day it was briefed with supply, which has to go back.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
@@ -780,7 +780,7 @@ pub fn process_bids_done(
 }
 
 /// Mark the chain done once its BIDS_DONE marker and every batch have arrived with matching totals.
-/// Invoked from both arrival paths — either side may land last over the unordered bridge. An
+/// Invoked from both arrival paths - either side may land last over the unordered bridge. An
 /// integrity mismatch (batch totals vs marker claims) keeps the chain not-done, so the deadline
 /// skip excludes it.
 fn try_finalize_chain(
@@ -838,7 +838,7 @@ pub fn force_clear(
 }
 
 /// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
-/// fan-in gate. Each day runs in its own checkpoint — an Err rolls that day
+/// fan-in gate. Each day runs in its own checkpoint - an Err rolls that day
 /// back (retried next slot) and never escapes into the trigger chain.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
@@ -1065,7 +1065,7 @@ fn clear_inner(
 // ---------------------------------------------------------------------------
 
 /// Sort chain-tagged bids: descending rate, ascending timestamp on tie. The sort is
-/// stable, so remaining ties keep the snapshot's chain order — deterministic.
+/// stable, so remaining ties keep the snapshot's chain order - deterministic.
 fn sort_bids(bids: &mut [(u32, BidData)]) {
     bids.sort_by(|(_, a), (_, b)| {
         b.intex_bid_rate

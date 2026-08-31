@@ -98,7 +98,7 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
             // The target is the hub, which returns the magic value or reverts; never park a non-reverting call.
             require(magic == IERC7786Recipient.receiveMessage.selector, RecipientExecutionFailed());
         } catch (bytes memory reason) {
-            // Park only a delivery that provably received the full gas limit — EIP-150 headroom plus the call's
+            // Park only a delivery that provably received the full gas limit - EIP-150 headroom plus the call's
             // argument encoding, which scales with the payload. An under-gassed send reverts outright so a delivery
             // can never be falsely parked.
             require(

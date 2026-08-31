@@ -67,12 +67,12 @@ fn zero_amount_cohort_op_is_a_noop() {
 #[test]
 fn league_reflects_holding_and_sale() {
     with_env(|storage| {
-        // Sole holder, no sales → top league at a later time.
+        // Sole holder, no sales -> top league at a later time.
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
         let league = api::league_at(storage.clone(), ALICE, T0 + 100 * DAY).unwrap();
         assert_eq!(league, MAX_LEAGUE);
 
-        // Selling most of the position drops efficiency → league falls.
+        // Selling most of the position drops efficiency -> league falls.
         api::cohort_out(storage.clone(), ALICE, U256::from(900u64), T0 + 100 * DAY).unwrap();
         let after = api::league_at(storage.clone(), ALICE, T0 + 200 * DAY).unwrap();
         assert!(after < MAX_LEAGUE);
@@ -89,7 +89,7 @@ fn league_reflects_holding_and_sale() {
 fn snapshot_batches_owner_leagues_in_order() {
     with_env(|storage| {
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
-        // Bob acquires then sells everything → low efficiency.
+        // Bob acquires then sells everything -> low efficiency.
         api::cohort_in(storage.clone(), BOB, U256::from(1_000u64), T0).unwrap();
         api::cohort_out(storage.clone(), BOB, U256::from(1_000u64), T0 + 10 * DAY).unwrap();
 
@@ -135,7 +135,7 @@ fn signed_query_returns_index_for_owner_and_rejects_others() {
         let c = FidelityContract::new(storage.clone());
         let expiry = T0 + 400 * DAY;
 
-        // Owner-signed authorization → the enclave returns a positive RCFI.
+        // Owner-signed authorization -> the enclave returns a positive RCFI.
         let sig = query_auth(&sk, account, expiry);
         let result = c
             .query_index_at(account, T0 + 100 * DAY, expiry, sig)
@@ -156,12 +156,12 @@ fn signed_query_returns_index_for_owner_and_rejects_others() {
 fn max_rcfi_at_uses_plaintext_anchor() {
     with_env(|storage| {
         let c = FidelityContract::new(storage.clone());
-        // No anchor yet → zero ceiling.
+        // No anchor yet -> zero ceiling.
         assert_eq!(c.max_rcfi_at(T0).unwrap(), U256::ZERO);
 
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
         // After qualification, the ceiling grows with elapsed time (pure on-chain
-        // t_dec of the plaintext anchor — no enclave).
+        // t_dec of the plaintext anchor - no enclave).
         let early = c.max_rcfi_at(T0 + 10 * DAY).unwrap();
         let later = c.max_rcfi_at(T0 + 100 * DAY).unwrap();
         assert!(later > early);
@@ -209,7 +209,7 @@ fn precompile_dispatch_query_auth_and_metadata() {
         let query_ts = T0 + 100 * DAY;
 
         // getFidelityIndexAt through the ABI dispatch with a valid owner
-        // authorization → decoded RCFI is positive.
+        // authorization -> decoded RCFI is positive.
         let sig = query_auth(&sk, account, expiry);
         let call =
             IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {

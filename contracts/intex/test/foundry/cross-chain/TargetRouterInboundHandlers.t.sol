@@ -27,13 +27,13 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
 ///      drives `lzReceive` from the endpoint address, then asserts the downstream side-effect on
-///      the wired contract — proving the full receiveMessage -> dispatchInbound -> _handleX -> X path
+///      the wired contract - proving the full receiveMessage -> dispatchInbound -> _handleX -> X path
 ///      under the current fail-don't-drop model.
 contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd — the auction day (root)
+    uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd - the auction day (root)
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;

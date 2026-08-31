@@ -43,7 +43,7 @@ pub fn record_validator_register(addr: Address, reregister: bool) {
 }
 
 /// One DKG reshare activation; `transitioned_to_unbonding` is the
-/// number of validators transitioned EXITING→UNBONDING this round.
+/// number of validators transitioned EXITING->UNBONDING this round.
 pub fn record_reshared_set_activated(active_count: u32, transitioned_to_unbonding: usize) {
     counter!("outbe_reshared_set_activated_total").increment(1);
     gauge!("outbe_validator_active_set_size").set(f64::from(active_count));

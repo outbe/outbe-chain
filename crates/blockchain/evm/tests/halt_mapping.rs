@@ -4,15 +4,15 @@
 //! Verifies every variant of `outbe_primitives::error::PrecompileError`
 //! routes to the correct revm [`PrecompileResult`] form:
 //!
-//! - `Ok(bytes)` → `Ok(PrecompileOutput::new(actual_gas, bytes, 0))`
-//! - `OutOfGas` → `Ok(Halt(OOG))` with zero gas reported
-//! - `Revert(msg)` → `Ok(Revert(Error(string)-encoded msg, actual_gas))`
-//! - `RevertBytes(bytes)` → `Ok(Revert(bytes, actual_gas))` (no re-encoding)
-//! - `WriteProtection` → `Ok(Halt(Other("state change during static call")))`
-//! - `SubCall(_)` → `Err(Fatal(_))` with sub-call error info
-//! - `Unsupported` → `Err(Fatal("precompile reported Unsupported"))`
-//! - `Storage(s)` → `Err(Fatal(s))` (fallback arm)
-//! - `Fatal(s)` → `Err(Fatal(s))` (fallback arm)
+//! - `Ok(bytes)` -> `Ok(PrecompileOutput::new(actual_gas, bytes, 0))`
+//! - `OutOfGas` -> `Ok(Halt(OOG))` with zero gas reported
+//! - `Revert(msg)` -> `Ok(Revert(Error(string)-encoded msg, actual_gas))`
+//! - `RevertBytes(bytes)` -> `Ok(Revert(bytes, actual_gas))` (no re-encoding)
+//! - `WriteProtection` -> `Ok(Halt(Other("state change during static call")))`
+//! - `SubCall(_)` -> `Err(Fatal(_))` with sub-call error info
+//! - `Unsupported` -> `Err(Fatal("precompile reported Unsupported"))`
+//! - `Storage(s)` -> `Err(Fatal(s))` (fallback arm)
+//! - `Fatal(s)` -> `Err(Fatal(s))` (fallback arm)
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{Revert, SolError};

@@ -459,7 +459,7 @@ fn render_docs(rows: &[Row], input_codecs: &[InputCodecRow]) -> String {
         .expect("writing to String cannot fail");
         for row in rows.iter().filter(|row| row.kind == kind) {
             let identifier = if row.identifier.is_empty() {
-                "—".to_owned()
+                "-".to_owned()
             } else {
                 format!("`{}`", row.identifier)
             };

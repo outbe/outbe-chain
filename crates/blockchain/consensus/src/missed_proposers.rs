@@ -4,9 +4,9 @@
 //! Phase 1 system transaction) and the verify side
 //! (`finalization::attestation::canonical_missed_proposers`, which recomputes and
 //! validates that metadata) must elect the *same* leader for every skipped view
-//! — otherwise a proposer's `missed_proposers` list would be rejected by
+//! - otherwise a proposer's `missed_proposers` list would be rejected by
 //! validators and consensus would diverge. This module is the single source of
-//! truth for that election sequence; callers keep their own guards, index →
+//! truth for that election sequence; callers keep their own guards, index ->
 //! address mapping, out-of-bounds policy, logging, and metrics.
 
 use commonware_consensus::simplex::elector::Elector as _;
@@ -23,7 +23,7 @@ use crate::hybrid::HybridCertificate;
 ///
 /// Returns one [`Participant`] per elected view, in view order. Mapping the
 /// participant index to a validator address, and deciding what to do when that
-/// index is out of range, is the caller's responsibility — the two call sites
+/// index is out of range, is the caller's responsibility - the two call sites
 /// deliberately differ there (the reporter skips, the verifier rejects).
 pub(crate) fn elected_leaders_for_gap(
     epoch: Epoch,
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn no_gap_returns_empty() {
         let elector = round_robin_elector(3);
-        // current_view <= last_view + 1 ⇒ no skipped views.
+        // current_view <= last_view + 1 => no skipped views.
         assert!(elected_leaders_for_gap(Epoch::new(0), &elector, None, 5, 6, 255).is_empty());
         assert!(elected_leaders_for_gap(Epoch::new(0), &elector, None, 5, 5, 255).is_empty());
     }

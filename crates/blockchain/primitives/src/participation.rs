@@ -355,7 +355,7 @@ mod tests {
 
         // Consensus says: b and d voted, a and c are absent.
 
-        // OLD BUG: encode in voters++absent order (b, d, a, c) — NO sort.
+        // OLD BUG: encode in voters++absent order (b, d, a, c) - NO sort.
         let unsorted_encode_order = vec![b, d, a, c];
         let signers_unsorted = vec![true, true, false, false];
         let encoded = encode_participation(&unsorted_encode_order, &signers_unsorted).unwrap();
@@ -364,9 +364,9 @@ mod tests {
         let sorted_decode_order = vec![a, b, c, d];
         let decoded = decode_participation(&encoded, &sorted_decode_order).unwrap();
 
-        // BUG: bitmap says positions 0,1 are signers → maps to a,b in sorted order.
+        // BUG: bitmap says positions 0,1 are signers -> maps to a,b in sorted order.
         // But the ACTUAL signers were b,d. So 'a' is falsely marked as voter
-        // and 'd' is falsely marked as absent — wrong slashing!
+        // and 'd' is falsely marked as absent - wrong slashing!
         assert!(
             decoded.voters.contains(&a), // WRONG: a didn't vote
             "old bug: a falsely marked as voter"
@@ -502,7 +502,7 @@ mod proptests {
             prop_assert_eq!(decoded.missed_proposers, expected_missed);
         }
 
-        /// Encoding is deterministic — same inputs always produce identical bytes.
+        /// Encoding is deterministic - same inputs always produce identical bytes.
         #[test]
         fn encoding_deterministic(
             (validators, signers) in validators_and_signers(),
@@ -525,7 +525,7 @@ mod proptests {
             prop_assert!(decode_participation(&encoded, &wrong).is_none());
         }
 
-        /// Random garbage bytes never panic — they return None.
+        /// Random garbage bytes never panic - they return None.
         #[test]
         fn random_bytes_no_panic(
             data in proptest::collection::vec(any::<u8>(), 0..512),

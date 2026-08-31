@@ -7,7 +7,7 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {Test} from "forge-std/Test.sol";
 
-/// @title — supply cap, burnSettled state gate, and the paginated holders getter.
+/// @title - supply cap, burnSettled state gate, and the paginated holders getter.
 /// @notice Every test here exercises a behavior introduced by the lifecycle/DoS hardening pass.
 contract IntexNFT1155SupplyTest is Test {
     IntexNFT1155 nft;
@@ -73,13 +73,13 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.mint(holderA, 60, SERIES_ID);
-        // 60 + 41 = 101 > 100 → reverts with the post-increment attempted total.
+        // 60 + 41 = 101 > 100 -> reverts with the post-increment attempted total.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
         nft.mint(holderA, 41, SERIES_ID);
         vm.stopPrank();
     }
 
-    // --- burnSettled state gate (state ∈ {Qualified, Called}) ---
+    // --- burnSettled state gate (state in {Qualified, Called}) ---
 
     function _mintAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
         _createSeries(cap);
@@ -99,7 +99,7 @@ contract IntexNFT1155SupplyTest is Test {
     function test_BurnSettled_OnIssuedState_Reverts() public {
         // Stage a Settled balance that exists despite the series sitting in Issued state. The
         // production flow can't reach this configuration today, but the gate is the precondition
-        // we want to test — a future change (e.g. airdropping Settled) must not silently unlock
+        // we want to test - a future change (e.g. airdropping Settled) must not silently unlock
         // burnSettled while the series is still in Issued.
         _createSeries(10);
         // Use the storage slot directly to forge a Settled balance under an Issued series.
@@ -154,10 +154,10 @@ contract IntexNFT1155SupplyTest is Test {
         nft.burnSettled(holderA, SERIES_ID, 0);
     }
 
-    // --- Live-supply cap (a burn frees cap room; cap is `totalSupply ≤ issuedIntexCount`) ---
+    // --- Live-supply cap (a burn frees cap room; cap is `totalSupply <= issuedIntexCount`) ---
 
     function test_Cap_Mint_AfterSettle_FreesCapRoom() public {
-        // Mint to cap, settle (burns 4 Issued → totalSupply 6): the freed room is reusable, so a
+        // Mint to cap, settle (burns 4 Issued -> totalSupply 6): the freed room is reusable, so a
         // mint of 4 succeeds back up to the cap, and only the unit past the cap reverts.
         uint32 cap = 10;
         _createSeries(cap);
@@ -184,7 +184,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_Cap_CrosschainMint_AtCap_Reverts() public {
         // After totalSupply reaches the cap (via mint), crosschainMint must reject any further
-        // incoming supply — the live-totalSupply invariant is `totalSupply ≤ cap` at all times.
+        // incoming supply - the live-totalSupply invariant is `totalSupply <= cap` at all times.
         uint32 cap = 10;
         _createSeries(cap);
 
@@ -199,7 +199,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_Cap_CrosschainMint_AfterCrosschainBurn_RefillsCapRoom() public {
         // Cross-chain return: tokens bridged out (crosschainBurn) come back (crosschainMint). The crosschainMint cap is
-        // per-instant `totalSupply ≤ cap`, so the room cleared by crosschainBurn may be refilled by crosschainMint.
+        // per-instant `totalSupply <= cap`, so the room cleared by crosschainBurn may be refilled by crosschainMint.
         uint32 cap = 10;
         _createSeries(cap);
 
@@ -229,7 +229,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 7);
 
         nft.markQualified(SERIES_ID);
-        // settle burns Issued from holderA — live totalSupply decreases, freeing cap room.
+        // settle burns Issued from holderA - live totalSupply decreases, freeing cap room.
         vm.stopPrank();
         vm.prank(settler);
         nft.settle(SERIES_ID, holderA, holderA, 2);
@@ -239,7 +239,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_Cap_Mint_OverCap_SurfacesTypedRevertNotPanic() public {
         // The cap-check intermediate is widened to uint256 so `totalSupply + qty` cannot wrap
-        // uint32 — even at `issuedIntexCount == type(uint32).max`. We can't drive `totalSupply`
+        // uint32 - even at `issuedIntexCount == type(uint32).max`. We can't drive `totalSupply`
         // all the way to 2^32 in a test (per-mint capped at uint16.max would need 65k+ calls),
         // but the widening is proved by inspection AND by this small-cap test that verifies
         // the typed SupplyCapExceeded surfaces cleanly on the overshoot. Pre-widening, an
@@ -250,13 +250,13 @@ contract IntexNFT1155SupplyTest is Test {
         vm.startPrank(bridger);
         nft.mint(holderA, cap, SERIES_ID);
 
-        // mint overshoot by uint16-bounded amounts — typed revert, not panic
+        // mint overshoot by uint16-bounded amounts - typed revert, not panic
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))
         );
         nft.mint(holderB, 1, SERIES_ID);
 
-        // crosschainMint overshoot — typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
+        // crosschainMint overshoot - typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
         nft.markQualified(SERIES_ID);
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))

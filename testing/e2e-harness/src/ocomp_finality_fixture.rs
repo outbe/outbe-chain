@@ -535,7 +535,7 @@ fn build_finalized_intent_proof_fixture(
         code_hash: KECCAK_EMPTY,
     };
     // The Fidelity league opening shares the Metadosis intent account, so it is
-    // NOT a distinct state account — only Oracle adds one. When no openings are
+    // NOT a distinct state account - only Oracle adds one. When no openings are
     // requested (proof-only fixtures), Metadosis and ValidatorSet are the only
     // accounts and no opening provider is produced.
     let (state_accounts, opening_contracts) = match oracle_contract {
@@ -757,11 +757,11 @@ struct OpeningContractFixture {
 
 /// A deterministic, valid Fidelity league for populating a fixture snapshot slot.
 ///
-/// This is NOT the Fidelity league derivation — that lives in `outbe_fidelity`
-/// (`league_from_rcfi`, RCFI → league). These fixtures mock the on-chain state a
+/// This is NOT the Fidelity league derivation - that lives in `outbe_fidelity`
+/// (`league_from_rcfi`, RCFI -> league). These fixtures mock the on-chain state a
 /// node would read, so each snapshot slot needs *some* value in the canonical
 /// `[MIN_LEAGUE, MAX_LEAGUE]` range. The value is opaque to the tests, which
-/// assert opening-proof layout and deterministic re-execution — never league
+/// assert opening-proof layout and deterministic re-execution - never league
 /// semantics. A distinct (but arbitrary) per-owner value just spreads tributes
 /// across more than one Lysis per-league group; owner order carries no meaning.
 pub fn fixture_league(owner_index: usize) -> u16 {

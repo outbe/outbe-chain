@@ -114,8 +114,8 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     }
 
     function test_AFullMessageStaysUnderTheSendCeiling() public pure {
-        // The caps are counts, not bytes, so pin that the worst case they admit — every
-        // series slot filled, every recipient slot filled — still fits the wire.
+        // The caps are counts, not bytes, so pin that the worst case they admit - every
+        // series slot filled, every recipient slot filled - still fits the wire.
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
         uint256 perSeries = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE / seriesCount;
 

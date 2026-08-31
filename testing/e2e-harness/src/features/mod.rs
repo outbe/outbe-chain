@@ -1,4 +1,4 @@
-//! Step definitions — the code behind the Gherkin fixtures in `features/`.
+//! Step definitions - the code behind the Gherkin fixtures in `features/`.
 //!
 //! Steps are registered with cucumber's `#[given]`/`#[when]`/`#[then]` macros
 //! (collected via `inventory`), so simply compiling these modules wires them
@@ -13,6 +13,7 @@
 pub mod agent_reward;
 pub mod common;
 pub mod governance;
+#[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;
 pub mod update;
 

@@ -3,7 +3,7 @@
 //! Every Promis state transition routes through the enclave: [`crate::runtime`]
 //! reads the current ciphertext from committed storage, hands it + the op to the
 //! enclave via [`apply_promis_op`], and stores the returned ciphertext verbatim.
-//! Mirrors `gratis::enclave_client` — same determinism (canonical-hash recheck)
+//! Mirrors `gratis::enclave_client` - same determinism (canonical-hash recheck)
 //! and attestation (verify-then-discard) guarantees, and the same
 //! `tee_sidecar_unavailable` failure mode when no enclave is configured.
 
@@ -16,7 +16,7 @@ use outbe_tee::protocol::{
 ///
 /// Determinism: recompute the canonical inputs hash and reject a mismatch
 /// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the enclave
-/// key pinned from its quote (`tee_promis_attestation_invalid`), then discard it —
+/// key pinned from its quote (`tee_promis_attestation_invalid`), then discard it -
 /// it is never written to state. A missing enclave is `tee_sidecar_unavailable`.
 /// All of these are `Fatal` (a node/consensus fault, not a user revert); a
 /// *business* rejection is carried in `PromisOpResult::status` and handled by the

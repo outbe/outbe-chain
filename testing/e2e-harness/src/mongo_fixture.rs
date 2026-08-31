@@ -60,7 +60,7 @@ impl ManagedMongoReplicaSet {
         }
 
         // Initiate the set (ignore "already initialized" on retries) and only
-        // report ready once the node has actually won its election — rs.initiate
+        // report ready once the node has actually won its election - rs.initiate
         // returns ok:1 before the member transitions to PRIMARY, so writing early
         // races into NotWritablePrimary.
         let init = format!(

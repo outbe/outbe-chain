@@ -23,7 +23,7 @@ use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha
 use crate::errors::{Result, TeeError};
 
 /// Balance amount-slot field tag folded into the nonce derivation. Shared: every
-/// ledger's primary balance uses tag `0` (higher tags — e.g. Gratis pledged/eoa —
+/// ledger's primary balance uses tag `0` (higher tags - e.g. Gratis pledged/eoa -
 /// are ledger-local).
 pub const FIELD_BALANCE: u8 = 0;
 
@@ -45,7 +45,7 @@ pub struct Domain {
     pub modify_tag: &'static [u8],
 }
 
-/// Gratis domain separators — byte-identical to the historical inline labels.
+/// Gratis domain separators - byte-identical to the historical inline labels.
 pub const GRATIS: Domain = Domain {
     state_info: b"outbe/gratis/state-key/v1/",
     view_info: b"outbe/gratis/view-key/v1",
@@ -54,7 +54,7 @@ pub const GRATIS: Domain = Domain {
     modify_tag: b"outbe/gratis/modify/v1",
 };
 
-/// Promis domain separators — keys are independent from Gratis's.
+/// Promis domain separators - keys are independent from Gratis's.
 pub const PROMIS: Domain = Domain {
     state_info: b"outbe/promis/state-key/v1/",
     view_info: b"outbe/promis/view-key/v1",
@@ -63,7 +63,7 @@ pub const PROMIS: Domain = Domain {
     modify_tag: b"outbe/promis/modify/v1",
 };
 
-/// Fidelity domain separators — keys are independent from Gratis's and
+/// Fidelity domain separators - keys are independent from Gratis's and
 /// Promis's. Encrypts the per-account cohort ledger (a variable-length record
 /// blob, see [`Domain::write_blob`]), not a single amount. The modify labels
 /// are reserved but unused: cohort ops are chain-initiated (they ride inside
@@ -202,7 +202,7 @@ impl Domain {
 
     /// Encrypt a variable-length record plaintext into a fresh `version+1 || ct`
     /// blob (the [`Domain::write_amount`] analogue for non-amount payloads).
-    /// Unlike amounts, the ciphertext length follows the plaintext length —
+    /// Unlike amounts, the ciphertext length follows the plaintext length -
     /// callers that must not leak record cardinality pad the plaintext to a
     /// deterministic bucket before calling.
     pub fn write_blob(
@@ -240,7 +240,7 @@ impl Domain {
         b
     }
 
-    /// `HMAC-SHA256(modify_key, preimage)` — the write authorization the client
+    /// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client
     /// sends and the enclave re-checks. `op_tag` is the ledger op's `as u8` value.
     pub fn modify_mac(
         &self,

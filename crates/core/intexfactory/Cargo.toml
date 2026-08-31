@@ -10,6 +10,7 @@ outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-intex.workspace = true
+outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
@@ -26,6 +27,7 @@ outbe-intex = { workspace = true, features = ["test-utils"] }
 workspace = true
 
 [features]
+bench-utils = []
 # Retarget the intex contract addresses at the throwaway CREATE3 set an e2e chain
 # deploys with the well-known anvil key, and let a payout e2e credit proceeds
 # without a deployed router. Never enabled in a release build.

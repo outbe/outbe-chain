@@ -742,7 +742,7 @@ fn locally_built_candidate_is_not_retained_when_execution_is_not_ready() {
 /// bp-1 / BUG-A regression: opt3 dissemination. The proposer caches its block
 /// into marshal at propose time (`handle_propose` -> `marshal.proposed`, making
 /// it servable on demand), and `Relay::broadcast` then wire-pushes it by calling
-/// `marshal.forward(round, commitment, Recipients::All)` DIRECTLY — never via
+/// `marshal.forward(round, commitment, Recipients::All)` DIRECTLY - never via
 /// the bounded application mailbox (which could drop the trigger under
 /// saturation). With a recording buffer we assert `Relay::broadcast` reaches the
 /// `Buffer::send` wire-broadcast hook to ALL peers. If `Relay::broadcast`ever
@@ -800,7 +800,7 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
     );
 }
 
-/// SD-6: `forward()` WITHOUT a prior `proposed()` is a safe no-op — marshal has
+/// SD-6: `forward()` WITHOUT a prior `proposed()` is a safe no-op - marshal has
 /// nothing stashed for `take_proposed`, so `Buffer::send` is never called (no
 /// panic, no wrong send). In opt3 `handle_propose` always proposes before
 /// `Relay::broadcast` forwards, so this guards the fallback. A follow-up
@@ -988,7 +988,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
 /// the anchor hash but the marshal store has not yet durably stored the block
 /// (the lagging-store race at the first slot of a new epoch), the `Wait`
 /// subscription times out and `resolve_epoch_boundary_parent` returns
-/// `MissingMarshalBlock` — a deterministic forfeit signal. This must NOT hang
+/// `MissingMarshalBlock` - a deterministic forfeit signal. This must NOT hang
 /// or panic; the proposer simply forfeits the boundary slot until marshal
 /// catches up.
 #[test]
@@ -1010,7 +1010,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             let parent_digest = parent_block.digest();
 
             // FinalizationView has the anchor hash, but we deliberately do NOT
-            // `marshal.proposed(parent_block)` — the marshal store lags behind
+            // `marshal.proposed(parent_block)` - the marshal store lags behind
             // FinalizationView (the epoch-boundary first-slot race).
             {
                 let mut view = shared.finalization_view.write();
@@ -1339,8 +1339,8 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
 // parent's proof (post-restart, late-joining validator, brief finalization lag),
 // but marshal's DURABLE finalization archive may still hold it locally. Recovery
 // rebuilds the canonical parent-proof record so the slot is NOT forfeited. This
-// drives `recover_parent_proof_from_marshal` — the exact branch `build_block`
-// takes on a selection-store miss — and asserts: happy path recovers, the
+// drives `recover_parent_proof_from_marshal` - the exact branch `build_block`
+// takes on a selection-store miss - and asserts: happy path recovers, the
 // hash-exact guard rejects a different parent, and a missing archive entry yields
 // None (deterministic forfeit, not a fabricated record).
 #[test]
@@ -1371,7 +1371,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
 
             // Seed marshal's durable archive: propose the parent block (servable)
             // and report its finalization, so `get_finalization(height)` returns it
-            // — the post-restart state where the in-process selection store is
+            // - the post-restart state where the in-process selection store is
             // empty but marshal still holds the parent.
             let _ = marshal_mailbox.proposed(round, block.clone()).await;
             let mut reporter = marshal_mailbox.clone();
@@ -1386,7 +1386,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
             // Recovery resolves the committee for the finalization's epoch.
             let _ = shared.committee_provider.register(epoch, committee);
 
-            // Happy path: key hash matches the seeded finalization → recovered.
+            // Happy path: key hash matches the seeded finalization -> recovered.
             let key_ok = CertifiedParentProofKey::new(epoch.get(), round.view().get(), digest.0);
             let recovered = shared
                 .recover_parent_proof_from_marshal(key_ok, parent_height)
@@ -1410,7 +1410,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
                 "hash-exact guard must reject a finalization for a different parent"
             );
 
-            // Missing height: nothing in the archive → None (deterministic forfeit).
+            // Missing height: nothing in the archive -> None (deterministic forfeit).
             assert!(
                 shared
                     .recover_parent_proof_from_marshal(key_ok, parent_height + 99)
@@ -1896,21 +1896,21 @@ fn resolve_for_verify_timeout_logs_full_context() {
 // Minimum-block-time pacing (proposer-side liveness floor).
 // ---------------------------------------------------------------------------
 
-/// Tests 1-4: pure floor arithmetic (`min ⊖ elapsed`, saturating).
+/// Tests 1-4: pure floor arithmetic (`min - elapsed`, saturating).
 #[test]
 fn floor_remaining_arithmetic() {
     use super::floor_remaining;
-    // Case A — empty/fast block: most of the floor remains.
+    // Case A - empty/fast block: most of the floor remains.
     assert_eq!(
         floor_remaining(Duration::from_millis(2000), Duration::from_millis(250)),
         Duration::from_millis(1750)
     );
-    // Case B — exec < min: wait the remainder.
+    // Case B - exec < min: wait the remainder.
     assert_eq!(
         floor_remaining(Duration::from_millis(2000), Duration::from_millis(1300)),
         Duration::from_millis(700)
     );
-    // Case C — exec >= min: no wait (saturates to zero).
+    // Case C - exec >= min: no wait (saturates to zero).
     assert_eq!(
         floor_remaining(Duration::from_millis(2000), Duration::from_millis(2400)),
         Duration::ZERO
@@ -1978,7 +1978,7 @@ fn floor_aborts_on_closed_receiver() {
 }
 
 /// Test 7: zero remaining (case C / floor already met) sends immediately with no
-/// sleep — control-flow identical to pre-pacing behavior.
+/// sleep - control-flow identical to pre-pacing behavior.
 #[test]
 fn floor_zero_sends_immediately() {
     let (received, waited) = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(
@@ -1997,8 +1997,8 @@ fn floor_zero_sends_immediately() {
 
 /// Test 13 (pacing-invisibility parity, unit level): the proposer hands Simplex a
 /// byte-identical digest regardless of the min-block-time floor. The build path is
-/// structurally floor-agnostic — `build_block` / `handle_propose` take no
-/// `min_block_time`, so the floor cannot influence block bytes — and
+/// structurally floor-agnostic - `build_block` / `handle_propose` take no
+/// `min_block_time`, so the floor cannot influence block bytes - and
 /// `pace_and_send` only delays delivery of the already-sealed digest. This loops
 /// over the no-wait (case C, floor 0) and wait paths (250ms..5s) and asserts the
 /// delivered digest never changes.

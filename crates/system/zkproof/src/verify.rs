@@ -18,7 +18,7 @@ use tracing::{info, trace};
 use crate::errors::ZkProofError;
 
 /// Maximum Barretenberg SRS size needed by the canonical circuits in
-/// `outbe-zk-canonical` (`flat_aggregation_n64` is the largest at 2²⁰
+/// `outbe-zk-canonical` (`flat_aggregation_n64` is the largest at 2^2^0
 /// gates). `verify_combined` does not size the CRS itself, so the startup
 /// `preinit_srs` must cover the largest circuit the registry can verify.
 /// This is the upstream-pinned preinit size (see `outbe-zk-backend`'s
@@ -77,7 +77,7 @@ pub struct PayNotePublicInputs {
 /// One-shot initialization of the Barretenberg global CRS.
 ///
 /// **Must be called from a synchronous context before the tokio runtime
-/// starts** — `outbe-zk-backend`'s SRS loader uses `reqwest::blocking`
+/// starts** - `outbe-zk-backend`'s SRS loader uses `reqwest::blocking`
 /// internally (under the default `with-network-srs` feature) and panics if
 /// invoked from inside an async task. Calling this once at node startup is
 /// what allows the `0xEE08` zkVerify precompile to actually verify proofs at
@@ -88,7 +88,7 @@ pub struct PayNotePublicInputs {
 /// pre-staged `g1.dat` SRS file (via `set_srs_path`); if unset the backend
 /// downloads it once from `crs.aztec.network`.
 ///
-/// Idempotent — repeated calls return the first initialization result.
+/// Idempotent - repeated calls return the first initialization result.
 ///
 /// The verifier participates in consensus-critical Tribute admission, so a
 /// node must not execute blocks without the hash-pinned CRS. Startup callers

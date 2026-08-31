@@ -141,7 +141,7 @@ jobs:
       - name: Verify abi-export is up to date
         run: |
           if ! git diff --quiet -- abi-export; then
-            echo "::error::abi-export is stale — run 'mise run export-abi' and commit the result"
+            echo "::error::abi-export is stale - run 'mise run export-abi' and commit the result"
             git diff -- abi-export
             exit 1
           fi

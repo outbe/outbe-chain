@@ -1,20 +1,20 @@
 //! Proposer-side VRF/DKG freshness gate.
 //!
-//! `VrfSafetyGate` is a *proposer-side* hygiene check — it gates whether the
+//! `VrfSafetyGate` is a *proposer-side* hygiene check - it gates whether the
 //! local node may continue to propose blocks given the freshness of the
 //! active VRF material. It is **not** a verifier:
 //!
 //! - **Do not import** [`VrfSafetyGate`] into import-time paths (the block
 //!   import pipeline must consult the state-backed canonical
-//!   `CommitteeSnapshotStore` instead — this gate is process-local and would
+//!   `CommitteeSnapshotStore` instead - this gate is process-local and would
 //!   diverge from the snapshot on restart).
 //! - **Do not import** it into the V2 verifier (`outbe-consensus-proof`)
 //!   either; verifier inputs come from chain state, not from local
 //!   bookkeeping.
 //! - Legitimate importers:
-//!   1. [`crate::application::handler`] — proposer emission path
+//!   1. [`crate::application::handler`] - proposer emission path
 //!      (`build_block` and `ensure_block_allowed` guard).
-//!   2. [`crate::finalization::actor`] — post-finalization side effects
+//!   2. [`crate::finalization::actor`] - post-finalization side effects
 //!      (`mark_degraded` after a missing VRF seed, `snapshot` for the bridge
 //!      `ConsensusStatus`). These run on the consensus actor task, NOT the
 //!      block-import path, and so do not violate the narrowing.

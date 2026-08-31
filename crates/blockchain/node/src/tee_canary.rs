@@ -2,12 +2,12 @@
 //! consensus path (`ProcessTributeOfferBatch`) plus the `Health` telemetry
 //! probe, published to [`TeeEnclaveHealthChannel`] and Prometheus.
 //!
-//! Signal only — a failing canary never gates consensus participation; it
+//! Signal only - a failing canary never gates consensus participation; it
 //! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
 //! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
 //!
 //! The probe shares the process-global enclave mutex with consensus traffic:
-//! one 1-offer batch per tick (~ms of compute) every `interval` — a ~1e-4 duty
+//! one 1-offer batch per tick (~ms of compute) every `interval` - a ~1e-4 duty
 //! cycle. The blocking round-trip runs on `spawn_blocking`; an `in_flight`
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Fixed canary identity: a marker owner address and a fixed worldwide day so
 /// the payload (and its Poseidon `token_id`) is identical on every tick and
-/// every validator. The offer is never submitted as a transaction — it exists
+/// every validator. The offer is never submitted as a transaction - it exists
 /// only inside the probe request.
 const CANARY_OWNER: Address = Address::repeat_byte(0xCA);
 const CANARY_DAY: u32 = 20250115;
@@ -79,7 +79,7 @@ pub enum CanaryTickOutcome {
     /// Canary decrypt round-tripped and validated.
     Success { latency_ms: u64 },
     /// The enclave answers but the permanent offer key is not resident yet
-    /// (pre-DKG) — not a failure.
+    /// (pre-DKG) - not a failure.
     OfferKeyNotReady,
     /// The probe failed. `unreachable` = transport-level (connect/socket/session
     /// revoked) as opposed to a bad answer.
@@ -116,7 +116,7 @@ pub fn canary_state(
 }
 
 /// One blocking probe pass: Health (feature-detected), offer-key state, canary
-/// decrypt. Pure with respect to the requester — unit-testable with a fake.
+/// decrypt. Pure with respect to the requester - unit-testable with a fake.
 pub fn run_canary_probe(
     requester: &dyn EnclaveRequester,
     health_supported: Option<bool>,
@@ -127,7 +127,7 @@ pub fn run_canary_probe(
 ) {
     // 1. Health telemetry, unless feature detection already ruled it out. An
     //    old enclave binary kills the connection on the unknown variant, so a
-    //    Health error alone is ambiguous — GetPublicKeys below disambiguates.
+    //    Health error alone is ambiguous - GetPublicKeys below disambiguates.
     let mut health_supported = health_supported;
     let mut health_payload = None;
     if health_supported != Some(false) {
@@ -405,7 +405,7 @@ pub async fn run_tee_canary_worker(
             }
             Err(join_error) => {
                 // The blocking probe panicked or was cancelled; the in_flight
-                // latch may still be set — clear it so the canary keeps going.
+                // latch may still be set - clear it so the canary keeps going.
                 in_flight.store(false, Ordering::Release);
                 snapshot.last_failure = Some(format!("canary probe task failed: {join_error}"));
                 snapshot.consecutive_failures = snapshot.consecutive_failures.saturating_add(1);

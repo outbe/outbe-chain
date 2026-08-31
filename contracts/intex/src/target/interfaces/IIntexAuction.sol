@@ -44,7 +44,7 @@ interface IIntexAuction {
         uint16 referenceCurrency;
     }
 
-    /// @notice Auction schedule — stage-end timestamps.
+    /// @notice Auction schedule - stage-end timestamps.
     /// @dev Computed on the Outbe side (Desis) and passed into `auctionStart`.
     struct AuctionSchedule {
         /// @notice End of the commit stage (UNIX seconds).
@@ -61,7 +61,7 @@ interface IIntexAuction {
         uint32 callWindow;
         /// @notice Call-trigger threshold in seconds.
         uint32 callThreshold;
-        /// @notice Called→deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
+        /// @notice Called->deadline window in seconds; stored verbatim, the issuer must supply a non-zero value.
         uint32 callNoticePeriod;
     }
 
@@ -278,7 +278,7 @@ interface IIntexAuction {
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
-    ///      be cancelled or revealed — an unrevealed commit is permanently forfeited (its bond
+    ///      be cancelled or revealed - an unrevealed commit is permanently forfeited (its bond
     ///      stays claimable via `claimCommitBond`). Cancelling returns the bond immediately.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     function cancelCommit(uint32 worldwideDay) external;

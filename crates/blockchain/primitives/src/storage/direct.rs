@@ -29,7 +29,7 @@ use crate::storage::PrecompileStorageProvider;
 /// mutable database that supports reads plus `commit()`.
 pub struct DirectStorageProvider<'a, DB: StateDB> {
     state: &'a mut DB,
-    /// Pending storage writes: address → (slot → new_value).
+    /// Pending storage writes: address -> (slot -> new_value).
     pending: HashMap<Address, HashMap<U256, U256>>,
     /// Pending account-info updates such as hook-level balance transfers/burns.
     pending_accounts: AddressMap<AccountInfo>,
@@ -314,7 +314,7 @@ where
             return Ok(());
         }
 
-        // Self-transfer is a no-op — prevents double-insert overwrite
+        // Self-transfer is a no-op - prevents double-insert overwrite
         // that would create tokens out of nothing.
         if from == to {
             return Ok(());

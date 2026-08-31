@@ -86,7 +86,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     // reverting "pair not registered" (which would abort pre-execution and leave
     // every payload empty). Production genesis always seeds oracle pairs; the
     // oracle itself is left uninitialized so its own begin-block tally/s-curve
-    // stays inert — the same minimal state the executor tests use.
+    // stays inert - the same minimal state the executor tests use.
     std::fs::write(
         &seed_path,
         r#"{
@@ -243,8 +243,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let ce_directory = tempfile::tempdir()?;
 
     // The OST3 payload binds the epoch-0 committee snapshot that the block-1
-    // BoundaryOutcome writes before TeeBootstrap runs — the same hash the boundary
-    // artifact carries — and is signed by the single genesis validator.
+    // BoundaryOutcome writes before TeeBootstrap runs - the same hash the boundary
+    // artifact carries - and is signed by the single genesis validator.
     let bridge = ConsensusExecutionBridge::new();
     bridge.set_pending_tee_bootstrap(
         gramine_direct_bootstrap_v2(

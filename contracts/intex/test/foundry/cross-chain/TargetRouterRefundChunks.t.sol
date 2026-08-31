@@ -122,8 +122,8 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         assertEq(tokenBridge.lastAmount(), 25e6);
     }
 
-    /// Driven through the real adapter: the rule that matters — a finalized day refuses
-    /// everything after — is exactly what the mock above cannot express.
+    /// Driven through the real adapter: the rule that matters - a finalized day refuses
+    /// everything after - is exactly what the mock above cannot express.
     function test_TheRealEscrowSettlesEveryChunkOfADay() public {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();

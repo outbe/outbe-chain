@@ -171,7 +171,7 @@ contract BodyVersionTest is Test {
     function test_BridgeCodec_DecodeBidsBatch_RejectsArrayLengthMismatch() public {
         // Four parallel arrays with mismatched lengths: indexed in lockstep downstream, so an
         // unequal decode would panic out of bounds inside the ordered lane. Must revert typed.
-        // The encoder now reverts on parity mismatch, so the wire payload is hand-built directly —
+        // The encoder now reverts on parity mismatch, so the wire payload is hand-built directly -
         // matching the way an oversized REFUND would arrive via a peer compromise or a future
         // encoder change.
         address[] memory bidders = new address[](2);

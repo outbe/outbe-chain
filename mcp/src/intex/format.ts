@@ -9,7 +9,7 @@
 import { type Hex, hexToString, stringToHex } from "viem";
 
 const AUCTION_STAGE = ["CommittingBids", "RevealingBids", "Issuance", "Completed", "Cancelled"];
-const INTEX_STATE = ["Issued", "Qualified", "Called"];
+const INTEX_STATE = ["Issued", "Qualified", "Called", "Expired"];
 const INTEX_STATUS = ["Issued", "Settled"];
 const DESIS_STAGE = ["None", "Briefed", "Started", "Revealing", "Clearing", "Cleared", "Cancelled"];
 const LOCK_STATUS = ["None", "Locked", "Finalized"];

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+bench-utils = []
+
 [dependencies]
 outbe-macros.workspace = true
 outbe-common.workspace = true

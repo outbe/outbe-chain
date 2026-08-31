@@ -80,7 +80,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
 }
 
 /// Reject unless the supplied op-nonce equals the account's current on-chain
-/// counter — this is what makes a captured modify-auth non-replayable.
+/// counter - this is what makes a captured modify-auth non-replayable.
 fn check_op_nonce(gratis: &Gratis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = gratis.op_nonce_of(account)?;
     if provided != current {
@@ -328,7 +328,7 @@ pub(crate) fn unpledge(
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
-    // `new_pledge_record` is empty → this clears (deletes) the ticket slot.
+    // `new_pledge_record` is empty -> this clears (deletes) the ticket slot.
     gratis.write_pledge_ticket_ct(pledge_handle, &result.new_pledge_record)?;
     gratis.set_op_nonce(caller, result.next_op_nonce)?;
     let total_pledged = gratis
@@ -351,7 +351,7 @@ pub(crate) fn unpledge(
 /// touching state. `handle = Some(h)` decrypts a live pledge ticket (at
 /// `consume_pledge`, before calldata carries the EOA); `None` decrypts the self-contained
 /// `eoa_ct` stored on a Credis position (at settlement / void). The EOA is recovered
-/// this way so it never appears in calldata or stored plaintext — only in the (trusted)
+/// this way so it never appears in calldata or stored plaintext - only in the (trusted)
 /// host to key the confidential ledgers.
 fn reveal_owner_inner(
     storage: &StorageHandle<'_>,
@@ -380,10 +380,10 @@ pub(crate) fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<
 /// requestCredis: consume `pledge_handle`'s ticket (authorized by `spend_auth`, which
 /// binds it to `bundle`), crediting the collateral into the EOA's OWN pledged ledger
 /// and deleting the ticket. No escrow account and no aggregate change (it stays
-/// pledged, pending → active). The EOA is not passed in calldata: the enclave carries it
+/// pledged, pending -> active). The EOA is not passed in calldata: the enclave carries it
 /// in the ticket, so we first `RevealOwner` it (to key its pledged ledger) and the
 /// consume result seals it into `eoa_ct` for the caller to store on the position. Returns
-/// `(terms, eoa_ct)` — the loan terms quoted when the pledge was made, so credis never
+/// `(terms, eoa_ct)` - the loan terms quoted when the pledge was made, so credis never
 /// re-prices the collateral.
 pub(crate) fn consume_pledge(
     storage: StorageHandle<'_>,
@@ -444,7 +444,7 @@ pub(crate) fn release_to_eoa(
     gratis.set_pledged_total_supply(total_pledged)?;
     // Scrub the EOA from the event: this is a credis-driven release tied to a specific
     // position (credis emits the position-scoped `SettlementApplied`), so emitting the
-    // pledger address here would re-link EOA↔position on every settlement. The aggregate
+    // pledger address here would re-link EOA<->position on every settlement. The aggregate
     // `remainingPledged` signal is preserved.
     storage.emit_event(
         GRATIS_ADDRESS,

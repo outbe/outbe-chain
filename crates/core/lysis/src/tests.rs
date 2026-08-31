@@ -499,7 +499,7 @@ fn test_many_fi_groups() {
 /// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
 fn test_deficit_derivation_scarce_and_abundant() {
-    // Scarce: deficit below the 8% floor → f = deficit (adapts down).
+    // Scarce: deficit below the 8% floor -> f = deficit (adapts down).
     let scarce = F_FP_DEFAULT / U256::from(2u64); // 4%
     let f_fp = scarce.min(F_FP_DEFAULT);
     let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
@@ -510,7 +510,7 @@ fn test_deficit_derivation_scarce_and_abundant() {
         "fmax tracks 2*f when below the cap"
     );
 
-    // Abundant: deficit at/above 8% → f capped at 8%, fmax at 16%.
+    // Abundant: deficit at/above 8% -> f capped at 8%, fmax at 16%.
     let abundant = F_MAX_FP; // 16% deficit
     let f_fp = abundant.min(F_FP_DEFAULT);
     let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
@@ -559,7 +559,7 @@ fn test_skewed_distribution() {
 /// Regression: large nominal amounts (> 2^53) must not lose precision.
 #[test]
 fn test_large_nominal_distribution() {
-    // Simplified: 60/40 split → use SCALE fractions directly.
+    // Simplified: 60/40 split -> use SCALE fractions directly.
     let y_fp = vec![
         SCALE * U256::from(6u64) / U256::from(10u64),
         SCALE * U256::from(4u64) / U256::from(10u64),
@@ -658,7 +658,7 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
 }
 
 // ---------------------------------------------------------------------------
-// I256 precision — no silent zero-collapse on small FI groups
+// I256 precision - no silent zero-collapse on small FI groups
 // ---------------------------------------------------------------------------
 
 /// Input with a dominant group and one tiny-interest group. Under the
@@ -669,8 +669,8 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
 fn test_small_fi_group_survives_i256_precision() {
     let tiny = U256::from(1_000_000u64);
     let y_fp = vec![
-        SCALE - tiny, // dominant group ≈ 99.9999%
-        tiny,         // tiny group ≈ 0.0001% — used to collapse to 0
+        SCALE - tiny, // dominant group ~= 99.9999%
+        tiny,         // tiny group ~= 0.0001% - used to collapse to 0
     ];
     let p = vec![1000u64, 1];
     let f_fp = F_FP_DEFAULT;
@@ -718,7 +718,7 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 ///   `cost_amount_minor = cost_of_gratis_minor * gratis_load_minor / SIX_DECIMAL_SCALE`
 ///
 /// Pre-fix: `lysis::runtime` computed `cost_of_gratis_minor * gratis_load`
-/// without the divisor, producing a value ~10^6× too large that was stored
+/// without the divisor, producing a value ~10^6x too large that was stored
 /// on-chain and emitted to the `NodIssued` event. This was silent because
 /// `settle_mine_payment` is a no-op today, but every nominal-scale consumer
 /// (token URI, `nodData`, future settlement) was wrong.
@@ -883,7 +883,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
 
 /// 15 distinct-amount tributes, all bearing fidelity index 1. Sum is a clean
 /// 1200 COEN so the percentage scenarios (5%/30%/32%) divide exactly with no
-/// integer truncation in the deficit derivation — the assertions can use
+/// integer truncation in the deficit derivation - the assertions can use
 /// strict equality rather than tolerance bands.
 fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
     let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| coen(10u64 * i)).collect();
@@ -900,7 +900,7 @@ fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
 #[test]
 fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
-    // 5% deficit — well below the historical 8% floor.
+    // 5% deficit - well below the historical 8% floor.
     let gratis_allocation = total_interest * U256::from(5u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
@@ -924,7 +924,7 @@ fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
 #[test]
 fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
-    // 30% deficit — well above the historical 8%/16% range; the new logic
+    // 30% deficit - well above the historical 8%/16% range; the new logic
     // must not silently cap the fraction at 16%.
     let gratis_allocation = total_interest * U256::from(30u64) / U256::from(100u64);
 
@@ -948,7 +948,7 @@ fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
 #[test]
 fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
-    // 32% — matches the canonical metadosis symbolic rate (D1 in
+    // 32% - matches the canonical metadosis symbolic rate (D1 in
     // metadosis-lysis-discrepancies.md). The fraction must reach 0.32, exactly.
     let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
 
@@ -978,7 +978,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     // Distinct nominals 1..=100 COEN. Sum = 5050 COEN; 32% = 1616 COEN exactly.
     let nominal_amounts: Vec<U256> = (1u64..=100).map(coen).collect();
     // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
-    // FIs 11..=15 each get 6 — covers every bucket with uneven population.
+    // FIs 11..=15 each get 6 - covers every bucket with uneven population.
     let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
     let total_interest: U256 = nominal_amounts
         .iter()
@@ -1007,7 +1007,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         assert!(map.contains_key(&fi), "FI {fi} missing from fraction map");
     }
 
-    // 2. Every fraction must be positive — the I256 pipeline must not collapse
+    // 2. Every fraction must be positive - the I256 pipeline must not collapse
     //    any group to zero, and the moment solver must not produce a negative
     //    that clamps to 0 (would starve a whole FI bucket).
     for (fi, frac) in &map {
@@ -1020,7 +1020,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     // 3. Algorithm-level budget invariant. Reconstruct the y_fp vector exactly
     //    as the runtime does (BTreeMap-ordered group share with the truncation
     //    delta absorbed into the last entry) and assert the normalized
-    //    `Σ(f_g · y_fp_g)/SCALE ≤ f_fp` post-condition. This is the
+    //    `sum(f_g * y_fp_g)/SCALE <= f_fp` post-condition. This is the
     //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
     let mut group_interest: BTreeMap<u16, U256> = BTreeMap::new();
     for (i, &fi) in tribute_fis.iter().enumerate() {
@@ -1047,15 +1047,15 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^6
     assert!(
         weighted <= f_fp,
-        "weighted Σ(f·y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
+        "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
     );
 
     println!("100-tribute / 15-FI fraction map: {:?}", map);
-    println!("weighted Σ(f·y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
+    println!("weighted sum(f*y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
 }
 
 /// D3 regression (runtime path): when gratis is scarce (deficit < 8%), the per-FI
-/// floor must adapt DOWN so the whole — small — allocation is loaded onto the
+/// floor must adapt DOWN so the whole - small - allocation is loaded onto the
 /// tribute. Under the previous degenerate `clamp(MIN, MAX/2)` the floor was pinned
 /// to 8%, computing a gratis_load of 8% of nominal (> the 4% allocation), which
 /// exceeds `remaining` and causes the NOD issuance to be SKIPPED entirely.
@@ -1078,7 +1078,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     let nominal = coen(100u64);
     let cost_of_gratis = U256::from(500_000u64);
 
-    // Scarce: allocation is only 4% of nominal → deficit (4%) is BELOW the 8% floor.
+    // Scarce: allocation is only 4% of nominal -> deficit (4%) is BELOW the 8% floor.
     let gratis_allocation = nominal * U256::from(4u64) / U256::from(100u64);
     let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
 

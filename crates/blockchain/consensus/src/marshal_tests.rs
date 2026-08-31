@@ -3,7 +3,7 @@
 //! Tests verify that the digest-bound block availability model works correctly:
 //! - Blocks resolve via digest (not from local handler cache via raw P2P)
 //! - Missing blocks are resolved via buffer/resolver (not bespoke admission)
-//! - The full propose → digest → resolution → finalize flow works end-to-end
+//! - The full propose -> digest -> resolution -> finalize flow works end-to-end
 //! - No legacy BlockReceived/BlockRequested message variants exist
 
 #[cfg(test)]
@@ -25,7 +25,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 1 — Integration: verify resolves block by digest through buffer
+    // Test 1 - Integration: verify resolves block by digest through buffer
     // -----------------------------------------------------------------------
 
     /// Verify path resolves block body by digest through a content-addressed
@@ -42,10 +42,10 @@ mod tests {
         // Simulate marshal's buffer: content-addressed store keyed by digest.
         let mut buffer = std::collections::HashMap::<Digest, ConsensusBlock>::new();
 
-        // Block not in buffer → verify would call subscribe_by_digest (pending).
+        // Block not in buffer -> verify would call subscribe_by_digest (pending).
         assert!(!buffer.contains_key(&digest));
 
-        // Proposer broadcasts → buffer stores by digest.
+        // Proposer broadcasts -> buffer stores by digest.
         buffer.insert(digest, block.clone());
 
         // Verifier resolves by digest (not by sender identity or cache admission).
@@ -55,11 +55,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 2 — Regression: no raw unsolicited block admission path
+    // Test 2 - Regression: no raw unsolicited block admission path
     // -----------------------------------------------------------------------
 
     /// Raw unsolicited block payload cannot be a primary source for verify/finalize.
-    /// The Message enum has exactly 3 variants — no BlockReceived/BlockRequested.
+    /// The Message enum has exactly 3 variants - no BlockReceived/BlockRequested.
     /// (The `Finalized` variant moved to `crate::finalization::ingress::Message`
     /// in step 21; the `Broadcast` variant was removed when proposer
     /// dissemination moved to a direct `marshal.forward` from `Relay::broadcast`.)
@@ -77,7 +77,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 3 — Recovery: missing block resolves via content-addressed lookup
+    // Test 3 - Recovery: missing block resolves via content-addressed lookup
     // -----------------------------------------------------------------------
 
     /// A block that was NOT received via broadcast (e.g. network partition)
@@ -91,13 +91,13 @@ mod tests {
         // Content-addressed store (simulates marshal's internal cache).
         let mut store = std::collections::HashMap::<Digest, ConsensusBlock>::new();
 
-        // Block NOT available initially — simulates missing broadcast.
+        // Block NOT available initially - simulates missing broadcast.
         assert!(!store.contains_key(&digest));
 
         // Resolver delivers the block (content-addressed, by digest).
         store.insert(digest, block.clone());
 
-        // Now resolvable — no sender identity check, no timestamp check,
+        // Now resolvable - no sender identity check, no timestamp check,
         // no block-number-vs-finalized check. Pure content-addressed.
         let resolved = store.get(&digest).unwrap();
         assert_eq!(resolved.digest(), digest);
@@ -105,11 +105,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 4 — E2E: proposer → digest → body resolution → finalize
+    // Test 4 - E2E: proposer -> digest -> body resolution -> finalize
     // -----------------------------------------------------------------------
 
     /// Full end-to-end flow exercised through data structures:
-    /// 1. Proposer builds block → stores in proposer's local cache + buffer
+    /// 1. Proposer builds block -> stores in proposer's local cache + buffer
     /// 2. Non-proposer receives digest in consensus proposal
     /// 3. Non-proposer resolves block by digest from buffer
     /// 4. Block is complete and usable for EL verification + finalization
@@ -142,7 +142,7 @@ mod tests {
         let resolved_block = resolved.unwrap();
         assert_eq!(resolved_block.digest(), digest);
 
-        // Step 4: Finalization — resolved block is complete for EL processing.
+        // Step 4: Finalization - resolved block is complete for EL processing.
         assert_eq!(resolved_block.number(), number);
 
         // After finalization, proposer removes from local cache.
@@ -191,7 +191,7 @@ mod tests {
             use commonware_utils::acknowledgement::{Acknowledgement, Exact};
 
             let (ack, waiter) = Exact::handle();
-            drop(ack); // Old behavior — should cancel
+            drop(ack); // Old behavior - should cancel
 
             let result = waiter.await;
             assert!(
@@ -252,7 +252,7 @@ mod tests {
             "retry delay must be 2 seconds"
         );
 
-        // Worst case before structured failure: N attempts × per-attempt timeout
+        // Worst case before structured failure: N attempts x per-attempt timeout
         // + (N - 1) sleeps between them (no sleep after the last attempt).
         let total_worst_case = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
             + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
@@ -263,7 +263,7 @@ mod tests {
         );
         assert!(
             total_worst_case <= std::time::Duration::from_secs(60),
-            "worst-case before structured failure must be bounded (≤60s)"
+            "worst-case before structured failure must be bounded (<=60s)"
         );
         assert_eq!(
             PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT,
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(resolved.view(), View::new(90));
     }
 
-    /// Simulated marshal failure — retry exhaustion returns error.
+    /// Simulated marshal failure - retry exhaustion returns error.
     #[test]
     fn test_retry_exhaustion_on_persistent_failure() {
         use crate::finalization::util::{retry_with_backoff, RetryFailureKind};
@@ -312,7 +312,7 @@ mod tests {
         });
     }
 
-    /// Retry succeeds on second attempt — no stall.
+    /// Retry succeeds on second attempt - no stall.
     #[test]
     fn test_retry_succeeds_after_transient_failure() {
         use crate::finalization::util::retry_with_backoff;
@@ -356,7 +356,7 @@ mod tests {
         });
     }
 
-    /// Immediate success — no retries needed.
+    /// Immediate success - no retries needed.
     #[test]
     fn test_retry_immediate_success_no_stall() {
         use crate::finalization::util::retry_with_backoff;

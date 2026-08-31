@@ -1,9 +1,9 @@
-//! `outbe-tee-enclave` — the TEE enclave core for the Tribute PoC.
+//! `outbe-tee-enclave` - the TEE enclave core for the Tribute PoC.
 //!
 //! This crate holds the **secret-bearing** logic that runs only inside the
 //! enclave: the offer-decryption primitive, the DKG -> tribute-offer-key
 //! derivation chain, and the sealed-blob format. The host (`outbe-tee`) never
-//! links the secret crypto — it only speaks the neutral `outbe_tee::protocol`
+//! links the secret crypto - it only speaks the neutral `outbe_tee::protocol`
 //! message contract over a Noise-IK channel.
 //!
 //! SGX integration is real, not mocked: [`gramine`] talks to the actual
@@ -13,11 +13,11 @@
 //! `EGETKEY`, so the enclave reports `attestation_type=none` and runs in an
 //! explicitly-unattested mode rather than fabricating attestation.
 //!
-//!   - [`crypto`] — ECDHE + HKDF + ChaCha20Poly1305 offer decrypt (byte-identical
+//!   - [`crypto`] - ECDHE + HKDF + ChaCha20Poly1305 offer decrypt (byte-identical
 //!     to the host's current scheme) and the tribute-offer-key derivation.
-//!   - [`seal`]   — the `TSEAL` sealed-blob format; the sealing key is the real
+//!   - [`seal`]   - the `TSEAL` sealed-blob format; the sealing key is the real
 //!     `EGETKEY` key under `gramine-sgx` (a `mock`-gated dev key only off-hardware).
-//!   - [`gramine`] — the real `/dev/attestation/*` quote/seal/measurement surface.
+//!   - [`gramine`] - the real `/dev/attestation/*` quote/seal/measurement surface.
 
 pub mod compute;
 pub mod confidential;
@@ -42,7 +42,7 @@ pub mod zk_claim;
 /// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).
 ///
 /// In the real enclave one resident group signature yields every ledger's state
-/// key (the transport derives the gratis, fidelity, … keys from the same
+/// key (the transport derives the gratis, fidelity, ... keys from the same
 /// `group_sig`). The per-crate in-process test enclaves must model that: the
 /// fidelity key derived when the *gratis* stand-in applies a folded cohort
 /// section MUST equal the key the *fidelity* stand-in uses for snapshots/queries,

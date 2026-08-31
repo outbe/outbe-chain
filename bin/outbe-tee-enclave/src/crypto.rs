@@ -1,14 +1,14 @@
-//! Enclave crypto core (secret-bearing — lives only in the enclave binary).
+//! Enclave crypto core (secret-bearing - lives only in the enclave binary).
 //!
 //! Two responsibilities for slice 1:
 //!
-//! 1. **Offer decryption primitive** — byte-identical to the host's current
+//! 1. **Offer decryption primitive** - byte-identical to the host's current
 //!    `outbe-tributefactory` `crypto.rs`: ECDHE(X25519) + HKDF-SHA256 +
 //!    ChaCha20Poly1305 with the same `b"tribute-factory-encryption"` info
 //!    label. This is what `crypto.rs` will call into the enclave for once the
 //!    decrypt key is enclave-resident.
 //!
-//! 2. **Tribute-offer-key derivation** — DKG group threshold signature -> HKDF ->
+//! 2. **Tribute-offer-key derivation** - DKG group threshold signature -> HKDF ->
 //!    tribute-offer X25519 keypair, resident in each enclave so every validator
 //!    decrypts tribute offers deterministically during block execution.
 //!
@@ -160,14 +160,14 @@ pub fn derive_tribute_offer_keypair(seed: &[u8; 32]) -> Result<(Zeroizing<[u8; 3
 }
 
 /// Derive the tribute-offer X25519 keypair from the DKG **group threshold
-/// signature** `group_sig` — the signature every enclave recovers (via
+/// signature** `group_sig` - the signature every enclave recovers (via
 /// `threshold::recover`) from `2f+1` partial signatures over the fixed offer
 /// message. `group_sig` is the shared, deterministic secret material:
 /// byte-identical on every honest enclave (so all derive the same tribute-offer
 /// key), yet unforgeable without a threshold of DKG shares. `chain_id` + `epoch`
 /// are bound into the HKDF for domain separation. The resulting tribute-offer
 /// secret is resident in each enclave so every validator decrypts tribute offers
-/// deterministically during block execution — an architectural requirement of
+/// deterministically during block execution - an architectural requirement of
 /// deterministic local re-execution, not a compromise. Returns
 /// `(tribute_offer_secret, tribute_offer_public)` with a zeroizing secret.
 pub fn derive_tribute_offer_secret_from_group_sig(
@@ -226,7 +226,7 @@ impl EncryptedShare {
 /// so the random nonce is defense-in-depth.
 ///
 /// `OsRng` here is **transport-encryption** randomness (ephemeral X25519 + nonce)
-/// — it is NOT consensus randomness. The encrypted share decrypts to a
+/// - it is NOT consensus randomness. The encrypted share decrypts to a
 /// deterministic plaintext; ciphertext freshness only protects confidentiality
 /// in flight, and never feeds VRF/leader-election/state transitions.
 pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedShare> {
@@ -258,7 +258,7 @@ pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<Encry
 ///
 /// Unlike [`encrypt_share`] (random ephemeral key + random nonce), this uses
 /// static-static ECDH between the sender's static secret and the recipient's
-/// static public, and derives the nonce from the shared secret — NO RNG. The
+/// static public, and derives the nonce from the shared secret - NO RNG. The
 /// recipient opens it with the UNCHANGED [`decrypt_share`] using its own X25519
 /// secret and the sender's static public (carried in `ephemeral_pub`, which equals
 /// the on-chain `tribute_offer_public_key`). The fixed-per-pair nonce is safe: the
@@ -378,7 +378,7 @@ mod tests {
 
     /// The shared client-side encryptor (`outbe_tee::offer_encrypt`, used by
     /// outbe-cli, the bench and the node canary) must round-trip with THIS
-    /// decrypt path byte-for-byte — the canary asserts exactly this in prod.
+    /// decrypt path byte-for-byte - the canary asserts exactly this in prod.
     #[test]
     fn shared_offer_encrypt_helper_round_trips_with_decrypt() {
         let offer_sk = [7u8; 32];
@@ -446,7 +446,7 @@ mod tests {
         let opened = decrypt_share(&recipient_secret, &a).unwrap();
         assert_eq!(opened.as_slice(), plaintext);
 
-        // Different recipient → different blob (key + nonce both salted by recipient).
+        // Different recipient -> different blob (key + nonce both salted by recipient).
         let other_pub = x25519_public(&[11u8; 32]);
         let c = encrypt_share_deterministic(&offer_secret, &other_pub, plaintext).unwrap();
         assert_ne!(a.to_bytes(), c.to_bytes());
@@ -563,7 +563,7 @@ mod tests {
 
         let share = b"a-serialized-dkg-share-scalar-bytes";
         let sealed = encrypt_share(&recipient_pub, share).unwrap();
-        // The host never sees the plaintext — only the opaque blob.
+        // The host never sees the plaintext - only the opaque blob.
         assert_ne!(sealed.ciphertext.as_slice(), share.as_slice());
 
         let opened = decrypt_share(&recipient_sk, &sealed).unwrap();
@@ -623,7 +623,7 @@ mod tests {
     }
 
     /// The length check is `< 44`, so exactly 44 bytes is valid and decodes to an
-    /// empty ciphertext — the boundary case.
+    /// empty ciphertext - the boundary case.
     #[test]
     fn encrypted_share_from_bytes_accepts_min_len_empty_ciphertext() {
         let share = EncryptedShare {

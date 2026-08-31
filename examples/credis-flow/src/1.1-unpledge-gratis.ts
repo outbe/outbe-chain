@@ -33,7 +33,7 @@ const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GR
 
 async function main() {
   const found = ticketPath ? { path: ticketPath, ticket: readTicket(ticketPath) } : findLatestTicket();
-  if (!found) throw new Error("No pledge ticket found — run `npm run pledge-gratis` first.");
+  if (!found) throw new Error("No pledge ticket found - run `npm run pledge-gratis` first.");
   const ticket: Ticket = found.ticket;
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -42,7 +42,7 @@ async function main() {
   const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
 
   const gratisMeta = await fetchTokenMeta(gratis);
-  // Unpledge is quoted in the same unit the pledge was — the stables figure sealed in
+  // Unpledge is quoted in the same unit the pledge was - the stables figure sealed in
   // the ticket. `ticket.amount` is the gratis collateral that comes back.
   const stablesAmount = BigInt(ticket.stablesAmount);
   const amount = BigInt(ticket.amount);

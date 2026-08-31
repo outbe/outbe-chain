@@ -62,7 +62,7 @@ fn funded(balance: u64) -> AccountInfo {
 ///
 /// `CALLCODE` (`0xf2`) takes a value operand, which we source from `CALLVALUE`
 /// so the frame forwards exactly what the outer transaction sent.
-/// `DELEGATECALL` (`0xf4`) takes none — it inherits the frame's value.
+/// `DELEGATECALL` (`0xf4`) takes none - it inherits the frame's value.
 fn borrow_code(opcode: u8, target: Address) -> Bytes {
     let mut code = vec![
         0x36, // CALLDATASIZE          size
@@ -143,7 +143,7 @@ fn balance_of(outcome: &ResultAndState, address: Address) -> U256 {
 
 /// Number of storage slots this transaction actually wrote at `address`. The
 /// boundary rejects before any storage provider exists, so a rejected call must
-/// leave the precompile's storage untouched — including the stake ledger.
+/// leave the precompile's storage untouched - including the stake ledger.
 fn storage_writes(outcome: &ResultAndState, address: Address) -> usize {
     outcome
         .state
@@ -204,7 +204,7 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
 /// CALLCODE hands the boundary a `CallValue::Transfer` whose amount came off the
 /// stack, but caller and target are the same account, so revm's journal performs a
 /// balance check and moves nothing. Crediting it would let `staking.stake` book
-/// stake `STAKING_ADDRESS` never received — repeatable at no cost.
+/// stake `STAKING_ADDRESS` never received - repeatable at no cost.
 #[test]
 fn callcode_to_staking_with_value_cannot_credit_stake() {
     // CALLCODE sets `caller` to the executing account, so the borrower stakes to
@@ -337,7 +337,7 @@ fn plain_call_with_value_credits_a_payable_precompile() {
     );
 }
 
-/// Reserving the `0x53c0…` class must not make native value unspendable there: an
+/// Reserving the `0x53c0...` class must not make native value unspendable there: an
 /// empty-calldata send is an ordinary transfer the class dispatch returns from
 /// without touching token state.
 ///
@@ -387,7 +387,7 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
 ///
 /// `DELEGATECALL` keeps the frame's inherited caller, and dispatch keys the
 /// precompile's storage on the borrowed address, so before the refusal a
-/// contract could run any caller-authenticated selector — here `unstake` — as
+/// contract could run any caller-authenticated selector - here `unstake` - as
 /// whoever called it, against real staking state. Without the guard this reaches
 /// staking and fails on staking's own accounting; with it, the frame never runs.
 #[test]

@@ -1,9 +1,9 @@
-//! — `ParentProofResolver` bounded-fetch tests.
+//! - `ParentProofResolver` bounded-fetch tests.
 //!
 //! Drives the resolver against a mock [`ParentProofTransport`] so the test
 //! suite exercises the schedule-budget enforcement, the hash-exact contract
 //! , the local-witness gate , and the competing-branch safety
-//! property — all without spinning up a real P2P stack. The marshal
+//! property - all without spinning up a real P2P stack. The marshal
 //! transport plugs into the same trait surface.
 
 use std::{
@@ -43,7 +43,7 @@ use outbe_consensus::{
 };
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 
-// ── Test fixtures ─────────────────────────────────────────────────────────
+// -- Test fixtures ---------------------------------------------------------
 
 fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
     let keys: Vec<bls12381::PrivateKey> = (0..n)
@@ -138,7 +138,7 @@ fn build_resolver<T: ParentProofTransport>(
     ParentProofResolver::new(transport, schedule, store, verifier, ordered_addresses())
 }
 
-// ── Mock transport ────────────────────────────────────────────────────────
+// -- Mock transport --------------------------------------------------------
 
 #[derive(Default, Clone)]
 struct CallLog {
@@ -150,10 +150,10 @@ struct CallLog {
 #[derive(Clone)]
 enum MockBehaviour {
     /// Return this fixed Notarization on every call. Boxed because the
-    /// Notarization inline is ~500 bytes — see clippy::large_enum_variant.
+    /// Notarization inline is ~500 bytes - see clippy::large_enum_variant.
     Returns(Box<Notarization<HybridScheme<MinSig>, OutbeDigest>>),
     /// Never respond, so the resolver's per-attempt `Clock::sleep(attempt_timeout)`
-    /// race always wins and the attempt times out (deterministic — no real sleep).
+    /// race always wins and the attempt times out (deterministic - no real sleep).
     NeverResponds,
 }
 
@@ -206,7 +206,7 @@ impl ParentProofTransport for MockTransport {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// -- Tests -----------------------------------------------------------------
 
 #[test]
 fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
@@ -222,7 +222,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
         let transport = MockTransport::new(MockBehaviour::Returns(Box::new(returned)));
 
         let store = FinalizedParentCertStore::new();
-        // Local witness present so a hash match WOULD succeed — proves the
+        // Local witness present so a hash match WOULD succeed - proves the
         // mismatch path short-circuits before the witness check.
         store
             .put_certified_notarization(witness_for(
@@ -375,7 +375,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
                     round,
                     parent_hash: B256::from_slice(Sha256::hash(b"any").as_ref()),
                 },
-                // More targets than ATTEMPTS — resolver must cap to ATTEMPTS.
+                // More targets than ATTEMPTS - resolver must cap to ATTEMPTS.
                 &[0u32, 1, 2, 3, 4],
             )
             .await;
@@ -401,7 +401,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
     });
 }
 
-// ── Local helpers ─────────────────────────────────────────────────────────
+// -- Local helpers ---------------------------------------------------------
 
 /// Build a minimal local certification witness record so the resolver's
 /// `is_none()` gate passes. Content does not need to crypto-verify here; the

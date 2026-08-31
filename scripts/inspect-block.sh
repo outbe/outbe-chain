@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Inspect an outbe-chain block — split system vs user transactions, identify
+# Inspect an outbe-chain block - split system vs user transactions, identify
 # each system tx by its name + body zone (begin_block / end_block), and
 # surface any `OutbeFailure(uint16 indexed code, string reason)` logs
 #
 # Body layout:
-#   begin_block system txs ───┐
-#                             │ all addressed to OUTBE_SYSTEM_TX_ADDRESS
-#   user txs                  │ user txs go to any other address
-#                             │
-#   end_block system txs   ───┘ currently empty in outbe-chain
+#   begin_block system txs ---+
+#                             | all addressed to OUTBE_SYSTEM_TX_ADDRESS
+#   user txs                  | user txs go to any other address
+#                             |
+#   end_block system txs   ---+ currently empty in outbe-chain
 #
 # A system tx's name is decoded from the SystemTxInputV1 tag byte (input[1]):
 #   01 FinalizationAndSlashing   (begin_block)
@@ -35,7 +35,7 @@ RPC_URL="${2:-http://localhost:18545}"
 JSON_OUT="${3:-}"
 
 # ---------------------------------------------------------------------------
-# Constants — mirror outbe-primitives::addresses + outbe-evm::failure_receipt
+# Constants - mirror outbe-primitives::addresses + outbe-evm::failure_receipt
 # ---------------------------------------------------------------------------
 OUTBE_SYSTEM_TX_ADDRESS="0xff00000000000000000000000000000000000001"
 SYSTEM_ADDRESS="0x0000000000000000000000000000000000000000"
@@ -115,7 +115,7 @@ BLOCK_GAS_USED_HEX="$(echo "$BLOCK_JSON" | jq -r '.result.gasUsed')"
 BLOCK_GAS_USED_DEC="$((BLOCK_GAS_USED_HEX))"
 
 # ---------------------------------------------------------------------------
-# JSON mode — emit machine-readable summary and exit
+# JSON mode - emit machine-readable summary and exit
 # ---------------------------------------------------------------------------
 
 if [ "$JSON_OUT" = "--json" ]; then
@@ -159,12 +159,12 @@ fi
 # Human summary
 # ---------------------------------------------------------------------------
 
-echo "═══════════════════════════════════════════════════════════════════════"
+echo "======================================================================="
 echo "Block #$BLOCK_NUM_DEC  ($BLOCK_NUM_HEX)"
 echo "Hash:    $BLOCK_HASH"
 echo "Gas:     $BLOCK_GAS_USED_DEC ($BLOCK_GAS_USED_HEX)"
 echo "RPC:     $RPC_URL"
-echo "═══════════════════════════════════════════════════════════════════════"
+echo "======================================================================="
 
 TX_COUNT=$(echo "$BLOCK_JSON" | jq '.result.transactions | length')
 SYS_COUNT=$(echo "$BLOCK_JSON" | jq --arg sys "$OUTBE_SYSTEM_TX_ADDRESS" \
@@ -177,9 +177,9 @@ echo "Transactions: total=$TX_COUNT  system=$SYS_COUNT  user=$USR_COUNT"
 echo
 
 if [ "$TX_COUNT" -eq 0 ]; then
-    echo "(empty block — no transactions)"
+    echo "(empty block - no transactions)"
 else
-    # Pre-scan to find the first user-tx index — system txs before it are
+    # Pre-scan to find the first user-tx index - system txs before it are
     # `begin_block`, system txs after it are `end_block`.
     FIRST_USER_IDX="$(echo "$BLOCK_JSON" \
         | jq --arg sys "$OUTBE_SYSTEM_TX_ADDRESS" -r '
@@ -211,8 +211,8 @@ else
             fi
         else
             KIND="user"
-            ZONE="—"
-            NAME="—"
+            ZONE="-"
+            NAME="-"
         fi
         printf "%-3s  %-7s  %-11s  %-26s  %-66s\n" "$INDEX" "$KIND" "$ZONE" "$NAME" "$TX_HASH"
         INDEX=$((INDEX + 1))
@@ -224,7 +224,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo
-echo "─── soft-failure receipts in this block ──────────────────────────────"
+echo "--- soft-failure receipts in this block ------------------------------"
 
 # Fetch logs for OutbeFailure topic0 within this single block, then group by tx.
 LOGS_JSON="$(rpc_call eth_getLogs \
@@ -232,7 +232,7 @@ LOGS_JSON="$(rpc_call eth_getLogs \
 LOG_COUNT="$(echo "$LOGS_JSON" | jq '.result | length')"
 
 if [ "$LOG_COUNT" = "0" ] || [ "$LOG_COUNT" = "null" ]; then
-    echo "(none — all transactions succeeded)"
+    echo "(none - all transactions succeeded)"
 else
     echo "$LOG_COUNT OutbeFailure log(s):"
     echo "$LOGS_JSON" | jq -r --arg zerofee "$ZERO_FEE_POLICY_LOG_ADDRESS" --arg sys "$OUTBE_SYSTEM_TX_ADDRESS" '
@@ -243,7 +243,7 @@ else
             code: (.topics[1] | .[58:] | tonumber),
             origin: (if (.address | ascii_downcase) == $zerofee then "zero-fee" elif (.address | ascii_downcase) == $sys then "system_tx" else "?" end)
         } |
-        "  • tx=\(.tx)  code=\(.code)  origin=\(.origin)"
+        "  * tx=\(.tx)  code=\(.code)  origin=\(.origin)"
     '
 fi
 
@@ -253,7 +253,7 @@ fi
 
 if [ "$TX_COUNT" -gt 0 ]; then
     echo
-    echo "─── receipt statuses ──────────────────────────────────────────────────"
+    echo "--- receipt statuses --------------------------------------------------"
     SUCCESS=0
     FAILED=0
     while read -r TX_HASH; do
@@ -269,4 +269,4 @@ if [ "$TX_COUNT" -gt 0 ]; then
     echo "  failed:  $FAILED"
 fi
 
-echo "═══════════════════════════════════════════════════════════════════════"
+echo "======================================================================="

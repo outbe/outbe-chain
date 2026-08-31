@@ -6,9 +6,9 @@
 //! `last_accounted_block_number := parent_block_number` to
 //! `ACCOUNTING_PROGRESS_ADDRESS` slot 0 BEFORE Phase 2 (`CycleTick`)
 //! executes. This module surfaces that property as an
-//! explicit gate so a regression that reorders Phase 1 vs Phase 2 — or
+//! explicit gate so a regression that reorders Phase 1 vs Phase 2 - or
 //! adds a Cycle trigger that reads validator-pool state racing the
-//! parent-finalization tx — is caught at the dispatcher boundary.
+//! parent-finalization tx - is caught at the dispatcher boundary.
 //!
 //! ## Resolution contract
 //!
@@ -22,9 +22,9 @@
 //!   `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER = 1`).
 //! * `Some(AccountingWindow { start_block, end_inclusive })` otherwise.
 //!   `end_inclusive == block_number - 1` (the parent block, which Phase 1
-//!   must have accounted). `start_block` is informational — derived
+//!   must have accounted). `start_block` is informational - derived
 //!   deterministically from the period boundary preceding the current
-//!   block's timestamp — and is currently NOT consulted by the gate;
+//!   block's timestamp - and is currently NOT consulted by the gate;
 //!   it exists for observability and is pinned by the proptest.
 //!
 //! ## Determinism
@@ -82,14 +82,14 @@ pub fn resolve_accounting_window(
         return None;
     }
 
-    // end_inclusive = parent block. The Phase 1 → Phase 2 ordering
+    // end_inclusive = parent block. The Phase 1 -> Phase 2 ordering
     // invariant means a correctly-built block has Phase 1
     // committed before this gate runs, so `last_accounted_block_number`
     // is at least `block_number - 1` and the gate passes.
     let end_inclusive = block.block_number.saturating_sub(1);
 
     // Informational `start_block`: derived from the period boundary
-    // preceding `block.timestamp`. We don't have a (timestamp →
+    // preceding `block.timestamp`. We don't have a (timestamp ->
     // block_number) inverse lookup at this scope; use the period start
     // timestamp itself as an opaque deterministic marker. Pinned by the
     // proptest only on the property of determinism, not on a specific

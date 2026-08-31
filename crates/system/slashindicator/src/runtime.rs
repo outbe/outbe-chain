@@ -34,8 +34,8 @@ use crate::precompile::ISlashIndicator;
 // epoch (`config_epoch_length_blocks`) is the ~1-hour window that also drives DKG
 // reshare / active-set rotation / counter reset, so a felony threshold MUST stay
 // below the epoch length, else the reset wipes the counter before it can trigger
-// (prod epoch 1200 ≈ 1h at ~3s; dev/localnet seeds a smaller threshold for its
-// short epoch via genesis — see `scripts/bootstrap-testnet.sh`). A voter miss
+// (prod epoch 1200 ~= 1h at ~3s; dev/localnet seeds a smaller threshold for its
+// short epoch via genesis - see `scripts/bootstrap-testnet.sh`). A voter miss
 // accrues ~1 per finalized block; a proposer miss only on the validator's own
 // leader slots (~1/N). Both are genesis-overridable per network
 // (`config_*_felony_threshold` slots).
@@ -174,7 +174,7 @@ impl SlashIndicator<'_> {
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
-            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake -
             // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
             // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
@@ -206,7 +206,7 @@ impl SlashIndicator<'_> {
                 felony_count = fc,
                 slash_percent,
                 block_number,
-                "proposer felony — validator force-exited and slashed",
+                "proposer felony - validator force-exited and slashed",
             );
 
             self.emit(ISlashIndicator::ProposerFelony {
@@ -288,7 +288,7 @@ impl SlashIndicator<'_> {
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
-            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake —
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake -
             // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
             // JAILED status untouched, so this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
@@ -320,7 +320,7 @@ impl SlashIndicator<'_> {
                 felony_count = fc,
                 slash_percent,
                 block_number,
-                "voter felony — validator force-exited and slashed",
+                "voter felony - validator force-exited and slashed",
             );
 
             self.emit(ISlashIndicator::VoterFelony {
@@ -702,7 +702,7 @@ impl SlashIndicator<'_> {
             slash_percent,
             slashed_amount = %slashed_amount,
             block_number,
-            "evidence-based felony applied — validator force-exited, stake slashed, submitter rewarded",
+            "evidence-based felony applied - validator force-exited, stake slashed, submitter rewarded",
         );
 
         // Reward evidence submitter: mint evidence_reward_percent of slashed amount.
@@ -742,7 +742,7 @@ impl SlashIndicator<'_> {
     ///    arbitrary EOAs to spam the chain.
     /// 2. Size cap (`invalid_vrf_evidence_max_bytes`).
     /// 3. Block-age cap (`invalid_vrf_evidence_max_age_blocks`).
-    /// 4. Epoch-lag cap (`invalid_vrf_evidence_max_epoch_lag`) — read from
+    /// 4. Epoch-lag cap (`invalid_vrf_evidence_max_epoch_lag`) - read from
     ///    on-chain state via [`ValidatorSet::epoch_number`]
     ///    BP-0 option C: epoch is consensus state, not a derived value).
     /// 5. Child and parent canonicity: claimed child and parent
@@ -766,12 +766,12 @@ impl SlashIndicator<'_> {
     /// 9. Re-run [`outbe_consensus::proof::verify_v2_proof`] against the
     ///    same metadata/snapshot/parent_hash the child block used; accept
     ///    only VRF-class failures from `V2VerifyError`. Any `Ok` or
-    ///    non-VRF rejection reverts — the precompile is strictly for VRF
+    ///    non-VRF rejection reverts - the precompile is strictly for VRF
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
     ///     [`Self::apply_evidence_felony`] for forced exit + 5% slash +
-    ///     10% submitter reward (reusing the existing felony helper —
+    ///     10% submitter reward (reusing the existing felony helper -
     ///     economics shared with the other evidence types).
     pub fn submit_invalid_vrf_evidence(
         &mut self,
@@ -788,7 +788,7 @@ impl SlashIndicator<'_> {
     /// Test seam for [`Self::submit_invalid_vrf_evidence`].
     ///
     /// Production callers go through the no-arg `submit_invalid_vrf_evidence`,
-    /// which always passes [`OutbeProtocolSchedule::default`] — that is the
+    /// which always passes [`OutbeProtocolSchedule::default`] - that is the
     /// canonical V2 schedule and the only schedule the precompile dispatcher
     /// ever uses. This `_with_schedule` variant exists so integration tests
     /// can relax admissibility caps (max_age, max_epoch_lag, max_bytes) to
@@ -832,7 +832,7 @@ impl SlashIndicator<'_> {
             )));
         }
 
-        // (5) Epoch-lag admissibility — read the canonical on-chain
+        // (5) Epoch-lag admissibility - read the canonical on-chain
         // epoch counter from ValidatorSet (option C: epoch is consensus
         // state, recorded by update_epoch at boundaries; we do NOT
         // re-derive it from block height).
@@ -948,7 +948,7 @@ impl SlashIndicator<'_> {
 
         // (10) Proposer must be in the snapshot's committee. Defends
         // against a future bug that signs a Phase 1 tx with a key not
-        // bound to any active validator — without this check, the
+        // bound to any active validator - without this check, the
         // felony helper would call jail_validator on a
         // non-existent validator and the slash path would silently
         // no-op.
@@ -989,7 +989,7 @@ impl SlashIndicator<'_> {
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony — forced exit + 5% slash + 10% submitter
+        // (13) Apply felony - forced exit + 5% slash + 10% submitter
         // reward, using the same helper the other evidence types call.
         self.apply_evidence_felony(proposer, caller)?;
 
@@ -1023,7 +1023,7 @@ impl SlashIndicator<'_> {
             child_epoch = ev.child_epoch,
             failure_class,
             block_number,
-            "invalid-VRF evidence accepted — proposer self-incriminated by Phase 1 tx signature",
+            "invalid-VRF evidence accepted - proposer self-incriminated by Phase 1 tx signature",
         );
 
         Ok(())
@@ -1032,7 +1032,7 @@ impl SlashIndicator<'_> {
     /// Submit evidence that a validator equivocated on its VRF seed partial:
     /// two DIFFERENT identity-signed `bls_seed_partial`s for the same
     /// `(round, vrf_material_version)`. Self-authenticating from the two MinPk
-    /// identity signatures — no committee polynomial is needed — and reuses the
+    /// identity signatures - no committee polynomial is needed - and reuses the
     /// shared felony economics. An honest validator produces exactly one partial
     /// per round/version and never identity-signs a second distinct one, so a
     /// valid pair cannot frame an honest node.
@@ -1058,7 +1058,7 @@ impl SlashIndicator<'_> {
         evidence_bytes: &[u8],
         schedule: &OutbeProtocolSchedule,
     ) -> Result<()> {
-        // (1) Submitter ACL: ACTIVE validators only — verification is BLS-heavy,
+        // (1) Submitter ACL: ACTIVE validators only - verification is BLS-heavy,
         // so gating to the staked set makes DoS self-destructive.
         self.require_active_submitter(caller)?;
 
@@ -1143,7 +1143,7 @@ impl SlashIndicator<'_> {
     /// Submit evidence that a validator emitted a single INVALID VRF seed
     /// partial: an identity-signed partial that fails verification against the
     /// committee's full public polynomial. Unlike equivocation, this needs the
-    /// committee polynomial — carried in the evidence and checked against the
+    /// committee polynomial - carried in the evidence and checked against the
     /// `vrf_public_polynomial_hash` committed in the committee snapshot (which
     /// the executor derives from the consensus-validated DKG boundary outcome,
     /// so a proposer cannot forge it to frame an honest validator). Reuses the
@@ -1171,7 +1171,7 @@ impl SlashIndicator<'_> {
         // (1) Submitter ACL: ACTIVE validators only (BLS-heavy verification).
         self.require_active_submitter(caller)?;
 
-        // (2) Size cap — the polynomial commitment dominates; reuse the VRF
+        // (2) Size cap - the polynomial commitment dominates; reuse the VRF
         // evidence cap (the only other commitment-carrying evidence).
         if evidence_bytes.len() > schedule.invalid_vrf_evidence_max_bytes {
             return Err(PrecompileError::Revert(format!(
@@ -1344,7 +1344,7 @@ impl SlashIndicator<'_> {
             slash_percent,
             slashed_amount = %slashed_amount,
             block_number,
-            "byzantine felony — equivocation detected, validator force-exited and slashed",
+            "byzantine felony - equivocation detected, validator force-exited and slashed",
         );
 
         self.emit(ISlashIndicator::ByzantineFelony {
@@ -1422,7 +1422,7 @@ fn canonical_evidence_hash(ev1: &[u8], ev2: &[u8]) -> B256 {
 /// maps a [`V2VerifyError`] to a canonical VRF failure class code
 /// emitted in [`InvalidVrfProofEvidenceApplied`] and the slashing journal.
 ///
-/// Returns `None` for any non-VRF failure — those are not slashable through
+/// Returns `None` for any non-VRF failure - those are not slashable through
 /// `submitInvalidVrfProofEvidence` and the caller must revert.
 ///
 /// The codes are stable wire constants once the precompile is live; renaming

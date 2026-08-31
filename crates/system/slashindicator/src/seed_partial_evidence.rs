@@ -4,7 +4,7 @@
 //! same `(round, vrf_material_version)` has equivocated on its VRF
 //! contribution. Each partial is bound to the validator's MinPk identity key by
 //! a rider signature (see `outbe_consensus::proof::seed_partial`), so the two
-//! identity signatures alone self-authenticate the offense — no committee
+//! identity signatures alone self-authenticate the offense - no committee
 //! polynomial is needed, mirroring the existing double-sign / conflicting-vote
 //! evidence. An honest validator produces exactly one partial per
 //! `(round, version)` and never identity-signs a second distinct one, so a
@@ -116,7 +116,7 @@ impl SeedPartialEquivocationEvidence {
 }
 
 // =============================================================================
-// Invalid-partial evidence (IPE1) — slashes a single identity-signed partial
+// Invalid-partial evidence (IPE1) - slashes a single identity-signed partial
 // that fails verification against the committee's full VRF polynomial.
 // =============================================================================
 
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn dedup_hash_is_partial_order_independent() {
         let a = SeedPartialEquivocationEvidence::decode(&sample_bytes()).unwrap();
-        // Swap partial_1/partial_2 (and their sigs) → same dedup hash.
+        // Swap partial_1/partial_2 (and their sigs) -> same dedup hash.
         let mut swapped = sample_bytes();
         // partial_1 at offset 5+24+48 = 77, identity_sig_1 at 125, partial_2 at 221, sig_2 at 269.
         let p1_off = 5 + 24 + 48;

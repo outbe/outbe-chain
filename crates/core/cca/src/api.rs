@@ -2,7 +2,7 @@
 //!
 //! Neighbouring modules (CredisFactory) ask about an agent's standing through
 //! here rather than through the precompile ABI, and the precompile answers from
-//! the same function — so the two views cannot diverge, and the stub below is
+//! the same function - so the two views cannot diverge, and the stub below is
 //! the single place the real registry has to replace.
 
 use alloy_primitives::Address;
@@ -16,7 +16,7 @@ pub use crate::precompile::ICca;
 /// TODO(cca): implement the registry. This must become a storage lookup that
 /// returns [`ICca::State::Unknown`] for an address that never registered and the
 /// recorded state otherwise. `Unknown` exists in the ABI precisely so an
-/// unregistered agent is distinguishable from an active one — the stub cannot
+/// unregistered agent is distinguishable from an active one - the stub cannot
 /// make that distinction, so no caller may treat `Active` as proof of
 /// registration until this is replaced.
 pub fn cca_state(_storage: &StorageHandle<'_>, _cca: Address) -> Result<ICca::State> {

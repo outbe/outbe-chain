@@ -37,7 +37,7 @@ const TIP_REFRESH_EVERY: u32 = 4;
 /// The marshal fetches the lowest permitted height and processes in order; a
 /// modest window keeps a backlog of in-flight resolver fetches without flooding
 /// the bounded handler mailbox. Re-hinting the (sliding) window each tick is
-/// idempotent — a height already finalized locally is skipped by the marshal.
+/// idempotent - a height already finalized locally is skipped by the marshal.
 const HINT_WINDOW: u64 = 64;
 
 /// A stub target peer for `hint_finalized`. The follower has no real consensus
@@ -50,11 +50,11 @@ fn stub_targets() -> NonEmptyVec<bls12381::PublicKey> {
 
 /// Configuration for the follow driver.
 pub(super) struct Config<T> {
-    /// Marshal mailbox — receives `hint_finalized` for each height to pull.
+    /// Marshal mailbox - receives `hint_finalized` for each height to pull.
     pub(super) marshal: MarshalMailbox,
     /// Upstream tip discovery.
     pub(super) tip: T,
-    /// Height→epoch strategy (shared with the marshal).
+    /// Height->epoch strategy (shared with the marshal).
     pub(super) epocher: FollowerEpocher,
 }
 
@@ -107,12 +107,12 @@ where
     ///
     /// The marshal advances its finalized chain ONE height at a time and only
     /// admits a resolver fetch for a height ABOVE its processed floor (a flooded
-    /// batch of out-of-order hints is silently dropped — `hint_finalized` is
+    /// batch of out-of-order hints is silently dropped - `hint_finalized` is
     /// fire-and-forget). So each tick we read the marshal's current processed
     /// height and (re-)hint a small contiguous WINDOW just above it, after
     /// ensuring every epoch the window spans has its committee registered. As
     /// the marshal processes the lowest height the floor rises, and the next
-    /// tick's window slides up — keeping a bounded backlog of in-flight fetches
+    /// tick's window slides up - keeping a bounded backlog of in-flight fetches
     /// without ever leaving a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {
         // Marshal's processed floor (genesis anchor = height 0 on a fresh node).

@@ -2,7 +2,7 @@
 //!
 //! This carries only what must stay confidential: the L2 linkage and the amount.
 //! `worldwide_day` and the issuance currency are cleartext ABI arguments on
-//! [`EncryptedTributeOffer`](outbe_tee::protocol::EncryptedTributeOffer) — the
+//! [`EncryptedTributeOffer`](outbe_tee::protocol::EncryptedTributeOffer) - the
 //! node needs them to price and admit the offer, and both are written to public
 //! chain state at issuance, so encrypting them protected nothing.
 //!

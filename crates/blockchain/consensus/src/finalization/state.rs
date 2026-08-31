@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 /// Canonical finalization-side state shared between the `FinalizationActor`
 /// (full-state writer) and the application handler, which reads it and
-/// advances only the monotonic `last_timestamp_millis` floor — both through
+/// advances only the monotonic `last_timestamp_millis` floor - both through
 /// the [`FinalizationViewAccess`] seam.
 #[derive(Clone, Debug)]
 pub struct FinalizationView {
@@ -88,7 +88,7 @@ impl FinalizationView {
 /// finalization actor takes a write guard while updating; readers take a
 /// short-lived read guard so concurrent finalization processing does not
 /// block proposal building beyond the lock window. The application handler
-/// never touches this handle directly — it uses [`FinalizationViewAccess`].
+/// never touches this handle directly - it uses [`FinalizationViewAccess`].
 pub type FinalizationViewHandle = Arc<RwLock<FinalizationView>>;
 
 /// Constructs a fresh `FinalizationViewHandle` from recovered state.
@@ -118,7 +118,7 @@ pub struct FinalizedAnchor {
 /// handler. It hides the lock and the struct fields: the handler asks for the
 /// snapshots it needs and advances the monotonic timestamp floor, without ever
 /// taking a raw guard. The `FinalizationActor` (full-state writer) and tests
-/// keep direct field access — this trait is the consumer-defined interface for
+/// keep direct field access - this trait is the consumer-defined interface for
 /// the handler only.
 pub trait FinalizationViewAccess {
     /// Consistent snapshot of the last finalized block (number, finalized head

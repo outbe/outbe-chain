@@ -9,7 +9,7 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Property test for the per-series escrow invariant:
-///   Σ bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
+///   sum bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
 ///     == auctionEscrowState[worldwideDay].totalLocked
 /// Holds across every state transition (lock, finalize, emergency refund).
 contract EscrowAdapterInvariantsTest is Test {

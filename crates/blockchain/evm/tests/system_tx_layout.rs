@@ -18,7 +18,7 @@ use outbe_evm::system_tx::{
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use reth_ethereum::TransactionSigned;
 
-/// Empty layout — used by the block-1 / block-0 layout tests that only need to
+/// Empty layout - used by the block-1 / block-0 layout tests that only need to
 /// drive the membership check, not the structural splitter.
 fn empty_layout() -> SystemTxLayout<'static> {
     SystemTxLayout {
@@ -456,9 +456,9 @@ fn rewards_gem_delivery_is_mandatory_unique_and_immediately_after_cycle() {
     ));
 }
 
-/// V2 begin-zone ordering: CertifiedParentAccounting (≥2), CycleTick (≥1),
-/// RewardsGemDelivery (≥1), BoundaryOutcome (when present),
-/// OracleSlashWindow (≥1).
+/// V2 begin-zone ordering: CertifiedParentAccounting (>=2), CycleTick (>=1),
+/// RewardsGemDelivery (>=1), BoundaryOutcome (when present),
+/// OracleSlashWindow (>=1).
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
     // Block 2+ canonical layout (no BoundaryOutcome on the parent).

@@ -20,7 +20,7 @@ contract CCAFlow is BaseAATest {
     // Tests
     // -------------------------------------------------------------------------
 
-    /// @dev Validates the full E2E flow: predict → deploy → fund → topUp → UserOp → verify.
+    /// @dev Validates the full E2E flow: predict -> deploy -> fund -> topUp -> UserOp -> verify.
     function test_CCA_CanWithdraw_FullFlow() external {
         address[] memory bundleTokens = new address[](1);
         bundleTokens[0] = address(token);
@@ -39,7 +39,7 @@ contract CCAFlow is BaseAATest {
         // Step 3: Fund account with ETH for gas
         vm.deal(deployed, 0.1 ether);
 
-        // Step 4: Vault topUp — mint 500e6 into bundle (pre-funds SA + vault match)
+        // Step 4: Vault topUp - mint 500e6 into bundle (pre-funds SA + vault match)
         uint256 topUpAmount = 500e6;
         _topUp(deployed, topUpAmount);
         // bundle = topUp * 2, SA token balance = topUp * 2 (pre-fund + vault)
@@ -92,7 +92,7 @@ contract CCAFlow is BaseAATest {
         _topUp(smartAccount, 500e6);
         token.mint(smartAccount, 300e6); // extra free balance (SA=1300e6)
 
-        // Withdraw 800e6 (decrease=1600e6 exceeds bundle balance of 1000e6 → clamped to 0)
+        // Withdraw 800e6 (decrease=1600e6 exceeds bundle balance of 1000e6 -> clamped to 0)
         _ccaWithdraw(smartAccount, recipient.addr, 800e6);
 
         assertEq(token.balanceOf(recipient.addr), 800e6, "recipient should receive 800");
@@ -105,7 +105,7 @@ contract CCAFlow is BaseAATest {
         vm.deal(smartAccount, 0.1 ether);
         _topUp(smartAccount, 2000e6);
 
-        // 1001e6 exceeds 1000e6 daily limit → policy reverts with custom error
+        // 1001e6 exceeds 1000e6 daily limit -> policy reverts with custom error
         PackedUserOperation memory op = _buildCcaUserOp(smartAccount, recipient.addr, 1001e6);
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
@@ -126,11 +126,11 @@ contract CCAFlow is BaseAATest {
         vm.deal(smartAccount, 0.1 ether);
         _topUp(smartAccount, 2000e6);
 
-        // First withdrawal: 600e6 → succeeds
+        // First withdrawal: 600e6 -> succeeds
         _ccaWithdraw(smartAccount, recipient.addr, 600e6);
         assertEq(token.balanceOf(recipient.addr), 600e6);
 
-        // Second withdrawal: 500e6 → cumulative 1100e6 exceeds 1000e6 → fails
+        // Second withdrawal: 500e6 -> cumulative 1100e6 exceeds 1000e6 -> fails
         PackedUserOperation memory op = _buildCcaUserOp(smartAccount, recipient.addr, 500e6);
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
@@ -161,7 +161,7 @@ contract CCAFlow is BaseAATest {
         // Warp past the window
         vm.warp(block.timestamp + 1 days + 1);
 
-        // New window: withdraw another 800e6 → succeeds
+        // New window: withdraw another 800e6 -> succeeds
         _ccaWithdraw(smartAccount, recipient.addr, 800e6);
         assertEq(token.balanceOf(recipient.addr), 1800e6, "recipient should have 1800 total");
     }
@@ -173,7 +173,7 @@ contract CCAFlow is BaseAATest {
         MockUSD otherToken = new MockUSD();
         otherToken.mint(smartAccount, 500e6);
 
-        // Build UserOp targeting otherToken — not a bundle token → hook reverts
+        // Build UserOp targeting otherToken - not a bundle token -> hook reverts
         bytes32 execMode = _execMode();
         bytes memory transferCall = abi.encodeWithSelector(otherToken.transfer.selector, recipient.addr, uint256(100e6));
         bytes memory innerExecute =
@@ -184,9 +184,9 @@ contract CCAFlow is BaseAATest {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
 
-        // Hook reverts with TokenNotInBundle → EntryPoint wraps as execution revert
+        // Hook reverts with TokenNotInBundle -> EntryPoint wraps as execution revert
         _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
-        // The UserOp fails (success=false from EntryPointEvent) — recipient gets nothing
+        // The UserOp fails (success=false from EntryPointEvent) - recipient gets nothing
         assertEq(otherToken.balanceOf(recipient.addr), 0, "recipient should have no other token");
     }
 
@@ -197,7 +197,7 @@ contract CCAFlow is BaseAATest {
 
         // Build a UserOp but sign with user key instead of cca key (permission signature format)
         PackedUserOperation memory op = _buildCcaUserOp(smartAccount, recipient.addr, 100e6);
-        // Overwrite the signer slice with the wrong key → ECDSASigner recovers != cca → AA24.
+        // Overwrite the signer slice with the wrong key -> ECDSASigner recovers != cca -> AA24.
         op.signature = _permSignature(entrypoint.getUserOpHash(op), user.privKey);
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
@@ -237,13 +237,13 @@ contract CCAFlow is BaseAATest {
         _ccaWithdrawToken(smartAccount, recipient.addr, 800e6, address(token));
         assertEq(token.balanceOf(recipient.addr), 800e6);
 
-        // Withdraw 900e6 of token2 via CCA permission for token2 — separate limit
+        // Withdraw 900e6 of token2 via CCA permission for token2 - separate limit
         _ccaWithdrawToken(smartAccount, recipient.addr, 900e6, address(token2));
         assertEq(token2.balanceOf(recipient.addr), 900e6);
     }
 
-    /// @dev T-02: a fee-on-transfer bundle token must credit the measured delta (2×(amount−fee)),
-    ///      not the nominal 2×amount the pre-transfer credit produced (which over-stated the reserve).
+    /// @dev T-02: a fee-on-transfer bundle token must credit the measured delta (2x(amount-fee)),
+    ///      not the nominal 2xamount the pre-transfer credit produced (which over-stated the reserve).
     function test_W02_FeeOnTransfer_CreditsActualReceived() external {
         MockFeeToken feeToken = new MockFeeToken(100); // 1% fee
 
@@ -272,7 +272,7 @@ contract CCAFlow is BaseAATest {
     }
 
     /// @dev T-03: the daily-limit debit is committed in the ERC-4337 validation phase, on purpose.
-    ///      It is the safe failure mode — it can over-restrict (a reverted execution still consumes the
+    ///      It is the safe failure mode - it can over-restrict (a reverted execution still consumes the
     ///      limit until the window resets) but two bundled ops can never over-spend, because the
     ///      EntryPoint validates every op before executing any. This test pins that intent: a withdraw
     ///      that passes validation (amount <= DAILY_LIMIT) but reverts in execution (account holds no
@@ -336,7 +336,7 @@ contract CCAFlow is BaseAATest {
 
         address attacker = makeAddr("attacker");
         vm.prank(attacker);
-        // attacker is not an installed smart account → BundleNotInstalled revert
+        // attacker is not an installed smart account -> BundleNotInstalled revert
         vm.expectRevert(abi.encodeWithSelector(BundleModulePlugin.BundleNotInstalled.selector));
         bundlePlugin.decreaseBundleBalance(address(token), 500e6);
 
@@ -386,7 +386,7 @@ contract CCAFlow is BaseAATest {
         vm.deal(smartAccount, 0.1 ether);
         _topUp(smartAccount, 1000e6);
 
-        // Deploy a second account (attackerSA) — a valid Kernel account but NOT a registered
+        // Deploy a second account (attackerSA) - a valid Kernel account but NOT a registered
         // executor on smartAccount
         address[] memory bundleTokens = new address[](1);
         bundleTokens[0] = address(token);
@@ -399,7 +399,7 @@ contract CCAFlow is BaseAATest {
         bytes memory decreaseCall = abi.encodeCall(BundleModulePlugin.decreaseBundleBalance, (address(token), 500e6));
         bytes memory execCalldata = _single(address(bundlePlugin), 0, decreaseCall);
 
-        // attackerSA is not a registered executor on smartAccount → Kernel reverts
+        // attackerSA is not a registered executor on smartAccount -> Kernel reverts
         vm.prank(attackerSA);
         vm.expectRevert();
         Kernel(payable(smartAccount)).executeFromExecutor(execMode, execCalldata);

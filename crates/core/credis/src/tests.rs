@@ -15,9 +15,9 @@ const DAY: u64 = 86_400;
 const ORIGINATED_AT: u64 = 1_700_000_000;
 
 // ---------------------------------------------------------------------------
-// The product paper's §5 worked example, in exact on-chain units.
+// The product paper's section 5 worked example, in exact on-chain units.
 //
-// Maria pledges Gratis worth $1,000 at P₀ = $0.50/COEN. Stablecoin minor units
+// Maria pledges Gratis worth $1,000 at P0 = $0.50/COEN. Stablecoin minor units
 // are 6-decimal; COEN and the oracle rate are 18-decimal.
 // ---------------------------------------------------------------------------
 
@@ -27,7 +27,7 @@ const PRINCIPAL: u64 = 1_000_000_000;
 fn collateral() -> U256 {
     U256::from(2_000u64) * SCALE_1E6_U256
 }
-/// P₀ = $0.50, scale 1e6.
+/// P0 = $0.50, scale 1e6.
 fn entry_price() -> U256 {
     U256::from(500_000u64)
 }
@@ -53,7 +53,7 @@ fn asset() -> Address {
 }
 
 /// Opaque sealed-EOA blob stored verbatim on the position. Credis unit tests
-/// treat it as bytes — decryption is exercised in the credisfactory enclave tests.
+/// treat it as bytes - decryption is exercised in the credisfactory enclave tests.
 fn eoa_ct() -> Vec<u8> {
     vec![0xEEu8; 48]
 }
@@ -151,7 +151,7 @@ fn open_position_rejects_duplicates_and_zero_amounts() {
 }
 
 // ---------------------------------------------------------------------------
-// The worked example, end to end (§5)
+// The worked example, end to end (section 5)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -164,11 +164,11 @@ fn worked_example_ledger_closes_exactly() {
         let first = credis
             .settle(id, U256::from(400_000_000u64), at(100))
             .unwrap();
-        // I = ceil(1_000_000_000 × 0.04 × 100/365) = $10.958905
+        // I = ceil(1_000_000_000 x 0.04 x 100/365) = $10.958905
         assert_eq!(first.interest, U256::from(10_958_905u64));
         assert_eq!(first.principal_paid, U256::from(389_041_095u64));
         assert_eq!(first.total_paid, U256::from(400_000_000u64));
-        // ΔG = 2000e18 × 389_041_095 / 1e9 = 778.08219 COEN
+        // deltaG = 2000e18 x 389_041_095 / 1e9 = 778.08219 COEN
         assert_eq!(first.gratis_released, U256::from(778_082_190u64));
         assert!(!first.closed);
 
@@ -187,7 +187,7 @@ fn worked_example_ledger_closes_exactly() {
         let second = credis
             .settle(id, U256::from(400_000_000u64), at(465))
             .unwrap();
-        // d = 365 exactly, so I = P_out × 4%.
+        // d = 365 exactly, so I = P_out x 4%.
         assert_eq!(second.interest, U256::from(24_438_357u64));
         assert_eq!(second.principal_paid, U256::from(375_561_643u64));
         assert_eq!(second.gratis_released, U256::from(751_123_286u64));
@@ -200,7 +200,7 @@ fn worked_example_ledger_closes_exactly() {
         let void = credis.void_position(id, at(472)).unwrap();
         assert_eq!(void.gratis_burned, U256::from(470_794_524u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_262u64));
-        // 7 days of interest on the remainder — never collected.
+        // 7 days of interest on the remainder - never collected.
         assert_eq!(void.interest_written_off, U256::from(180_579u64));
         // Unpaid fraction 235_397_262 / 1_000_000_000 = 23.5397262%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
@@ -308,7 +308,7 @@ fn settle_takes_only_what_the_position_needs() {
 // at r = 4% one period of interest is $8.00 with no rounding.
 // ---------------------------------------------------------------------------
 
-/// One period of the fixtures below: 73 days = 0.2 × ACT/365.
+/// One period of the fixtures below: 73 days = 0.2 x ACT/365.
 const FIFTH_YEAR: u64 = 73;
 
 #[test]
@@ -317,7 +317,7 @@ fn settle_covers_the_accrued_interest_before_any_principal() {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis, 1);
 
-        // I = 1_000_000_000 × 4% × 73/365 = 8_000_000, exactly.
+        // I = 1_000_000_000 x 4% x 73/365 = 8_000_000, exactly.
         let expected_interest = U256::from(8_000_000u64);
         let principal_target = U256::from(100_000_000u64);
 
@@ -334,7 +334,7 @@ fn settle_covers_the_accrued_interest_before_any_principal() {
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding, U256::from(PRINCIPAL) - principal_target);
         // Collateral tracks the principal covered, not the gross payment:
-        // ΔG = 2e9 × 1e8 / 1e9 = 2e8.
+        // deltaG = 2e9 x 1e8 / 1e9 = 2e8.
         assert_eq!(paid.gratis_released, U256::from(200_000_000u64));
         assert_eq!(p.collateral_locked, collateral() - paid.gratis_released);
         // Principal, not the payment, is what the position is measured against.
@@ -372,9 +372,9 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
         // Three equal 73-day periods. Interest falls with the outstanding
         // principal, because accrual restarts on what is left rather than
         // carrying anything forward.
-        //   day  73: I = 1_000e6 × 4% × 0.2 = 8.00e6, pay 400e6 of principal
-        //   day 146: I =   600e6 × 4% × 0.2 = 4.80e6, pay 300e6
-        //   day 219: I =   300e6 × 4% × 0.2 = 2.40e6, pay the remaining 300e6
+        //   day  73: I = 1_000e6 x 4% x 0.2 = 8.00e6, pay 400e6 of principal
+        //   day 146: I =   600e6 x 4% x 0.2 = 4.80e6, pay 300e6
+        //   day 219: I =   300e6 x 4% x 0.2 = 2.40e6, pay the remaining 300e6
         let plan = [
             (
                 1u64,
@@ -416,7 +416,7 @@ fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
                 "period {period}"
             );
             // The anchor advances one whole period, and nothing is owed at the
-            // instant of settlement — no interest carries between events.
+            // instant of settlement - no interest carries between events.
             assert_eq!(p.last_settled_at, day, "period {period}");
             assert_eq!(
                 CredisContract::accrued_interest(&p, day).unwrap(),
@@ -569,7 +569,7 @@ fn repeated_partials_release_exactly_the_collateral() {
                     .settle(id, interest + U256::from(chunk), at(day))
                     .unwrap();
                 released += paid.gratis_released;
-                // Every unit of collateral is either released or still locked —
+                // Every unit of collateral is either released or still locked -
                 // never double-counted, never stranded mid-flight.
                 let after = credis.get_position(id).unwrap();
                 assert_eq!(released + after.collateral_locked, collateral());
@@ -588,7 +588,7 @@ fn interest_rounds_up_and_collateral_release_rounds_down() {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis, 1);
 
-        // 1 day of interest on $1,000 at 4% = 109_589.041… minor units.
+        // 1 day of interest on $1,000 at 4% = 109_589.041... minor units.
         let position = credis.get_position(id).unwrap();
         assert_eq!(
             CredisContract::accrued_interest(&position, at(1)).unwrap(),
@@ -630,7 +630,7 @@ fn dust_settlements_cannot_evade_the_coupon() {
         let id = open_pos(&mut credis, 1);
 
         // A dust settlement one second short of a whole day charges no
-        // interest — and so must not consume accrual time either.
+        // interest - and so must not consume accrual time either.
         let dust = credis
             .settle(id, U256::from(1u64), at(0) + DAY - 1)
             .unwrap();
@@ -652,9 +652,9 @@ fn dust_settlements_cannot_evade_the_coupon() {
             .to_string();
         assert!(err.contains("below the interest"), "got: {err}");
 
-        // A full year on, the whole coupon is still owed — on the one minor
+        // A full year on, the whole coupon is still owed - on the one minor
         // unit of principal the dust settlement retired:
-        // ceil(999_999_999 × 4%) = 40_000_000.
+        // ceil(999_999_999 x 4%) = 40_000_000.
         let position = credis.get_position(id).unwrap();
         assert_eq!(position.outstanding, U256::from(PRINCIPAL - 1));
         assert_eq!(
@@ -723,7 +723,7 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
             .to_string();
         assert!(err.contains("window has not lapsed"), "got: {err}");
 
-        // Fully settled inside the window — nothing is left to void.
+        // Fully settled inside the window - nothing is left to void.
         credis
             .settle(id, U256::from(999_999_999_999u64), at(11))
             .unwrap();
@@ -828,7 +828,7 @@ fn the_active_index_holds_exactly_the_non_terminal_positions() {
         let id = credis.open_position(params(handle(1), alice())).unwrap();
         assert_eq!(active_ids(&credis), vec![id], "an open position is listed");
 
-        // Calling keeps it listed — a called position is non-terminal.
+        // Calling keeps it listed - a called position is non-terminal.
         credis.mark_called(id, at(10)).unwrap();
         assert_eq!(active_ids(&credis), vec![id]);
 

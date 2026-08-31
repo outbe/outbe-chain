@@ -34,7 +34,7 @@ const SALT = 0n;
 // Parse CLI args: [positionId] [amount] [envName]. When positionId is omitted it is
 // read from the latest pledge ticket (written by request-credis). `amount` is in the
 // ERC20's smallest unit and defaults to exactly what the next installment still owes;
-// any amount is accepted — it settles installments in order and may leave the last one
+// any amount is accepted - it settles installments in order and may leave the last one
 // partially paid. Overpaying is safe: only the outstanding balance is pulled.
 let positionIdArg: string | undefined;
 let amountArg: string | undefined;
@@ -233,7 +233,7 @@ async function main() {
   }
 
   // On payment the chain automatically releases the collateral share matching the
-  // debt just paid down back to the ORIGINAL pledger's confidential Gratis balance —
+  // debt just paid down back to the ORIGINAL pledger's confidential Gratis balance -
   // no reclaim note, no second transaction. The user reads their own (encrypted)
   // balance with their view key.
   const gratis = IGratis__factory.connect(gratisAddress, provider);
@@ -254,7 +254,7 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Build batch UserOp: approve + settle ──────────────────────────────
+  // -- Build batch UserOp: approve + settle ------------------------------
 
   // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
   // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
@@ -276,7 +276,7 @@ async function main() {
   // Encode batch: [approve(credisFactory, settleAmount), settle(positionId, settleAmount)].
   // The runtime applies the payment interest first and principal second, pulls only
   // what the position needed, and releases the collateral share proportional to the
-  // principal covered back to the pledger's (userAddress) encrypted balance — the
+  // principal covered back to the pledger's (userAddress) encrypted balance - the
   // enclave recovers the EOA from the position's sealed ciphertext, so it is not
   // passed in calldata.
   const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, settleAmount]);
@@ -320,7 +320,7 @@ async function main() {
   const sig = await userWallet.signMessage(ethers.getBytes(userOpHash));
   op.signature = encodePermissionSignature(sig);
 
-  // ── Pre-simulate the inner execute() so a precompile revert surfaces here
+  // -- Pre-simulate the inner execute() so a precompile revert surfaces here
   // rather than being swallowed by handleOps (which catches inner reverts and
   // still reports the outer tx as successful).
   console.log("\nSimulating inner execute() from EntryPoint...");
@@ -393,7 +393,7 @@ async function main() {
   }
 
   if (userOpSuccess === false) {
-    console.error("\n!! UserOperation reverted — outer handleOps tx still succeeded (ERC-4337 swallows inner reverts).");
+    console.error("\n!! UserOperation reverted - outer handleOps tx still succeeded (ERC-4337 swallows inner reverts).");
     if (userOpRevertReason && userOpRevertReason !== "0x") {
       console.error(`  Decoded: ${decodeRevert(userOpRevertReason)}`);
     } else {
@@ -414,7 +414,7 @@ async function main() {
   console.log(`  Vault ERC20:     ${formatTokenDiff(vaultErc20Diff, erc20Meta.decimals, erc20Meta.symbol)}`);
 
   // The collateral share unlocked automatically to the pledger's confidential
-  // balance — verify it by decrypting with the user's view key. No reclaim note
+  // balance - verify it by decrypting with the user's view key. No reclaim note
   // or follow-up unpledge is needed.
   const gratisBalAfter = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const unlocked = gratisBalAfter - gratisBalBefore;

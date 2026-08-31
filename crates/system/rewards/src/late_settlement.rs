@@ -5,13 +5,13 @@
 //! voter set with a **decay-weighted, fixed-denominator** payout:
 //!
 //! ```text
-//! payout_i = pending_fees[N] · w(k_i) / D       D = committee_size · w_max
+//! payout_i = pending_fees[N] * w(k_i) / D       D = committee_size * w_max
 //! ```
 //!
 //! `D` is constant per block (independent of who voted), so excluding a peer
-//! enriches nobody — there is no censorship incentive. The
-//! residue (`pending − Σ payout` = absentees + decay gap + division remainders)
-//! burns, keeping mint/burn parity (`Σ payout + residue == pending`).
+//! enriches nobody - there is no censorship incentive. The
+//! residue (`pending - sum payout` = absentees + decay gap + division remainders)
+//! burns, keeping mint/burn parity (`sum payout + residue == pending`).
 //!
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]; the executor wires them into the begin-zone CPA
@@ -118,7 +118,7 @@ pub fn escrow_block_fee(
 
 /// Window-close side effect run by the `LateFinalizeCredits` begin-zone phase at
 /// `current_block`: settle the target whose inclusion window just closed
-/// (`fb_number = current_block − K`), looked up by number. No-op when nothing was
+/// (`fb_number = current_block - K`), looked up by number. No-op when nothing was
 /// escrowed at that number (e.g. block 0, or a block with no fees recorded yet).
 pub fn settle_matured(
     ctx: &BlockRuntimeContext,
@@ -156,8 +156,8 @@ pub fn settle_matured(
 }
 
 /// Settle the matured window for `fb_hash` exactly once: pay each credited voter
-/// `pending · w(k_i) / D` from `REWARDS_ADDRESS`, burn the residue, and assert
-/// `Σ payout + residue == pending`. Returns `(distributed, residue)`.
+/// `pending * w(k_i) / D` from `REWARDS_ADDRESS`, burn the residue, and assert
+/// `sum payout + residue == pending`. Returns `(distributed, residue)`.
 pub fn settle_window(
     ctx: &BlockRuntimeContext,
     fb_hash: B256,
@@ -205,7 +205,7 @@ pub fn settle_window(
             .ok_or_else(|| PrecompileError::Revert("late distributed overflow".into()))?;
     }
 
-    // Solvency: full attendance pays at most the pool (D = N·w_max), so
+    // Solvency: full attendance pays at most the pool (D = N*w_max), so
     // distributed <= pending; checked_sub guards any violation.
     let residue = pending.checked_sub(distributed).ok_or_else(|| {
         PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
@@ -223,7 +223,7 @@ pub fn settle_window(
         )?;
     }
 
-    // Parity invariant (checked once): Σ payout + residue == pending.
+    // Parity invariant (checked once): sum payout + residue == pending.
     if distributed
         .checked_add(residue)
         .ok_or_else(|| PrecompileError::Revert("late parity overflow".into()))?
@@ -238,7 +238,7 @@ pub fn settle_window(
 
     //  free the per-window state now that it is settled. After
     // `fee_settled = true`, `record_late_credit` short-circuits, so nothing more
-    // is written for this `fb_hash` and the data is dead — freeing it here
+    // is written for this `fb_hash` and the data is dead - freeing it here
     // prevents unbounded state growth. `fee_settled` is the immediate
     // double-settle / re-escrow guard; it is itself pruned later by the
     // ring in `on_finalized_metadata` (`BLOCK_GUARD_RETAIN` blocks after the
@@ -267,7 +267,7 @@ pub fn settle_window(
 /// `fb_number`, used by the begin-zone window-close miss/slashing pass.
 ///
 /// `credited` is the union of base voters (k=0, seeded at escrow) and late voters
-/// (k≥1) — i.e. every committee member who voted within `K`. Callers compute the
+/// (k>=1) - i.e. every committee member who voted within `K`. Callers compute the
 /// absentee set as `committee(fb_number) \ credited`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowCloseInfo {
@@ -280,7 +280,7 @@ pub struct WindowCloseInfo {
 /// Read the [`WindowCloseInfo`] for the window that matures at `fb_number`, or
 /// `None` when nothing was escrowed there (block 0, or a block with no fees).
 ///
-/// Pure read over committed chain state — deterministic across proposer and
+/// Pure read over committed chain state - deterministic across proposer and
 /// validator. **Must run before [`settle_matured`]**, which frees `late_voter_*`.
 pub fn window_close_credited(
     ctx: &BlockRuntimeContext,
@@ -668,7 +668,7 @@ mod tests {
         });
     }
 
-    /// Denominator is `committee_size · w_max`.
+    /// Denominator is `committee_size * w_max`.
     #[test]
     fn denominator_matches_spec() {
         assert_eq!(fixed_denominator(7), U256::from(7u64) * LATE_FINALIZE_W_MAX);
@@ -696,7 +696,7 @@ mod tests {
             )
             .unwrap();
 
-            // Before maturity: block 12 would settle number 9 — nothing escrowed.
+            // Before maturity: block 12 would settle number 9 - nothing escrowed.
             assert_eq!(
                 settle_matured(ctx, 12, 3).unwrap(),
                 (U256::ZERO, U256::ZERO)

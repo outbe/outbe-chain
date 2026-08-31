@@ -1,4 +1,4 @@
-//! — HybridScheme::recover_proof contract tests.
+//! - HybridScheme::recover_proof contract tests.
 //!
 //! when `recover_proof` returns `None` while the quorum threshold is
 //! met, the chain must NOT stall and the proposer MUST forfeit the slot.
@@ -27,7 +27,7 @@ fn proposer_forfeit_reason_vrf_recover_label_is_pinned() {
 /// recorder so the assertion is independent of the global recorder.
 ///
 /// Full DKG-share-corruption fixture that would actually drive
-/// `recover_proof` to return None under quorum is deferred — it requires
+/// `recover_proof` to return None under quorum is deferred - it requires
 /// cracking BLS share material internals and is out's
 /// reasonable test scope. The combination of this runtime metric test +
 /// the source-level pin (`recover_proof_failure_under_quorum_does_not_halt_chain`)

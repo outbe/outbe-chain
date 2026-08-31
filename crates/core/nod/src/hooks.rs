@@ -4,14 +4,14 @@
 //! `x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`): every
 //! block, read each reference currency's current COEN rate from the oracle and
 //! promote any unqualified bucket whose `floor_price_minor < rate`. The
-//! comparison is strict — a bucket priced exactly at the rate stays
+//! comparison is strict - a bucket priced exactly at the rate stays
 //! unqualified until the rate moves strictly above its floor.
-//! Qualification is a monotonic latch — once a bucket is qualified it stays
+//! Qualification is a monotonic latch - once a bucket is qualified it stays
 //! that way, so `mine_gratis` only has to read the cached `is_qualified` bit.
 //!
 //! Implementation (PancakeSwap-Liquidity-Book bin index):
 //! - `floor_price_minor` is mapped to a 24-bit `bin_id` on a log-spaced
-//!   ladder (`BIN_STEP_BP = 25` ⇒ 0.25% per bin) via `state::price_to_bin`.
+//!   ladder (`BIN_STEP_BP = 25` => 0.25% per bin) via `state::price_to_bin`.
 //! - Unqualified buckets are stored in `unqualified_bin_count` /
 //!   `unqualified_bin_buckets`, and a 3-level radix-256 bitmap trie
 //!   (`bin_tree_root`/`bin_tree_mid`/`bin_tree_leaf`) marks non-empty bins.
@@ -88,7 +88,7 @@ impl BlockLifecycle for NodLifecycle {
 /// Reads every reference currency the oracle knows about and qualifies each
 /// one's buckets against its own COEN rate. An uninitialized registry does no
 /// work. A currency whose COEN pair is unregistered or carries no published
-/// rate is skipped for this block rather than halting it — the registry lists
+/// rate is skipped for this block rather than halting it - the registry lists
 /// currencies independently of whether a pair has been priced yet.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,

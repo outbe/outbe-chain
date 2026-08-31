@@ -30,7 +30,9 @@ contract MarkCalledClockTest is CrossChainTest {
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
+        // A real notice period: with zero the window closes the instant the series
+        // is called, and the reads below would report the series expired.
+        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 21 days));
     }
 
     function _deliverCalled(uint32 calledAt) internal {

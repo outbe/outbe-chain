@@ -42,7 +42,8 @@ use thiserror::Error;
 
 use crate::payout_artifact::CONTRIBUTOR_PAYOUT_ARTIFACT_FILE;
 use crate::vote_submitter::{
-    PublicVoteRpcClientV1, VoteInclusionV1, VoteSubmissionRpcV1, MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+    fee_within_envelope, PublicVoteRpcClientV1, VoteInclusionV1, VoteSubmissionRpcV1,
+    MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
 };
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPAY1";
@@ -218,8 +219,15 @@ pub enum LocalPayoutPreparationErrorV1 {
     InvalidChainId,
     #[error("payout transaction calldata is empty")]
     EmptyCalldata,
-    #[error("payout transaction fee envelope is invalid")]
-    InvalidFeeEnvelope,
+    #[error(
+        "payout transaction fee envelope is invalid: max fee {max_fee_per_gas} outside \
+         {min_fee}..={max_fee}"
+    )]
+    InvalidFeeEnvelope {
+        max_fee_per_gas: u128,
+        min_fee: u128,
+        max_fee: u128,
+    },
     #[error("payout transaction calldata exceeds the zero-fee cap")]
     CalldataTooLarge,
     #[error("payout transaction allocation failed")]
@@ -263,7 +271,11 @@ impl PayoutTransactionPreparerV1 for LocalPayoutTransactionPreparerV1 {
             ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
             .contains(&max_fee_per_gas)
         {
-            return Err(LocalPayoutPreparationErrorV1::InvalidFeeEnvelope);
+            return Err(LocalPayoutPreparationErrorV1::InvalidFeeEnvelope {
+                max_fee_per_gas,
+                min_fee: outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
+                max_fee: MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+            });
         }
         let signed = self.signer.sign_eip1559(TxEip1559 {
             chain_id: self.chain_id,
@@ -673,11 +685,11 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self
-            .rpc
-            .gas_price()
-            .map_err(rpc_error)?
-            .max(outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS);
+        let max_fee_per_gas = fee_within_envelope(
+            self.rpc.gas_price().map_err(rpc_error)?,
+            outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
         let prepared = preparer
             .prepare_payout_transaction(&work.calldata, nonce, max_fee_per_gas)
             .map_err(|error| PayoutSubmissionErrorV1::Preparation(error.to_string()))?;
@@ -918,8 +930,8 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
         self.skip_log.insert(worldwide_day, reason.to_owned());
     }
 
-    /// Any mismatch with the certified values — missing file, wrong size,
-    /// different root or total — disqualifies this validator for the day.
+    /// Any mismatch with the certified values - missing file, wrong size,
+    /// different root or total - disqualifies this validator for the day.
     fn load_verified_day(
         &mut self,
         worldwide_day: u32,

@@ -1,4 +1,4 @@
-//! Application handler — processes messages from the Automaton/Relay side.
+//! Application handler - processes messages from the Automaton/Relay side.
 //!
 //! This is the "server side" that reads from the mpsc channel populated by
 //! [`OutbeApplication`](super::actor::OutbeApplication). It bridges Simplex
@@ -18,7 +18,7 @@ use outbe_primitives::runtime_audit_v1::{
 };
 
 // Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
-// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` — they are read cross-module
+// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` - they are read cross-module
 // by the finalization actor, verify, and epoch-boundary resolution paths.
 use crate::config::{PROPOSE_RESOLUTION_TIMEOUT, VERIFY_RESOLUTION_TIMEOUT};
 
@@ -93,7 +93,7 @@ fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre::Result<u64
 /// `[parent + min_advance, parent + band]`, with the genesis-child exception.
 ///
 /// When `parent_timestamp_millis == 0` there is no finalized parent yet (the
-/// `finalization_view` is unseeded at genesis — it does NOT carry the genesis
+/// `finalization_view` is unseeded at genesis - it does NOT carry the genesis
 /// header timestamp), so the band is meaningless: capping at `0 + band` would
 /// clamp the real wall-clock time far below the genesis timestamp and reth
 /// would reject the payload as a past timestamp, stalling at block 0. In that
@@ -321,8 +321,8 @@ where
     }
 }
 
-/// Pure min-block-time floor arithmetic: remaining pad = `min ⊖ elapsed`
-/// (`saturating_sub`). A zero result means the floor is already met — send the
+/// Pure min-block-time floor arithmetic: remaining pad = `min - elapsed`
+/// (`saturating_sub`). A zero result means the floor is already met - send the
 /// digest immediately with no wait (case C / heavy block).
 fn floor_remaining(
     min_block_time: std::time::Duration,
@@ -336,7 +336,7 @@ fn floor_remaining(
 /// Holds the already-sealed `digest` until the floor (`min_block_time`) elapses,
 /// then hands it to Simplex via `response`. If the view is cancelled first
 /// (Simplex drops the proposal receiver), the `select!` aborts on
-/// `response.closed()` and nothing is sent. Liveness pacing only — it never
+/// `response.closed()` and nothing is sent. Liveness pacing only - it never
 /// touches block bytes/hash/validation, so it is invisible to validators.
 ///
 /// `propose_start` is the closure-level instant captured before `handle_propose`;
@@ -376,7 +376,7 @@ async fn pace_and_send<C>(
 }
 
 // `Built` carries the full `ConsensusBlock`; the other variants are unit. This is
-// an internal result returned once per propose and consumed immediately — boxing
+// an internal result returned once per propose and consumed immediately - boxing
 // the block would only add an allocation on the hot proposer path.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -510,7 +510,7 @@ pub(crate) struct ApplicationShared {
     /// handler reads it (`build_artifact`) to pack the in-window
     /// `LateFinalizeCreditsArtifact` into `header.extra_data`. The reporter
     /// writes votes into it and the `FinalizationActor` resolves them. Best-
-    /// effort, process-local — the resulting artifact is re-verified by every
+    /// effort, process-local - the resulting artifact is re-verified by every
     /// validator, so it never affects determinism.
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
 
@@ -523,7 +523,7 @@ pub(crate) struct ApplicationShared {
 ///
 /// Replaces a 25-positional-argument constructor (mirrors `FinalizationActorDeps`,
 /// used a few lines later in `stack.rs`), so the single production caller and the
-/// test fixtures cannot transpose arguments — the wiring order lives in the type
+/// test fixtures cannot transpose arguments - the wiring order lives in the type
 /// system rather than in a call-site convention.
 pub struct ApplicationDeps {
     pub unix_time_source: Arc<dyn UnixTimeSource>,
@@ -644,7 +644,7 @@ impl ApplicationHandler {
         info!("application handler started");
 
         // Step 21: the per-finalization side effects no longer run in
-        // this handler. Finalization events flow voter → OutbeReporter →
+        // this handler. Finalization events flow voter -> OutbeReporter ->
         // FinalizationActor (via the unbounded
         // `finalization::ingress::Mailbox`); the application handler's
         // mailbox handles only Genesis / Propose / Verify / Broadcast.
@@ -798,7 +798,7 @@ impl ApplicationHandler {
 /// parent and block validations can never drift in their SYNCING/retry policy.
 enum PayloadVerification {
     /// Execution accepted the payload. `saw_syncing` is true if SYNCING was
-    /// observed before acceptance — in that case the verify request may have been
+    /// observed before acceptance - in that case the verify request may have been
     /// superseded by a view timeout, so the caller skips its side effects.
     Valid { saw_syncing: bool },
     /// Execution rejected the payload; the caller votes `false`.
@@ -840,12 +840,12 @@ async fn prepare_built_candidate(
 }
 
 impl ApplicationShared {
-    /// Handle genesis request — return the parent digest for `view = 1` of
+    /// Handle genesis request - return the parent digest for `view = 1` of
     /// `genesis.epoch`.
     ///
     /// ** epoch continuity:**
-    /// - `epoch == 0` — return the chain genesis hash, as before.
-    /// - `epoch > 0` — return the last finalized block's hash from
+    /// - `epoch == 0` - return the chain genesis hash, as before.
+    /// - `epoch > 0` - return the last finalized block's hash from
     ///   `FinalizationView`. That value is the *continuity anchor*: the
     ///   first block produced in the new epoch must extend it.
     ///
@@ -909,7 +909,7 @@ impl ApplicationShared {
                     %epoch,
                     timeout_ms = GENESIS_ANCHOR_WAIT_TIMEOUT.as_millis(),
                     "handle_genesis: epoch>0 without finalized continuity anchor after timeout; \
-                     terminal failure — Simplex will lock parent_view=0 to B256::ZERO. \
+                     terminal failure - Simplex will lock parent_view=0 to B256::ZERO. \
                      Investigate why FinalizationView lacks last_finalized_number/hash; \
                      stack.rs pre-restart guard should have prevented this."
                 );
@@ -982,7 +982,7 @@ impl ApplicationShared {
                 let parent_block = if let Some(block) = cached_parent {
                     block
                 } else {
-                    // Parent from another proposer — resolve via marshal.
+                    // Parent from another proposer - resolve via marshal.
                     let marshal = self.marshal_mailbox.clone();
                     let block_future = marshal.subscribe_by_digest(
                         parent_digest,
@@ -1123,7 +1123,7 @@ impl ApplicationShared {
                 }
                 // Cache the proposed block into marshal NOW, at propose time, so
                 // the proposer can always SERVE it on demand (verifiers pull via
-                // subscribe_by_digest) — independent of whether the later
+                // subscribe_by_digest) - independent of whether the later
                 // `Relay::broadcast` wire-push succeeds. commonware 2026.5.0
                 // split dissemination: `proposed` caches + stashes locally;
                 // `forward` (driven from `Relay::broadcast`) does the wire-push.
@@ -1132,10 +1132,10 @@ impl ApplicationShared {
                 let durable = self.marshal_mailbox.proposed(round, block).await;
                 if !durable {
                     // `proposed()` returns false only when the marshal actor's ack
-                    // channel is closed — i.e. marshal is gone/shutting down. The
+                    // channel is closed - i.e. marshal is gone/shutting down. The
                     // block is then NOT durably cached (not servable on pull, not
                     // stashed for `forward`), so this proposal cannot be resolved by
-                    // verifiers (bp-1 pull-recovery does not help — nothing to serve).
+                    // verifiers (bp-1 pull-recovery does not help - nothing to serve).
                     // Surface it loudly rather than silently treating the proposal as
                     // durable. A persistent marshal failure is the supervisor's
                     // concern: the marshal handle is monitored (SSA-8) and a dead
@@ -1178,7 +1178,7 @@ impl ApplicationShared {
     /// record from marshal's durable finalization archive when the in-process
     /// selection store missed it (restart / late-join / brief finalization lag).
     ///
-    /// `get_finalization` is a LOCAL archive read — it never triggers a network
+    /// `get_finalization` is a LOCAL archive read - it never triggers a network
     /// fetch, so this cannot block consensus on a peer; the archive is the same
     /// durable store marshal repopulates during sync. The rebuilt record mirrors
     /// the live [`FinalizationActor`](crate::finalization::actor) writer
@@ -1351,15 +1351,15 @@ impl ApplicationShared {
         // in `outbe-node`'s `validate_against_parent_timestamp_millis`, so an
         // honest proposer never emits a block validators would reject as
         // over-drifted. Both bounds match the validator rule exactly, so the
-        // clamp only ever shifts the timestamp into the accepted band — never out
+        // clamp only ever shifts the timestamp into the accepted band - never out
         // of it. After a long stall `now_millis` may exceed the cap; the chain
         // self-heals, ratcheting time forward by at most one band per block until
         // it catches up to real time.
         //
-        // Exception — the genesis child has no resolved consensus parent block,
+        // Exception - the genesis child has no resolved consensus parent block,
         // so the band is meaningless and only monotonicity is enforced. The
         // validator side exempts the genesis parent (`parent.number() == 0`) from
-        // both band bounds, so block 1 (≈ genesis + now) always validates and no
+        // both band bounds, so block 1 (~= genesis + now) always validates and no
         // unbonding-lock bypass is possible at the first block.
         let timestamp_millis = proposal_timestamp_millis(
             parent_block.as_ref(),
@@ -1379,7 +1379,7 @@ impl ApplicationShared {
         // parent_height == 0) MUST carry `ConsensusHeaderArtifact::BoundaryOutcome`
         // in `extra_data`. If the epoch has no pending boundary for block 1,
         // the proposer forfeits the slot deterministically with the
-        // `genesis_dkg_boundary_not_ready` reason — never propose block 1
+        // `genesis_dkg_boundary_not_ready` reason - never propose block 1
         // without a real boundary artifact.
         let proposed_height = parent_height.get().saturating_add(1);
         let pending_boundary = self
@@ -1435,8 +1435,8 @@ impl ApplicationShared {
                 // If the DKG for the NEXT epoch has completed (its boundary is
                 // pending) but this is not yet its activation block, PRE-ANNOUNCE
                 // that committee in this E-1 block so a follower authenticates it via
-                // the already-trusted E-1 committee — before the self-finalized
-                // activation boundary at E·L+1 (Path A committee-chaining). Otherwise
+                // the already-trusted E-1 committee - before the self-finalized
+                // activation boundary at E*L+1 (Path A committee-chaining). Otherwise
                 // a DKG is still in flight, so emit a dealer log.
                 if let Some(boundary) = self
                     .dkg_manager
@@ -1471,8 +1471,8 @@ impl ApplicationShared {
         };
 
         // Non-blocking direct-parent proof selection
-        // (finalization first → certified-notarization → marshal-archive
-        // recovery → forfeit). The request budget does not gate this lookup —
+        // (finalization first -> certified-notarization -> marshal-archive
+        // recovery -> forfeit). The request budget does not gate this lookup -
         // the selector returns synchronously. On a selection-store
         // miss the None branch recovers the parent's finalization from marshal's
         // durable archive (, `recover_parent_proof_from_marshal`); only if
@@ -1510,10 +1510,10 @@ impl ApplicationShared {
         }
 
         // pack the in-window late-finalize credits this node has
-        // locally observed for blocks `proposed_height − K ..= proposed_height − 1`.
+        // locally observed for blocks `proposed_height - K ..= proposed_height - 1`.
         // Best-effort and process-local: every validator re-verifies each batch
-        // (pre-exec FATAL) and re-derives the same artifact via header↔calldata
-        // parity, so the contents never affect determinism — an empty store just
+        // (pre-exec FATAL) and re-derives the same artifact via header<->calldata
+        // parity, so the contents never affect determinism - an empty store just
         // credits nobody. A poisoned lock degrades to no credits.
         let late_finalize_credits = match self.late_sig_store.lock() {
             Ok(store) => {
@@ -1753,7 +1753,7 @@ impl ApplicationShared {
             }
             Err(error) => {
                 // Local infrastructure issue (missing anchor / marshal miss / hash mismatch).
-                // Do NOT vote false — a validator with a temporarily lagging finalization view
+                // Do NOT vote false - a validator with a temporarily lagging finalization view
                 // or marshal store must not reject a block that is in fact valid. Bubble Err
                 // so the response channel drops, matching existing `resolve_for_verify`
                 // behaviour for local timeouts.
@@ -1895,7 +1895,7 @@ impl ApplicationShared {
         }
 
         // `handle_verify` performs ONLY structural
-        // checks — Phase 1 system tx decode succeeds, header artifacts well-
+        // checks - Phase 1 system tx decode succeeds, header artifacts well-
         // formed, parent binding correct, VRF window not expired. It does NOT
         // perform BLS decode/verify on the carried certificate, does not
         // perform accounting checks, and does not look up committee snapshots.
@@ -2144,7 +2144,7 @@ async fn validate_header_consensus_artifacts_for_activation(
     ancestry: &impl AncestryReader,
 ) -> Result<(), String> {
     // Finalized-follower rule: a share-less verifier (a TEE full-node, no
-    // `proposer_evm_address`) does NOT validate live proposals — it follows
+    // `proposer_evm_address`) does NOT validate live proposals - it follows
     // FINALIZED blocks, whose threshold certificate is verified by the reporter
     // against the GROUP public key (preserved across reshares). The leader-binding
     // and DKG-boundary checks below are polynomial/DKG-view-dependent and would
@@ -2227,7 +2227,7 @@ async fn validate_header_consensus_artifacts_for_activation(
         ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome } => {
             // Path A committee pre-announce, emitted during E-1 after the DKG
             // completes. Validate its carried outcome against this node's OWN
-            // reconstructed DKG output for the incoming epoch — fail-closed if this
+            // reconstructed DKG output for the incoming epoch - fail-closed if this
             // node has no pending boundary to compare against, so a forged
             // pre-announce cannot ride a finalized block.
             dkg_manager
@@ -2304,7 +2304,7 @@ mod clamp_tests {
     #[test]
     fn genesis_child_uses_wall_clock_not_band() {
         // Regression: at genesis the finalization_view is unseeded (parent==0).
-        // The real wall-clock (≈1.78e12 ms) must NOT be clamped to 0+band, which
+        // The real wall-clock (~=1.78e12 ms) must NOT be clamped to 0+band, which
         // would put block 1 before the genesis timestamp and stall the chain. The
         // min-advance lower bound is also skipped at genesis (monotonic-only).
         let now = 1_781_255_987_000u64;
@@ -2314,12 +2314,12 @@ mod clamp_tests {
     #[test]
     fn real_parent_applies_band() {
         let parent = 1_781_255_987_000u64;
-        // within band, above min advance → wall clock used
+        // within band, above min advance -> wall clock used
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent + 2_000, BAND, MIN),
             parent + 2_000
         );
-        // far-future now → capped at parent + band
+        // far-future now -> capped at parent + band
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent + 10 * BAND, BAND, MIN),
             parent + BAND
@@ -2333,17 +2333,17 @@ mod clamp_tests {
         // the block satisfies the validator minimum-advance rule and is accepted,
         // rather than emitting `parent + 1` which validators would now reject.
         let parent = 1_781_255_987_000u64;
-        // now in the past → parent + MIN (not parent + 1).
+        // now in the past -> parent + MIN (not parent + 1).
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent - 5, BAND, MIN),
             parent + MIN
         );
-        // now between parent+1 and parent+MIN → clamped up to parent + MIN.
+        // now between parent+1 and parent+MIN -> clamped up to parent + MIN.
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent + 500, BAND, MIN),
             parent + MIN
         );
-        // now exactly at the min-advance boundary → unchanged.
+        // now exactly at the min-advance boundary -> unchanged.
         assert_eq!(
             clamp_proposed_timestamp_millis(parent, parent + MIN, BAND, MIN),
             parent + MIN

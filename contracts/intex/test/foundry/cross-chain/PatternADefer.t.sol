@@ -15,7 +15,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
-///         defer/flush path. `bidCount = 0` exercises the no-bid → single empty final batch path.
+///         defer/flush path. `bidCount = 0` exercises the no-bid -> single empty final batch path.
 contract StubAuctionWithBids {
     uint256 public bidCount = 1;
 
@@ -48,7 +48,7 @@ contract StubAuctionWithBids {
                 referenceCurrency: 840
             });
         }
-        // `data` left default — TM's `_doSendBidsToOutbe` drops the first tuple component.
+        // `data` left default - TM's `_doSendBidsToOutbe` drops the first tuple component.
         data;
     }
 }
@@ -56,7 +56,7 @@ contract StubAuctionWithBids {
 /// @title PatternADeferTest
 /// @notice Behavioural coverage of Pattern A on `TargetRouter`: the inbound clearing/mark-called handlers fire an
 ///         outbound relay (bids batch / holders bridge) that parks on failure and is retried permissionlessly via
-///         `flushPending*`. Failure is forced by starving the relay float — a positive bridge fee with a zero native
+///         `flushPending*`. Failure is forced by starving the relay float - a positive bridge fee with a zero native
 ///         balance makes `_send` revert `NotEnoughNative`; topping the float up lets the flush land.
 contract PatternADeferTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
@@ -113,7 +113,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter — bids relay defer + flush
+    // TargetRouter - bids relay defer + flush
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayDeferredOnInsufficientBalance() public {

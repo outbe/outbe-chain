@@ -9,7 +9,7 @@ import {OrderValidator} from "./libs/OrderValidator.sol";
 
 /// @title Auction
 /// @notice Commit-reveal Vickrey auction for competitive solver selection
-/// @dev Phases: commit (10s) → reveal (10s) → getWinner.
+/// @dev Phases: commit (10s) -> reveal (10s) -> getWinner.
 ///      Winner = highest outputAmount, pays second-highest price.
 contract Auction is IAuction, Ownable2Step {
     // ============ Phase Constants ============
@@ -39,7 +39,7 @@ contract Auction is IAuction, Ownable2Step {
     /// @notice Maximum number of revealed quotes allowed per order
     uint256 public maxQuotesPerOrder = 10;
 
-    /// @notice Router contract — authorized caller
+    /// @notice Router contract - authorized caller
     address public router;
 
     /// @notice Revealed quotes per order

@@ -35,8 +35,8 @@ impl TributeFactoryContract<'_> {
     /// cleartext day and currency, resolves the COEN price for that exact pair and
     /// day, hands offer + price to the enclave (`ProcessTributeOfferBatch`), and
     /// issues the Tribute from the returned `TributeOfferResult`. The enclave
-    /// returns only what it computed — the amounts, the draft-derived fields and
-    /// the Poseidon `token_id` — so everything public on the Tribute comes from
+    /// returns only what it computed - the amounts, the draft-derived fields and
+    /// the Poseidon `token_id` - so everything public on the Tribute comes from
     /// this function's own inputs. The canonical identity is independently
     /// recomputed and checked before issuance.
     pub(crate) fn offer_tribute(
@@ -53,7 +53,7 @@ impl TributeFactoryContract<'_> {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "bench-utils"))]
     pub(crate) fn offer_tribute_with_processor(
         &mut self,
         scope: &ExecutionScope,
@@ -197,8 +197,8 @@ impl TributeFactoryContract<'_> {
             zk_context,
         };
         // Node-local enclave faults (dead sidecar after the session's bounded
-        // reconnect+retry, non-determinism, bad attestation) are Fatal — see
-        // `enclave_offer` — never a deterministic revert.
+        // reconnect+retry, non-determinism, bad attestation) are Fatal - see
+        // `enclave_offer` - never a deterministic revert.
         let results = processor(&[offer])?;
         let result = results.into_iter().next().ok_or_else(|| {
             PrecompileError::Fatal("enclave returned an empty tribute offer result".into())

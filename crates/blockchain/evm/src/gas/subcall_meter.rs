@@ -1,4 +1,4 @@
-//! `SubcallGasMeter` — a thin wrapper over [`revm::interpreter::Gas`] used by
+//! `SubcallGasMeter` - a thin wrapper over [`revm::interpreter::Gas`] used by
 //! the outbe sub-call driver.
 //!
 //! Each method delegates 1:1 to the inner [`revm::interpreter::Gas`] instance
@@ -23,7 +23,7 @@ pub struct SubcallGasMeter {
 impl SubcallGasMeter {
     /// Creates a new meter with the given regular-gas limit.
     ///
-    /// Reservoir is zero — Outbe does not use EIP-8037 at this stage, so the
+    /// Reservoir is zero - Outbe does not use EIP-8037 at this stage, so the
     /// meter behaves as a single-pool tracker. The field is preserved to
     /// keep the byte-for-byte mirror with upstream `Gas`.
     ///
@@ -87,7 +87,7 @@ impl SubcallGasMeter {
         self.inner.record_regular_cost(cost)
     }
 
-    /// Erases `returned` gas from the spent counter — i.e. returns unused
+    /// Erases `returned` gas from the spent counter - i.e. returns unused
     /// gas from a child frame back into the meter's `remaining` budget.
     ///
     /// Mirrors revm Gas::erase_cost.
@@ -128,7 +128,7 @@ impl SubcallGasMeter {
     /// Provided so the sub-call driver in can pass the
     /// inner gas tracker to upstream helpers
     /// (`handle_reservoir_remaining_gas`, `load_acc_and_calc_gas`).
-    /// **Not** marked `Mirrors revm Gas::*` — this is an outbe-only escape
+    /// **Not** marked `Mirrors revm Gas::*` - this is an outbe-only escape
     /// hatch, not a method on `Gas`.
     #[inline]
     pub const fn inner(&self) -> &Gas {

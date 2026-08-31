@@ -23,7 +23,7 @@ pub struct Validator {
 }
 
 impl Validator {
-    /// The EOA private key (`validator-<i>/evm-key.hex`), `0x`-prefixed — matches
+    /// The EOA private key (`validator-<i>/evm-key.hex`), `0x`-prefixed - matches
     /// the shell `"0x$(tr -d '[:space:]' < evm-key.hex)"`.
     pub fn evm_key(&self) -> Result<String> {
         let path = self.evm_key_path();
@@ -197,7 +197,7 @@ impl RegistrationIdentity {
     }
 }
 
-/// An operator role — a thin wrapper over the validator that proposes/casts.
+/// An operator role - a thin wrapper over the validator that proposes/casts.
 #[derive(Debug, Clone)]
 pub struct Operator(pub Validator);
 
@@ -244,7 +244,7 @@ impl Validators {
     }
 
     /// HTTP RPC port of the primary committee node (validator-0). Each peer's
-    /// ports live in its own block — see [`crate::internal::ports`].
+    /// ports live in its own block - see [`crate::internal::ports`].
     pub fn primary_port(&self) -> u16 {
         self.cfg.primary_port()
     }

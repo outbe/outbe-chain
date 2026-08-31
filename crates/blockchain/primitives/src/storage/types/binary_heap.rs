@@ -17,7 +17,7 @@ use super::Storable;
 /// - Base slot: stores length as `U256` (same convention as `StorageVec`).
 /// - Data slots: `keccak256(base_slot) + index * T::SLOTS`.
 ///
-/// Ordering is injected at each mutation via a fallible closure — our
+/// Ordering is injected at each mutation via a fallible closure - our
 /// use-case compares by priorities looked up from a neighbouring `Map`,
 /// which requires `sload` and can fail. The caller MUST use a consistent
 /// comparator across the heap's lifetime; mixing yields undefined behavior
@@ -118,7 +118,7 @@ impl<'storage, T: Storable + Copy + PartialEq> BinaryHeap<'storage, T> {
         self.set_len(last_idx)?;
         if idx != last_idx && last_idx > 0 {
             // Restore invariant: entry at `idx` may be too small or too large
-            // relative to its neighbours — try both directions.
+            // relative to its neighbours - try both directions.
             let parent = if idx == 0 { None } else { Some((idx - 1) / 2) };
             let should_sift_up = match parent {
                 Some(p) => cmp(&self.read(idx)?, &self.read(p)?)? == Ordering::Less,

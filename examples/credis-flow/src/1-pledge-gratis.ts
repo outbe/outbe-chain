@@ -78,11 +78,11 @@ async function main() {
   console.log(`  Pledged:  ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
 
   if (balanceBefore === 0n) {
-    console.error("No Gratis balance to pledge — run `npm run setup-gratis` first.");
+    console.error("No Gratis balance to pledge - run `npm run setup-gratis` first.");
     process.exit(1);
   }
 
-  // Authorize the pledge with the modify key. The MAC binds the STABLES figure — the
+  // Authorize the pledge with the modify key. The MAC binds the STABLES figure - the
   // one the user chose; `asset` and `maxGratis` are covered by the tx signature.
   const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Pledge, amountStables, opNonce, chainId);
 
@@ -107,7 +107,7 @@ async function main() {
     .find((p) => p?.name === "GratisPledged");
   if (!pledged) throw new Error("GratisPledged event not found in receipt");
   const handle = pledged.args.pledgeHandle as string;
-  // The gratis the quote actually cost — derived on-chain, so read it back off the event.
+  // The gratis the quote actually cost - derived on-chain, so read it back off the event.
   const gratisAmount = pledged.args.gratisAmount as bigint;
 
   // The bearer secret the user hands to the CCA to request credis later.
@@ -125,7 +125,7 @@ async function main() {
 
   // A pledge moves the derived gratis from the liquid balance into a new pending
   // ticket; the active pledged ledger (`pledgedOf`) stays flat until requestCredis
-  // consumes the ticket. So the pending line — not the pledged-ledger diff — is where
+  // consumes the ticket. So the pending line - not the pledged-ledger diff - is where
   // a fresh pledge shows up.
   console.log("\n=== CHANGES ===");
   console.log(`  Balance:         ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);

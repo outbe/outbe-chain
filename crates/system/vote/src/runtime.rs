@@ -48,7 +48,7 @@ pub fn ensure_active_validator(storage: StorageHandle<'_>, caller: Address) -> R
     Ok(())
 }
 
-/// Returns `Ok(())` when `caller` is a registered validator with `status ∈ {PENDING, ACTIVE}`.
+/// Returns `Ok(())` when `caller` is a registered validator with `status in {PENDING, ACTIVE}`.
 pub fn ensure_voting_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     let vs = ValidatorSet::new(storage);
     let lifecycle = vs.validator_lifecycle(caller)?;

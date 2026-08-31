@@ -79,12 +79,12 @@ library BridgeMsgCodec {
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
     //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
-    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9×32 = 288
+    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9x32 = 288
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
-    //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
+    //     3 static head words + 3 dynamic offsets + 3 empty length words = 9x32 = 288
     //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 12 static + 2 dynamic fields):
     //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 12 static
-    //     + 2 inner offsets + 2 empty length words = 22×32 = 704
+    //     + 2 inner offsets + 2 empty length words = 22x32 = 704
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 704;
@@ -94,7 +94,7 @@ library BridgeMsgCodec {
     ///         the ordered lane; larger bid sets are chunked into multiple batches by the sender.
     /// @dev Unified with the outbound `MAX_PAYLOAD_ARRAY_LEN` so inbound and outbound
     ///      agree on one number. The earlier value of 256 was the original ticket figure and is
-    ///      physically unsendable: a bids batch is ~128 B/item, so 256 items is ~32 KB — over 3×
+    ///      physically unsendable: a bids batch is ~128 B/item, so 256 items is ~32 KB - over 3x
     ///      ERC-7786's send-side `maxMessageSize = 10_000` byte cap (an over-cap send reverts on
     ///      the source chain). The real byte ceiling lands near 78 items; 64 sits under it with gas
     ///      headroom, and the outbound encoder already rejects anything larger.
@@ -282,7 +282,7 @@ library BridgeMsgCodec {
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
     /// @param _prices Entry, floor and call price of every currency the day can clear in.
-    /// @param _callNoticePeriod The Called→deadline window in seconds (0 = default).
+    /// @param _callNoticePeriod The Called->deadline window in seconds (0 = default).
     /// @param _callWindow The call-trigger observation window in seconds.
     /// @param _callThreshold The call-trigger threshold in seconds.
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
@@ -371,14 +371,14 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Issuance instructions payload — grouped into a struct to keep the
+    /// @notice Issuance instructions payload - grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
     /// @dev `issuedIntexCount` mirrors the auction-cleared count; the destination chain
     ///      pins it on `SeriesData` and `IntexNFT1155.mint` rejects any mint
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
         bytes14 seriesId;
-        /// @notice Worldwide day the series was derived from — carried so the destination records real provenance.
+        /// @notice Worldwide day the series was derived from - carried so the destination records real provenance.
         uint32 worldwideDay;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
@@ -742,7 +742,7 @@ library BridgeMsgCodec {
         }
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
-        // function's stack — keeps the 14-field payload within bounds under via_ir.
+        // function's stack - keeps the 14-field payload within bounds under via_ir.
         (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
         _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);
@@ -850,8 +850,8 @@ library BridgeMsgCodec {
     // --- Validation helpers ---
 
     /// @notice Returns the minimum encoded length for the given `msgType`, or 0 if not recognised.
-    /// @dev Caller is expected to validate `msgType ∈ allowedSet` separately via
-    ///      `UnknownMsgType` — a 0 return here means "unknown to the codec".
+    /// @dev Caller is expected to validate `msgType in allowedSet` separately via
+    ///      `UnknownMsgType` - a 0 return here means "unknown to the codec".
     /// @param _msgType The message-type byte to look up.
     /// @return The minimum encoded length for `_msgType`, or 0 if unknown to the codec.
     function minLengthFor(uint8 _msgType) internal pure returns (uint16) {
@@ -878,7 +878,7 @@ library BridgeMsgCodec {
 
     /// @notice Validates the 2-byte header and returns the `msgType` byte.
     /// @dev Reverts `InvalidPayloadLength(0, got, HEADER_LEN)` if shorter than the header.
-    ///      Does NOT validate the `msgType` is in any particular handler's accepted set —
+    ///      Does NOT validate the `msgType` is in any particular handler's accepted set -
     ///      that check is the caller's responsibility (revert `UnknownMsgType` on mismatch).
     /// @param _msg The wire-encoded bridge message.
     /// @return _msgType The message-type byte read from offset 1.

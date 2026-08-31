@@ -8,9 +8,6 @@ mod group_index {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
 
-    use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-    use outbe_primitives::storage::types::{Storable, StorageKey};
-
     use crate::schema::IntexFactoryContract;
 
     const CHAIN_ID: u64 = 1;
@@ -22,7 +19,7 @@ mod group_index {
         StorageHandle::enter(&mut storage, f)
     }
 
-    /// Same day, differing only in issuance currency — the members of one group.
+    /// Same day, differing only in issuance currency - the members of one group.
     fn sid(worldwide_day: u32, issuance: &[u8; 3]) -> SeriesId {
         SeriesId::pack(WorldwideDay::new(worldwide_day), *issuance, b'U').unwrap()
     }
@@ -202,35 +199,6 @@ mod group_index {
                     .unwrap(),
                 vec![series]
             );
-        });
-    }
-
-    /// The old index left series ids where the bins kept their contents; far too wide
-    /// for a worldwide day, so those columns are reserved rather than reused.
-    #[test]
-    fn a_legacy_bin_word_is_never_read_as_a_group() {
-        with_factory(|s| {
-            let f = IntexFactoryContract::new(s.clone());
-            let bin = IntexFactoryContract::price_to_bin(U256::from(FLOOR)).unwrap();
-            let legacy_slot = IntexFactoryContract::bin_index_key(ISO, bin, 0)
-                .mapping_slot(f.unqualified_bin_series_legacy.slot());
-            let series = sid(20260212, b"USD");
-
-            // What the previous layout left behind: a series id in the bin's slot, and
-            // the count that says the bin holds one entry.
-            s.sstore(INTEX_FACTORY_ADDRESS, legacy_slot, series.to_word())
-                .unwrap();
-            f.unqualified_bin_count
-                .write(&IntexFactoryContract::scoped(ISO, bin), 1)
-                .unwrap();
-
-            // The scan reads its own column, so the leftover is inert rather than fatal.
-            let groups = f.unqualified_groups_in_bin(ISO, bin).unwrap();
-            assert_eq!(groups, vec![WorldwideDay::new(0)], "no group is recovered");
-            assert!(f
-                .unqualified_group_members(ISO, groups[0])
-                .unwrap()
-                .is_empty());
         });
     }
 }

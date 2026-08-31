@@ -71,7 +71,7 @@ impl Localnet {
         }
 
         // Bring the complete enclave cohort up before the first validator can
-        // enter genesis DKG. Starting enclave→validator per index gave the first
+        // enter genesis DKG. Starting enclave->validator per index gave the first
         // nodes several seconds' head start and made them finalize before the
         // last dealings existed (`MissingPlayerDealing`).
         for &i in &launched {
@@ -87,7 +87,7 @@ impl Localnet {
         }
 
         // Survival check: a node that dies in the first couple seconds is a
-        // config error — surface it with its log tail (`run-testnet.sh:386-407`).
+        // config error - surface it with its log tail (`run-testnet.sh:386-407`).
         sleep(Duration::from_secs(2));
         for &i in &launched {
             if self.validators.get_mut(&i).is_some_and(|g| g.exited()) {
@@ -317,7 +317,7 @@ impl Localnet {
 
     /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
     /// state; the node keeps running. Its enclave session must reconnect (with
-    /// identity re-validation) on the next request — a node restart is not
+    /// identity re-validation) on the next request - a node restart is not
     /// required and this verb is the first that proves it.
     pub fn restart_enclave_only(&mut self, i: usize) -> Result<()> {
         self.enclaves.remove(&i);
@@ -510,7 +510,7 @@ impl Localnet {
         self.start_enclave_with_seed(i, chain_id_hex, seed)
     }
 
-    /// [`Self::start_enclave`] with an explicit DKG-seed override — the
+    /// [`Self::start_enclave`] with an explicit DKG-seed override - the
     /// fresh-identity restart verb uses a different seed so the relaunched
     /// enclave presents different keys.
     fn start_enclave_with_seed(

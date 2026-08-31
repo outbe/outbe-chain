@@ -304,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_staking_info_rpc_error() {
-        let mock = MockRpc::default(); // eth_call_map is None → Err
+        let mock = MockRpc::default(); // eth_call_map is None -> Err
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();

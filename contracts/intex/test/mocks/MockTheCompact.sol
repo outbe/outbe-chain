@@ -127,7 +127,7 @@ contract MockTheCompact is ITheCompact {
         return balances[lockId][account];
     }
 
-    /// @notice ERC6909-style balance query — The Compact issues ERC6909 receipts keyed by lockId.
+    /// @notice ERC6909-style balance query - The Compact issues ERC6909 receipts keyed by lockId.
     function balanceOf(address owner, uint256 id) external view returns (uint256) {
         return balances[id][owner];
     }

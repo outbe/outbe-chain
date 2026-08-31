@@ -18,7 +18,7 @@ use outbe_primitives::address_pair::AddressPair;
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 
-/// `(bases, quotes, peak_days, peak_prices)` — every active S-curve entry.
+/// `(bases, quotes, peak_days, peak_prices)` - every active S-curve entry.
 type ScurveTable = (Vec<Address>, Vec<Address>, Vec<u64>, Vec<U256>);
 
 /// The pair an S-curve entry belongs to.
@@ -426,7 +426,7 @@ fn process_daily_scurve_inner(
     // The daily hook fires on the first block of `current_day`, so
     // `current_day` itself has no close yet. Detect peaks only over fully
     // CLOSED UTC days. At this point the most recent closed day is D-1, so
-    // the latest peak we can confirm is D-2 — confirming a peak requires the
+    // the latest peak we can confirm is D-2 - confirming a peak requires the
     // close of the day that follows it.
     //
     //   day_minus_3 (close before peak) < day_minus_2 (peak) > day_minus_1 (close after peak)
@@ -485,7 +485,7 @@ fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -
             continue;
         }
 
-        // Found a snapshot in this day — look for our pair
+        // Found a snapshot in this day - look for our pair
         let pc = oracle.snapshot_pair_count.read(&idx)?;
         let pair_map = oracle.snapshot_pair.get_nested(&idx);
         let rate_map = oracle.snapshot_rate.get_nested(&idx);
@@ -653,11 +653,11 @@ mod tests {
             store_scurve_entry(&mut oracle, pair, peak_day, peak_price).unwrap();
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
 
-            // Query value at peak day (day_index=0) → should equal peak_price
+            // Query value at peak day (day_index=0) -> should equal peak_price
             let val = get_max_active_scurve_value(&oracle, pair, peak_day).unwrap();
             assert_eq!(val, peak_price);
 
-            // Query value at peak_day + 127 days → should be ~92% of peak
+            // Query value at peak_day + 127 days -> should be ~92% of peak
             let far_future = peak_day + 127 * DAY_SECONDS;
             let val_127 = get_max_active_scurve_value(&oracle, pair, far_future).unwrap();
             assert_eq!(val_127, price6(460)); // 500 * 0.92 = 460
@@ -802,7 +802,7 @@ mod tests {
             let mut oracle = OracleContract::new(storage);
             let pair = register_test_pair(&mut oracle);
 
-            let d0 = truncate_to_day(1_700_000_000); // current day — empty at fire time
+            let d0 = truncate_to_day(1_700_000_000); // current day - empty at fire time
             let d1 = d0 - DAY_SECONDS;
             let d2 = d0 - 2 * DAY_SECONDS; // peak
             let d3 = d0 - 3 * DAY_SECONDS;
@@ -810,7 +810,7 @@ mod tests {
             write_daily_close(&mut oracle, pair, d3, price6(100));
             write_daily_close(&mut oracle, pair, d2, price6(120));
             write_daily_close(&mut oracle, pair, d1, price6(110));
-            // intentionally NO D0 data — the fix must not depend on it
+            // intentionally NO D0 data - the fix must not depend on it
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();
 
@@ -823,7 +823,7 @@ mod tests {
     #[test]
     fn test_current_day_data_is_irrelevant() {
         // Whatever the current (incomplete) day shows must not change the
-        // outcome — detection is over closed days only.
+        // outcome - detection is over closed days only.
         use outbe_primitives::storage::hashmap::HashMapStorageProvider;
         use outbe_primitives::storage::StorageHandle;
 
@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn test_no_detection_with_insufficient_history() {
-        // Only two closed days available (D-3 missing) → no peak, no panic.
+        // Only two closed days available (D-3 missing) -> no peak, no panic.
         use outbe_primitives::storage::hashmap::HashMapStorageProvider;
         use outbe_primitives::storage::StorageHandle;
 

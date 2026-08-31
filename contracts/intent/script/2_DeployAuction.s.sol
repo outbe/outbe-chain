@@ -9,8 +9,8 @@ import {Auction} from "../src/Auction.sol";
 /// @dev Deployment script for standalone Auction contract.
 ///
 /// Required env vars:
-///   DEPLOYER_PK      — deployer private key
-///   AUCTION_OWNER    — auction contract owner (admin)
+///   DEPLOYER_PK      - deployer private key
+///   AUCTION_OWNER    - auction contract owner (admin)
 contract DeployAuction is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");

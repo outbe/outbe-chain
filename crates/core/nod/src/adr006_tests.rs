@@ -114,7 +114,7 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
 }
 
 /// Slot assignment is dense in `order` sequence, so inserting a field rather
-/// than appending one silently reassigns the meaning of every slot after it —
+/// than appending one silently reassigns the meaning of every slot after it -
 /// including the two the genesis alloc seeds. New fields must append.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {

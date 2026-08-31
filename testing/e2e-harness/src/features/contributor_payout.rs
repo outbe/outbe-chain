@@ -13,9 +13,9 @@ use cucumber::{then, when};
 use crate::internal::eth;
 use crate::world::World;
 
-/// Intex precompile — certified contributor authority.
+/// Intex precompile - certified contributor authority.
 const INTEX_ADDR: Address = address!("0x0000000000000000000000000000000000001014");
-/// IntexFactory precompile — contributor payout round.
+/// IntexFactory precompile - contributor payout round.
 const INTEX_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001015");
 
 sol! {
@@ -98,7 +98,7 @@ fn certified_authority_is_installed(world: &mut World) {
     );
 
     // Quorum installed one authority, so every validator must expose that exact
-    // record — a divergence here is a consensus fault, not a read race.
+    // record - a divergence here is a consensus fault, not a read race.
     for port in ports.iter().skip(1) {
         assert_eq!(
             authority_on(world, *port, day),
@@ -133,7 +133,7 @@ sol! {
     }
 }
 
-/// Hardhat account #0 — the sender a throwaway build accepts as the proceeds
+/// Hardhat account #0 - the sender a throwaway build accepts as the proceeds
 /// source, since the production one is a contract nobody can sign for.
 const PROCEEDS_SENDER_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

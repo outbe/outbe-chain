@@ -2,12 +2,12 @@
 //!
 //! Two proof kinds live in this store, each in its own MDBX slot:
 //!
-//! 1. **Finalization** — written by the [`crate::finalization::actor::FinalizationActor`]
+//! 1. **Finalization** - written by the [`crate::finalization::actor::FinalizationActor`]
 //!    after Simplex emits `Activity::Finalization`. The proposer-side selector
 //!    reads it through [`CertifiedParentProofStore::get_best_parent_proof`] and
 //!    builds OAV3 Phase 1 metadata from
 //!    [`CertifiedParentProofRecord::to_v2_metadata`].
-//! 2. **CertifiedNotarization** — written by [`crate::reporter::OutbeReporter`]
+//! 2. **CertifiedNotarization** - written by [`crate::reporter::OutbeReporter`]
 //!    after Simplex emits `Activity::Certification`. Commonware marshal's mailbox
 //!    silently drops this activity (`_ => return;`), so Outbe is the only persistent
 //!    consumer. The slot is keyed exactly like the finalization slot and is
@@ -21,7 +21,7 @@
 //! commit synchronously before returning, so a crash between `put_*` and the
 //! Phase 1 system-tx build cannot lose the proof.
 //!
-//! This store is **not** an EVM `StorageHandle` consumer — it is node-local
+//! This store is **not** an EVM `StorageHandle` consumer - it is node-local
 //! proposer-side state, parallel to (not a replacement for) the canonical
 //! chain. it is out of scope for the
 //! storage-handle survey.
@@ -302,7 +302,7 @@ impl std::error::Error for ParentProofStoreError {
 /// sentinel-`finalized_block_number`, and `local_certification_witness`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProofKind {
-    /// A finalized block's exact-parent proof — carries its real on-chain height.
+    /// A finalized block's exact-parent proof - carries its real on-chain height.
     Finalization { finalized_block_number: u64 },
     /// A certified-notarization witness. It carries NO block number (the
     /// notarization has no block context); the proposer-side selector resolves
@@ -500,8 +500,8 @@ pub enum ParentProofSelection {
     CertifiedNotarization(CertifiedParentProofRecord),
 }
 
-/// Hash-keyed parent proof store. Cheap to clone — internally
-/// `Arc<RwLock<…>>`. All public methods are non-blocking other than the brief
+/// Hash-keyed parent proof store. Cheap to clone - internally
+/// `Arc<RwLock<...>>`. All public methods are non-blocking other than the brief
 /// lock acquire; lock window is microseconds.
 #[derive(Clone)]
 pub struct FinalizedParentCertStore {
@@ -769,7 +769,7 @@ impl FinalizedParentCertStore {
 /// observation. This is the *only* surface the consensus voter side
 /// (`OutbeReporter`) is given onto the store, so the reporter structurally
 /// cannot reach the durable-write methods (`put_*` / `remove` / `prune`). Durable
-/// writes stay the `FinalizationActor`'s responsibility (single durable writer) —
+/// writes stay the `FinalizationActor`'s responsibility (single durable writer) -
 /// the capability narrowing makes that invariant type-enforced instead of
 /// convention, preventing a future reporter edit from regressing the off-thread
 /// persistence boundary established for the certified-notarization path.
@@ -1228,7 +1228,7 @@ mod tests {
         let store = FinalizedParentCertStore::new();
         let r = notarization_record(0xAA, 100);
         store.put_certified_notarization(r.clone()).unwrap();
-        // exact-key lookup only — no fuzzy match.
+        // exact-key lookup only - no fuzzy match.
         assert_eq!(store.get_certified_notarization(key(0xAA)), Some(r));
         assert_eq!(store.get_certified_notarization(key(0xBB)), None);
     }
@@ -1630,7 +1630,7 @@ mod proptests {
             let temp = tempfile::tempdir().expect("tempdir");
             let backend = MdbxParentProofBackend::open(temp.path()).expect("open backend");
             let decoded = backend.decode_record(bytes);
-            // Extract the predicate first — `prop_assert!` treats commas in
+            // Extract the predicate first - `prop_assert!` treats commas in
             // its arg list as format-string separators, so embedding the
             // `matches! ... if ...` guard inline confuses the macro parser.
             let rejected_with_bad_version = matches!(

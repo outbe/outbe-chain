@@ -22,7 +22,7 @@ use outbe_primitives::storage::{
 /// addressable as function pointers with the right shape, so any
 /// future refactor that drops or renames them breaks the test.
 // The `'a` lifetime is used only inside the body's fn-pointer type assertions, not
-// in the signature, so clippy flags it; keep it — the body needs a named lifetime.
+// in the signature, so clippy flags it; keep it - the body needs a named lifetime.
 #[allow(dead_code, clippy::extra_unused_lifetimes)]
 fn _assert_evm_provider_ctors_exist<'a>() {
     let _: fn(EvmInternals<'a>) -> EvmStorageProvider<'a> = EvmStorageProvider::new;

@@ -12,13 +12,15 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Qualified -> Called`.
+/// Series lifecycle state. `Issued -> Qualified -> Called -> Expired`, where
+/// `Expired` means the call window closed, not that anything burned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
     Qualified = 1,
     Called = 2,
+    Expired = 3,
 }
 
 impl IntexState {
@@ -27,6 +29,7 @@ impl IntexState {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
+            3 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -228,7 +231,7 @@ pub struct SeriesRecord {
     #[attribute(order = 6)]
     pub call_price_minor: U256,
 
-    // call_trigger group — stored flat (the storage DSL has no nested-struct codec),
+    // call_trigger group - stored flat (the storage DSL has no nested-struct codec),
     // exposed nested via `call_trigger()`.
     #[attribute(order = 7)]
     pub call_window: u32,
@@ -275,7 +278,7 @@ impl SeriesRecord {
 /// Cost of one Intex in reference ISO stable-units (1e6). Entry price and PROMIS load
 /// both use scale 1e6, so removing the PROMIS denominator leaves the
 /// reference-currency price at scale 1e6.
-/// Settling converts this into the chosen token's minor units — see
+/// Settling converts this into the chosen token's minor units - see
 /// `intexfactory::runtime::quote_cost_amount`.
 pub fn cost_amount_minor(
     entry_price_minor: U256,
@@ -299,7 +302,7 @@ pub struct DistProgress {
     #[attribute(order = 0)]
     pub amount: U256,
 
-    /// Σ of contributor nominals (the proportionality denominator).
+    /// sum of contributor nominals (the proportionality denominator).
     #[attribute(order = 1)]
     pub total_nominal: U256,
 
@@ -334,7 +337,7 @@ pub struct CertifiedPayoutRound {
     #[attribute(order = 0)]
     pub amount: U256,
 
-    /// Σ of the shares paid so far; feeds the round cap and the close remainder.
+    /// sum of the shares paid so far; feeds the round cap and the close remainder.
     #[attribute(order = 1)]
     pub paid_so_far: U256,
 
@@ -379,7 +382,7 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // --- Creator-reward: per-day contributors (owner → nominal share) ---
+    // --- Creator-reward: per-day contributors (owner -> nominal share) ---
     // Orders 3-23 are keyed by worldwide day, not by series id.
     /// worldwide_day -> number of contributors.
     #[attribute(order = 3)]
@@ -393,7 +396,7 @@ pub struct IntexContract {
     #[attribute(order = 5)]
     pub contributor_nominal_at: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// worldwide_day -> Σ nominal across all contributors.
+    /// worldwide_day -> sum nominal across all contributors.
     #[attribute(order = 6)]
     pub contributor_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
@@ -478,6 +481,16 @@ pub struct IntexContract {
     /// keccak256(wwd_be32 ++ word_index_be32) -> 256 paid flags, one per leaf.
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // Cumulative: a series forfeits `issued_intex_count - settled - parked` at its
+    // deadline. Not on `SeriesRecord` because a record write rewrites every field.
+    /// series_id -> units settled so far.
+    #[attribute(order = 27)]
+    pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    /// series_id -> units parked into Gem positions.
+    #[attribute(order = 28)]
+    pub parked_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 }
 
 impl IntexContract<'_> {

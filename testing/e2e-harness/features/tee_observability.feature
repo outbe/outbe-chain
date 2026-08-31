@@ -11,7 +11,7 @@ Feature: TEE enclave observability and session identity
   #     survivable WITHOUT restarting the validator (session reconnect with
   #     identity re-validation);
   #   - an enclave that comes back with DIFFERENT keys is refused permanently
-  #     (fail-closed revocation), visible in the canary state — never silently
+  #     (fail-closed revocation), visible in the canary state - never silently
   #     adopted.
   # Membership/onboarding stays with validator_lifecycle; the permanent
   # attested-key restart contract stays with tee_onboarding.

@@ -100,7 +100,7 @@ contract DeployFlowTest is CrossChainTest {
     function test_DistinctDeployersGetDistinctAddresses() public {
         address other = makeAddr("otherDeployer");
         // The factory namespaces the CREATE3 salt by deployer, so the same prefix+version yields
-        // disjoint address spaces — one deployer cannot squat another's predicted address.
+        // disjoint address spaces - one deployer cannot squat another's predicted address.
         address predSelf = Create3Deploy.predictProxy(factory, address(this), "NsTest", VERSION);
         address predOther = Create3Deploy.predictProxy(factory, other, "NsTest", VERSION);
         assertTrue(predSelf != predOther, "deployer must namespace the salt");

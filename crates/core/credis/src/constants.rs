@@ -1,6 +1,6 @@
 //! Module-local protocol constants for credis positions.
 //!
-//! Values trace to the Credis product paper §10. Those still marked TBD there
+//! Values trace to the Credis product paper section 10. Those still marked TBD there
 //! carry a placeholder here plus a `ponytail:` note naming what has to be
 //! decided before launch.
 
@@ -31,8 +31,8 @@ pub const CALL_WINDOW_SECS: u64 = 14 * 24 * 60 * 60;
 pub const DAYS_PER_YEAR: u64 = 365;
 
 /// Basis-point multiplier applied to the currency's official policy rate when
-/// pinning a position's `policy_rate` at opening. 10_000 bp = ×1.
-// ponytail: §10 lists the policy-rate factor as TBD and proposes a default of 1.
+/// pinning a position's `policy_rate` at opening. 10_000 bp = x1.
+// ponytail: section 10 lists the policy-rate factor as TBD and proposes a default of 1.
 // A governance-settable parameter is the upgrade path if it needs retuning
 // without a redeploy.
 pub const POLICY_RATE_FACTOR_BP: u32 = 10_000;

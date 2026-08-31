@@ -138,7 +138,7 @@ contract SmartAccountApproach is BaseAATest {
         vm.prank(user.addr);
         require(token.transfer(smartAccount, 800e18), "user->SA transfer failed");
 
-        // Bundle deposit: 600 tokens (locked) — SA already has 800 >= 600 ✓
+        // Bundle deposit: 600 tokens (locked) - SA already has 800 >= 600 [OK]
         token.mint(mockVault, 600e18);
         vm.prank(mockVault);
         token.approve(smartAccount, 600e18);
@@ -149,7 +149,7 @@ contract SmartAccountApproach is BaseAATest {
         assertEq(token.balanceOf(smartAccount), 1400e18);
         assertEq(bundlePlugin.balanceOf(smartAccount, address(token)), 1200e18);
 
-        // Attempt 1: transfer 300 (exceeds free=200) → hook reverts, UserOp marked failed (success=false)
+        // Attempt 1: transfer 300 (exceeds free=200) -> hook reverts, UserOp marked failed (success=false)
         // Note: ERC-4337 handleOps does NOT revert on execution failures; it emits UserOperationEvent(success=false)
         bytes memory callData300 = abi.encodePacked(
             Kernel.executeUserOp.selector,
@@ -167,7 +167,7 @@ contract SmartAccountApproach is BaseAATest {
         assertEq(token.balanceOf(recipient.addr), 0, "recipient should have 0 tokens after blocked transfer");
         assertEq(token.balanceOf(smartAccount), 1400e18, "SA should still have 1400 tokens after blocked transfer");
 
-        // Attempt 2: transfer 150 (within free=200) → success
+        // Attempt 2: transfer 150 (within free=200) -> success
         bytes memory callData150 = abi.encodePacked(
             Kernel.executeUserOp.selector,
             abi.encodeWithSelector(
@@ -187,7 +187,7 @@ contract SmartAccountApproach is BaseAATest {
     // most freeBalance of a bundled token, and may leave no standing allowance on it), covering
     // SINGLE, BATCH, and the "approve + atomic pull" repayment shape uniformly and address-agnostically.
 
-    /// @dev A batch move within freeBalance is allowed — postCheck checks the NET balance after the
+    /// @dev A batch move within freeBalance is allowed - postCheck checks the NET balance after the
     ///      whole batch, so splitting a move across sub-calls cannot bypass the reserve, and there
     ///      is no need to reject batches wholesale (the prior over-conservative behavior).
     function test_BundleSpendProtector_AllowsBatchTransferWithinFree() external {
@@ -256,7 +256,7 @@ contract SmartAccountApproach is BaseAATest {
         assertEq(token.allowance(smartAccount, address(puller)), 0, "no residual allowance should remain");
     }
 
-    /// @dev Same shape but the pulled amount exceeds freeBalance → reserve invariant broken → rejected.
+    /// @dev Same shape but the pulled amount exceeds freeBalance -> reserve invariant broken -> rejected.
     function test_BundleSpendProtector_BlocksApproveConsumedOverFree() external {
         address smartAccount = _setupSmartAccountWithFree(); // free = 200
         MockPuller puller = new MockPuller();
@@ -283,7 +283,7 @@ contract SmartAccountApproach is BaseAATest {
     }
 
     /// @dev A standalone (unconsumed) approve in a batch leaves a standing allowance a grantee could
-    ///      later drain via an unhooked transferFrom → rejected by the no-standing-allowance rule.
+    ///      later drain via an unhooked transferFrom -> rejected by the no-standing-allowance rule.
     function test_BundleSpendProtector_BlocksUnconsumedBatchApprove() external {
         address smartAccount = _setupSmartAccountWithFree();
         address spender = makeAddr("spender");
@@ -348,7 +348,7 @@ contract SmartAccountApproach is BaseAATest {
 
     /// @dev transferFrom of a bundled token exceeding freeBalance is blocked. A self-allowance is
     ///      set directly (not via the hooked root path) so that, absent the hook, the transferFrom
-    ///      WOULD move funds — the balance staying put attributes the block to the hook, not to a
+    ///      WOULD move funds - the balance staying put attributes the block to the hook, not to a
     ///      missing allowance.
     function test_BundleSpendProtector_BlocksTransferFromOfBundledTokenOverFree() external {
         address smartAccount = _setupSmartAccountWithFree(); // free = 200
@@ -391,7 +391,7 @@ contract SmartAccountApproach is BaseAATest {
         vm.prank(user.addr);
         require(token.transfer(smartAccount, 800e18), "user->SA transfer failed");
 
-        // Bundle deposit: 600 from vault → bundleBalance doubles to 1200, total balance 1400
+        // Bundle deposit: 600 from vault -> bundleBalance doubles to 1200, total balance 1400
         token.mint(vault, 600e18);
         vm.prank(vault);
         token.approve(smartAccount, 600e18);
@@ -416,7 +416,7 @@ contract SmartAccountApproach is BaseAATest {
 
 /// @dev Generic stand-in for the "caller approves, precompile pulls" factory flows
 ///      (credis/gem/nod/intex). `pull` consumes the caller-granted allowance via transferFrom,
-///      exactly as those precompiles do — letting the tests exercise the consumed-approve path
+///      exactly as those precompiles do - letting the tests exercise the consumed-approve path
 ///      without deploying the real precompiles.
 contract MockPuller {
     function pull(address token, address from, uint256 amount) external {

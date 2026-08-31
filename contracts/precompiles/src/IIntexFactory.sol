@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
 ///         settlement, Promis mining, and the dual-wallet authorized-settler
-///         setter. Issuance is a module-to-module call (Desis → IntexFactory)
+///         setter. Issuance is a module-to-module call (Desis -> IntexFactory)
 ///         exposed through the Rust `api`, not a precompile selector. Series
 ///         identity + lifecycle live in Intex; this precompile owns
 ///         settlement bookkeeping and the autonomous qualification index.
@@ -94,11 +94,15 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
 
-    /// @notice The series qualified (Issued → Qualified).
+    /// @notice The series qualified (Issued -> Qualified).
     event SeriesQualified(bytes14 indexed seriesId);
 
-    /// @notice The series was force-called (Qualified → Called).
+    /// @notice The series was force-called (Qualified -> Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
+
+    /// @notice The series' settlement window closed. Both are zero when every unit
+    ///         was realized in time.
+    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
 
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain

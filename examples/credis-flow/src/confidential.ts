@@ -12,7 +12,7 @@ import { createHash, createHmac, hkdfSync, createDecipheriv } from "node:crypto"
 import { x25519 } from "@noble/curves/ed25519";
 import { ethers } from "ethers";
 
-// GratisOp discriminants — MUST match `outbe_tee::protocol::GratisOp` order.
+// GratisOp discriminants - MUST match `outbe_tee::protocol::GratisOp` order.
 // Only Mint/Burn/Pledge/Unpledge are client-authorized; the rest are chain-driven
 // (credis) and listed so the discriminants stay aligned with the Rust enum.
 export enum GratisOp {
@@ -26,20 +26,20 @@ export enum GratisOp {
   RevealOwner = 7,
 }
 
-// PromisOp discriminants — MUST match `outbe_tee::protocol::PromisOp` order.
+// PromisOp discriminants - MUST match `outbe_tee::protocol::PromisOp` order.
 export enum PromisOp {
   Mint = 0,
   Burn = 1,
 }
 
 // The two TEE-confidential ledgers. Selects the enclave key domain, so Gratis and
-// Promis derive cryptographically independent keys — matches `outbe_tee::protocol::Ledger`.
+// Promis derive cryptographically independent keys - matches `outbe_tee::protocol::Ledger`.
 export type Ledger = "Gratis" | "Promis";
 
-// Per-ledger domain-separation labels — MUST match the Rust constants
+// Per-ledger domain-separation labels - MUST match the Rust constants
 // (crates/system/tee/src/lib.rs + bin/outbe-tee-enclave/src/confidential.rs).
-// Note: the modify-key HKDF label ("…/modify-key/v1") differs from the MAC
-// preimage tag ("…/modify/v1"); only the latter appears here (the enclave applies
+// Note: the modify-key HKDF label (".../modify-key/v1") differs from the MAC
+// preimage tag (".../modify/v1"); only the latter appears here (the enclave applies
 // the former server-side when deriving the modify key).
 interface LedgerLabels {
   deriveKeysTag: Uint8Array; // personal_sign domain for outbe_deriveKeys
@@ -59,7 +59,7 @@ const LEDGER_LABELS: Record<Ledger, LedgerLabels> = {
   },
 };
 
-// Domain-separation labels — MUST match the Rust constants.
+// Domain-separation labels - MUST match the Rust constants.
 const DKG_SHARE_INFO = utf8("outbe/tee/dkg-share/v1"); // crypto.rs
 const SPEND_BIND_TAG = utf8("outbe/gratis/credis-bind/v1"); // gratis.rs SPEND_BIND_TAG
 
@@ -112,7 +112,7 @@ function addressBytes(addr: string): Uint8Array {
 // Primitives (Node built-ins)
 // ---------------------------------------------------------------------------
 
-/** HKDF-SHA256 extract+expand to 32 bytes — matches `crypto.rs::hkdf_sha256`. */
+/** HKDF-SHA256 extract+expand to 32 bytes - matches `crypto.rs::hkdf_sha256`. */
 function hkdf32(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array): Uint8Array {
   return new Uint8Array(hkdfSync("sha256", ikm, salt, info, 32));
 }
@@ -134,7 +134,7 @@ function chachaDecrypt(key: Uint8Array, nonce: Uint8Array, ctWithTag: Uint8Array
 }
 
 // ---------------------------------------------------------------------------
-// Key delivery — outbe_deriveGratisKeys RPC
+// Key delivery - outbe_deriveGratisKeys RPC
 // ---------------------------------------------------------------------------
 
 export interface GratisKeys {
@@ -144,7 +144,7 @@ export interface GratisKeys {
 
 /**
  * Fetch the signer's own enclave-derived view + modify keys for `ledger` via the
- * unified `outbe_deriveKeys(ledger, …)` RPC. The enclave seals them to a fresh
+ * unified `outbe_deriveKeys(ledger, ...)` RPC. The enclave seals them to a fresh
  * client ephemeral X25519 key (the `decrypt_share` scheme in `crypto.rs`).
  *
  * The RPC authenticates control of the account: we prove it with an EIP-191
@@ -179,7 +179,7 @@ export async function deriveKeys(signer: ethers.Wallet, ledger: Ledger): Promise
   const nonce = ethers.getBytes(resp.nonce);
   const enclaveEph = ethers.getBytes(resp.enclaveEphemeralPubkey);
 
-  // decrypt_share: shared = ephSecret · enclaveEph; key = HKDF(salt=ephPublic, ikm=shared).
+  // decrypt_share: shared = ephSecret * enclaveEph; key = HKDF(salt=ephPublic, ikm=shared).
   const shared = x25519.getSharedSecret(ephSecret, enclaveEph);
   const key = hkdf32(ephPublic, shared, DKG_SHARE_INFO);
   const plaintext = chachaDecrypt(key, nonce, sealed);
@@ -203,10 +203,10 @@ export function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
  * The Fidelity precompile forwards it to the enclave, which recovers the signer
  * and rejects the read unless it equals `account`, the chain matches, and
  * `expiry >= block timestamp`. Unlike a view key, this only authorizes index
- * reads until `expiry` — never decryption of the raw cohort ledger.
+ * reads until `expiry` - never decryption of the raw cohort ledger.
  *
  * Message = "outbe/fidelity/query-auth/v1" || chainId(32 BE) || account(20) || expiry(8 BE),
- * signed as EIP-191 personal_sign — mirrors `outbe_tee::protocol::fidelity_query_auth_message`
+ * signed as EIP-191 personal_sign - mirrors `outbe_tee::protocol::fidelity_query_auth_message`
  * (chainId is `B256::from(U256::from(chain_id))`, i.e. the numeric chain id big-endian).
  */
 export async function signFidelityQueryAuth(
@@ -325,7 +325,7 @@ export function spendAuth(secret: Uint8Array, bundle: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Position id — keccak256(handle || smartAccount), matches CredisContract
+// Position id - keccak256(handle || smartAccount), matches CredisContract
 // ---------------------------------------------------------------------------
 
 /** `position_id = keccak256(pledge_handle(32) || smart_account(20))` as uint256. */

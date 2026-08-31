@@ -8,7 +8,7 @@
 //!
 //! `validate_consensus_metadata` is the V2 structural + certificate predicate.
 //! `validate_consensus_metadata_for_verify` is retained ONLY as a legacy test
-//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier — it MUST
+//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier - it MUST
 //! NOT be called from production runtime paths, which use
 //! `outbe-consensus-proof::verify_v2_proof` instead.
 
@@ -47,7 +47,7 @@ const MAX_MISSED_PROPOSERS_IN_METADATA: usize = u8::MAX as usize;
 /// finalized-parent attestation validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationVerdict {
-    /// Attestation is absent — valid block, no settlement.
+    /// Attestation is absent - valid block, no settlement.
     AcceptNone,
     /// Attestation present and valid; embed (builder) / accept (verifier).
     AcceptValid,
@@ -104,7 +104,7 @@ pub struct AttestationValidationContext<'a> {
 //
 // `validate_consensus_metadata_for_verify` below is retained ONLY as a
 // test fixture for legacy `handler_tests.rs` cases that pre-date
-// — it MUST NOT be called from production runtime paths. 's
+// - it MUST NOT be called from production runtime paths. 's
 // V2 verifier reads `outbe-consensus-proof::verify_v2_proof` instead.
 
 pub async fn validate_consensus_metadata_for_verify(
@@ -204,7 +204,7 @@ pub(crate) fn validate_consensus_metadata(
     let committee_set: BTreeSet<_> = expected_committee.iter().copied().collect();
     // V2 contract requires `missed_proposers` to be empty; if any
     // event is present, it must reference a committee member (defensive
-    // structural check — the V2 verifier enforces emptiness upstream).
+    // structural check - the V2 verifier enforces emptiness upstream).
     if actual
         .missed_proposers
         .iter()
@@ -242,7 +242,7 @@ pub(crate) fn validate_consensus_metadata(
         return AttestationVerdict::RejectCertificate;
     }
 
-    // V2 signer bitmap is the certificate's own bitmap — no
+    // V2 signer bitmap is the certificate's own bitmap - no
     // supplemental finalize-vote reconciliation. The V1
     // `build_signer_bitmap_with_finalize_votes` helper is dropped.
     let expected_bitmap = build_signer_bitmap(&finalization.certificate, expected_committee.len());
@@ -268,7 +268,7 @@ async fn validate_canonical_missed_proposers(
     let previous_finalization = if actual.finalized_block_number <= 1 {
         None
     } else {
-        // Borrowing future ⇒ biased select instead of `Clock::timeout`.
+        // Borrowing future => biased select instead of `Clock::timeout`.
         let lookup =
             marshal_mailbox.get_finalization(Height::new(actual.finalized_block_number - 1));
         let timeout = clock.sleep(METADATA_CANONICAL_LOOKUP_TIMEOUT);
@@ -295,7 +295,7 @@ async fn validate_canonical_missed_proposers(
     };
 
     // compare V2 event list (`Vec<MissedProposerEvent>`) against
-    // the canonical-derivation `Vec<Address>` — equality holds when (a) both
+    // the canonical-derivation `Vec<Address>` - equality holds when (a) both
     // are empty (the V2 contract) or (b) the event sequence's `.validator`
     // chain matches the expected address sequence.
     let actual_addrs: Vec<Address> = actual

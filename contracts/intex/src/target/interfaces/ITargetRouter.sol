@@ -48,7 +48,7 @@ interface ITargetRouter {
     /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param msgType Codec message type.
-    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, ...) as the handler keys it.
     /// @param reason One of the `InboundReason` codes.
     event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
 
@@ -152,6 +152,6 @@ interface ITargetRouter {
 
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be ≤ contract balance.
+    /// @param amount Amount in wei to sweep; must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 }

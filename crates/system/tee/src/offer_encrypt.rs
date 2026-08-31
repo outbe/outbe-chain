@@ -1,12 +1,12 @@
-//! Client-side tribute-offer encryption — the single shared implementation used
+//! Client-side tribute-offer encryption - the single shared implementation used
 //! by `outbe-cli`, the enclave throughput bench and the node's canary probe.
 //!
 //! Recipe (byte-compatible with the enclave decrypt path
-//! `outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt`): ephemeral X25519 →
-//! ECDHE with the offer public key → `HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm =
-//! shared, info = b"tribute-factory-encryption")` → ChaCha20Poly1305 with empty
+//! `outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt`): ephemeral X25519 ->
+//! ECDHE with the offer public key -> `HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm =
+//! shared, info = b"tribute-factory-encryption")` -> ChaCha20Poly1305 with empty
 //! AAD. This is client-side crypto over an ephemeral secret and the PUBLIC offer
-//! key — no enclave-resident secret material is involved (the crate rule that
+//! key - no enclave-resident secret material is involved (the crate rule that
 //! secret-bearing cryptography lives only in `bin/outbe-tee-enclave` holds).
 
 use crate::OFFER_HKDF_SALT;
@@ -39,7 +39,7 @@ pub fn encrypt_tribute_offer(
     Ok((cipher_text, nonce, eph_pub.to_bytes()))
 }
 
-/// Deterministic variant with an explicit ephemeral secret and nonce — for the
+/// Deterministic variant with an explicit ephemeral secret and nonce - for the
 /// bench, tests, and any caller that manages its own randomness.
 pub fn encrypt_tribute_offer_with(
     offer_pub: &[u8; 32],

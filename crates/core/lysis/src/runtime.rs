@@ -194,7 +194,7 @@ fn load_day_tributes(
     }
 }
 
-/// Computes the FI → gratis-fraction map (fixed-point, SCALE = 10^6) from each
+/// Computes the FI -> gratis-fraction map (fixed-point, SCALE = 10^6) from each
 /// tribute's nominal amount and fidelity index. Pure integer math; deterministic
 /// across nodes.
 ///

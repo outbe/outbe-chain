@@ -11,7 +11,7 @@ import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol"
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 
 /// @dev Wires the local hub to its counterparts on other chains. Bridge and adapters share one CREATE3 address across
-///      chains, so remote addresses equal the local ones (computed here) — env only lists `(chainId, eid)`.
+///      chains, so remote addresses equal the local ones (computed here) - env only lists `(chainId, eid)`.
 ///      Each adapter is wired only if its endpoint env is present (LZ_ENDPOINT / HYPERLANE_MAILBOX). For Hyperlane the
 ///      remote domain is assumed equal to the chain id. When `WIRE_LOOPBACK` is true, the local chain itself is wired
 ///      as a destination through the loopback adapter.

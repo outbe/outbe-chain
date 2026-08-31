@@ -168,7 +168,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         let rate_eth = oracle.get_exchange_rate(usd(), ETH).unwrap();
         assert_eq!(rate_eth, fixed18(2000));
 
-        // BTC/USDT has no initial rate set → zero.
+        // BTC/USDT has no initial rate set -> zero.
         let rate_btc = oracle.get_exchange_rate(BTC, USDT).unwrap();
         assert_eq!(rate_btc, U256::ZERO);
 
@@ -200,7 +200,7 @@ fn init_from_genesis_is_idempotent_on_replay() {
         assert!(oracle.config_is_initialized.read().unwrap());
         assert_eq!(oracle.pair_count.read().unwrap(), 1);
 
-        // Second init is a no-op (idempotent — no error)
+        // Second init is a no-op (idempotent - no error)
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
         assert_eq!(oracle.pair_count.read().unwrap(), 1); // still 1, not 2
     });
@@ -970,7 +970,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
         let start_time = wwd.start_timestamp();
         let end_time = start_time + 50 * 60 * 60;
 
-        // Pair not registered yet → typed None, not an error.
+        // Pair not registered yet -> typed None, not an error.
         assert_eq!(
             crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
             None
@@ -979,7 +979,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
-        // No window data → store is a deterministic no-op returning false,
+        // No window data -> store is a deterministic no-op returning false,
         // not a "no VWAP data" revert leaking to the caller.
         assert!(!crate::api::store_worldwide_day_vwap_snapshot(
             storage.clone(),
@@ -991,10 +991,10 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
         assert_eq!(
             crate::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
             None,
-            "no snapshot written → None"
+            "no snapshot written -> None"
         );
 
-        // Window with data → store writes (true) and the COEN VWAP resolves.
+        // Window with data -> store writes (true) and the COEN VWAP resolves.
         oracle
             .write_snapshot(
                 start_time + 1_500,
@@ -1142,7 +1142,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
 
-        // Two COEN samples within the day → volume-weighted:
+        // Two COEN samples within the day -> volume-weighted:
         // (100*2 + 200*1) / (2 + 1) = 133.333333 at the six-decimal boundary.
         oracle
             .write_snapshot(
@@ -1156,7 +1156,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
                 &[(pair_key(COEN, usd()), coen_iso(200), coen_iso(1))],
             )
             .unwrap();
-        // ETH single sample → VWAP == rate.
+        // ETH single sample -> VWAP == rate.
         oracle
             .write_snapshot(
                 day_start + 300,
@@ -1209,7 +1209,7 @@ fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
 
-        // No snapshots for the day → finalize is a no-op, nothing written.
+        // No snapshots for the day -> finalize is a no-op, nothing written.
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
 
         assert_eq!(
@@ -1244,7 +1244,7 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
 
-        // Finalized day → returns the stored VWAP.
+        // Finalized day -> returns the stored VWAP.
         let call = IOracle::getUtcDayVwapCall {
             base: COEN,
             quote: usd(),
@@ -1258,7 +1258,7 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
         .unwrap();
         assert_eq!(decoded, coen_iso(150));
 
-        // Unfinalized day → revert.
+        // Unfinalized day -> revert.
         let unfinalized = IOracle::getUtcDayVwapCall {
             base: COEN,
             quote: usd(),
@@ -1279,7 +1279,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
     // Measures gas cost of calculate_vwap for a 50-hour window
     // with increasing snapshot counts (simulating real testnet load).
     // Each snapshot has 1 pair. vote_period=2 blocks, ~1s blocks.
-    // 50h = 180,000s → ~90,000 snapshots at 1 per 2s.
+    // 50h = 180,000s -> ~90,000 snapshots at 1 per 2s.
     // We test smaller counts to show the linear growth curve.
     let counts = [100, 500, 1_000, 5_000, 10_000];
     let window_seconds: u64 = 50 * 3600; // 50 hours
@@ -1308,7 +1308,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
             // Gas estimation: each snapshot in range costs ~5 sloads
             // (timestamp + pair_count + pair_id + rate + volume).
             // calculate_vwaps calls this for each vote_target pair.
-            // With 7 pairs: 7 × n × 5 sloads × 100 gas = 3500 × n gas.
+            // With 7 pairs: 7 x n x 5 sloads x 100 gas = 3500 x n gas.
             let estimated_gas_per_pair = n * 5 * 100; // 1 pair
             let estimated_gas_7_pairs = estimated_gas_per_pair * 7;
 
@@ -1319,7 +1319,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
 
             assert!(
                 estimated_gas_7_pairs < 100_000_000,
-                "VWAP with {n} snapshots × 7 pairs costs ~{estimated_gas_7_pairs} gas — exceeds 100M"
+                "VWAP with {n} snapshots x 7 pairs costs ~{estimated_gas_7_pairs} gas - exceeds 100M"
             );
         });
     }
@@ -1696,7 +1696,7 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
-        // COEN is not the base — must not be mistaken for a COEN/<iso> pair.
+        // COEN is not the base - must not be mistaken for a COEN/<iso> pair.
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();

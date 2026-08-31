@@ -64,7 +64,7 @@ async function main() {
   console.log(`ERC20:          ${erc20Address} (${tokenSymbol}, ${tokenDecimals} decimals)`);
   console.log(`Vault Router: ${vaultRouterAddress}`);
 
-  // ── Step 1: Compute deficits ──────────────────────────────────────────────
+  // -- Step 1: Compute deficits ----------------------------------------------
 
   console.log("\n[1] Computing deficits...");
   const userBalance = await tokenAsOwner.balanceOf(userAddress);
@@ -81,12 +81,12 @@ async function main() {
   console.log(`    Vault deficit: ${fmt(vaultDeficit)}`);
 
   if (totalNeeded === 0n) {
-    console.log("\nSufficient — skipping");
+    console.log("\nSufficient - skipping");
     console.log("\n=== Setup ERC20 complete ===");
     return;
   }
 
-  // ── Step 2: Ensure holder has enough tokens ───────────────────────────────
+  // -- Step 2: Ensure holder has enough tokens -------------------------------
 
   console.log("\n[2] Checking holder ERC20 balance...");
   const holderBalance = await tokenAsOwner.balanceOf(holderWallet.address);
@@ -97,24 +97,24 @@ async function main() {
     const tx = await mintableToken.mint(holderWallet.address, mintAmount);
     await tx.wait();
     const newBal = await tokenAsOwner.balanceOf(holderWallet.address);
-    console.log(`    Minted ${fmt(mintAmount)} → holder balance: ${fmt(newBal)}`);
+    console.log(`    Minted ${fmt(mintAmount)} -> holder balance: ${fmt(newBal)}`);
   } else {
-    console.log("    Sufficient — skipping mint");
+    console.log("    Sufficient - skipping mint");
   }
 
-  // ── Step 3: Transfer to user ──────────────────────────────────────────────
+  // -- Step 3: Transfer to user ----------------------------------------------
 
   if (userDeficit > 0n) {
     console.log("\n[3] Transferring to user...");
     const tx = await tokenAsHolder.transfer(userAddress, userDeficit);
     await tx.wait();
     const newBal = await tokenAsOwner.balanceOf(userAddress);
-    console.log(`    Sent ${fmt(userDeficit)} → user balance: ${fmt(newBal)}`);
+    console.log(`    Sent ${fmt(userDeficit)} -> user balance: ${fmt(newBal)}`);
   } else {
-    console.log("\n[3] User balance sufficient — skipping transfer");
+    console.log("\n[3] User balance sufficient - skipping transfer");
   }
 
-  // ── Step 4: Deposit to vault ──────────────────────────────────────────────
+  // -- Step 4: Deposit to vault ----------------------------------------------
 
   if (vaultDeficit > 0n) {
     console.log("\n[4] Depositing to vault...");
@@ -163,9 +163,9 @@ async function main() {
     const depositTx = await vaultRouterAsHolder.deposit(erc20Address, vaultDeficit);
     await depositTx.wait();
     const newBal = await tokenAsOwner.balanceOf(underlyingVaultAddr);
-    console.log(`    Deposited ${fmt(vaultDeficit)} → vault balance: ${fmt(newBal)}`);
+    console.log(`    Deposited ${fmt(vaultDeficit)} -> vault balance: ${fmt(newBal)}`);
   } else {
-    console.log("\n[4] Vault balance sufficient — skipping deposit");
+    console.log("\n[4] Vault balance sufficient - skipping deposit");
   }
 
   console.log("\n=== Setup ERC20 complete ===");

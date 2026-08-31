@@ -1,4 +1,4 @@
-//! Native JSON-RPC layer — the typed replacement for the harness's `cast`
+//! Native JSON-RPC layer - the typed replacement for the harness's `cast`
 //! shell-outs.
 //!
 //! Reads (`eth_call` to the protocol precompiles, block/receipt queries) and
@@ -11,7 +11,7 @@
 //! bridges to alloy's async API via [`block_on`], which runs the future on a
 //! dedicated background runtime and blocks the caller on a channel. That works
 //! regardless of whether the calling step runs on a tokio worker or a plain
-//! thread — there is no runtime nesting to panic on.
+//! thread - there is no runtime nesting to panic on.
 
 use std::future::Future;
 use std::sync::mpsc::sync_channel;
@@ -210,7 +210,7 @@ fn eth_runtime() -> &'static Runtime {
 
 /// Run an async future to completion from a synchronous step. The future runs on
 /// [`eth_runtime`] and the caller blocks on a channel, so there is no runtime
-/// nesting — this is safe whether the caller is a tokio worker or a plain thread.
+/// nesting - this is safe whether the caller is a tokio worker or a plain thread.
 pub(crate) fn block_on<F>(f: F) -> F::Output
 where
     F: Future + Send + 'static,
@@ -253,7 +253,7 @@ where
 }
 
 /// `eth_call` a view function and decode its return, or `None` on any transport /
-/// decode error (the analogue of the old `cast … 2>/dev/null`).
+/// decode error (the analogue of the old `cast ... 2>/dev/null`).
 pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>
 where
     C::Return: Send + 'static,
@@ -1195,7 +1195,7 @@ pub(crate) fn send_reward_call(
     })
 }
 
-/// EOA address (`0x`-hex, checksummed) for a private key — pure, no RPC.
+/// EOA address (`0x`-hex, checksummed) for a private key - pure, no RPC.
 pub(crate) fn address_of(key: &str) -> Option<Address> {
     let signer: PrivateKeySigner = key.parse().ok()?;
     Some(signer.address())
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn address_from_known_key() {
-        // Hardhat account #0 — a well-known key→address pair.
+        // Hardhat account #0 - a well-known key->address pair.
         let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let addr = address_of(key).expect("address");
         assert_eq!(

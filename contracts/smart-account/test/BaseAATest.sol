@@ -158,7 +158,7 @@ abstract contract BaseAATest is Test {
     }
 
     /// @dev Kernel v4 permission signature: abi.encode(bytes[] signatures), one slice per policy
-    ///      (empty — our policies read from calldata, not the signature) then the signer's ECDSA sig.
+    ///      (empty - our policies read from calldata, not the signature) then the signer's ECDSA sig.
     function _permSignature(bytes32 userOpHash, uint256 signerKey) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, ECDSA.toEthSignedMessageHash(userOpHash));
         bytes[] memory sigs = new bytes[](2);
@@ -252,7 +252,7 @@ abstract contract BaseAATest is Test {
         return LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
     }
 
-    /// @dev ERC-7579 single execution calldata: target(20) ‖ value(32) ‖ callData (replaces v3.3 ExecLib.encodeSingle).
+    /// @dev ERC-7579 single execution calldata: target(20) || value(32) || callData (replaces v3.3 ExecLib.encodeSingle).
     function _single(address target, uint256 value, bytes memory data) internal pure returns (bytes memory) {
         return abi.encodePacked(target, value, data);
     }

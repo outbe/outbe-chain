@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Vendored from ZeroDev Kernel v4.0 test/utils/EntryPointLib.sol — deploys the canonical
+// Vendored from ZeroDev Kernel v4.0 test/utils/EntryPointLib.sol - deploys the canonical
 // ERC-4337 EntryPoint v0.9 (0x4337...709) via the deterministic CREATE2 deployer for tests/scripts.
 pragma solidity ^0.8.0;
 

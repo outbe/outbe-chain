@@ -2,7 +2,7 @@
 //!
 //! These types are the message contract shared by the host (`outbe-tee`) and
 //! the enclave (`outbe-tee-enclave`). They carry **no secret material** and no
-//! cryptographic logic — only the shape of requests and responses.
+//! cryptographic logic - only the shape of requests and responses.
 //!
 //! Transport (later slice): length-prefixed framing over UDS, wrapped in a
 //! Noise-IK transport (payload layer). Production first exposes only an
@@ -34,22 +34,22 @@ pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
 /// plus the sender and the node-resolved public Oracle inputs:
 ///   - `cipherText`, `nonce`, `ephemeralPubkey`, `worldwideDay`,
 ///     `tributeCurrency`, `referenceCurrency`, `excludeFromIntexIssuance` (ABI);
-///   - `owner` — the L1 `msg.sender`; the enclave binds it into the result and
+///   - `owner` - the L1 `msg.sender`; the enclave binds it into the result and
 ///     into the `token_id` (computed in-enclave, see `TributeOfferResult`);
 ///   - `issuance_wwd_vwap_minor`, `reference_wwd_vwap_minor`, and
-///     `reference_scurve_minor` — resolved by the node from committed Oracle
+///     `reference_scurve_minor` - resolved by the node from committed Oracle
 ///     state; not ABI fields.
 ///
 /// The ZK fields (`zkProof`/`zkVerificationKey`/`zkPublicKey`/`zkMerkleRoot`)
 /// are verified BEFORE the enclave call and are NOT forwarded.
 ///
 /// Every field here is public and host-supplied, so the enclave never echoes any
-/// of them back — [`TributeOfferResult`] carries only what the enclave itself
+/// of them back - [`TributeOfferResult`] carries only what the enclave itself
 /// computed from the decrypted payload.
 ///
 /// Price integrity: the enclave applies the rate but does not verify it against
 /// chain state; integrity is enforced by deterministic re-execution (a forged
-/// rate yields a state-root mismatch). See plan §"Oracle Price Determinism".
+/// rate yields a state-root mismatch). See plan section "Oracle Price Determinism".
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedTributeOffer {
     /// L1 `msg.sender` that owns the resulting Tribute (public, on-chain).
@@ -66,11 +66,11 @@ pub struct EncryptedTributeOffer {
     /// binds the value into `token_id` without re-deriving either. The host
     /// recomputes the same `(owner, day)` identity from its own input and
     /// rejects a mismatch, and every validator re-executes the call, so the
-    /// chain — not a second in-enclave calendar — is what anchors this field.
+    /// chain - not a second in-enclave calendar - is what anchors this field.
     pub worldwide_day: WorldwideDay,
     /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated in.
     pub tribute_currency: u16,
-    /// ABI `referenceCurrency`. A separate axis from `tribute_currency` — it
+    /// ABI `referenceCurrency`. A separate axis from `tribute_currency` - it
     /// drives gem/intex qualification, not pricing.
     pub reference_currency: u16,
     /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
@@ -118,14 +118,14 @@ pub enum TributeOfferStatus {
 /// fields are the economics derived from the decrypted payload.
 ///
 /// This carries **only what the enclave computed**. Values the host supplied in
-/// [`EncryptedTributeOffer`] — day, currencies, exclusion flag, price — are not
+/// [`EncryptedTributeOffer`] - day, currencies, exclusion flag, price - are not
 /// echoed back: the host already holds them, so an echo would be one more thing
 /// to keep in agreement for no gain. `owner` is the exception and is deliberate:
 /// it is folded into `token_id`, so comparing it against `msg.sender` checks the
 /// enclave's computation rather than repeating an input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TributeOfferResult {
-    /// Poseidon(token_id preimage) — computed in-enclave from sensitive data.
+    /// Poseidon(token_id preimage) - computed in-enclave from sensitive data.
     pub token_id: B256,
     /// L1 `msg.sender` (public, on-chain).
     pub owner: Address,
@@ -134,13 +134,13 @@ pub struct TributeOfferResult {
     /// `max(reference_wwd_vwap_minor, reference_scurve_minor)`, computed inside
     /// the enclave and checked by the host against the public request inputs.
     pub effective_reference_price_minor: U256,
-    /// SU hashes (hex) — the host marks them used (replay prevention). Public
+    /// SU hashes (hex) - the host marks them used (replay prevention). Public
     /// on-chain as used-markers. The privacy-preserving markers-only form (rather
     /// than raw hashes) is a later slice (see `process.rs`).
     pub su_hashes: Vec<String>,
-    /// WAA wallet addresses — host routes agent rewards. Public on-chain.
+    /// WAA wallet addresses - host routes agent rewards. Public on-chain.
     pub wallet_addresses: Vec<String>,
-    /// SRA addresses — host routes agent rewards. Public on-chain.
+    /// SRA addresses - host routes agent rewards. Public on-chain.
     pub sra_addresses: Vec<String>,
     /// Expected public hashes recomputed over the decrypted TributeDraft.
     /// Present only when the matching request carried [`TributeZkContext`].
@@ -193,7 +193,7 @@ pub enum GratisOp {
     Unpledge,
     /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
     /// it to `smart_account`, credit the ticket gratis into the EOA's own pledged
-    /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
+    /// ledger, and delete the ticket (no aggregate change - it stays pledged). Returns
     /// the sealed [`PledgeTerms`] so credis can size the position from the quote the
     /// pledger accepted.
     ConsumePledge,
@@ -216,8 +216,8 @@ pub enum GratisOp {
 
 /// Proof that the caller holds the account's modify key, without revealing it.
 ///
-/// `mac = HMAC-SHA256(modify_key, "outbe/gratis/modify/v1" ‖ account ‖ op_tag ‖
-/// amount ‖ op_nonce ‖ chain_id)`, recomputed inside the enclave (which
+/// `mac = HMAC-SHA256(modify_key, "outbe/gratis/modify/v1" || account || op_tag ||
+/// amount || op_nonce || chain_id)`, recomputed inside the enclave (which
 /// re-derives `modify_key` from the resident state key + account). `op_nonce` is
 /// the account's monotonic on-chain replay counter, so a captured tuple cannot be
 /// replayed.
@@ -233,7 +233,7 @@ pub struct ModifyAuth {
 /// handed back verbatim on the matching `ConsumePledge`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PledgeTerms {
-    /// Stablecoin minor units the pledge covers — equals `GratisOpRequest::amount` on
+    /// Stablecoin minor units the pledge covers - equals `GratisOpRequest::amount` on
     /// a `Pledge` (the enclave cross-checks it, since that is the MAC-bound figure).
     pub stables_amount: U256,
     /// Gratis debited from the pledger's balance, derived host-side from the oracle
@@ -266,14 +266,14 @@ pub struct GratisOpRequest {
     // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
     // visible in calldata (only cumulative balances are encrypted). To also hide
     // amounts, carry a client-encrypted amount blob here (like `EncryptedTributeOffer`)
-    // and decrypt it inside the enclave — heavier ABI + a client encrypt step.
+    // and decrypt it inside the enclave - heavier ABI + a client encrypt step.
     pub amount: U256,
-    /// Current balance blob (`version(8 BE) ‖ ciphertext`), self-versioning so no
+    /// Current balance blob (`version(8 BE) || ciphertext`), self-versioning so no
     /// separate version slot is needed. Empty when the account has no state yet.
     pub current_balance: Vec<u8>,
-    /// Current pledged-ledger blob (same `version ‖ ct` shape). Empty if none.
+    /// Current pledged-ledger blob (same `version || ct` shape). Empty if none.
     pub current_pledged: Vec<u8>,
-    /// Existing pledge-lock-ticket blob (`version ‖ ct`); empty for `Pledge`. Set for
+    /// Existing pledge-lock-ticket blob (`version || ct`); empty for `Pledge`. Set for
     /// `Unpledge`/`ConsumePledge`.
     pub current_pledge_record: Vec<u8>,
     /// Modify-key authorization (required for Mint/Burn/Pledge/Unpledge; ignored for
@@ -291,9 +291,9 @@ pub struct GratisOpRequest {
     #[serde(default)]
     pub pledge_terms: Option<PledgeTerms>,
     /// Optional co-located Fidelity cohort update/probe, applied atomically with
-    /// the Gratis op in the SAME enclave round-trip (Mint → `In`, Burn/BurnPledged
-    /// → `Out`, Pledge → `Probe` for the eligibility gate). A failing section
-    /// rejects the whole op — the host writes neither ledger.
+    /// the Gratis op in the SAME enclave round-trip (Mint -> `In`, Burn/BurnPledged
+    /// -> `Out`, Pledge -> `Probe` for the eligibility gate). A failing section
+    /// rejects the whole op - the host writes neither ledger.
     #[serde(default)]
     pub fidelity: Option<FidelityOpSection>,
 }
@@ -317,13 +317,13 @@ pub enum FidelityCohortOp {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityOpSection {
     pub op: FidelityCohortOp,
-    /// Block timestamp (seconds) — the cohort `acquired_at`/`sold_at` stamp and
+    /// Block timestamp (seconds) - the cohort `acquired_at`/`sold_at` stamp and
     /// the league evaluation time.
     pub timestamp: u64,
     /// Plaintext global `first_qualified_start` scalar (league ceiling anchor);
     /// `0` before any account has qualified.
     pub first_qualified_start: u64,
-    /// Current cohort-ledger blob (`version(8 BE) ‖ ciphertext`); empty when the
+    /// Current cohort-ledger blob (`version(8 BE) || ciphertext`); empty when the
     /// account has no cohort state yet.
     pub current_blob: Vec<u8>,
 }
@@ -332,18 +332,18 @@ pub struct FidelityOpSection {
 /// [`GratisOpResult`]. Cohort contents never appear here.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityOpOutcome {
-    /// New cohort-ledger blob (`version ‖ ct`) to store verbatim; EMPTY for a
+    /// New cohort-ledger blob (`version || ct`) to store verbatim; EMPTY for a
     /// `Probe` (nothing to write).
     pub new_blob: Vec<u8>,
     /// `Some(ts)` when this op set the account's `qualified_start` (first
-    /// acquisition) — the host updates the global plaintext
+    /// acquisition) - the host updates the global plaintext
     /// `first_qualified_start` if still unset.
     pub qualified_start_initialized: Option<u64>,
     /// The account's league at the section timestamp, evaluated post-op.
     pub league: u16,
 }
 
-/// Inputs for a STANDALONE `ApplyFidelityCohortOp` — a cohort mutation applied
+/// Inputs for a STANDALONE `ApplyFidelityCohortOp` - a cohort mutation applied
 /// on its own enclave round-trip (used where there is no co-located Gratis op to
 /// fold into, i.e. the fidelity crate's `cohort_in`/`cohort_out` before the
 /// Phase-3 round-trip fold). The section carries the op/timestamp/anchor/blob;
@@ -365,7 +365,7 @@ pub struct FidelityCohortResult {
     /// Diagnostic hash of the canonical request inputs; the host recomputes it to
     /// detect enclave non-determinism, then discards.
     pub inputs_canonical_hash: B256,
-    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the
+    /// Local-only attestation tag over `(inputs_canonical_hash || result)`; the
     /// host verifies it against the pinned enclave attestation key, then discards.
     pub attestation_tag: Vec<u8>,
 }
@@ -383,11 +383,11 @@ pub enum GratisOpStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
-    /// New balance blob (`version ‖ ct`) to store verbatim.
+    /// New balance blob (`version || ct`) to store verbatim.
     pub new_balance: Vec<u8>,
-    /// New pledged-ledger blob (`version ‖ ct`) to store verbatim.
+    /// New pledged-ledger blob (`version || ct`) to store verbatim.
     pub new_pledged: Vec<u8>,
-    /// New pledge-lock-ticket blob (`version ‖ ct`) for `Pledge`; empty on
+    /// New pledge-lock-ticket blob (`version || ct`) for `Pledge`; empty on
     /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
     /// ticket slot). Empty and untouched for all other ops.
     pub new_pledge_record: Vec<u8>,
@@ -402,7 +402,7 @@ pub struct GratisOpResult {
     /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
     /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
     pub revealed_owner: Address,
-    /// Self-contained sealed EOA blob (`nonce(12) ‖ ChaCha20Poly1305(owner 20B)` under the
+    /// Self-contained sealed EOA blob (`nonce(12) || ChaCha20Poly1305(owner 20B)` under the
     /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
     /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_handle = None`).
     pub eoa_ct: Vec<u8>,
@@ -417,7 +417,7 @@ pub struct GratisOpResult {
     /// Diagnostic hash of the canonical request inputs; the host recomputes it to
     /// detect enclave non-determinism, then discards.
     pub inputs_canonical_hash: B256,
-    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the
+    /// Local-only attestation tag over `(inputs_canonical_hash || result)`; the
     /// host verifies it against the pinned enclave attestation key, then discards.
     pub attestation_tag: Vec<u8>,
 }
@@ -447,7 +447,7 @@ pub enum PromisOp {
 }
 
 /// Inputs for a single `ApplyPromisOp`. The host reads the current balance
-/// ciphertext (`version(8 BE) ‖ ct`, empty for a fresh account) from committed
+/// ciphertext (`version(8 BE) || ct`, empty for a fresh account) from committed
 /// storage and forwards it verbatim; the enclave decrypts, enforces the balance
 /// invariant + modify-key authorization, and re-encrypts deterministically.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -456,7 +456,7 @@ pub struct PromisOpRequest {
     pub chain_id: B256,
     pub account: Address,
     pub amount: U256,
-    /// Current balance blob (`version(8 BE) ‖ ciphertext`); empty when the account
+    /// Current balance blob (`version(8 BE) || ciphertext`); empty when the account
     /// has no state yet.
     pub current_balance: Vec<u8>,
     /// Modify-key authorization (required for both Mint and Burn).
@@ -476,7 +476,7 @@ pub enum PromisOpStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PromisOpResult {
     pub status: PromisOpStatus,
-    /// New balance blob (`version ‖ ct`) to store verbatim.
+    /// New balance blob (`version || ct`) to store verbatim.
     pub new_balance: Vec<u8>,
     /// Amount for the emitted event (mint/burn magnitude).
     pub event_amount: U256,
@@ -485,7 +485,7 @@ pub struct PromisOpResult {
     /// Diagnostic hash of the canonical request inputs; the host recomputes it to
     /// detect enclave non-determinism, then discards.
     pub inputs_canonical_hash: B256,
-    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the host
+    /// Local-only attestation tag over `(inputs_canonical_hash || result)`; the host
     /// verifies it against the pinned enclave attestation key, then discards.
     pub attestation_tag: Vec<u8>,
 }
@@ -494,7 +494,7 @@ pub struct PromisOpResult {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelitySnapshotEntry {
     pub owner: Address,
-    /// Current cohort-ledger blob (`version(8 BE) ‖ ct`); empty for no state.
+    /// Current cohort-ledger blob (`version(8 BE) || ct`); empty for no state.
     pub cohort_blob: Vec<u8>,
 }
 
@@ -520,14 +520,14 @@ pub struct FidelityLeagueEntry {
 }
 
 /// Inputs for a `QueryFidelityIndex`: an owner-authorized read of one account's
-/// RCFI/league over its encrypted cohorts. NOT a consensus path — served via
+/// RCFI/league over its encrypted cohorts. NOT a consensus path - served via
 /// `eth_call`. `owner_sig` is the 65-byte EIP-191 `personal_sign` signature by
 /// `account` over [`fidelity_query_auth_message`]; the enclave recovers it and
 /// rejects unless the signer equals `account`, the message chain id equals the
 /// enclave's resident chain id, and `expiry >= block_timestamp`.
 ///
 /// Scope of the guarantees: the signature is never key material and can never
-/// be forged. Chain binding IS enforced — the enclave hashes the message under
+/// be forged. Chain binding IS enforced - the enclave hashes the message under
 /// its own resident chain id and rejects a mismatched `chain_id`, so a signature
 /// captured on another chain (same reused EOA) cannot authorize a read here.
 /// The `expiry` bound is only advisory against a COMPROMISED host: the enclave
@@ -535,20 +535,20 @@ pub struct FidelityLeagueEntry {
 /// host-supplied `block_timestamp`, so a malicious host can pass
 /// `block_timestamp = 0` and reuse a stale genuine signature. The worst case is
 /// re-reading the derived index/league the owner already chose to expose by
-/// signing — never the raw cohort ledger.
+/// signing - never the raw cohort ledger.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityQueryRequest {
     /// The chain the authorization is for; the enclave rejects unless it equals
     /// its own resident chain id (it does NOT trust this value for key
-    /// derivation — that uses the resident id).
+    /// derivation - that uses the resident id).
     pub chain_id: B256,
     pub account: Address,
-    /// Current cohort-ledger blob (`version(8 BE) ‖ ct`); empty for no state.
+    /// Current cohort-ledger blob (`version(8 BE) || ct`); empty for no state.
     pub cohort_blob: Vec<u8>,
-    /// Timestamp to evaluate RCFI/league at (any time — the curve is pure).
+    /// Timestamp to evaluate RCFI/league at (any time - the curve is pure).
     pub query_timestamp: u64,
     /// Current block timestamp, for the `expiry` freshness check (advisory
-    /// against a compromised host — see the type doc).
+    /// against a compromised host - see the type doc).
     pub block_timestamp: u64,
     /// Plaintext global `first_qualified_start` scalar; `0` if unset.
     pub first_qualified_start: u64,
@@ -569,7 +569,7 @@ pub struct FidelityQueryResult {
     /// Diagnostic hash of the canonical request inputs; the host recomputes it to
     /// detect enclave non-determinism, then discards.
     pub inputs_canonical_hash: B256,
-    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the host
+    /// Local-only attestation tag over `(inputs_canonical_hash || result)`; the host
     /// verifies it against the pinned enclave attestation key, then discards.
     pub attestation_tag: Vec<u8>,
 }
@@ -660,7 +660,7 @@ pub enum EnclaveRequest {
 
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
-    /// owner's signature binding the two — so the untrusted host cannot mis-pair or
+    /// owner's signature binding the two - so the untrusted host cannot mis-pair or
     /// duplicate enc keys. The enclave verifies every binding, rejects duplicate
     /// enc keys, then builds the ceremony `Info` from the BLS set and captures the
     /// enc keys so dealings can be sealed to recipients. The host only relays values
@@ -699,7 +699,7 @@ pub enum EnclaveRequest {
     /// Seam F (offer key): threshold-sign the fixed offer message with this
     /// enclave's recovered share, then **seal the partial to every recipient
     /// enclave's X25519 key** (one ciphertext per participant). The host relays
-    /// only the opaque ciphertexts — it never sees a plaintext partial, so it
+    /// only the opaque ciphertexts - it never sees a plaintext partial, so it
     /// cannot recover the group signature (and hence the offer key) itself.
     /// Requires `DkgPlayerFinalize` first.
     DkgTributeOfferPartial { ceremony_id: B256 },
@@ -775,13 +775,13 @@ pub enum EnclaveRequest {
 
     /// Off-chain key delivery: derive `account`'s view + modify keys for `ledger`
     /// from the matching resident state key and seal them to the requester's
-    /// ephemeral X25519 key. NOT a consensus path — served only over RPC, never
+    /// ephemeral X25519 key. NOT a consensus path - served only over RPC, never
     /// during block execution.
     ///
     /// `owner_sig` is the 65-byte (`r||s||v`) EIP-191 `personal_sign` signature by
     /// `account` over `derive_account_keys_message(ledger, account,
     /// requester_ephemeral_pubkey)`. The enclave recovers it and rejects unless the
-    /// signer equals `account`, so the keys are released only to the account owner —
+    /// signer equals `account`, so the keys are released only to the account owner -
     /// the trust boundary is the enclave, not the (untrusted) host RPC that also
     /// checks it as a fast reject. Carried as `Vec<u8>` because serde does not derive
     /// for `[u8; 65]`; the enclave validates the length.
@@ -797,7 +797,7 @@ pub enum EnclaveRequest {
     /// every validator. See [`FidelityCohortRequest`].
     ApplyFidelityCohortOp { request: Box<FidelityCohortRequest> },
 
-    /// Batch-decrypt cohort blobs and return one plaintext league per owner —
+    /// Batch-decrypt cohort blobs and return one plaintext league per owner -
     /// metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP prepare
     /// step in begin-block, re-executed by every validator).
     SnapshotFidelityLeagues {
@@ -805,13 +805,13 @@ pub enum EnclaveRequest {
     },
 
     /// Owner-authorized read of one account's RCFI/league over its encrypted
-    /// cohorts (signed, expiring authorization — see [`FidelityQueryRequest`]).
-    /// NOT a consensus path — served via `eth_call`.
+    /// cohorts (signed, expiring authorization - see [`FidelityQueryRequest`]).
+    /// NOT a consensus path - served via `eth_call`.
     QueryFidelityIndex { request: Box<FidelityQueryRequest> },
 
     /// Read-only health/telemetry probe: uptime, request counters, offer-key
     /// readiness and self-observed heap usage. Never touches keys or sealed
-    /// state. NOT a consensus path — served to the local NodeHost only.
+    /// state. NOT a consensus path - served to the local NodeHost only.
     ///
     /// WIRE-COMPAT LAW: the codec encodes enums by variant declaration index
     /// (postcard), so new variants are appended ONLY at the tail of
@@ -868,7 +868,7 @@ impl EnclaveRequest {
     /// double-apply enclave state: the request is pure or deterministic, so the
     /// reconnect-and-retry path may re-send it once. State-mutating requests
     /// (initialization, DKG seams, artifact ingestion, session admission and
-    /// the multi-frame DCAP upload) must never be re-sent implicitly — the
+    /// the multi-frame DCAP upload) must never be re-sent implicitly - the
     /// exhaustive match forces every future variant to make this choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
@@ -934,11 +934,11 @@ pub struct EnclaveHealthStatusV1 {
 
 /// Domain-tagged message an account owner personal-signs to authorize Fidelity
 /// index queries until `expiry`:
-/// `"outbe/fidelity/query-auth/v1" ‖ chain_id(32) ‖ account(20) ‖ expiry_be(8)`.
+/// `"outbe/fidelity/query-auth/v1" || chain_id(32) || account(20) || expiry_be(8)`.
 ///
 /// SHARED by the host precompile (fast reject) and the enclave (the trust
 /// boundary) so the two hash an identical preimage. Deliberately scoped: a
-/// leaked signature authorizes index reads until `expiry` — it is never key
+/// leaked signature authorizes index reads until `expiry` - it is never key
 /// material and cannot decrypt state.
 pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64) -> Vec<u8> {
     let tag: &[u8] = b"outbe/fidelity/query-auth/v1";
@@ -950,7 +950,7 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
     m
 }
 
-/// Deterministic hash over the canonical batch inputs — every field of every
+/// Deterministic hash over the canonical batch inputs - every field of every
 /// offer. Length-prefixed to be unambiguous.
 ///
 /// Every field of `ProcessTributeOfferBatch` must be covered here: an input the
@@ -958,9 +958,9 @@ pub fn fidelity_query_auth_message(chain_id: B256, account: Address, expiry: u64
 /// enclave's would agree on ignoring it.
 ///
 /// SHARED by the enclave (which returns it in `TributeOfferBatch`) and the host (which
-/// recomputes it from the request it sent and compares — a mismatch is enclave
+/// recomputes it from the request it sent and compares - a mismatch is enclave
 /// non-determinism). Defining it once here keeps the two byte layouts from
-/// drifting. Diagnostic only — never written to chain state.
+/// drifting. Diagnostic only - never written to chain state.
 pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(&(offers.len() as u32).to_be_bytes());
@@ -995,7 +995,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
 /// `"outbe/<ledger>/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
 ///
 /// SHARED by the host RPC (fast reject) and the enclave (the trust boundary) so
-/// the two hash an identical preimage — a divergence would let one accept a
+/// the two hash an identical preimage - a divergence would let one accept a
 /// signature the other rejects. The Gratis tag byte-matches the historical
 /// [`derive_gratis_keys_message`], so existing Gratis clients are unaffected.
 pub fn derive_account_keys_message(
@@ -1016,12 +1016,12 @@ pub fn derive_account_keys_message(
 }
 
 /// Backward-compatible alias for the Gratis key-derivation message
-/// (`derive_account_keys_message(Ledger::Gratis, …)`).
+/// (`derive_account_keys_message(Ledger::Gratis, ...)`).
 pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
     derive_account_keys_message(Ledger::Gratis, account, ephemeral_pubkey)
 }
 
-/// EIP-191 `personal_sign` digest of `message` — matches ethers `signMessage`.
+/// EIP-191 `personal_sign` digest of `message` - matches ethers `signMessage`.
 pub fn eip191_hash(message: &[u8]) -> B256 {
     let mut buf = Vec::with_capacity(message.len() + 40);
     buf.extend_from_slice(b"\x19Ethereum Signed Message:\n");
@@ -1031,11 +1031,11 @@ pub fn eip191_hash(message: &[u8]) -> B256 {
 }
 
 /// Domain-separated preimage the enclave signs (with its Ed25519 attestation key)
-/// and the host verifies — it binds the canonical inputs hash to the produced
+/// and the host verifies - it binds the canonical inputs hash to the produced
 /// results, so the host can prove the results were computed inside the attested
 /// enclave (not substituted by the host). SHARED so the two byte layouts cannot
 /// drift: `serde_json` of a fixed-field struct list is deterministic (struct
-/// field order is declaration order; there are no maps or floats). Local-only —
+/// field order is declaration order; there are no maps or floats). Local-only -
 /// never written to chain state.
 pub fn tribute_offer_attestation_preimage(
     inputs_canonical_hash: B256,
@@ -1175,7 +1175,7 @@ pub enum EnclaveResponse {
         share_commitment: B256,
     },
     /// Seam F result: this enclave's partial signature over the offer message,
-    /// **sealed to each recipient enclave** — one opaque ciphertext per
+    /// **sealed to each recipient enclave** - one opaque ciphertext per
     /// participant `(recipient_bls, sealed_partial)`. The host relays the
     /// ciphertexts but cannot decrypt them, so it cannot recover the group
     /// signature / offer key.
@@ -1186,14 +1186,14 @@ pub enum EnclaveResponse {
     /// group signature (the secret stays resident in the enclave).
     DkgTributeOfferKey {
         tribute_offer_public: [u8; 32],
-        /// The committee's DKG group public KEY (constant term) — the public
+        /// The committee's DKG group public KEY (constant term) - the public
         /// verification key for this committee's threshold group signatures.
         /// Carried into the bootstrap payload so a later reshare endorsement can be
         /// verified on-chain against this committee's key.
         group_public_key: Vec<u8>,
     },
     /// On-chain key delivery SERVER result: the resident group signature
-    /// DETERMINISTICALLY sealed to `recipient_x25519` — byte-identical across all
+    /// DETERMINISTICALLY sealed to `recipient_x25519` - byte-identical across all
     /// committee enclaves, for committing to `TeeRegistry`.
     SealedOfferKeyForRegistry {
         sealed: Vec<u8>,
@@ -1239,7 +1239,7 @@ pub enum EnclaveResponse {
         result: Box<FidelityQueryResult>,
     },
     /// Result of `DeriveAccountKeys`: `AEAD(ECDHE(enclave, requester_ephemeral),
-    /// view_key ‖ modify_key)` sealed to the requester. Opaque to the host.
+    /// view_key || modify_key)` sealed to the requester. Opaque to the host.
     AccountKeysSealed {
         account: Address,
         sealed: Vec<u8>,
@@ -1258,8 +1258,8 @@ pub enum EnclaveResponse {
 
 /// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by
 /// the enclave (returned in `GratisOpResult`) and the host (recomputed from the
-/// request it sent and compared — a mismatch is enclave non-determinism).
-/// Length-prefixed to be unambiguous. Diagnostic only — never written to state.
+/// request it sent and compared - a mismatch is enclave non-determinism).
+/// Length-prefixed to be unambiguous. Diagnostic only - never written to state.
 pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     fn push_bytes(buf: &mut Vec<u8>, b: &[u8]) {
         buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
@@ -1323,7 +1323,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
 /// Domain-separated preimage the enclave signs (Ed25519 attestation key) and the
 /// host verifies, binding the canonical inputs hash to the produced result so the
 /// host can prove the result came from the attested enclave. SHARED so the byte
-/// layouts cannot drift. Local-only — never written to chain state.
+/// layouts cannot drift. Local-only - never written to chain state.
 pub fn gratis_op_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &GratisOpResult,
@@ -1346,8 +1346,8 @@ pub fn gratis_op_attestation_preimage(
 /// Deterministic hash over the canonical inputs of a single Promis op (the
 /// [`promis_op_canonical_hash`] analogue of [`gratis_op_canonical_hash`]). SHARED
 /// by the enclave (returned in `PromisOpResult`) and the host (recomputed and
-/// compared — a mismatch is enclave non-determinism). Length-prefixed;
-/// diagnostic only — never written to state.
+/// compared - a mismatch is enclave non-determinism). Length-prefixed;
+/// diagnostic only - never written to state.
 pub fn promis_op_canonical_hash(req: &PromisOpRequest) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.push(req.op as u8);
@@ -1362,9 +1362,9 @@ pub fn promis_op_canonical_hash(req: &PromisOpRequest) -> B256 {
 }
 
 /// Domain-separated preimage the enclave signs (Ed25519 attestation key) and the
-/// host verifies for a Promis op — the [`gratis_op_attestation_preimage`]
+/// host verifies for a Promis op - the [`gratis_op_attestation_preimage`]
 /// analogue, with its own domain tag so a Gratis attestation can never be replayed
-/// as a Promis one. Local-only — never written to chain state.
+/// as a Promis one. Local-only - never written to chain state.
 pub fn promis_op_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &PromisOpResult,
@@ -1396,7 +1396,7 @@ pub fn fidelity_cohort_canonical_hash(req: &FidelityCohortRequest) -> B256 {
     alloy_primitives::keccak256(buf)
 }
 
-/// Domain-separated attestation preimage for a standalone Fidelity cohort op —
+/// Domain-separated attestation preimage for a standalone Fidelity cohort op -
 /// its own tag so no other attestation can be replayed as one. Local-only.
 pub fn fidelity_cohort_attestation_preimage(
     inputs_canonical_hash: B256,
@@ -1415,8 +1415,8 @@ pub fn fidelity_cohort_attestation_preimage(
 
 /// Deterministic hash over the canonical inputs of a Fidelity league snapshot
 /// batch. SHARED by the enclave (returned in `FidelityLeaguesSnapshotted`) and
-/// the host (recomputed and compared — a mismatch is enclave non-determinism).
-/// Length-prefixed; diagnostic only — never written to state.
+/// the host (recomputed and compared - a mismatch is enclave non-determinism).
+/// Length-prefixed; diagnostic only - never written to state.
 pub fn fidelity_snapshot_canonical_hash(req: &FidelitySnapshotRequest) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(&req.timestamp.to_be_bytes());
@@ -1430,7 +1430,7 @@ pub fn fidelity_snapshot_canonical_hash(req: &FidelitySnapshotRequest) -> B256 {
     alloy_primitives::keccak256(buf)
 }
 
-/// Domain-separated attestation preimage for a Fidelity snapshot batch — the
+/// Domain-separated attestation preimage for a Fidelity snapshot batch - the
 /// [`gratis_op_attestation_preimage`] analogue with its own tag. Local-only.
 pub fn fidelity_snapshot_attestation_preimage(
     inputs_canonical_hash: B256,
@@ -1463,7 +1463,7 @@ pub fn fidelity_query_canonical_hash(req: &FidelityQueryRequest) -> B256 {
     alloy_primitives::keccak256(buf)
 }
 
-/// Domain-separated attestation preimage for a Fidelity index query — its own
+/// Domain-separated attestation preimage for a Fidelity index query - its own
 /// tag so no other attestation can be replayed as one. Local-only.
 pub fn fidelity_query_attestation_preimage(
     inputs_canonical_hash: B256,

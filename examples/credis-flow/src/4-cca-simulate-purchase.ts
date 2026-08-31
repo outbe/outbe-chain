@@ -90,7 +90,7 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Build and submit UserOp ───────────────────────────────────────────────
+  // -- Build and submit UserOp -----------------------------------------------
 
   // Per-token CCA permission (Kernel v4 permission validation, vType = 0x02).
   const nonceKey = permissionNonceKey(ccaPermissionId(erc20Address));
@@ -153,7 +153,7 @@ async function main() {
   console.log(`  Block:      ${receipt!.blockNumber}`);
   console.log(`  Gas used:   ${receipt!.gasUsed}`);
 
-  // ── State after ───────────────────────────────────────────────────────────
+  // -- State after -----------------------------------------------------------
 
   const [bundleBalAfter, accountBalAfter, ccaBalAfter] = await Promise.all([
     bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),

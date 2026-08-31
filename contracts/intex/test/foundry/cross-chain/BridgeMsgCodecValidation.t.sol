@@ -234,7 +234,7 @@ contract BridgeMsgCodecValidationTest is Test {
     /// @notice The send-side `maxMessageSize` the bridge configures for these pathways. A send whose
     ///         encoded message exceeds this reverts on the source chain. This is the *byte*
     ///         ceiling only; destination gas (the per-item crosschainMint loop) is a separate and,
-    ///         for the heavy paths, tighter limit — not measured here.
+    ///         for the heavy paths, tighter limit - not measured here.
     uint256 internal constant MAX_MESSAGE_BYTES = 10_000;
 
     /// @dev Derives the largest array length whose encoded message still fits under

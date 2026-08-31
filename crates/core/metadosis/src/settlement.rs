@@ -321,7 +321,7 @@ pub(crate) fn day_entry_prices(
     )?;
     // A zero price is not a price. The projection carries the day-type row even
     // when the oracle has nothing for it, so that the OCOMP envelope always has
-    // one currency; here an empty table is load-bearing in the other direction —
+    // one currency; here an empty table is load-bearing in the other direction -
     // it is how Desis is told the day is unpriced, and it cancels and refunds on
     // it rather than opening an auction nobody can bid in.
     let priced: Vec<_> = projection

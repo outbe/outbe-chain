@@ -319,10 +319,12 @@ fn intex_state_encoding_matches_solidity() {
     assert_eq!(IntexState::Issued as u8, 0);
     assert_eq!(IntexState::Qualified as u8, 1);
     assert_eq!(IntexState::Called as u8, 2);
+    assert_eq!(IntexState::Expired as u8, 3);
     assert_eq!(IntexState::from_u8(0).unwrap(), IntexState::Issued);
     assert_eq!(IntexState::from_u8(1).unwrap(), IntexState::Qualified);
     assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Called);
-    assert!(IntexState::from_u8(3).is_err());
+    assert_eq!(IntexState::from_u8(3).unwrap(), IntexState::Expired);
+    assert!(IntexState::from_u8(4).is_err());
 }
 
 // ---------------------------------------------------------------------
@@ -1077,4 +1079,124 @@ fn empty_population_and_empty_batch_are_rejected() {
         verify_contributor_leaf_range(600, 0, &[], &contributor_range_proof(&leaves, 0), root)
             .is_err()
     );
+}
+
+// ---------------------------------------------------------------------
+// realized units + expiry
+// ---------------------------------------------------------------------
+
+/// Create a series and drive it to `Called` so expiry can be exercised.
+fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
+    api::create_series(storage, sample_params(worldwide_day)).unwrap();
+    api::mark_qualified(storage, sid(worldwide_day)).unwrap();
+    api::mark_called(storage, sid(worldwide_day), ISSUED_AT).unwrap();
+    sid(worldwide_day)
+}
+
+#[test]
+fn expiry_forfeits_every_unrealized_unit() {
+    with_registry(|s| {
+        let id = called_series(&s, 40);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 100);
+        assert_eq!(
+            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
+            IntexState::Expired
+        );
+    });
+}
+
+#[test]
+fn expiry_forfeits_only_what_was_left_unrealized() {
+    with_registry(|s| {
+        let id = called_series(&s, 41);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_parked_units(&s, id, 25).unwrap();
+
+        assert_eq!(api::settled_units(&s, id).unwrap(), 30);
+        assert_eq!(api::parked_units(&s, id).unwrap(), 25);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 45);
+    });
+}
+
+#[test]
+fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
+    with_registry(|s| {
+        let id = called_series(&s, 42);
+        api::record_settled_units(&s, id, 60).unwrap();
+        api::record_parked_units(&s, id, 40).unwrap();
+
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
+        assert_eq!(
+            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
+            IntexState::Expired
+        );
+    });
+}
+
+#[test]
+fn the_view_carries_what_is_still_unrealized() {
+    with_registry(|s| {
+        let id = called_series(&s, 46);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_parked_units(&s, id, 25).unwrap();
+
+        let data = dispatch_series_data(&s, id);
+        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.parkedUnits, 25);
+
+        // The counters survive expiry, so the split stays readable afterwards.
+        api::expire_series(&s, id).unwrap();
+        let data = dispatch_series_data(&s, id);
+        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.parkedUnits, 25);
+    });
+}
+
+fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex::SeriesData {
+    let call = IIntex::seriesDataCall {
+        seriesId: series_id.into(),
+    };
+    let out = dispatch(
+        storage.clone(),
+        &call.abi_encode(),
+        Address::ZERO,
+        U256::ZERO,
+    )
+    .unwrap();
+    IIntex::seriesDataCall::abi_decode_returns(&out).unwrap()
+}
+
+#[test]
+fn expiry_is_rejected_before_the_series_is_called() {
+    with_registry(|s| {
+        api::create_series(&s, sample_params(43)).unwrap();
+        assert!(api::expire_series(&s, sid(43)).is_err());
+
+        api::mark_qualified(&s, sid(43)).unwrap();
+        assert!(api::expire_series(&s, sid(43)).is_err());
+    });
+}
+
+#[test]
+fn expired_is_terminal() {
+    with_registry(|s| {
+        let id = called_series(&s, 44);
+        api::expire_series(&s, id).unwrap();
+
+        assert!(api::expire_series(&s, id).is_err());
+        assert!(api::mark_qualified(&s, id).is_err());
+        assert!(api::mark_called(&s, id, ISSUED_AT).is_err());
+    });
+}
+
+#[test]
+fn realized_units_can_never_exceed_the_issued_count() {
+    with_registry(|s| {
+        let id = called_series(&s, 45);
+        api::record_settled_units(&s, id, 100).unwrap();
+        // One unit past the cap means the two ledgers disagree; the forfeit
+        // arithmetic would underflow later, so it is refused here instead.
+        assert!(api::record_parked_units(&s, id, 1).is_err());
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
+    });
 }

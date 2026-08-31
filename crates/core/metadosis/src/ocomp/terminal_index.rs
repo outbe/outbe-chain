@@ -18,7 +18,7 @@ use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 const TERMINAL_INDEX_DOMAIN: &[u8] = b"OUTBE_OCOMP_TERMINAL_INDEX_V1";
 
 /// Derives the entry key for one `(worldwide_day, index)` position:
-/// `keccak(domain ‖ wwd_be ‖ index_be)`. Big-endian fixed-width preimage,
+/// `keccak(domain || wwd_be || index_be)`. Big-endian fixed-width preimage,
 /// deterministic across proposer and validator.
 pub(crate) fn terminal_entry_key(wwd: WorldwideDay, index: u16) -> B256 {
     let mut preimage = [0_u8; 35];

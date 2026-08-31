@@ -1,4 +1,4 @@
-//! — `OutbeReporter` fanout tests.
+//! - `OutbeReporter` fanout tests.
 //!
 //! Verifies that `Activity::Certification(notarization)` is admitted by
 //! `OutbeReporter` (the Outbe-side branch of the `Reporters::from((outbe, marshal))`
@@ -195,11 +195,11 @@ async fn reporter_fanout_persists_certification_activity_before_marshal_filter()
     assert_eq!(record.finalized_view, 2);
     assert_eq!(record.parent_view, 1);
     assert_eq!(record.finalized_block_hash, parent_hash);
-    // — Activity-driven insert always sets the local certification
+    // - Activity-driven insert always sets the local certification
     // witness flag; remote-fetch fallbacks gate writes on
     // this being true.
     assert!(record.is_certification_witness());
-    // The store accepted only the certified-notarization slot — finalization
+    // The store accepted only the certified-notarization slot - finalization
     // slot is untouched.
     assert!(store.get_finalization(proof_key).is_none());
 }
@@ -210,7 +210,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     // certificate signature no longer matches the proposal subject. The
     // reporter must drop the activity without writing.
     let (mut notarization, verifier, participants) = valid_notarization();
-    // Swap the proposal payload — the cert was signed for the original
+    // Swap the proposal payload - the cert was signed for the original
     // payload; the verifier will reject the post-mutation Notarization.
     let original_hash = notarization.proposal.payload.0;
     notarization.proposal.payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
@@ -224,7 +224,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
 
     let _ = reporter.report(Activity::Certification(notarization));
     // A verify failure drops on-thread before enqueue, so draining finds
-    // nothing — but apply any writes so the "nothing persisted" assertion is
+    // nothing - but apply any writes so the "nothing persisted" assertion is
     // exact even if behavior regresses.
     drain_certification_writes(&mut rx, &store);
 
@@ -261,7 +261,7 @@ async fn reporter_handle_certification_records_witness_flag_true() {
     );
 }
 
-/// A fake `CertificationWitnessSink` recording every mark — exercises the narrow
+/// A fake `CertificationWitnessSink` recording every mark - exercises the narrow
 /// capability seam the reporter is given (instead of the full store), which is the
 /// reason the seam is a trait rather than a newtype.
 #[derive(Default)]
@@ -281,7 +281,7 @@ impl CertificationWitnessSink for CountingWitnessSink {
 async fn reporter_marks_witness_through_narrow_sink() {
     // The reporter's only capability onto the proof store is the
     // `CertificationWitnessSink`. A valid `Activity::Certification` must drive
-    // exactly one witness mark for the `(epoch, view, parent)` it observed —
+    // exactly one witness mark for the `(epoch, view, parent)` it observed -
     // proving the narrow seam is the path, and that the reporter is mockable
     // without standing up a real store.
     let sink = Arc::new(CountingWitnessSink::default());

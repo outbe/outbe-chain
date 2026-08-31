@@ -191,7 +191,7 @@ fn mine_gratis_inner(
         return Err(NodFactoryError::NodNotQualified.into());
     }
 
-    // Mining stays open during the notice period — that is what the notice is
+    // Mining stays open during the notice period - that is what the notice is
     // for. Past it the Nod is forfeit, and this check closes the gap before the
     // daily sweep reaches it.
     let called_at = NodContract::new(storage.clone())

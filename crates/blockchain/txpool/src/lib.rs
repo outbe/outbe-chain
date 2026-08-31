@@ -695,7 +695,7 @@ where
     /// is present (the tx then falls back to the standard
     /// cost-vs-balance Overdraft gate). Returns `Err(_)` for an
     /// authenticated sponsorship attempt that fails any of the policy
-    /// rules — the pool rejects with the policy reason in the
+    /// rules - the pool rejects with the policy reason in the
     /// `InvalidPoolTransactionError::other` payload so the caller sees
     /// the same error code the executor would produce at block time.
     ///
@@ -718,9 +718,9 @@ where
         // Resolve the signer's account + (optional) delegation bytecode
         // from the latest committed state, then hand the already-fetched
         // values to the pure decision core. Splitting the I/O from the
-        // policy keeps the composition (delegation match → classify →
+        // policy keeps the composition (delegation match -> classify ->
         // precheck, with NO quota check) deterministically unit-testable
-        // without a provider mock — see `sponsorship_decision` tests.
+        // without a provider mock - see `sponsorship_decision` tests.
         let Some(account) = state
             .basic_account(&signer)
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
@@ -827,16 +827,16 @@ enum SponsorshipOutcome {
 /// committed state: the signer, its native `balance`, and the address
 /// its account code delegates to (`None` if it is not an EIP-7702
 /// delegation). The decision:
-///   - `delegated_to != Some(ZEROFEE_ADDRESS)` → `NotSponsored` (normal
+///   - `delegated_to != Some(ZEROFEE_ADDRESS)` -> `NotSponsored` (normal
 ///     fee path; never an error).
 ///   - delegated but the envelope does not match `classify_sponsorship`
-///     (most importantly `priority_fee > 0` — "I am paying") →
+///     (most importantly `priority_fee > 0` - "I am paying") ->
 ///     `NotSponsored`. The tx is a normal paid transaction that merely
 ///     originates from a delegated account; it must go through the
 ///     standard cost-vs-balance gating, NOT be rejected. This keeps
 ///     EIP-7702 delegation additive and lets a signer pay once their
 ///     daily free quota is exhausted.
-///   - delegated AND envelope matches → run `precheck_sponsorship`
+///   - delegated AND envelope matches -> run `precheck_sponsorship`
 ///     (self-sponsorship); its policy error is
 ///     returned so the pool rejects with the matching code.
 ///
@@ -853,7 +853,7 @@ fn sponsorship_decision(
     }
 
     // Envelope mismatch (e.g. priority_fee > 0) means the signer is not
-    // opting into sponsorship — fall through to the normal fee path
+    // opting into sponsorship - fall through to the normal fee path
     // rather than rejecting the tx.
     if outbe_zerofee::classify_sponsorship(zero_fee_tx).is_err() {
         return Ok(SponsorshipOutcome::NotSponsored);
@@ -1290,9 +1290,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // EIP-7702 sponsorship admission — pin the pool/executor contract:
+    // EIP-7702 sponsorship admission - pin the pool/executor contract:
     //   1. classify_sponsorship rejects shape violations (executor would
-    //      do the same — codes must match).
+    //      do the same - codes must match).
     //   2. precheck_sponsorship rejects self-sponsorship and zero-
     //      balance signers but DELIBERATELY does no quota check.
     // The pool's `try_eip7702_sponsorship` chains classify + precheck;
@@ -1374,7 +1374,7 @@ mod tests {
     #[test]
     fn pool_precheck_does_not_run_quota_check() {
         // The pool MUST admit even when storage state says the daily
-        // quota is exhausted — the executor produces the soft-failure
+        // quota is exhausted - the executor produces the soft-failure
         // receipt code 110 at block time. precheck has no StorageHandle
         // parameter to enforce this contract at compile time; this
         // smoke test pins the runtime behaviour.
@@ -1382,9 +1382,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // sponsorship_decision — the pure pool-admission decision core.
+    // sponsorship_decision - the pure pool-admission decision core.
     // These pin the EXACT composition try_eip7702_sponsorship performs
-    // (delegation match → classify → precheck, no quota) without needing
+    // (delegation match -> classify -> precheck, no quota) without needing
     // a provider mock. A regression in the wiring (reordered checks,
     // dropped classify, an accidental quota gate, or wrong delegation
     // target match) is caught here by `cargo test`, not only by the
@@ -1404,7 +1404,7 @@ mod tests {
 
     #[test]
     fn decision_not_sponsored_when_delegated_elsewhere() {
-        // Delegated to a non-paymaster address → normal fee path.
+        // Delegated to a non-paymaster address -> normal fee path.
         let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
             Some(ORACLE_ADDRESS),
@@ -1440,7 +1440,7 @@ mod tests {
     fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
         // Delegated + funded, but the envelope carries native value, so
         // it is NOT a sponsorship request. It must fall through to the
-        // normal fee path (NotSponsored), NOT be rejected — EIP-7702
+        // normal fee path (NotSponsored), NOT be rejected - EIP-7702
         // delegation is additive and must never block a normal tx.
         let mut tx = ok_sponsored_envelope();
         tx.value = U256::from(1);
@@ -1470,7 +1470,7 @@ mod tests {
     #[test]
     fn decision_non_whitelisted_target_delegated_tx_falls_through() {
         // Delegated, zero-tip, but target not in the sponsored whitelist
-        // → not a sponsorship request → normal path (the signer pays to
+        // -> not a sponsorship request -> normal path (the signer pays to
         // call whatever contract they like; delegation does not gate it).
         let mut tx = ok_sponsored_envelope();
         tx.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
@@ -1481,7 +1481,7 @@ mod tests {
 
     #[test]
     fn decision_does_not_quota_check() {
-        // sponsorship_decision has no storage access at all — it cannot
+        // sponsorship_decision has no storage access at all - it cannot
         // perform a quota check by construction. A delegated, funded,
         // well-formed tx is always Accepted regardless of how many slots
         // the signer has burned; the executor enforces the quota. This

@@ -111,7 +111,7 @@ fn verify_v2_proof_accepts_valid_quorum_certificate() {
 
 #[test]
 fn verify_v2_proof_rejects_below_quorum() {
-    // 4 participants, 2 signers → N3f1 quorum is 3, so this rejects.
+    // 4 participants, 2 signers -> N3f1 quorum is 3, so this rejects.
     let committee = build_committee(4);
     let cert = build_certificate(&committee, &[0, 1]);
     let bytes = cert.encode();

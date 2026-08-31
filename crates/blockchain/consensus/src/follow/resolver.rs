@@ -6,19 +6,19 @@
 //! `commonware_resolver::p2p`, which talks to consensus peers. A follower has no
 //! consensus peers, so this resolver instead:
 //!
-//! * `Request::Block(digest)` → reads the block from the local EL
+//! * `Request::Block(digest)` -> reads the block from the local EL
 //!   ([`LocalBlockSource`]) and delivers it back to the marshal.
-//! * `Request::Finalized { height }` → fetches the certificate + block from the
+//! * `Request::Finalized { height }` -> fetches the certificate + block from the
 //!   upstream ([`FinalizedSource`]) and delivers the concatenated
 //!   `(Finalization, ConsensusBlock)` bytes, which the marshal decodes and
 //!   verifies against the epoch committee.
-//! * `Request::Notarized { .. }` → ignored (the follower only consumes finalized
+//! * `Request::Notarized { .. }` -> ignored (the follower only consumes finalized
 //!   data; notarizations are a validator-internal concern).
 //!
 //! **Actor + mailbox split.** The runtime's `Context` is not `Clone`, but the
 //! marshal requires the resolver it holds to be `Clone`. So the spawnable half
 //! (which owns the context + sources) is a [`ResolverActor`] spawned once, and
-//! the marshal-facing half is [`FollowResolver`] — a cheap `Clone` mailbox that
+//! the marshal-facing half is [`FollowResolver`] - a cheap `Clone` mailbox that
 //! forwards each fetch to the actor over an unbounded channel. This mirrors the
 //! p2p resolver's `Engine` + `Mailbox` shape.
 //!
@@ -215,7 +215,7 @@ async fn resolve_one<F, L>(
     // `response.is_closed()` at dequeue and silently skips a delivery whose
     // receiver is gone (see `handler::Message::response_closed`). Since this
     // fetch runs on its own spawned task, holding the receiver open until the
-    // marshal answers costs nothing — and the answer tells us whether the value
+    // marshal answers costs nothing - and the answer tells us whether the value
     // was accepted. We do not retry on rejection (the marshal re-requests if it
     // still needs the height).
     match handler.deliver(delivery, value).await {

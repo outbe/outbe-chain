@@ -1,10 +1,10 @@
 //! Stateful-per-ceremony DKG secret session (enclave side).
 //!
 //! The host-side `tee_dkg` actor (a TEE-native clone of the consensus DKG actor)
-//! drives the public protocol — P2P gossip, ceremony bookkeeping, timing, wire
-//! codec — and delegates the five secret-touching seams to this module over the
+//! drives the public protocol - P2P gossip, ceremony bookkeeping, timing, wire
+//! codec - and delegates the five secret-touching seams to this module over the
 //! Noise-IK channel. The Commonware `Dealer` / `Player` are non-serializable
-//! secret objects that live across several host↔enclave round-trips, so each
+//! secret objects that live across several host<->enclave round-trips, so each
 //! ceremony's state is held resident here keyed by ceremony id and never leaves
 //! SGX in plaintext.
 //!
@@ -13,22 +13,22 @@
 //! `tribute`.
 //!
 //! Seams (mirrors `crates/blockchain/consensus/src/dkg_actor/actor.rs`):
-//!  - A `start_dealer`        → `Dealer::start`          (deal + seal per-player shares)
-//!  - B `player_ingest`       → `Player::dealer_message` (open + verify incoming share)
-//!  - C `dealer_receive_ack`  → `Dealer::receive_player_ack`
-//!  - D `dealer_finalize`     → `Dealer::finalize`       (sign dealer log)
-//!  - E `player_finalize`     → `Player::finalize`       (recover local threshold share)
+//!  - A `start_dealer`        -> `Dealer::start`          (deal + seal per-player shares)
+//!  - B `player_ingest`       -> `Player::dealer_message` (open + verify incoming share)
+//!  - C `dealer_receive_ack`  -> `Dealer::receive_player_ack`
+//!  - D `dealer_finalize`     -> `Dealer::finalize`       (sign dealer log)
+//!  - E `player_finalize`     -> `Player::finalize`       (recover local threshold share)
 //!
 //! [`verify_dealer_log`] (`SignedDealerLog::check`) is public-only and therefore
 //! also runnable on the host; it is provided here for the host actor and the
 //! in-process ceremony test.
 //!
-//! ## SECURITY — share confidentiality
+//! ## SECURITY - share confidentiality
 //!
 //! Commonware's per-player share (`DealerPrivMsg`) is a protocol-secret
 //! `Secret<Scalar>`, not a ciphertext: in Feldman-Desmedt the recipient
 //! *verifies* the share against the dealer's public commitment. The consensus
-//! DKG may transmit shares on the host; the TEE DKG must not — its premise is
+//! DKG may transmit shares on the host; the TEE DKG must not - its premise is
 //! that shares never appear on the host in plaintext.
 //!
 //! This module therefore seals shares **inside** the enclave: [`DkgSession::start_dealer`]
@@ -72,7 +72,7 @@ use crate::errors::{Result, TeeError};
 type Variant = MinSig;
 /// BLS12-381 public key (Commonware MinPk encoding).
 pub type PubKey = bls12381::PublicKey;
-/// BLS12-381 private key — the TEE threshold-BLS signing key, generated **inside**
+/// BLS12-381 private key - the TEE threshold-BLS signing key, generated **inside**
 /// the enclave and never exported in plaintext.
 pub type PrivKey = bls12381::PrivateKey;
 
@@ -88,7 +88,7 @@ pub type CeremonyAck = PlayerAck<PubKey>;
 pub type CeremonySignedLog = SignedDealerLog<Variant, PrivKey>;
 /// Verified dealer log (output of [`verify_dealer_log`]); fed to player finalize.
 pub type CeremonyLog = DealerLog<Variant, PubKey>;
-/// Group threshold public polynomial — the ceremony's public output.
+/// Group threshold public polynomial - the ceremony's public output.
 pub type CeremonyOutput = Output<Variant, PubKey>;
 /// A validator's long-term threshold secret share. Never leaves the enclave.
 pub type CeremonyShare = Share;
@@ -114,7 +114,7 @@ pub type EncodedDealing = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>);
 /// into a consensus ceremony (strong domain separation).
 pub const TEE_DKG_NAMESPACE: &[u8] = b"outbe-tee-dkg";
 
-/// Seam F — the namespace + fixed message the DKG group threshold-signs to
+/// Seam F - the namespace + fixed message the DKG group threshold-signs to
 /// derive the shared tribute offer key. Every enclave signs the SAME message
 /// with its share; recovering `2f+1` partials yields the deterministic group
 /// threshold signature, whose HKDF is the shared offer secret. The message is
@@ -196,7 +196,7 @@ impl DkgSession {
         x25519_public(&self.enc_secret)
     }
 
-    /// Seam A — generate this party's dealing and seal each per-player share to
+    /// Seam A - generate this party's dealing and seal each per-player share to
     /// the recipient enclave's X25519 key. Returns the public commitment and the
     /// opaque [`EncryptedShare`] blobs (one per participant); the secret
     /// polynomial and the plaintext shares never leave SGX. A participant missing
@@ -228,7 +228,7 @@ impl DkgSession {
             // Serialize the protocol-secret share and seal it to the recipient.
             // The plaintext exists only in this enclave-sidecar process; the host
             // gets ciphertext. (Process isolation today, not SGX memory
-            // encryption — see audit_tee_bootstrap.md `tee-not-real-sgx`.)
+            // encryption - see audit_tee_bootstrap.md `tee-not-real-sgx`.)
             let plaintext = Zeroizing::new(priv_msg.encode().to_vec());
             let blob = encrypt_share(enc_pub, plaintext.as_ref())?;
             sealed.push((player_pk, blob));
@@ -236,7 +236,7 @@ impl DkgSession {
         Ok((pub_msg, sealed))
     }
 
-    /// Seam B — open a sealed incoming share with the resident X25519 secret,
+    /// Seam B - open a sealed incoming share with the resident X25519 secret,
     /// then verify it against the dealer's public commitment and produce an
     /// acknowledgement. The plaintext share exists only inside SGX. Returns
     /// `Ok(None)` if the dealing is invalid (host treats as no-ack).
@@ -257,7 +257,7 @@ impl DkgSession {
         Ok(player.dealer_message::<N3f1>(dealer, pub_msg, priv_msg))
     }
 
-    /// Seam C — record a player's acknowledgement at this party's dealer. The
+    /// Seam C - record a player's acknowledgement at this party's dealer. The
     /// dealer tallies acks toward the finalize threshold.
     pub fn dealer_receive_ack(&mut self, player: PubKey, ack: CeremonyAck) -> Result<()> {
         let dealer = self.dealer.as_mut().ok_or(TeeError::DkgSeamOrder(
@@ -268,7 +268,7 @@ impl DkgSession {
             .map_err(|e| dkg_err("dealer receive ack", e))
     }
 
-    /// Seam D — finalize this party's dealing into a signed dealer log (signed
+    /// Seam D - finalize this party's dealing into a signed dealer log (signed
     /// with the in-enclave signing key). Consumes the resident `Dealer`.
     pub fn dealer_finalize(&mut self) -> Result<CeremonySignedLog> {
         let dealer = self.dealer.take().ok_or(TeeError::DkgSeamOrder(
@@ -277,7 +277,7 @@ impl DkgSession {
         Ok(dealer.finalize::<N3f1>())
     }
 
-    /// Seam E — recover this party's long-term threshold share from the verified
+    /// Seam E - recover this party's long-term threshold share from the verified
     /// dealer logs. Consumes the resident `Player`. Returns the public group
     /// output and the secret `Share`; the share is the caller's to seal and must
     /// never leave the enclave in plaintext.
@@ -304,12 +304,12 @@ impl DkgSession {
         Ok((output, share))
     }
 
-    /// Seam F (offer key) — threshold-sign the fixed offer message
+    /// Seam F (offer key) - threshold-sign the fixed offer message
     /// ([`TEE_OFFER_MESSAGE`]) with this party's recovered share, then **seal the
     /// partial to every participant's X25519 share-encryption key** (one
     /// [`EncryptedShare`] per recipient). The host relays only the opaque
-    /// ciphertexts, so it cannot recover the group signature — and therefore the
-    /// offer key — itself; recovery happens only inside each recipient enclave
+    /// ciphertexts, so it cannot recover the group signature - and therefore the
+    /// offer key - itself; recovery happens only inside each recipient enclave
     /// ([`DkgSession::recover_tribute_offer_secret`]). Requires
     /// [`DkgSession::player_finalize`] to have run (the share must be resident).
     pub fn tribute_offer_partials_sealed(&self) -> Result<Vec<(PubKey, EncryptedShare)>> {
@@ -329,7 +329,7 @@ impl DkgSession {
         Ok(out)
     }
 
-    /// Seam F (offer key) — recover the group threshold signature over the fixed
+    /// Seam F (offer key) - recover the group threshold signature over the fixed
     /// offer message from the **sealed partials addressed to this enclave**
     /// (decrypted in-SGX with the resident X25519 share-decryption secret), then
     /// derive the shared offer X25519 keypair from it (`HKDF(group_sig)` bound to
@@ -371,7 +371,7 @@ impl DkgSession {
         Ok((secret, public, sigma))
     }
 
-    /// Reshare authority — produce this enclave's threshold partial signature over a
+    /// Reshare authority - produce this enclave's threshold partial signature over a
     /// reshare-endorsement `message` (see [`reshare_endorsement_message`]) with its
     /// recovered share. Unlike the offer-key partials these are NOT sealed: the
     /// recovered group signature is the PUBLIC on-chain authority over the new
@@ -385,7 +385,7 @@ impl DkgSession {
         Ok(partial.encode().to_vec())
     }
 
-    /// The encoded DKG group public KEY — the constant term of the public
+    /// The encoded DKG group public KEY - the constant term of the public
     /// polynomial (`output.public().public()`), a single fixed-size point. PUBLIC:
     /// it is the verification key for this committee's threshold group signatures
     /// (offer-key recovery and reshare endorsements), and matches the byte layout of
@@ -403,7 +403,7 @@ impl DkgSession {
 
 /// Verify a signed dealer log against the ceremony `info`, yielding the dealer's
 /// public key (recovered from the log signature) and the public [`CeremonyLog`]
-/// used by [`DkgSession::player_finalize`]. Public-only — no secret material —
+/// used by [`DkgSession::player_finalize`]. Public-only - no secret material -
 /// so the host actor runs it too; provided here for the host actor and the
 /// in-process ceremony test, and to keep the seam vocabulary in one place.
 pub fn verify_dealer_log(
@@ -518,7 +518,7 @@ impl DkgSession {
         }
         // Initial DKG: the group key is the sum of EVERY dealer's contribution, so an
         // incomplete dealer set yields a DIFFERENT group key. Require the verified
-        // distinct dealers to cover the full committee — otherwise an untrusted host
+        // distinct dealers to cover the full committee - otherwise an untrusted host
         // feeding different dealer subsets to different enclaves would diverge the
         // derived offer key across validators. (Each verified dealer is a committee
         // member, so a full distinct count equals full coverage. Scheduled rolling
@@ -646,7 +646,7 @@ mod tests {
     }
 
     /// Drive a complete n-party ceremony in-process through the enclave seams,
-    /// with every share sealed dealer→recipient and opened inside the recipient
+    /// with every share sealed dealer->recipient and opened inside the recipient
     /// session, and return each party's `(group output bytes, share bytes)`.
     fn run_ceremony(n: u32) -> Vec<(Vec<u8>, Vec<u8>)> {
         let (info, keys, pubkeys) = setup(n);
@@ -728,7 +728,7 @@ mod tests {
         let results = run_ceremony(4);
         assert_eq!(results.len(), 4);
 
-        // Every party must derive the identical public group output — this is the
+        // Every party must derive the identical public group output - this is the
         // determinism property the consensus/execution boundary relies on.
         let group = &results[0].0;
         for (i, (output, _share)) in results.iter().enumerate() {
@@ -825,7 +825,7 @@ mod tests {
     fn reshare_endorsement_partials_recover_deterministic_group_sig() {
         // Reshare-authority prerequisite (Fix B3): 2f+1 prior-committee partials over
         // the endorsement commitment recover a single deterministic group signature,
-        // regardless of WHICH quorum subset is gathered — the on-chain authority must
+        // regardless of WHICH quorum subset is gathered - the on-chain authority must
         // be byte-identical across validators.
         let sessions = drive_ceremony_to_shares(7);
         let msg = reshare_endorsement_message(
@@ -964,7 +964,7 @@ mod tests {
         ));
     }
 
-    /// Drive a complete n-party ceremony through seams A–E and return the
+    /// Drive a complete n-party ceremony through seams A-E and return the
     /// resident sessions, each holding its recovered share + group output so
     /// Seam F (offer key) can run on them.
     fn drive_ceremony_to_shares(n: u32) -> Vec<DkgSession> {
@@ -1066,7 +1066,7 @@ mod tests {
 
     /// Seam F core property: every party recovers the SAME group threshold
     /// signature over the fixed offer message and therefore derives the
-    /// byte-identical offer keypair — the determinism the on-chain offer key
+    /// byte-identical offer keypair - the determinism the on-chain offer key
     /// relies on. Also checks chain-binding.
     #[test]
     fn seam_f_derives_identical_tribute_offer_key_across_parties() {
@@ -1128,9 +1128,9 @@ mod tests {
         ));
     }
 
-    /// SECURITY — no-leak proof (sealed Seam F): the offer partial signatures are
+    /// SECURITY - no-leak proof (sealed Seam F): the offer partial signatures are
     /// the secret that, combined by public Lagrange math (`threshold::recover`),
-    /// reconstruct the group signature σ and therefore the offer key. The fix
+    /// reconstruct the group signature sigma and therefore the offer key. The fix
     /// seals each partial pairwise (X25519 + ChaCha20Poly1305) to its recipient
     /// enclave, so the HOST only ever relays **ciphertext** on gossip. This test
     /// proves: (1) a legit enclave still recovers the byte-identical offer key
@@ -1167,7 +1167,7 @@ mod tests {
             })
             .collect();
 
-        // The sealed wire (X25519 ephemeral pub ‖ nonce ‖ ciphertext) does not
+        // The sealed wire (X25519 ephemeral pub || nonce || ciphertext) does not
         // decode as a BLS `PartialSignature`. The host cannot obtain even one valid
         // plaintext partial, let alone the quorum `threshold::recover` requires.
         let decodable = ciphertexts

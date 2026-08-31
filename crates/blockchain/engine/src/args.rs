@@ -196,7 +196,7 @@ pub struct ConsensusArgs {
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1; if it
     /// times out (or fails), node startup fails fast and the node halts rather than
-    /// proceeding into a permanently un-bootstrapped chain. Local only — not a
+    /// proceeding into a permanently un-bootstrapped chain. Local only - not a
     /// consensus rule.
     #[arg(
         long = "tee-bootstrap-timeout-secs",
@@ -232,7 +232,7 @@ pub struct ConsensusArgs {
     pub tee_renewal_critical_blocks: u64,
 
     /// Interval between TEE-enclave canary probes (known-plaintext decrypt +
-    /// health telemetry). `0` disables the canary. Signal only — it never gates
+    /// health telemetry). `0` disables the canary. Signal only - it never gates
     /// consensus participation.
     #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
     pub tee_canary_interval_secs: u64,
@@ -350,9 +350,9 @@ impl fmt::Debug for ConsensusArgs {
 impl ConsensusArgs {
     /// Validate argument consistency.
     ///
-    /// - `--validator` without `--consensus.signing-key` → error
-    /// - `--consensus.signing-key` without `--validator` → warning (ignored key)
-    /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
+    /// - `--validator` without `--consensus.signing-key` -> error
+    /// - `--consensus.signing-key` without `--validator` -> warning (ignored key)
+    /// - `--bls-key-backend encrypted` without `--bls-passphrase` -> error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
         if self.tee_renewal_poll_secs == 0 {
@@ -411,7 +411,7 @@ impl ConsensusArgs {
         // Two valid manual-provisioning shapes:
         //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
         //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share
-        //     — a node joining a running chain that has no threshold share yet; it runs
+        //     - a node joining a running chain that has no threshold share yet; it runs
         //     the consensus engine in verifier (follow/verify) mode and acquires a share
         //     at the next DKG reshare. Any other partial combination is an error.
         let (share, poly, output) = (
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_plaintext_backward_compatibility() {
-        // Default is plaintext — existing setups continue working.
+        // Default is plaintext - existing setups continue working.
         let args = default_args();
         assert_eq!(args.bls_key_backend, "plaintext");
         assert!(matches!(

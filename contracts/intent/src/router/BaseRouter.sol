@@ -18,16 +18,16 @@ import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step {
     // ============ Immutables ============
 
-    /// @notice The Compact contract — canonical token custody (same address on all chains)
+    /// @notice The Compact contract - canonical token custody (same address on all chains)
     ITheCompact public immutable COMPACT;
 
     /// @notice Resource lock tag for origin chain deposits.
     bytes12 public immutable LOCK_TAG;
 
-    /// @notice The SolverEscrow contract — solver collateral management (address(0) if disabled)
+    /// @notice The SolverEscrow contract - solver collateral management (address(0) if disabled)
     ISolverEscrow public immutable SOLVER_ESCROW;
 
-    /// @notice The Auction contract — competitive solver selection. Immutable: replacing it would
+    /// @notice The Auction contract - competitive solver selection. Immutable: replacing it would
     ///         strand in-flight orders' quotes in the old contract, so it is fixed at deploy and
     ///         swapped only by redeploying the router.
     IAuction public immutable AUCTION;
@@ -114,7 +114,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
         _dispatchRefundCrossChain(_originDomain, _orderIds);
     }
 
-    // ============ Abstract — cross-chain messaging (implemented by concrete router) ============
+    // ============ Abstract - cross-chain messaging (implemented by concrete router) ============
 
     function _dispatchSettleCrossChain(
         uint32 _originDomain,

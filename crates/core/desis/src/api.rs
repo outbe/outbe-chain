@@ -4,7 +4,7 @@
 //! begin-block schedule drives every stage from there. Capacity rejection is a
 //! typed business result. Every technical or invariant failure remains an
 //! `Err`, with all partial writes reverted. The auction key is the worldwide
-//! day — one auction per day; series ids are allocated at issuance.
+//! day - one auction per day; series ids are allocated at issuance.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;

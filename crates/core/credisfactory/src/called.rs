@@ -42,7 +42,7 @@ pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 /// `burn_pledged_with_fidelity`) on a process-global connection.
 ///
 /// A correlated mass-void is the *expected* shape of a call event, not a tail
-/// case — a sustained breach calls every position in a currency at once, so 14
+/// case - a sustained breach calls every position in a currency at once, so 14
 /// days later they all lapse together. Without a separate cap one run would
 /// carry the whole burst.
 ///
@@ -76,7 +76,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke — skip loudly instead of
+    // a lagging watermark means the ordering broke - skip loudly instead of
     // misreading an unfinalized day as one with no published price.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
@@ -139,7 +139,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 })?;
 
             // The price-path arms are pure storage and arithmetic, so a
-            // deterministic error is isolated to this position and skipped —
+            // deterministic error is isolated to this position and skipped -
             // one bad position never halts the daily run. Same shape as gem's
             // and intexfactory's scans.
             let outcome = ctx
@@ -239,8 +239,8 @@ fn visit_price_path(
 ///
 /// Days below the call price and days with no published price both simply fail
 /// to count, so the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS`
-/// of either. §11.3 leaves missing-data days undecided; treating them as
-/// non-breaches is conservative — it can only delay a call, never trigger one.
+/// of either. section 11.3 leaves missing-data days undecided; treating them as
+/// non-breaches is conservative - it can only delay a call, never trigger one.
 ///
 /// A day that predates the position ends the count: the window is newest-first,
 /// so every remaining entry is older still, and a position must never inherit a
@@ -262,7 +262,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
 
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
 /// newest first, filling it on first use. Only the currencies actually present
-/// in the active book are read — there is no registry walk.
+/// in the active book are read - there is no registry walk.
 ///
 /// An unregistered pair caches an empty window: such a position can never
 /// register a breach, but it must still reach the void arm, so this skips the

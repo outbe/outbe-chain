@@ -1,4 +1,4 @@
-//! Localnet: the whole network in one handle — bootstrap plus every owned node
+//! Localnet: the whole network in one handle - bootstrap plus every owned node
 //! (committee validators, joiner, followers) and their enclaves.
 //!
 //! A localnet *is* its set of nodes, so adding/removing a validator, attaching a
@@ -9,12 +9,12 @@
 //! stateless datadir/run-tag sweep as the SIGINT backstop. The distinct
 //! lifecycles live in submodules over this one struct:
 //!
-//! - [`bootstrap`] — genesis/key generation glue (`dkg bootstrap` + `seed_genesis.py`).
-//! - [`committee`] — the bootstrapped validator set (start/stop/restart/kill).
-//! - [`joiner`] — a validator that joins a running localnet (index = committee size).
-//! - [`follower`] — full-execution follower nodes (`--upstream`).
-//! - [`log_audit`] — runtime-log normalization, policy, and evidence.
-//! - [`probes`] — datadir, compressed-entity, and timing observations.
+//! - [`bootstrap`] - genesis/key generation glue (`dkg bootstrap` + `seed_genesis.py`).
+//! - [`committee`] - the bootstrapped validator set (start/stop/restart/kill).
+//! - [`joiner`] - a validator that joins a running localnet (index = committee size).
+//! - [`follower`] - full-execution follower nodes (`--upstream`).
+//! - [`log_audit`] - runtime-log normalization, policy, and evidence.
+//! - [`probes`] - datadir, compressed-entity, and timing observations.
 
 mod bootstrap;
 mod committee;
@@ -49,7 +49,7 @@ use crate::internal::shell::Sh;
 /// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
-/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
+/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here -
 /// it's an environment decision read from [`Config::tee_mode`]. Only per-scenario
 /// parameters live on this struct.
 #[derive(Debug, Clone, Default)]
@@ -115,7 +115,7 @@ impl StartOpts {
 #[derive(Debug)]
 pub struct Localnet {
     cfg: Config,
-    /// Owned validator-indexed nodes — the committee (`0..n`) and, when attached,
+    /// Owned validator-indexed nodes - the committee (`0..n`) and, when attached,
     /// the joiner (index = committee size).
     validators: HashMap<usize, ChildGuard>,
     /// Operator-owned validator-indexed Radicle sidecars.
@@ -270,7 +270,7 @@ impl Localnet {
 
     /// The flags common to every node process (committee, joiner, follower):
     /// reth http/p2p/discovery/authrpc/ipc/log for port index `i`, rooted at
-    /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
+    /// `node_dir`. Callers `.extend(args![...])` with their role-specific tail.
     fn reth_base_args(&self, node_dir: &Path, i: usize) -> Vec<String> {
         let data = node_dir.join("data");
         let chain_manifest = self
@@ -336,9 +336,9 @@ impl Localnet {
     }
 
     /// Run a one-shot setup subprocess (`dkg bootstrap`, `seed_genesis.py`).
-    /// Quiet by default — stdout/stderr are captured and only surfaced when the
+    /// Quiet by default - stdout/stderr are captured and only surfaced when the
     /// command fails; under `--debug` it streams live so the full DKG/seed
-    /// progress (`balance: … entries`, `Total storage entries: …`, …) is shown.
+    /// progress (`balance: ... entries`, `Total storage entries: ...`, ...) is shown.
     fn run_setup(&self, cmd: &mut Command, label: &str) -> Result<()> {
         if self.cfg.debug {
             let status = cmd.status().wrap_err_with(|| format!("run {label}"))?;
@@ -357,7 +357,7 @@ impl Localnet {
     /// Spawn an owned node process, logging its launch **metadata** (command,
     /// PID, log path) under `--debug`. The node's own runtime stdout/stderr are
     /// already attached to `<node_dir>/node.log` by the caller (via
-    /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
+    /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
     fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
@@ -402,7 +402,7 @@ impl Localnet {
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
-        // Nodes first (release MDBX locks), then their enclaves — matching the
+        // Nodes first (release MDBX locks), then their enclaves - matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
         self.validators.clear();
         self.followers.clear();
@@ -438,7 +438,7 @@ impl Localnet {
     ///
     /// `validator-<i>/tee` is the enclave container's only writable mount
     /// (`proc::spawn_enclave`), so under `--sudo` it is the only thing this user
-    /// can't unlink — drop those with `sudo rm` first. Everything else the
+    /// can't unlink - drop those with `sudo rm` first. Everything else the
     /// harness created itself, and a failure to remove it is a real error.
     pub fn wipe(&self) -> Result<()> {
         if !self.cfg.dir.exists() {
@@ -479,7 +479,7 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
     }
 }
 
-/// The sealed-state dirs under `root` — the only paths the (root) enclave
+/// The sealed-state dirs under `root` - the only paths the (root) enclave
 /// container writes. `root` is either a scenario dir (`validator-<i>/tee`) or a
 /// run dir (`scenario-<n>/validator-<i>/tee`); both shapes are checked.
 ///
@@ -651,7 +651,7 @@ mod tests {
             .any(|pair| pair[0] == "--color" && pair[1] == "never"));
     }
 
-    /// Both layouts, and nothing else — in particular not `validator-*/data`.
+    /// Both layouts, and nothing else - in particular not `validator-*/data`.
     #[test]
     fn sealed_dirs_finds_only_enclave_mounts() {
         let root = std::env::temp_dir().join(format!("outbe-sealed-{}", std::process::id()));

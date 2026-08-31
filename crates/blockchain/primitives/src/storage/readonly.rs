@@ -12,7 +12,7 @@ use revm::{
 
 use crate::error::{PrecompileError, Result};
 
-/// Trait for reading storage values — abstracts over Reth's `StateProvider`.
+/// Trait for reading storage values - abstracts over Reth's `StateProvider`.
 ///
 /// Introduced so `ReadOnlyStorageProvider` doesn't depend on Reth directly
 /// (keeping `outbe-primitives` lightweight).
@@ -28,7 +28,7 @@ pub trait StorageReader {
     /// want to expose canonical history. The default returns `Ok(None)`
     /// because most `StorageReader` users (txpool admission, consensus
     /// validator-set reads) do not bridge block hashes at all and answering
-    /// "I don't know" through this surface is honest — the canonical
+    /// "I don't know" through this surface is honest - the canonical
     /// answer for `submit_invalid_vrf_evidence` lives on
     /// `PrecompileStorageProvider::canonical_block_hash`, which has no
     /// default and must be implemented by every production provider.
@@ -64,7 +64,7 @@ impl ReadOnlyBlockContext {
     }
 }
 
-/// Only `sload()` works — all write operations are rejected. Context-free
+/// Only `sload()` works - all write operations are rejected. Context-free
 /// constructors retain zero block fields for pure storage reads; readers whose
 /// answer depends on time or height must require [`ReadOnlyBlockContext`].
 pub struct ReadOnlyStorageProvider<R> {

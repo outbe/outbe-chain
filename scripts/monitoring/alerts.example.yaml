@@ -13,7 +13,7 @@
 #       Reth's standard per-process RSS gauge.
 #   - commonware_p2p_tracked_peer_set_size
 #       current tracked Commonware consensus peer-set size (membership,
-#       NOT live TCP connections — it does not drop on disconnect).
+#       NOT live TCP connections - it does not drop on disconnect).
 #   - outbe_current_view / outbe_finalized_view
 #       highest observed Simplex view vs last finalized view. The gap is the
 #       primary consensus-stall signal: views advancing but nothing finalizing.
@@ -25,7 +25,7 @@
 #   (see `crates/blockchain/consensus/src/finalization/actor.rs`)
 #
 # An alert on the MDBX `read transaction has been open for too long`
-# warning is intentionally NOT included here — that warning is emitted
+# warning is intentionally NOT included here - that warning is emitted
 # from `reth-db`'s `MetricsHandler` and does not currently have a
 # Prometheus counter; capture it via the operator's log pipeline
 # (Loki / journald-based alerting). Track Rust-side counter exposure
@@ -52,7 +52,7 @@ groups:
             via logs and `outbe_consensus_tip_block_height` /
             `outbe_finalized_view`.
 
-      # Hard alarm: cache pinned at the cap for an extended period —
+      # Hard alarm: cache pinned at the cap for an extended period -
       # eviction is keeping up but the underlying condition (wedge or
       # fork spam) has not cleared.
       - alert: OutbeBlockCacheAtCap
@@ -67,13 +67,13 @@ groups:
             outbe_block_cache_size has been at or above
             BLOCK_CACHE_MAX_ENTRIES (1024) for 15 minutes. This is
             survivable (eviction still runs) but indicates a sustained
-            problem — wedge or fork spam — that the operator must
+            problem - wedge or fork spam - that the operator must
             investigate now.
 
       # Network split early-warning: empty tracked peer set. The May
       # 2026 OOM incident root cause was this condition going unnoticed
       # for hours. NOTE: this metric is tracked-set membership, not live
-      # connectivity — pair with the stall alert below, which keys on the
+      # connectivity - pair with the stall alert below, which keys on the
       # finalization gap and catches connectivity loss the membership count
       # cannot.
       - alert: OutbeConsensusPeerSetEmpty
@@ -92,7 +92,7 @@ groups:
       # Primary consensus-stall alarm (M-20): views are advancing but nothing
       # is finalizing. Unlike the membership/cache proxies above, this keys on
       # the live finalization gap, so it fires for a connectivity loss, a
-      # leader-timeout storm, or a wedge — even while the tracked peer set looks
+      # leader-timeout storm, or a wedge - even while the tracked peer set looks
       # healthy.
       - alert: OutbeConsensusStalled
         expr: (outbe_current_view - outbe_finalized_view) > 20
@@ -104,7 +104,7 @@ groups:
           summary: "consensus stalled on {{ $labels.instance }}: views advancing, no finalization"
           description: |
             outbe_current_view - outbe_finalized_view = {{ $value }} (> 20) for
-            2 minutes. Views are progressing but no view is finalizing — a
+            2 minutes. Views are progressing but no view is finalizing - a
             liveness fault (lost connectivity, a byzantine/offline leader run,
             or a wedge). Cross-reference rate(outbe_views_nullified_total[5m])
             and the `outbe::reporter` / `outbe::consensus` log targets.
@@ -162,7 +162,7 @@ groups:
           summary: "validator {{ $labels.addr }} approaching proposer felony"
           description: |
             outbe_proposer_miss_count = {{ $value }} for {{ $labels.addr }}.
-            Default felony threshold is 150 — at this rate the validator
+            Default felony threshold is 150 - at this rate the validator
             will be force-exited soon. Investigate node health.
 
       # Validator just transitioned to EXITING (status code 3). This
@@ -224,7 +224,7 @@ groups:
           summary: "felony count rose for {{ $labels.addr }}"
           description: |
             outbe_felony_count for {{ $labels.addr }} = {{ $value }}.
-            Cumulative metric — any rise indicates a new felony just
+            Cumulative metric - any rise indicates a new felony just
             fired. Cross-reference `outbe_validator_slashed_total`
             with the corresponding `reason` label.
 
@@ -309,7 +309,7 @@ groups:
           summary: "no successful TEE canary for >5 min on {{ $labels.instance }}"
 
       - alert: OutbeTeeCanaryLatencyHigh
-        # NOTE: verify how the exporter renders histograms before deploying —
+        # NOTE: verify how the exporter renders histograms before deploying -
         # metrics-exporter-prometheus may emit summary quantiles
         # (outbe_tee_canary_latency_ms{quantile="0.99"}) instead of _bucket
         # series; use whichever the running node actually exposes.
@@ -362,7 +362,7 @@ groups:
   #
   # Steady state is zero evictions: a healthy transaction is mined long before
   # the staleness interval elapses. Sustained evictions mean transactions are
-  # entering the pool that the network cannot include — a stuck-transaction
+  # entering the pool that the network cannot include - a stuck-transaction
   # pattern, a builder that keeps skipping them, or a validator too slow to
   # finalize the proposals carrying them.
   - name: outbe-chain.txpool

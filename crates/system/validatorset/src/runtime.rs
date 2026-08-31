@@ -44,7 +44,7 @@ pub mod status {
 /// blocks before staking (see
 /// [`ValidatorSet::get_admitted_non_consensus_validators`]). That admission is
 /// by design, but without a bound an attacker can self-register up to
-/// `config_max_validators` free Sybil identities — consuming registration slots
+/// `config_max_validators` free Sybil identities - consuming registration slots
 /// (griefing legitimate staked joins with "max validators reached") and
 /// consensus-P2P connection / handshake / decode slots. This caps the unstaked
 /// self-registration surface well below `config_max_validators` (default 128),
@@ -468,7 +468,7 @@ impl ValidatorSet<'_> {
         Ok(target)
     }
 
-    /// Returns validators with `status == PENDING` — staked joiners admitted to the
+    /// Returns validators with `status == PENDING` - staked joiners admitted to the
     /// validator set but not yet granted a threshold share. Used to admit them to
     /// consensus P2P as SECONDARY peers so they can sync to head before the reshare
     /// that makes them signers; they are NOT consensus participants (no share).
@@ -788,8 +788,8 @@ impl ValidatorSet<'_> {
         // bound the free, permissionless self-registration Sybil surface.
         // A self-registered REGISTERED node is admitted to the consensus P2P
         // secondary tier (the TEE verifier flow), so cap how many unstaked
-        // REGISTERED validators can exist at once — far below
-        // `config_max_validators` — so an attacker cannot fill the validator set
+        // REGISTERED validators can exist at once - far below
+        // `config_max_validators` - so an attacker cannot fill the validator set
         // (or the consensus P2P set) with free Sybils. Owner registrations
         // (`caller == owner`) bypass this cap. Checked before any state mutation
         // (including the re-registration path), so an over-cap self-registration
@@ -1469,7 +1469,7 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
-    /// Deactivates a validator — transitions to EXITING (awaiting DKG reshare to exclude).
+    /// Deactivates a validator - transitions to EXITING (awaiting DKG reshare to exclude).
     ///
     /// The caller must be the config owner or the validator itself.
     pub fn deactivate_validator(&mut self, caller: Address, addr: Address) -> Result<()> {
@@ -1548,9 +1548,9 @@ impl ValidatorSet<'_> {
     /// [`Self::force_exit_validator`], the validator is NOT removed from the
     /// registry: it is frozen in JAILED, excluded from the next reshare target
     /// (so the reshare clears its share), and may later return via
-    /// `unjailValidator` (`Jail → WaitingForReadiness → Joining → Active`) or,
+    /// `unjailValidator` (`Jail -> WaitingForReadiness -> Joining -> Active`) or,
     /// after boundary exclusion, leave via a full unstake
-    /// (`Jail → Unbonding → Inactive`). The slash itself is applied by the caller
+    /// (`Jail -> Unbonding -> Inactive`). The slash itself is applied by the caller
     /// AFTER this call (`slash_stake` leaves a jailed lifecycle untouched).
     /// Increments `slash_count` once. Repeated punishment of the same lifecycle
     /// is a no-op even if a caller bypasses SlashIndicator's replay guard.
@@ -1559,8 +1559,8 @@ impl ValidatorSet<'_> {
     }
 
     /// Shared punitive transition for [`Self::force_exit_validator`] (`jail =
-    /// false` → ACTIVE→EXITING, the validator leaves the registry via UNBONDING)
-    /// and [`Self::jail_validator`] (`jail = true` → ACTIVE→JAILED, the validator
+    /// false` -> ACTIVE->EXITING, the validator leaves the registry via UNBONDING)
+    /// and [`Self::jail_validator`] (`jail = true` -> ACTIVE->JAILED, the validator
     /// is frozen in the registry). Both signal a reshare and bump `slash_count`
     /// exactly once.
     fn punish_validator(&mut self, addr: Address, jail: bool) -> Result<()> {
@@ -1661,7 +1661,7 @@ impl ValidatorSet<'_> {
     }
 
     /// Unjails a JAILED validator back to PENDING. Called by Staking's
-    /// `unjailValidator` (which first verifies the caller's stake ≥ min_stake);
+    /// `unjailValidator` (which first verifies the caller's stake >= min_stake);
     /// the caller must be the validator itself. Enforces the unjail cooldown,
     /// clears missed-block/vote counters, and signals a reshare. Identity,
     /// deactivation, slash and proposal history remain intact.
@@ -1715,7 +1715,7 @@ impl ValidatorSet<'_> {
         self.unjail_after_stake_check(addr)
     }
 
-    /// Unjail cooldown in blocks (default 0 — immediate unjail allowed).
+    /// Unjail cooldown in blocks (default 0 - immediate unjail allowed).
     pub fn unjail_cooldown_blocks(&self) -> Result<u64> {
         self.config_unjail_cooldown_blocks.read()
     }
@@ -2179,7 +2179,7 @@ impl ValidatorSet<'_> {
     pub fn reset_epoch_counters(&mut self) -> Result<()> {
         for addr in self.registered_validator_addresses()? {
             // Only reset counters for validators that accumulate them.
-            // Include EXITING — they still participate in consensus
+            // Include EXITING - they still participate in consensus
             // until reshare completes and accumulate per-epoch counters.
             // JailRetained is likewise still in the live committee until the
             // next reshare clears its share, so reset its counters too. Jail is
@@ -2289,7 +2289,7 @@ impl ValidatorSet<'_> {
             self.address_to_index.write(&addr, 0)?;
             count -= 1;
             removed += 1;
-            // Don't increment i — the swapped-in entry needs checking
+            // Don't increment i - the swapped-in entry needs checking
         }
 
         self.validator_count.write(count)?;

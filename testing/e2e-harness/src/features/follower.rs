@@ -144,7 +144,7 @@ fn production_full_node_follower(world: &mut World) {
         .expect("launch production FullNode follower");
 }
 
-/// S1 — follower1 reaches lockstep with the committee.
+/// S1 - follower1 reaches lockstep with the committee.
 #[then("the follower reaches lockstep with the committee")]
 fn follower_lockstep(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -252,7 +252,7 @@ fn restart_follower_same_upstream(world: &mut World) {
         .expect("restart follower from durable datadir against validator-0");
 }
 
-/// S1b — follower1 publishes its tip; launch follower2 chained off it.
+/// S1b - follower1 publishes its tip; launch follower2 chained off it.
 #[when("a second follower chains off the first")]
 fn chained_follower(world: &mut World) {
     let f1 = world.validators.http_port(FOLLOWER1_SLOT);
@@ -275,7 +275,7 @@ fn chained_follower(world: &mut World) {
         .expect("launch follower2");
 }
 
-/// S1b — the chained follower reaches lockstep too.
+/// S1b - the chained follower reaches lockstep too.
 #[then("the chained follower reaches lockstep with the committee")]
 fn chained_lockstep(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -286,7 +286,7 @@ fn chained_lockstep(world: &mut World) {
     );
 }
 
-/// S3 — kill validator-3 mid-epoch and restart it.
+/// S3 - kill validator-3 mid-epoch and restart it.
 #[when("a validator is killed and restarted mid-epoch")]
 fn validator_catchup(world: &mut World) {
     world.localnet.kill_validator(3).expect("kill validator-3");
@@ -294,7 +294,7 @@ fn validator_catchup(world: &mut World) {
     world.localnet.restart().expect("restart committee");
 }
 
-/// S3 — the restarted validator catches up to lockstep.
+/// S3 - the restarted validator catches up to lockstep.
 #[then("the restarted validator catches up to lockstep")]
 fn validator_relockstep(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -305,7 +305,7 @@ fn validator_relockstep(world: &mut World) {
     );
 }
 
-/// S2 — stop followers, preserve follower1's complete node identity and local
+/// S2 - stop followers, preserve follower1's complete node identity and local
 /// state, then assign validator role through the ordinary ValidatorSet path.
 #[when("the first follower is promoted to a validator with its warm datadir")]
 fn warm_promotion(world: &mut World) {
@@ -533,7 +533,7 @@ fn promotion_boundary_and_recovery(world: &mut World) {
     );
 }
 
-/// S2 — the promoted validator activates and stays in lockstep.
+/// S2 - the promoted validator activates and stays in lockstep.
 #[then("the promoted validator activates and stays in lockstep")]
 fn promoted_activates(world: &mut World) {
     let primary = world.validators.primary_port();

@@ -24,7 +24,8 @@ use crate::nod_materialization::{
     MaterializationReferenceErrorV1, MaterializationReferenceStoreV1,
 };
 use crate::vote_submitter::{
-    VoteBlockV1, VoteReceiptV1, VoteSubmissionRpcV1, MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+    fee_within_envelope, VoteBlockV1, VoteReceiptV1, VoteSubmissionRpcV1,
+    MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
 };
 
 const RECORD_VERSION: u16 = 1;
@@ -150,14 +151,11 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self
-            .rpc
-            .gas_price()
-            .map_err(rpc_error)?
-            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
-        if max_fee_per_gas > MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS {
-            return Err(NodMaterializationSubmissionErrorV1::FeeCapTooHigh);
-        }
+        let max_fee_per_gas = fee_within_envelope(
+            self.rpc.gas_price().map_err(rpc_error)?,
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
         let calldata = encode_materialize_certified_nods_calldata(batch, &self.config.limits)?;
         let signed = self.signer.sign_eip1559(TxEip1559 {
             chain_id,
@@ -494,8 +492,6 @@ pub enum NodMaterializationSubmissionErrorV1 {
     ConflictingReplay,
     #[error("NOD materialization RPC chain mismatch: expected {expected}, got {actual}")]
     WrongRpcChain { expected: u64, actual: u64 },
-    #[error("NOD materialization fee cap exceeds the signer ceiling")]
-    FeeCapTooHigh,
     #[error("NOD materialization transaction hash mismatch")]
     TransactionHashMismatch,
     #[error("NOD materialization journal generation overflow")]

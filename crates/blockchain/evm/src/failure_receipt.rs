@@ -34,7 +34,7 @@ sol! {
     ///
     /// `code` is a stable per-subsystem `u16` identifier (zero-fee 100-199,
     /// phase failures 200-299). `reason` is the `Display` rendering of the
-    /// underlying Rust error and is intended for human consumption — its
+    /// underlying Rust error and is intended for human consumption - its
     /// exact text is byte-stable per compiled binary but is not part of the
     /// API contract; downstream consumers should match on `code`.
     #[derive(Debug, PartialEq)]
@@ -47,8 +47,8 @@ pub const OUTBE_FAILURE_TOPIC0: alloy_primitives::B256 = OutbeFailure::SIGNATURE
 /// Builds the synthetic `OutbeFailure` log to attach to a soft-failure
 /// receipt.
 ///
-/// The encoding is purely a function of the inputs — no environment, no
-/// allocation order, no hash-map iteration — so two nodes that build a
+/// The encoding is purely a function of the inputs - no environment, no
+/// allocation order, no hash-map iteration - so two nodes that build a
 /// failure receipt for the same `(log_address, code, reason)` produce
 /// byte-equal logs and therefore byte-equal receipts.
 pub fn build_outbe_failure_log(log_address: Address, code: u16, reason: String) -> Log<LogData> {
@@ -88,7 +88,7 @@ mod tests {
         expected_topic1[30] = (107u16 >> 8) as u8;
         expected_topic1[31] = (107u16 & 0xff) as u8;
         assert_eq!(log.data.topics()[1].as_slice(), expected_topic1);
-        // data is ABI-encoded `(string)` — non-empty.
+        // data is ABI-encoded `(string)` - non-empty.
         assert!(!log.data.data.is_empty());
     }
 
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(log.data.data.len(), 64);
     }
 
-    // ── Conformance snapshots ─────────────────────────────
+    // -- Conformance snapshots -----------------------------
     //
     // Pin the exact byte layout of `OutbeFailure(code, reason)` for the four
     // most common production codes. If any of these tests breaks, every
@@ -141,7 +141,7 @@ mod tests {
     }
 
     /// Code 107 (`UnauthorizedSigner`) emitted from the zero-fee log
-    /// address — the exact scenario that halted the testnet on 2026-05-15.
+    /// address - the exact scenario that halted the testnet on 2026-05-15.
     #[test]
     fn snapshot_zero_fee_unauthorized_signer_107() {
         let reason = "zero-fee signer is not authorized for this transaction hook";
@@ -163,7 +163,7 @@ mod tests {
         );
     }
 
-    /// Code 108 (`AlreadyVoted`) — most common zero-fee oracle rejection.
+    /// Code 108 (`AlreadyVoted`) - most common zero-fee oracle rejection.
     #[test]
     fn snapshot_zero_fee_already_voted_108() {
         let reason = "zero-fee oracle vote already exists for validator";
@@ -179,11 +179,11 @@ mod tests {
         );
     }
 
-    /// Code 201 (`PrecompileRevert`) emitted from the system-tx address —
+    /// Code 201 (`PrecompileRevert`) emitted from the system-tx address -
     /// what a begin_block phase precompile revert looks like on-chain.
     #[test]
     fn snapshot_phase_precompile_revert_201() {
-        let reason = "system tx CertifiedParentAccounting did not succeed at body_index=0: Revert { gas: …, logs: [], output: 0x }";
+        let reason = "system tx CertifiedParentAccounting did not succeed at body_index=0: Revert { gas: ..., logs: [], output: 0x }";
         let log = build_outbe_failure_log(
             address!("0xff00000000000000000000000000000000000001"),
             201,
@@ -200,7 +200,7 @@ mod tests {
         );
     }
 
-    /// Code 204 (`InvariantViolation`) — phase precompile exceeded its
+    /// Code 204 (`InvariantViolation`) - phase precompile exceeded its
     /// declared gas budget. Synthesised, not from a runtime path.
     #[test]
     fn snapshot_phase_invariant_violation_204() {
@@ -217,7 +217,7 @@ mod tests {
         );
     }
 
-    /// Reason text encoding is independent of the address — same `(code, reason)`
+    /// Reason text encoding is independent of the address - same `(code, reason)`
     /// produced from different addresses differ only in the `Log.address` field,
     /// not in the `data` payload.
     #[test]
@@ -235,7 +235,7 @@ mod tests {
     }
 
     /// Reason text containing multi-byte UTF-8 must encode by byte length,
-    /// not by character count — otherwise indexers see length / data mismatch.
+    /// not by character count - otherwise indexers see length / data mismatch.
     #[test]
     fn reason_encoding_is_byte_length_not_char_length() {
         // 1 char, 4 UTF-8 bytes.

@@ -37,7 +37,7 @@ interface ISmartAccountFactory {
         uint256 salt
     ) external view returns (address account);
 
-    // ── Getters ──────────────────────────────────────────────────────────
+    // -- Getters ----------------------------------------------------------
 
     /// @notice ZeroDev KernelFactory address
     function kernelFactory() external view returns (address);
@@ -63,7 +63,7 @@ interface ISmartAccountFactory {
     /// @notice BundleWithdrawHook singleton address
     function bundleWithdrawHook() external view returns (address);
 
-    // ── Constants ────────────────────────────────────────────────────────
+    // -- Constants --------------------------------------------------------
 
     /// @notice Daily withdrawal limit enforced by WithdrawalLimitPolicy (6-decimal USDC units)
     function DAILY_LIMIT() external view returns (uint256);
