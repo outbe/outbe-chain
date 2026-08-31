@@ -28,7 +28,6 @@ fn sample_params(owner: Address) -> GemAddParams {
         gem_type: 2, // WALLET
         gem_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
-        cost_amount_minor: U256::from(500_000u64),
         floor_price_minor: U256::from(540_000u64),
         call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
@@ -607,13 +606,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
         assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
-        // GemData record spans 18 slots (owner@+0 .. settled_at@+17), so
-        // the schema fields after gem_items start at 1 + 18 = 19.
-        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 18);
-        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(19u64));
-        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(20u64));
-        // all_gem_ids (List) occupies slot 21.
-        assert_eq!(gem.gem_index.base_slot(), U256::from(22u64));
+        // GemData record spans 17 slots (owner@+0 .. settled_at@+16), so
+        // the schema fields after gem_items start at 1 + 17 = 18.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 17);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(18u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(19u64));
+        // all_gem_ids (List) occupies slot 20.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(21u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);

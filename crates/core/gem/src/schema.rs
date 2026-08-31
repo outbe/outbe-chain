@@ -17,7 +17,6 @@ pub struct GemAddParams {
     pub gem_type: u8,
     pub gem_load_minor: U256,
     pub entry_price_minor: U256,
-    pub cost_amount_minor: U256,
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
     pub call_rate: u16,
@@ -47,60 +46,57 @@ pub struct GemData {
     pub entry_price_minor: U256,
 
     #[attribute(order = 4)]
-    pub cost_amount_minor: U256,
-
-    #[attribute(order = 5)]
     pub floor_price_minor: U256,
 
-    #[attribute(order = 6)]
+    #[attribute(order = 5)]
     pub issuance_currency: u16,
 
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub reference_currency: u16,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub state: u8,
 
-    #[attribute(order = 9)]
+    #[attribute(order = 8)]
     pub issued_at: u64,
 
     /// Coen price level (Reference Currency) whose breach arms a Call Event.
     /// `entry_price_minor * (1 + call_rate)`; call rate is 128% for agent gems.
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub call_price_minor: U256,
 
     /// Block timestamp when the gem was force-called; `0` until Called.
-    #[attribute(order = 11, default = 0)]
+    #[attribute(order = 10, default = 0)]
     pub called_at: u64,
 
     /// Call Notice Period in seconds: after a Called gem passes
     /// `called_at + call_notice_period` it is forfeit-burned. Snapshot of the
     /// protocol constant at issuance.
-    #[attribute(order = 12, default = 0)]
+    #[attribute(order = 11, default = 0)]
     pub call_notice_period: u32,
 
     /// Call-price markup percent (snapshot of `CALL_RATE` at issuance);
     /// `call_price_minor = entry_price_minor * (100 + call_rate) / 100`
     /// (128 => 2.28x).
-    #[attribute(order = 13, default = 0)]
+    #[attribute(order = 12, default = 0)]
     pub call_rate: u16,
 
     /// Call-trigger evaluation window in seconds (snapshot of `CALL_WINDOW` at
     /// issuance); the trailing span scanned for Call Price breaches.
-    #[attribute(order = 14, default = 0)]
+    #[attribute(order = 13, default = 0)]
     pub call_window: u32,
 
     /// Breach threshold in seconds (snapshot of `CALL_THRESHOLD` at issuance);
     /// divided by 86400 to get the required breach-day count.
-    #[attribute(order = 15, default = 0)]
+    #[attribute(order = 14, default = 0)]
     pub call_threshold: u32,
 
     /// Block timestamp when the gem became Qualified; `0` until Qualified.
-    #[attribute(order = 16, default = 0)]
+    #[attribute(order = 15, default = 0)]
     pub qualified_at: u64,
 
     /// Block timestamp when the gem was Settled; `0` until Settled.
-    #[attribute(order = 17, default = 0)]
+    #[attribute(order = 16, default = 0)]
     pub settled_at: u64,
 }
 
@@ -151,20 +147,20 @@ pub struct GemContract {
     // a gem is listed iff its state is Qualified or Called. Maintained by
     // add_gem / set_state / burn. `callable_gem_index` maps gem_id -> position
     // for O(1) swap-remove.
-    #[attribute(order = 11)]
+    #[attribute(order = 10)]
     pub callable_gems: outbe_primitives::storage::dsl::List<U256>,
 
-    #[attribute(order = 12)]
+    #[attribute(order = 11)]
     pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Next bin the qualify scan visits, per reference currency. Non-zero only
     /// while a sweep was cut short by the per-block budget.
-    #[attribute(order = 13)]
+    #[attribute(order = 12)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Where the next qualify scan starts, so a heavy currency cannot starve the
     /// ones behind it when the per-block budget runs out.
-    #[attribute(order = 14)]
+    #[attribute(order = 13)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 

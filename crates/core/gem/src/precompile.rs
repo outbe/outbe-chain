@@ -70,7 +70,6 @@ fn to_abi_data(item: &GemData) -> IGem::GemData {
         state: item.state,
         gemLoad: item.gem_load_minor,
         entryPrice: item.entry_price_minor,
-        costAmount: item.cost_amount_minor,
         floorPrice: item.floor_price_minor,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,

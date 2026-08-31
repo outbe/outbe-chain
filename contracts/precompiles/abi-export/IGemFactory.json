@@ -358,12 +358,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "costAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "floorPrice",
         "type": "uint256",
         "indexed": false,

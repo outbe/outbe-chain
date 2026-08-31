@@ -48,8 +48,7 @@ pub fn mint_gem(
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (cost_amount, floor_price, initial_state) =
-        compute_params(gem_type, gem_load, entry_price)?;
+    let (floor_price, initial_state) = compute_params(gem_type, gem_load, entry_price)?;
     let call_price = derived_call_price(entry_price)?;
 
     let params = GemAddParams {
@@ -57,7 +56,6 @@ pub fn mint_gem(
         gem_type: gem_type as u8,
         gem_load_minor: gem_load,
         entry_price_minor: entry_price,
-        cost_amount_minor: cost_amount,
         floor_price_minor: floor_price,
         call_price_minor: call_price,
         call_rate: CALL_RATE as u16,
@@ -85,7 +83,6 @@ pub fn mint_gem(
             owner,
             gemLoad: gem_load,
             entryPrice: entry_price,
-            costAmount: cost_amount,
             floorPrice: floor_price,
             issuanceCurrency: issuance_currency,
             referenceCurrency: reference_currency,
@@ -214,7 +211,7 @@ pub fn mint_merchant_gem(
     // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
-    let cost_amount = compute_cost(entry_price, gem_load, 100)?;
+    compute_cost(entry_price, gem_load, 100)?;
     let floor_price = derived_floor(entry_price)?.max(record.source_floor_price);
     let call_price = derived_call_price(entry_price)?;
 
@@ -225,7 +222,6 @@ pub fn mint_merchant_gem(
             gem_type: GemTypes::Merchant as u8,
             gem_load_minor: gem_load,
             entry_price_minor: entry_price,
-            cost_amount_minor: cost_amount,
             floor_price_minor: floor_price,
             call_price_minor: call_price,
             call_rate: CALL_RATE as u16,
@@ -255,7 +251,6 @@ pub fn mint_merchant_gem(
             owner,
             gemLoad: gem_load,
             entryPrice: entry_price,
-            costAmount: cost_amount,
             floorPrice: floor_price,
             issuanceCurrency: record.issuance_currency,
             referenceCurrency: record.reference_currency,
@@ -414,18 +409,33 @@ fn cost_in_token(
     currency: PaymentCurrency,
 ) -> Result<U256> {
     let asset_decimals = read_decimals(storage, asset)?;
+    let cost = gem_cost_minor(item)?;
     if currency == PaymentCurrency::Reference {
-        return cost_to_payment_units(item.cost_amount_minor, U256::ONE, U256::ONE, asset_decimals);
+        return cost_to_payment_units(cost, U256::ONE, U256::ONE, asset_decimals);
     }
 
     let rate_issuance = fresh_coen_rate_for(storage.clone(), item.issuance_currency)?;
     let rate_reference = fresh_coen_rate_for(storage.clone(), item.reference_currency)?;
-    cost_to_payment_units(
-        item.cost_amount_minor,
-        rate_issuance,
-        rate_reference,
-        asset_decimals,
+    cost_to_payment_units(cost, rate_issuance, rate_reference, asset_decimals)
+}
+
+/// The gem's cost in its reference currency, derived from the record: the same
+/// `entry x load x rate` the issuance path computed, off the same stored inputs.
+pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
+    compute_cost(
+        item.entry_price_minor,
+        item.gem_load_minor,
+        cost_rate(item.gem_type),
     )
+}
+
+/// Share of the full agent cost this gem type pays, in percent.
+fn cost_rate(gem_type: u8) -> u64 {
+    if gem_type == GemTypes::Sra as u8 {
+        SRA_RATE
+    } else {
+        100
+    }
 }
 
 /// Six-decimal cost into payment-token minor units, rounded up exactly once.
@@ -565,38 +575,33 @@ fn read_reference_oracle_rate(
     Ok(rate)
 }
 
-fn compute_params(
-    gem_type: GemTypes,
-    gem_load: U256,
-    coen_rate: U256,
-) -> Result<(U256, U256, GemState)> {
-    let (cost_amount, floor_price, initial_state) = match gem_type {
+fn compute_params(gem_type: GemTypes, gem_load: U256, coen_rate: U256) -> Result<(U256, GemState)> {
+    // The cost is derived from the record on demand; it is computed here only to
+    // reject a load whose cost rounds to zero.
+    let (floor_price, initial_state) = match gem_type {
         // Genesis: validator gem during the genesis window — born Qualified
         // (no maturity wait), but validators pay like every other agent
         // class: cost = entry × load, floor = rate × 1.08. settleGem moves
         // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
-            let cost = compute_cost(coen_rate, gem_load, 100)?;
-            let floor = derived_floor(coen_rate)?;
-            (cost, floor, GemState::Qualified)
+            compute_cost(coen_rate, gem_load, 100)?;
+            (derived_floor(coen_rate)?, GemState::Qualified)
         }
         GemTypes::Sra => {
-            let cost = compute_cost(coen_rate, gem_load, SRA_RATE)?;
-            let floor = derived_floor(coen_rate)?;
-            (cost, floor, GemState::Issued)
+            compute_cost(coen_rate, gem_load, SRA_RATE)?;
+            (derived_floor(coen_rate)?, GemState::Issued)
         }
         // Validator (post-genesis), Wallet, Cca — standard agent-class flow:
         // cost = entry × load, floor = rate × 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
-            let cost = compute_cost(coen_rate, gem_load, 100)?;
-            let floor = derived_floor(coen_rate)?;
-            (cost, floor, GemState::Issued)
+            compute_cost(coen_rate, gem_load, 100)?;
+            (derived_floor(coen_rate)?, GemState::Issued)
         }
         // Merchant gems are minted via `mint_merchant_gem` against a GemPosition,
         // not through this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
-    Ok((cost_amount, floor_price, initial_state))
+    Ok((floor_price, initial_state))
 }
 
 /// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and

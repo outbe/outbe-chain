@@ -68,7 +68,6 @@ interface IGemFactory {
         address owner,
         uint256 gemLoad,
         uint256 entryPrice,
-        uint256 costAmount,
         uint256 floorPrice,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,

@@ -28,7 +28,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         gem_type: params.gem_type,
         gem_load_minor: params.gem_load_minor,
         entry_price_minor: params.entry_price_minor,
-        cost_amount_minor: params.cost_amount_minor,
         floor_price_minor: params.floor_price_minor,
         call_price_minor: params.call_price_minor,
         call_rate: params.call_rate,

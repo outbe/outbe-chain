@@ -63,7 +63,7 @@ impl GemContract<'_> {
         let gem_id_str = gem_id.to_string();
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
+            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             gem_id,
             TOKEN_DESCRIPTION,
             TOKEN_IMAGE_BASE,
@@ -73,7 +73,6 @@ impl GemContract<'_> {
             item.state,
             item.gem_load_minor,
             item.entry_price_minor,
-            item.cost_amount_minor,
             item.floor_price_minor,
             item.issuance_currency,
             item.reference_currency,
