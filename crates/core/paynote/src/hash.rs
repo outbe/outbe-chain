@@ -35,6 +35,8 @@ pub type Field = Fr;
 /// it.
 const PAYNOTE_DOMAIN: &str = "OUTBE_PAYNOTE";
 
+// TODO refactor: introduce a base hashing functions and remove these ones.
+
 // Base purpose tags, shared across circuits and folded with the domain above.
 const TAG_NOTE_SN: &str = "NOTE_SN";
 const TAG_COMMITMENT: &str = "COMMITMENT";
