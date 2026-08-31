@@ -3,11 +3,9 @@
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-use crate::errors::GemFactoryError;
-
 use crate::constants::{MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS};
 use crate::runtime::emit_event;
-use crate::schema::GemFactoryContract;
+use crate::schema::{GemFactoryContract, GemPosition};
 
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     sweep_expired_positions(ctx)?;
@@ -47,7 +45,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
         }
         budget -= 1;
 
-        match storage.with_checkpoint(|| expire_position(ctx, position_id)) {
+        match storage.with_checkpoint(|| expire_position(ctx, &record)) {
             Ok(()) => expired = expired.saturating_add(1),
             Err(error) => {
                 tracing::warn!(
@@ -65,17 +63,16 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
 }
 
 /// The record is kept: a merchant should still see the position they held.
-fn expire_position(ctx: &BlockRuntimeContext, position_id: U256) -> Result<()> {
+fn expire_position(ctx: &BlockRuntimeContext, record: &GemPosition) -> Result<()> {
     let storage = &ctx.storage;
     let mut factory = GemFactoryContract::new(storage.clone());
-    let mut record = factory
-        .positions
-        .get(position_id)?
-        .ok_or(GemFactoryError::PositionNotFound)?;
+    let position_id = record.position_id;
 
     let returned = record.remaining_capacity;
-    record.remaining_capacity = U256::ZERO;
-    factory.positions.update(&record)?;
+    factory.positions.update(&GemPosition {
+        remaining_capacity: U256::ZERO,
+        ..*record
+    })?;
     factory.remove_live_position(position_id)?;
 
     if !returned.is_zero() {
