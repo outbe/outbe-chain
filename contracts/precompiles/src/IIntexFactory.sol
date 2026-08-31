@@ -104,9 +104,6 @@ interface IIntexFactory {
     ///         was realized in time.
     event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
 
-    /// @notice A called group the sweep cannot retire; its load stays out of circulation.
-    event SeriesExpiryStalled(uint32 indexed worldwideDay, uint16 indexed referenceCurrency);
-
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
     ///         proceeds into the day's pot. Emitted once per delivery, so a chain
     ///         routing its proceeds in parts emits once per part.

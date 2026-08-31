@@ -423,19 +423,6 @@
   },
   {
     "type": "event",
-    "name": "GemPositionExpiryStalled",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "GemSettled",
     "inputs": [
       {

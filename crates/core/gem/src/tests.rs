@@ -1,5 +1,5 @@
 use alloy_primitives::{address, Address, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::math::constants::REAL_ID_SHIFT;
@@ -783,8 +783,10 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
     });
 }
 
+/// An entry the sweep cannot retire keeps its place and credits nothing: the
+/// burn and the credit share a checkpoint, so neither half can happen alone.
 #[test]
-fn a_sweep_that_keeps_failing_says_so() {
+fn an_entry_the_sweep_cannot_retire_is_left_alone() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         // A slot pointing at a gem that is not there: forfeit errors every run.
@@ -795,45 +797,17 @@ fn a_sweep_that_keeps_failing_says_so() {
         gem.called_tail.write(1).unwrap();
 
         let ctx = block_ctx_at(storage, T_NOW + 1);
-        for expected in 1..=3 {
-            crate::hooks::run_call_daily(&ctx).unwrap();
-            assert_eq!(gem.expiry_attempts.read(&ghost).unwrap(), expected);
-        }
-        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(ghost));
-    });
-}
-
-/// Announced on the first failure, and only once however long it stays stuck.
-#[test]
-fn a_stalled_entry_is_announced_once() {
-    let ghost = U256::from(0xdeadu64);
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_timestamp(U256::from(T_NOW));
-    StorageHandle::enter(&mut provider, |handle| {
-        let gem = GemContract::new(handle.clone());
-        gem.called_queue_at.write(&0, ghost).unwrap();
-        gem.called_queue_index.write(&ghost, 0).unwrap();
-        gem.called_deadline.write(&ghost, T_NOW).unwrap();
-        gem.called_tail.write(1).unwrap();
-
-        let ctx = block_ctx_at(&handle, T_NOW + 1);
         for _ in 0..3 {
             crate::hooks::run_call_daily(&ctx).unwrap();
         }
+        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(ghost));
+        assert_eq!(unallocated(storage), U256::ZERO);
     });
-
-    let stalls: Vec<_> = provider
-        .get_ordered_events()
-        .iter()
-        .filter_map(|log| IGem::GemExpiryStalled::decode_log(log).ok())
-        .collect();
-    assert_eq!(stalls.len(), 1);
-    assert_eq!(stalls[0].gemId, ghost);
 }
 
-/// Left silent, such an entry would hold the queue head forever.
+/// Same for a due entry whose gem is no longer Called: it burns nothing.
 #[test]
-fn a_due_entry_that_cannot_burn_is_counted_too() {
+fn a_due_entry_that_cannot_burn_credits_nothing() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
         let gem = GemContract::new(storage.clone());
@@ -843,10 +817,10 @@ fn a_due_entry_that_cannot_burn_is_counted_too() {
         gem.called_tail.write(1).unwrap();
 
         let ctx = block_ctx_at(storage, T_NOW + 1);
-        for expected in 1..=3 {
+        for _ in 0..3 {
             crate::hooks::run_call_daily(&ctx).unwrap();
-            assert_eq!(gem.expiry_attempts.read(&gem_id).unwrap(), expected);
         }
+        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(gem_id));
         assert_eq!(unallocated(storage), U256::ZERO);
     });
 }

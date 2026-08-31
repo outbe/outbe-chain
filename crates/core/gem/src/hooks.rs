@@ -270,11 +270,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         budget -= 1;
         match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
-            Ok(true) => {
-                burned = burned.saturating_add(1);
-                gem.expiry_attempts.clear(&gem_id)?;
-                continue;
-            }
+            Ok(true) => burned = burned.saturating_add(1),
             // Due and still not burning: the entry no longer matches its gem.
             Ok(false) => {
                 tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
@@ -282,13 +278,6 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
             Err(error) => {
                 tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem")
             }
-        }
-        let attempts = gem.expiry_attempts.read(&gem_id)?.saturating_add(1);
-        gem.expiry_attempts.write(&gem_id, attempts)?;
-        // Announced on the first failure: nothing here fails transiently, so a
-        // later attempt would only repeat the same answer.
-        if attempts == 1 {
-            gem.emit(crate::precompile::IGem::GemExpiryStalled { gemId: gem_id })?;
         }
     }
     gem.compact_called_queue()?;

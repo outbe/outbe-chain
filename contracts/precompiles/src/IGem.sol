@@ -45,6 +45,4 @@ interface IGem {
     event GemCalled(uint256 indexed gemId, uint64 calledAt);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
     event GemExpired(uint256 indexed gemId, address owner, uint256 gemLoad);
-    /// @notice A gem the expiry sweep cannot retire; its load stays out of circulation.
-    event GemExpiryStalled(uint256 indexed gemId);
 }

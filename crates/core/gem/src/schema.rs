@@ -193,9 +193,6 @@ pub struct GemContract {
     /// Held off the record so the head check costs no record load.
     #[attribute(order = 24)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
-
-    #[attribute(order = 25)]
-    pub expiry_attempts: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemContract<'_> {

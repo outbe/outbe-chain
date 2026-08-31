@@ -81,9 +81,6 @@ pub struct GemFactoryContract {
     pub live_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 8)]
     pub live_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
-    #[attribute(order = 9)]
-    pub expiry_attempts: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemFactoryContract<'_> {

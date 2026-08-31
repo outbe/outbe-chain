@@ -82,6 +82,4 @@ interface IGemFactory {
     event GemPositionExpired(
         uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
     );
-    /// @notice A position the sweep cannot retire; its remainder stays out of circulation.
-    event GemPositionExpiryStalled(uint256 indexed positionId);
 }

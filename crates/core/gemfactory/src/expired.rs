@@ -46,10 +46,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
         budget -= 1;
 
         match storage.with_checkpoint(|| expire_position(ctx, position_id)) {
-            Ok(()) => {
-                expired = expired.saturating_add(1);
-                factory.expiry_attempts.clear(&position_id)?;
-            }
+            Ok(()) => expired = expired.saturating_add(1),
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::gemfactory",
@@ -57,20 +54,6 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
                     error = ?error,
                     "position sweep: skipping position"
                 );
-                let attempts = factory
-                    .expiry_attempts
-                    .read(&position_id)?
-                    .saturating_add(1);
-                factory.expiry_attempts.write(&position_id, attempts)?;
-                // Announced on the first failure: nothing here fails transiently.
-                if attempts == 1 {
-                    emit_event(
-                        storage,
-                        crate::precompile::IGemFactory::GemPositionExpiryStalled {
-                            positionId: position_id,
-                        },
-                    )?;
-                }
             }
         }
     }

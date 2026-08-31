@@ -482,25 +482,6 @@
   },
   {
     "type": "event",
-    "name": "SeriesExpiryStalled",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "SeriesIssued",
     "inputs": [
       {

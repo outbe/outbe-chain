@@ -43,10 +43,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
 
         match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day, index)) {
-            Ok(members) => {
-                budget = budget.saturating_sub(members);
-                factory.expiry_attempts.clear(&key)?;
-            }
+            Ok(members) => budget = budget.saturating_sub(members),
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::intexfactory",
@@ -55,18 +52,6 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                     error = ?error,
                     "expiry sweep: skipping group"
                 );
-                let attempts = factory.expiry_attempts.read(&key)?.saturating_add(1);
-                factory.expiry_attempts.write(&key, attempts)?;
-                // Announced on the first failure: nothing here fails transiently.
-                if attempts == 1 {
-                    emit_event(
-                        storage,
-                        crate::precompile::IIntexFactory::SeriesExpiryStalled {
-                            worldwideDay: worldwide_day.value(),
-                            referenceCurrency: iso_code,
-                        },
-                    )?;
-                }
             }
         }
     }
