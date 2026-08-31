@@ -57,6 +57,18 @@ fn signal_committee(pids: &[u32], signal: &str) -> Result<()> {
     Ok(())
 }
 
+fn quiesce_and_terminate_committee_with(
+    pids: &[u32],
+    mut signal: impl FnMut(&[u32], &str) -> Result<()>,
+) -> Result<()> {
+    signal(pids, "STOP")?;
+    if let Err(error) = signal(pids, "TERM") {
+        let _ = signal(pids, "CONT");
+        return Err(error);
+    }
+    signal(pids, "CONT")
+}
+
 impl Localnet {
     /// Start the committee (and, when TEE is enabled, its enclaves). Idempotent:
     /// indices whose owned node is still alive are skipped, so [`restart`] only
@@ -190,7 +202,7 @@ impl Localnet {
                 validator_pids.len()
             );
         }
-        signal_committee(&validator_pids, "STOP")?;
+        quiesce_and_terminate_committee_with(&validator_pids, signal_committee)?;
         self.validators.clear();
         if !self.validators.is_empty() {
             bail!("committee stop barrier retained a validator process");
@@ -636,7 +648,41 @@ mod owned_committee_tests {
     use crate::internal::config::Config;
     use crate::internal::proc::{ChildGuard, DockerImageId};
 
-    use super::Localnet;
+    use super::{quiesce_and_terminate_committee_with, Localnet};
+
+    #[test]
+    fn controlled_time_restart_resumes_the_frozen_cohort_for_graceful_shutdown() {
+        let pids = [11, 22, 33, 44];
+        let mut delivered = Vec::new();
+
+        quiesce_and_terminate_committee_with(&pids, |actual_pids, signal| {
+            assert_eq!(actual_pids, pids);
+            delivered.push(signal.to_owned());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(delivered, ["STOP", "TERM", "CONT"]);
+    }
+
+    #[test]
+    fn controlled_time_restart_resumes_the_cohort_when_term_delivery_fails() {
+        let pids = [11, 22, 33, 44];
+        let mut delivered = Vec::new();
+
+        let error = quiesce_and_terminate_committee_with(&pids, |actual_pids, signal| {
+            assert_eq!(actual_pids, pids);
+            delivered.push(signal.to_owned());
+            if signal == "TERM" {
+                eyre::bail!("injected TERM failure");
+            }
+            Ok(())
+        })
+        .expect_err("TERM failure must abort the controlled-time restart");
+
+        assert!(error.to_string().contains("injected TERM failure"));
+        assert_eq!(delivered, ["STOP", "TERM", "CONT"]);
+    }
 
     #[test]
     fn readiness_rejects_an_owned_validator_that_exited() {
