@@ -46,6 +46,5 @@ interface IGem {
     /// @notice Called gem forfeit-burned after its notice period lapsed.
     event GemExpired(uint256 indexed gemId, address owner, uint256 gemLoad);
     /// @notice A gem the expiry sweep has failed to retire `attempts` times running.
-    ///         Its load stays out of circulation until someone looks.
     event GemExpiryStalled(uint256 indexed gemId, uint32 attempts);
 }

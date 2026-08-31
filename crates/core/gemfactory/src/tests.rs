@@ -1064,8 +1064,7 @@ fn parking_marks_the_units_realized_on_the_source_series() {
     });
 }
 
-/// A year on, whatever the merchant never issued goes back to the pool, and the
-/// position stays visible as the spent object it is.
+/// The position stays visible afterwards, as the spent object it is.
 #[test]
 fn an_expired_position_returns_its_remainder() {
     with_storage(None, |storage| {
@@ -1077,7 +1076,6 @@ fn an_expired_position_returns_its_remainder() {
         );
         let capacity = parked_capacity(six_decimal_u128());
 
-        // Inside the year the sweep leaves it alone.
         let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
         assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
         assert_eq!(unallocated(storage), U256::ZERO);
@@ -1094,8 +1092,6 @@ fn an_expired_position_returns_its_remainder() {
     });
 }
 
-/// A position the merchant drained leaves the queue at once rather than waiting
-/// out its year at the head.
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {

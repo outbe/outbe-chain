@@ -97,10 +97,8 @@ impl GemContract<'_> {
             return Ok(false);
         }
         self.burn(&item)?;
-        // Every gem's load comes out of a daily emission sink, and every sink's
-        // unspent remainder already returns here, so nothing realized it and it
-        // goes back. Same checkpoint as the burn: a block that burns without
-        // crediting leaves nothing to recover.
+        // The load came out of a daily emission sink and nobody realized it, so it
+        // goes back. Same checkpoint as the burn, or there is nothing to recover.
         outbe_promislimit::PromisLimitContract::new(self.storage.clone())
             .add_to_total_unallocated(item.gem_load_minor)?;
         self.emit(GemExpired {

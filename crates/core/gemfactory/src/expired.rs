@@ -1,5 +1,4 @@
-//! Daily sweep over merchant positions whose year of validity has run out,
-//! returning whatever capacity they never issued to the unallocated limit.
+//! Daily sweep returning the capacity an expired merchant position never issued.
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -12,7 +11,6 @@ use crate::constants::{
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
 
-/// Cycle daily-trigger entry.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     sweep_expired_positions(ctx)?;
     Ok(())
@@ -83,8 +81,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
     Ok(expired)
 }
 
-/// Return one position's remainder. The record is kept: it is an NFT-like object
-/// with an owner index, and a merchant should still see the position they held.
+/// The record is kept: a merchant should still see the position they held.
 fn expire_position(ctx: &BlockRuntimeContext, position_id: U256) -> Result<()> {
     let storage = &ctx.storage;
     let mut factory = GemFactoryContract::new(storage.clone());

@@ -9,10 +9,11 @@ pub const BIN_STEP_BP: u16 = 25;
 /// currencies. The per-currency bin cursor resumes the rest next block.
 pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
-/// Gems the daily run may call, and separately forfeit, before it gives out.
-/// A correlated breach calls a whole currency at once and their notice periods
-/// then lapse together, so both arms need a ceiling.
-pub const MAX_GEM_CALL_ACTIONS_PER_RUN: u32 = 256;
+/// Gems the daily call scan may call before it gives out.
+pub const MAX_GEM_CALLS_PER_RUN: u32 = 256;
+
+/// Gems the daily expiry sweep may forfeit before it gives out.
+pub const MAX_GEM_FORFEITS_PER_RUN: u32 = 256;
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
@@ -27,7 +28,5 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 /// the holder must settle. Once elapsed the gem is forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
-/// Consecutive failed expiry attempts before the stall is announced on chain.
-/// Below this a retry is ordinary; at it, the capacity is stuck and only a log
-/// line would say so otherwise.
+/// Failed forfeit attempts in a row before the stall is announced on chain.
 pub const EXPIRY_STALL_THRESHOLD: u32 = 3;

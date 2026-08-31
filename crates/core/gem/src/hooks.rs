@@ -12,7 +12,7 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, EXPIRY_STALL_THRESHOLD, MAX_GEM_CALL_ACTIONS_PER_RUN,
+    CALL_WINDOW, EXPIRY_STALL_THRESHOLD, MAX_GEM_CALLS_PER_RUN, MAX_GEM_FORFEITS_PER_RUN,
     MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
@@ -169,22 +169,20 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let gem = GemContract::new(ctx.storage.clone());
     let start = gem.call_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = MAX_GEM_CALL_ACTIONS_PER_RUN;
+    let mut budget = MAX_GEM_CALLS_PER_RUN;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
     let mut mutated: u32 = 0;
     let mut resume_at = start;
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget == 0 {
-            // Resume here, so a heavy currency cannot starve the ones behind it.
             resume_at = at;
             break;
         }
         let iso_code = currencies[at];
         let index = window_for(&oracle, &mut windows, iso_code, last_closed_day)?;
         let window = windows[index].1.as_slice();
-        // A gem priced above every day in the window cannot have breached, so the
-        // walk stops there instead of visiting the whole population.
+        // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
             continue;
         };
@@ -196,9 +194,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(mutated)
 }
 
-/// Walk one currency's qualified bins up to `ceiling`, resuming where the last
-/// run gave out. The cursor resumes rather than restarting: a gem left behind is
-/// picked up later, which cannot change an outcome that needs a multi-day breach.
+/// Walk one currency's qualified bins up to `ceiling`, resuming where it gave out.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
@@ -251,8 +247,7 @@ pub(crate) fn call_currency(
     Ok(called)
 }
 
-/// Forfeit-burn the gems whose notice period has closed. The queue is in call
-/// order, so a head that is not due ends the pass.
+/// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut gem = GemContract::new(ctx.storage.clone());
     let head = gem.called_head.read()?;
@@ -262,7 +257,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
 
     let now = ctx.block.timestamp;
-    let mut budget = MAX_GEM_CALL_ACTIONS_PER_RUN;
+    let mut budget = MAX_GEM_FORFEITS_PER_RUN;
     let mut burned: u32 = 0;
     for index in head..tail {
         if budget == 0 {
@@ -281,8 +276,8 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 gem.expiry_attempts.clear(&gem_id)?;
                 continue;
             }
-            // Due and still refusing to burn: the entry no longer matches its
-            // gem, and it holds up every entry behind it just as an error does.
+            // Due and still not burning: the entry no longer matches its gem,
+            // and it holds up every entry behind it just as an error does.
             Ok(false) => {
                 tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
             }

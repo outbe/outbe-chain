@@ -104,8 +104,7 @@ interface IIntexFactory {
     ///         was realized in time.
     event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
 
-    /// @notice A called group the expiry sweep has failed to retire `attempts` times
-    ///         running. Its load stays out of circulation until someone looks.
+    /// @notice A called group the sweep has failed to retire `attempts` times running.
     event SeriesExpiryStalled(uint32 indexed worldwideDay, uint16 indexed referenceCurrency, uint32 attempts);
 
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction

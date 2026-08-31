@@ -652,8 +652,6 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
     gem_id
 }
 
-/// The call pass is budgeted, so a run cut short must carry on from its own bin
-/// cursor rather than starting the currency over.
 #[test]
 fn the_call_pass_resumes_from_its_bin_cursor() {
     with_storage(|storage| {
@@ -709,7 +707,6 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
             GemState::Qualified as u8
         );
 
-        // The next run picks up where it stopped instead of revisiting the first.
         let mut budget = 8u32;
         assert_eq!(
             crate::hooks::call_currency(
@@ -729,8 +726,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
     });
 }
 
-/// The budget cuts between bins, never inside one: a bin left half-visited would
-/// be stepped over by the cursor and wait for a full wrap to be seen again.
+/// A bin left half-visited would be stepped over by the cursor.
 #[test]
 fn a_bin_wider_than_the_budget_is_not_left_half_called() {
     with_storage(|storage| {
@@ -787,8 +783,6 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
     });
 }
 
-/// A queue entry the sweep cannot retire is announced on chain once it has failed
-/// enough times running, rather than only in a node's log.
 #[test]
 fn a_sweep_that_keeps_failing_says_so() {
     with_storage(|storage| {
@@ -805,13 +799,11 @@ fn a_sweep_that_keeps_failing_says_so() {
             crate::hooks::run_call_daily(&ctx).unwrap();
             assert_eq!(gem.expiry_attempts.read(&ghost).unwrap(), expected);
         }
-        // The entry is still there: nothing was credited and nothing was lost.
         assert_eq!(gem.called_queue_slot(0).unwrap(), Some(ghost));
     });
 }
 
-/// A due entry whose gem is no longer Called burns nothing, so it must be
-/// counted as a stall: left silent it would hold the queue head forever.
+/// Left silent, such an entry would hold the queue head forever.
 #[test]
 fn a_due_entry_that_cannot_burn_is_counted_too() {
     with_storage(|storage| {
@@ -831,7 +823,6 @@ fn a_due_entry_that_cannot_burn_is_counted_too() {
     });
 }
 
-/// The load of a gem nobody settled goes back to the emission accumulator.
 #[test]
 fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     with_storage(|storage| {
@@ -843,7 +834,6 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
         let mut gem = GemContract::new(storage.clone());
         gem.mark_called(gem_id, T_NOW).unwrap();
 
-        // Inside the notice period nothing moves.
         assert!(!gem.forfeit(gem_id, T_NOW + 6 * 86_400).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
 
@@ -852,8 +842,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     });
 }
 
-/// A settled gem leaves the queue, so the forfeit arm can never reach it - its
-/// holder paid the strike and the load is theirs.
+/// Its holder paid the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {
@@ -874,9 +863,7 @@ fn unallocated(storage: &StorageHandle) -> U256 {
         .unwrap()
 }
 
-/// The two stages keep separate structures for a reason: a gem priced above every
-/// day in the window is never visited by the price pass, yet once called it still
-/// expires on schedule, because expiry reads the queue and not the tree.
+/// Expiry reads the queue, not the tree: the reason the two stages are separate.
 #[test]
 fn a_gem_above_the_window_is_not_visited_but_still_expires() {
     with_storage(|storage| {
@@ -910,7 +897,6 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
             GemState::Qualified as u8
         );
 
-        // Called by hand, it leaves the tree for the queue and expires from there.
         let mut gem = GemContract::new(storage.clone());
         gem.mark_called(gem_id, T_NOW).unwrap();
         assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());

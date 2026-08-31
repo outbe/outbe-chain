@@ -78,8 +78,7 @@ interface IGemFactory {
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
     /// @notice A settled gem was burned to mine confidential Promis.
     event GemMined(uint256 indexed gemId, address owner, uint256 gemLoad);
-    /// @notice A merchant position reached the end of its validity with capacity it
-    ///         never issued; that capacity returns to the unallocated limit.
+    /// @notice A position ended its validity with capacity it never issued.
     event GemPositionExpired(
         uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
     );

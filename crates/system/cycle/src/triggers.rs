@@ -228,8 +228,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "gem_position_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
-            // Walks parked-Intex positions by time alone, returning the capacity a
-            // merchant never issued; no oracle and no settlement accounting.
+            // Walks positions by time alone: no oracle, no settlement accounting.
             requires_accounting_window: false,
             coalesces_backlog: false,
             handler: TriggerHandler::GemPositionDaily,

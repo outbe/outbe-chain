@@ -97,7 +97,5 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 
-/// Consecutive failed expiry attempts before the stall is announced on chain.
-/// Below this a retry is ordinary; at it, the capacity is stuck and only a log
-/// line would say so otherwise.
+/// Failed expiry attempts in a row before the stall is announced on chain.
 pub const EXPIRY_STALL_THRESHOLD: u32 = 3;

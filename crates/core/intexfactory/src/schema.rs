@@ -152,7 +152,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// `scoped(iso, day)` -> consecutive failed expiry attempts. Cleared on success.
+    /// `scoped(iso, day)` -> failed expiry attempts.
     #[attribute(order = 34)]
     pub expiry_attempts: outbe_primitives::storage::dsl::Map<u64, u32>,
 }

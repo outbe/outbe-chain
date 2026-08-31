@@ -242,8 +242,7 @@ pub fn mint_merchant_gem(
 
     record.remaining_capacity = remaining;
     factory.positions.update(&record)?;
-    // A drained position has nothing left to return; it leaves the queue now
-    // rather than waiting out its year at the head.
+    // Nothing left to return: it leaves the queue instead of sitting at the head.
     if remaining.is_zero() {
         factory.remove_live_position(position_id)?;
     }

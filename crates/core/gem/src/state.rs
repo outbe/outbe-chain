@@ -169,8 +169,7 @@ impl GemContract<'_> {
                 item.qualified_at = self.storage.timestamp()?.to::<u64>();
             }
             GemState::Settled => {
-                // Qualified leaves the callable list, Called the deadline queue.
-                // An Issued -> Settled jump was in neither.
+                // Qualified leaves the bin index, Called the deadline queue.
                 if item.state == GemState::Qualified as u8 {
                     self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
                 } else if item.state == GemState::Called as u8 {
@@ -186,8 +185,6 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Index a qualified gem by its call price, so the daily scan enters only the
-    /// bins a breach could have reached.
     pub(crate) fn insert_qualified(
         &mut self,
         gem_id: U256,
@@ -272,13 +269,11 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    /// The queue slot's gem, or `None` for a slot already taken.
     pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<U256>> {
         let gem_id = self.called_queue_at.read(&index)?;
         Ok((!gem_id.is_zero()).then_some(gem_id))
     }
 
-    /// Move the head past emptied slots, resetting once the queue drains.
     pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
         let tail = self.called_tail.read()?;
         let mut head = self.called_head.read()?;
@@ -308,7 +303,6 @@ impl GemContract<'_> {
         self.push_called(gem_id, called_at + u64::from(item.call_notice_period))
     }
 
-    /// Append a called gem to the deadline queue.
     fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
         let tail = self.called_tail.read()?;
         self.called_queue_at.write(&tail, gem_id)?;
@@ -317,7 +311,6 @@ impl GemContract<'_> {
         self.called_tail.write(tail.saturating_add(1))
     }
 
-    /// Take a gem out of the deadline queue, leaving its slot empty.
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
         let index = self.called_queue_index.read(&gem_id)?;
         // A gem that never queued reads index 0; only clear a slot it owns.

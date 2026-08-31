@@ -70,8 +70,8 @@ pub struct GemFactoryContract {
     #[attribute(order = 4)]
     pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Live positions, in parking order, for the expiry sweep. Nothing else
-    // enumerates them: the owner index answers "whose", not "which are alive".
+    // --- Live positions, in parking order: nothing else enumerates them, the
+    // owner index answers "whose", not "which are alive".
     #[attribute(order = 5)]
     pub live_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 6)]
@@ -79,17 +79,14 @@ pub struct GemFactoryContract {
     /// Queue index -> position id; zero marks a slot already taken.
     #[attribute(order = 7)]
     pub live_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// position_id -> its queue index, so a drained position leaves at once.
     #[attribute(order = 8)]
     pub live_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// position_id -> consecutive failed expiry attempts. Cleared on success.
     #[attribute(order = 9)]
     pub expiry_attempts: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemFactoryContract<'_> {
-    /// Append a freshly parked position to the live queue.
     pub(crate) fn push_live_position(&mut self, position_id: U256) -> Result<()> {
         let tail = self.live_tail.read()?;
         self.live_queue_at.write(&tail, position_id)?;
@@ -97,7 +94,6 @@ impl GemFactoryContract<'_> {
         self.live_tail.write(tail.saturating_add(1))
     }
 
-    /// Take a position out of the live queue, leaving its slot empty.
     pub(crate) fn remove_live_position(&mut self, position_id: U256) -> Result<()> {
         let index = self.live_queue_index.read(&position_id)?;
         // A position that never queued reads index 0; only clear a slot it owns.
@@ -107,13 +103,11 @@ impl GemFactoryContract<'_> {
         self.live_queue_index.clear(&position_id)
     }
 
-    /// The queue slot's position, or `None` for a slot already taken.
     pub(crate) fn live_queue_slot(&self, index: u32) -> Result<Option<U256>> {
         let position_id = self.live_queue_at.read(&index)?;
         Ok((!position_id.is_zero()).then_some(position_id))
     }
 
-    /// Move the head past emptied slots, resetting once the queue drains.
     pub(crate) fn compact_live_queue(&mut self) -> Result<()> {
         let tail = self.live_tail.read()?;
         let mut head = self.live_head.read()?;
