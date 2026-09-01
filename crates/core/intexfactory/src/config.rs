@@ -43,7 +43,14 @@ impl IntexParams {
     pub const DEV: Self = Self {
         call_window: 3 * 24 * 3600,
         call_threshold: 2 * 24 * 3600,
+        // An e2e run cannot wait out a notice on the real clock, and it cannot jump
+        // the day machine either, so the window shrinks to something a scenario can
+        // sit through. It is also the window a holder has to settle a Called series,
+        // which is why this is minutes rather than seconds.
+        #[cfg(not(feature = "e2e-test"))]
         call_notice_period: 3 * 24 * 3600,
+        #[cfg(feature = "e2e-test")]
+        call_notice_period: 600,
         call_rate: 10,
         floor_rate: 5,
         commit_bond_minor: 100 * SCALE_1E18_U128,
