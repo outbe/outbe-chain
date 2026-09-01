@@ -838,6 +838,29 @@ fn unsettled_series_expired(world: &mut World) {
 
     // No message carries expiry across: each chain derives it from the same calledAt
     // and notice, so both have to agree on their own.
+    // A mark whose calledAt sits ahead of this chain's clock is parked, not applied,
+    // and nothing in a localnet plays the operator who retries it.
+    let target_router = world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .target_router;
+    let parked = eth::read_call(
+        &target_url,
+        target_router,
+        &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
+    );
+    if parked.is_some_and(|mark| mark != 0) {
+        let _ = eth::send_call(
+            &target_url,
+            target_router,
+            crate::world::forge::DEPLOYER_KEY,
+            &venue_probes::IIssuedSeries::applyPendingMarkCall { seriesId: series },
+            None,
+        );
+    }
+
     for (label, at, collection) in [
         ("committee", url.as_str(), nft),
         ("target chain", target_url.as_str(), target_nft),
@@ -849,8 +872,14 @@ fn unsettled_series_expired(world: &mut World) {
             }
             assert!(
                 Instant::now() < deadline,
-                "series {series} never read Expired on the {label}: {:?}",
-                venue_probes::series_state(at, collection, series)
+                "series {series} never read Expired on the {label}: {:?}; the mark parked on \
+                 the target router reads {:?}",
+                venue_probes::series_state(at, collection, series),
+                eth::read_call(
+                    &target_url,
+                    target_router,
+                    &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
+                )
             );
             sleep(Duration::from_secs(2));
         }

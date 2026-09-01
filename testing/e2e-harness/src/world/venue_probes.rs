@@ -573,6 +573,8 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
+        function pendingMark(bytes14 seriesId) external view returns (uint8);
+        function applyPendingMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
