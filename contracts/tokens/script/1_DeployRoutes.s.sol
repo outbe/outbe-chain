@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {UsdcRoute} from "./routes/UsdcRoute.sol";
 import {UsdtRoute} from "./routes/UsdtRoute.sol";
 import {WcoenRoute} from "./routes/WcoenRoute.sol";
 
@@ -8,17 +9,19 @@ import {WcoenRoute} from "./routes/WcoenRoute.sol";
 ///      route is canonical is derived from `OUTBE_CHAIN_ID`, so the same command runs on every chain.
 ///
 ///      Adding a token is a new file in `script/routes/` plus two lines here — no shared code changes.
-contract DeployRoutes is UsdtRoute, WcoenRoute {
+contract DeployRoutes is UsdtRoute, UsdcRoute, WcoenRoute {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");
         address createX = vm.envAddress("CREATEX_ADDRESS");
 
         vm.startBroadcast(_pk());
         (address usdt, address usdtBridge) = deployUsdt(createX, salt);
+        (address usdc, address usdcBridge) = deployUsdc(createX, salt);
         (address wcoen, address wcoenBridge) = deployWcoen(createX, salt);
         vm.stopBroadcast();
 
         _logRoute("USDT", usdt, usdtBridge);
+        _logRoute("USDC", usdc, usdcBridge);
         _logRoute("WCOEN", wcoen, wcoenBridge);
     }
 }

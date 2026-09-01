@@ -9,20 +9,23 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/
 import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
+import {IStablecoin} from "@precompiles/IStablecoin.sol";
+
 import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 
 /// @title ERC7786TokenBridge
-/// @notice ERC-7786 fungible token bridge supporting lock/unlock and ERC-7802 burn/mint sides.
-///         Composed transfers (`sendAndCall`) additionally invoke an ERC-1363-style receiver hook
-///         on the destination after the tokens are credited.
+/// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
+///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
+///         ERC-1363-style receiver hook on the destination after the tokens are credited.
 contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipient {
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
 
     enum TokenBridgeMode {
         LockUnlock,
-        BurnMint
+        BurnMint,
+        IssuerBurnMint
     }
 
     IERC20 public immutable token;
@@ -173,6 +176,8 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     function _onSend(address from, uint256 amount) internal {
         if (mode == TokenBridgeMode.LockUnlock) {
             token.safeTransferFrom(from, address(this), amount);
+        } else if (mode == TokenBridgeMode.IssuerBurnMint) {
+            IStablecoin(address(token)).burnFrom(from, amount);
         } else {
             IERC7802(address(token)).crosschainBurn(from, amount);
         }
@@ -181,6 +186,8 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     function _onReceive(address to, uint256 amount) internal {
         if (mode == TokenBridgeMode.LockUnlock) {
             token.safeTransfer(to, amount);
+        } else if (mode == TokenBridgeMode.IssuerBurnMint) {
+            IStablecoin(address(token)).mint(to, amount);
         } else {
             IERC7802(address(token)).crosschainMint(to, amount);
         }

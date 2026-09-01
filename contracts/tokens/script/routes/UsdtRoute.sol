@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {RouteSpec, BaseRoute} from "./BaseRoute.sol";
+import {RouteSpec, BaseRoute, SyntheticSource} from "./BaseRoute.sol";
 import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
@@ -13,11 +13,12 @@ abstract contract UsdtRoute is BaseRoute {
     function usdtSpec() public pure returns (RouteSpec memory) {
         return RouteSpec({
             tokenLabel: "USDT",
-            bridgeLabel: "USDTBridge",
             canonicalOnOutbe: false,
             // Point this at the issuer's USDT on a real network; leave it unset on a testnet, where no real USDT
             // exists and a mintable mock is deployed instead.
-            canonicalTokenEnv: "CANONICAL_USDT_TOKEN"
+            canonicalTokenEnv: "CANONICAL_USDT_TOKEN",
+            factoryTokenEnv: "",
+            syntheticSource: SyntheticSource.Erc7802
         });
     }
 

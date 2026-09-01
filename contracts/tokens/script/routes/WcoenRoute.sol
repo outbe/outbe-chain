@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {RouteSpec, BaseRoute} from "./BaseRoute.sol";
+import {RouteSpec, BaseRoute, SyntheticSource} from "./BaseRoute.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 
@@ -12,10 +12,11 @@ abstract contract WcoenRoute is BaseRoute {
     function wcoenSpec() public pure returns (RouteSpec memory) {
         return RouteSpec({
             tokenLabel: "WCOEN",
-            bridgeLabel: "WCOENBridge",
             canonicalOnOutbe: true,
             // Set only if a canonical WCOEN was already deployed on Outbe outside this script.
-            canonicalTokenEnv: "CANONICAL_WCOEN_TOKEN"
+            canonicalTokenEnv: "CANONICAL_WCOEN_TOKEN",
+            factoryTokenEnv: "",
+            syntheticSource: SyntheticSource.Erc7802
         });
     }
 
