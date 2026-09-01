@@ -532,19 +532,20 @@ groups:
         annotations:
           summary: "OCOMP result-vote submission is failing"
 
-      - alert: OutbeOcompRecoveryWindowOpened
-        expr: increase(outbe_ocomp_vote_missed_total{kind="first"}[5m]) > 0
+      - alert: OutbeOcompRecoveryWindowOpen
+        expr: (outbe_ocomp_recovery_deadline - on(job, instance) group_left outbe_ocomp_recovery_block_number) > 0
         labels:
           severity: critical
           subsystem: ocomp
         annotations:
           summary: "Validator {{ $labels.addr }} missed OCOMP and lost 10% bonded stake"
           description: |
-            A fixed 43,200-block recovery window is now open. Restore OCOMP and
-            replenish bonded stake before the per-validator deadline.
+            A fixed 43,200-block recovery window is open with {{ $value }} blocks
+            remaining. Restore OCOMP and replenish bonded stake before the
+            per-validator deadline.
 
       - alert: OutbeOcompRecoveryDeadlineApproaching
-        expr: outbe_ocomp_recovery_deadline > 0 and (outbe_ocomp_recovery_deadline - on(instance) group_left outbe_ocomp_recovery_block_number) < 3600
+        expr: outbe_ocomp_recovery_deadline > 0 and (outbe_ocomp_recovery_deadline - on(job, instance) group_left outbe_ocomp_recovery_block_number) < 3600
         for: 1m
         labels:
           severity: critical
