@@ -1073,8 +1073,8 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         };
         let validator_amount =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Validator);
-        let expected_gem_load = validator_amount / U256::from(voters.len());
-        let distributed = expected_gem_load * U256::from(voters.len());
+        let expected_promis_load = validator_amount / U256::from(voters.len());
+        let distributed = expected_promis_load * U256::from(voters.len());
         let validator_residue = validator_amount.checked_sub(distributed).unwrap();
         let expected_terminal =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
@@ -1111,7 +1111,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .reward_gem_planned_load_amount
                 .read(&20_240_101)
                 .unwrap(),
-            expected_gem_load * U256::from(voters.len())
+            expected_promis_load * U256::from(voters.len())
         );
         let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();
         assert_eq!(

@@ -54,7 +54,7 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 35: reward_gem_planned_load_amount - mapping(uint32 => uint256)
 /// 36: reward_gem_recipient_count - mapping(uint32 => uint32)
 /// 37: reward_gem_owner_at - mapping(uint32 => mapping(uint32 => address))
-/// 38: reward_gem_load_at - mapping(uint32 => mapping(uint32 => uint256))
+/// 38: reward_promis_load_at - mapping(uint32 => mapping(uint32 => uint256))
 /// 39: reward_gem_type - mapping(uint32 => uint8)
 /// 40: reward_gem_issuance_currency - mapping(uint32 => uint16)
 /// 41: reward_gem_reference_currency - mapping(uint32 => uint16)
@@ -262,7 +262,7 @@ pub struct Rewards {
     pub reward_gem_owner_at: Mapping<u32, Mapping<u32, Address>>,
 
     /// UTC reward day -> pending recipient index -> exact Gem load.
-    pub reward_gem_load_at: Mapping<u32, Mapping<u32, U256>>,
+    pub reward_promis_load_at: Mapping<u32, Mapping<u32, U256>>,
 
     /// Reward-day Gem type, frozen at preparation time.
     pub reward_gem_type: Mapping<u32, u8>,

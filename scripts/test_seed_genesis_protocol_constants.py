@@ -58,7 +58,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed = json.loads(MODULE_PATH.with_name(filename).read_text())
 
                 self.assertEqual(set(seed["balance"].values()), {"1000000000"})
-                self.assertEqual(seed["gems"][0]["gem_load"], "1000000000")
+                self.assertEqual(seed["gems"][0]["promis_load"], "1000000000")
                 if filename.startswith("seed-testnet"):
                     # A network profile seeds no worldwide day: the runtime
                     # creates the first one at block 1, and a seeded day gets
