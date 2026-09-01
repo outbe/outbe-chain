@@ -101,6 +101,22 @@ test("MCP formats native monetary fields at scale18 and leaves dimensionless FP1
   );
   assert.deepEqual(
     formatParam(
+      { name: "", type: "uint256" } as AbiParameter,
+      1_500_000_000_000_000_000n,
+      { contractName: "agentreward", functionName: "getPoolClaimableBalance" },
+    ),
+    { raw: "1500000000000000000", value: "1.5" },
+  );
+  // A claim returns a Gem id, which is not an amount and must stay unscaled.
+  assert.equal(
+    formatParam({ name: "gemId", type: "uint256" } as AbiParameter, 1_500_000_000_000_000_000n, {
+      contractName: "agentreward",
+      functionName: "claimReward",
+    }),
+    "1500000000000000000",
+  );
+  assert.deepEqual(
+    formatParam(
       { name: "rewardBand", type: "uint256" } as AbiParameter,
       20_000_000_000_000_000n,
     ),
@@ -296,8 +312,8 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     {
       tool: "agentreward_claim",
       contract: "agentreward",
-      args: { amount: "1.5", wait: false },
-      amountIndex: 0,
+      args: { pool: 0, amount: "1.5", wait: false },
+      amountIndex: 1,
       value: 0n,
     },
   ] as const;

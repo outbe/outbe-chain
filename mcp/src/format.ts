@@ -164,9 +164,10 @@ function isNativeCoenAmount(name: string, context: ScalarFormatContext): boolean
   const contract = context.contractName;
   const fn = context.functionName;
   if (contract === "staking" && (fn === "getStake" || fn === "getTotalStaked")) return true;
+  // `claimReward` is not here: it returns a Gem id, not an amount.
   if (
     contract === "agentreward" &&
-    (fn === "getClaimableBalance" || fn === "claimReward")
+    (fn === "getClaimableBalance" || fn === "getPoolClaimableBalance")
   ) {
     return true;
   }
