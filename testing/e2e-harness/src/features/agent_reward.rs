@@ -269,8 +269,12 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         )
     };
 
-    let waa_block_number =
-        claim_gem_and_assert_gas_only_cost(world, WAA_BENEFICIARY_KEY, waa_beneficiary, WAA_POOL);
+    let waa_block_number = claim_gem_and_assert_gas_only_cost(
+        world,
+        WAA_BENEFICIARY_KEY,
+        waa_beneficiary,
+        WAA_POOL,
+    );
     let escrow_after_waa = native_balance(
         world,
         world.validators.primary_port(),
@@ -283,8 +287,12 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
             .expect("WAA escrow debit")
     );
 
-    let sra_block_number =
-        claim_gem_and_assert_gas_only_cost(world, SRA_BENEFICIARY_KEY, sra_beneficiary, SRA_POOL);
+    let sra_block_number = claim_gem_and_assert_gas_only_cost(
+        world,
+        SRA_BENEFICIARY_KEY,
+        sra_beneficiary,
+        SRA_POOL,
+    );
     let escrow_after_sra = native_balance(
         world,
         world.validators.primary_port(),
