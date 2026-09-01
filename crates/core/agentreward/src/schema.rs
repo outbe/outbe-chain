@@ -2,12 +2,13 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::types::StorageKey;
 
 /// EVM storage layout for the Agent Reward contract.
 ///
 /// Tracks tribute counts per address/reward UTC day, claimable reward balances
-/// per address, and per-day address lists for the WAA (wallet) and SRA
+/// per address and pool, and per-day address lists for the WAA (wallet) and SRA
 /// (signer-of-record) participant pools. A reward day is the calendar day when
 /// an offer executes, not the Tribute's target WorldwideDay.
 ///
@@ -25,9 +26,9 @@ pub struct AgentRewardContract {
     #[attribute(order = 1)]
     pub sra_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 2: claimable reward per address
+    // slot 2: claimable WAA reward per address
     #[attribute(order = 2)]
-    pub claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub waa_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
 
     // slot 3: WAA address count per day
     #[attribute(order = 3)]
@@ -44,6 +45,31 @@ pub struct AgentRewardContract {
     // slot 6: SRA address list - key = keccak(day, index), value = address
     #[attribute(order = 6)]
     pub sra_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    // slot 7: claimable SRA reward per address
+    #[attribute(order = 7)]
+    pub sra_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+}
+
+/// Pool a claimable balance belongs to. The pool decides the Gem class a
+/// claim mints, so WAA and SRA balances are kept apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RewardPool {
+    Waa = 0,
+    Sra = 1,
+}
+
+impl RewardPool {
+    pub fn from_abi(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Waa),
+            1 => Ok(Self::Sra),
+            _ => Err(PrecompileError::Revert(format!(
+                "agentreward unknown reward pool {value}"
+            ))),
+        }
+    }
 }
 
 impl AgentRewardContract<'_> {

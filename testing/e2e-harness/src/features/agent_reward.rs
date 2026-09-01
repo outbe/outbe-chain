@@ -1,4 +1,4 @@
-//! Full public Tribute -> UTC AgentReward settlement -> paid claim evidence.
+//! Full public Tribute -> UTC AgentReward settlement -> paid Gem claim evidence.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -9,6 +9,7 @@ use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::features::ocomp::restart_committee_at_logical_time;
 use crate::internal::addresses;
+use crate::internal::eth::{SRA_POOL, WAA_POOL};
 use crate::world::state::OcompAgentRewardObservationV1;
 use crate::world::World;
 
@@ -16,7 +17,8 @@ const WAA_BENEFICIARY_KEY: &str =
     "0x3333333333333333333333333333333333333333333333333333333333333333";
 const SRA_BENEFICIARY_KEY: &str =
     "0x4444444444444444444444444444444444444444444444444444444444444444";
-const BENEFICIARY_GAS_FUNDING_COEN: u64 = 5;
+// A Gem mint costs more gas than the native transfer the claim used to do.
+const BENEFICIARY_GAS_FUNDING_COEN: u64 = 25;
 const AGENT_REWARD_WAIT: Duration = Duration::from_secs(300);
 const SECONDS_PER_DAY: u64 = 86_400;
 
@@ -246,7 +248,7 @@ fn observe_agent_rewards(world: &mut World) {
     );
 }
 
-#[when("both beneficiaries claim their complete AgentReward with paid transactions")]
+#[when("both beneficiaries claim their complete AgentReward as Gems with paid transactions")]
 fn beneficiaries_claim_agent_rewards(world: &mut World) {
     let (waa_beneficiary, sra_beneficiary, waa_claimable, sra_claimable, escrow_before) = {
         let observation = world
@@ -267,11 +269,11 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         )
     };
 
-    let waa_block_number = claim_and_assert_exact_paid_transfer(
+    let waa_block_number = claim_gem_and_assert_gas_only_cost(
         world,
         WAA_BENEFICIARY_KEY,
         waa_beneficiary,
-        waa_claimable,
+        WAA_POOL,
     );
     let escrow_after_waa = native_balance(
         world,
@@ -285,11 +287,11 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
             .expect("WAA escrow debit")
     );
 
-    let sra_block_number = claim_and_assert_exact_paid_transfer(
+    let sra_block_number = claim_gem_and_assert_gas_only_cost(
         world,
         SRA_BENEFICIARY_KEY,
         sra_beneficiary,
-        sra_claimable,
+        SRA_POOL,
     );
     let escrow_after_sra = native_balance(
         world,
@@ -320,7 +322,7 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         .claim_finalized_height = Some(finalized_height);
 }
 
-#[then("the paid claims clear both claimables and debit the AgentReward escrow exactly")]
+#[then("the paid Gem claims clear both claimables and debit the AgentReward escrow exactly")]
 fn claims_clear_agent_reward_state(world: &mut World) {
     let observation = world
         .state
@@ -355,18 +357,20 @@ fn claims_clear_agent_reward_state(world: &mut World) {
     }
 }
 
-fn claim_and_assert_exact_paid_transfer(
+/// Claims one pool as a Gem. The reward now arrives as a Gem, so the only native
+/// movement on the beneficiary is the gas it paid.
+fn claim_gem_and_assert_gas_only_cost(
     world: &World,
     key: &str,
     beneficiary: Address,
-    claimable: U256,
+    pool: u8,
 ) -> u64 {
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
     let receipt = world
         .rpc
-        .claim_all_agent_reward(key)
-        .expect("ordinary paid AgentReward claim");
+        .claim_agent_reward_gem(key, pool)
+        .expect("ordinary paid AgentReward Gem claim");
     let gas_cost_coen_units = crate::world::rpc::Rpc::receipt_gas_cost(&receipt)
         .expect("exact AgentReward claim gas cost");
     let after = native_balance(world, primary, beneficiary);
@@ -374,10 +378,8 @@ fn claim_and_assert_exact_paid_transfer(
         after
             .checked_add(gas_cost_coen_units)
             .expect("post-claim balance plus gas"),
-        before
-            .checked_add(claimable)
-            .expect("pre-claim balance plus reward"),
-        "paid AgentReward claim did not transfer the exact claimable amount net of gas"
+        before,
+        "the Gem claim moved native COEN beyond its own gas"
     );
     receipt
         .get("blockNumber")

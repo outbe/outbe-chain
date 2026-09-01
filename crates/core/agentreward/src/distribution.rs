@@ -1,4 +1,4 @@
-use crate::schema::AgentRewardContract;
+use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -256,13 +256,18 @@ fn distribute_capped(
         return Ok(amount);
     }
 
+    let reward_pool = match kind {
+        PoolKind::Waa => RewardPool::Waa,
+        PoolKind::Sra => RewardPool::Sra,
+        _ => unreachable!(),
+    };
     let (rewards, excess) = calculate_distribution_with_cap(amount, &counts);
     for r in &rewards {
         if !r.reward_amount.is_zero() {
             let native_reward = checked_protocol_to_native(r.reward_amount).ok_or_else(|| {
                 PrecompileError::Revert("native AgentReward share overflow".into())
             })?;
-            contract.add_claimable_reward(r.address, native_reward)?;
+            contract.add_claimable_reward(reward_pool, r.address, native_reward)?;
         }
     }
     if !excess.is_zero() {
