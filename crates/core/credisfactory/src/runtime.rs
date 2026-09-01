@@ -70,14 +70,6 @@ pub fn request_credis(
     // by the caller.
     let current_time = storage.timestamp()?.to::<u64>();
 
-    // An owner with an unresolved call cannot open new positions.
-    {
-        let credis = CredisContract::new(storage.clone());
-        if credis.has_called_position(smart_account)? {
-            return Err(CredisFactoryError::OwnerHasCalledPosition.into());
-        }
-    }
-
     // Consume the pledge ticket (the enclave verifies `spend_auth` binds it to
     // `smart_account`, so a mempool copy cannot redirect the loan). The collateral
     // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave

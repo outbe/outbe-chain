@@ -65,7 +65,7 @@ fn a_full_window_at_the_call_price_calls_the_position() {
             "the 14-day settlement window opens at the call"
         );
 
-        // The owner is blocked from opening new positions while it is unresolved.
+        // The owner's called-position counter tracks the unresolved call.
         assert!(CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());
@@ -264,7 +264,7 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void released the owner's call block and left the active index.
+        // The void cleared the owner's called count and left the active index.
         assert!(!CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());

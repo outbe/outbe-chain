@@ -356,8 +356,8 @@ impl CredisContract<'_> {
         self.load_position(position_id)
     }
 
-    /// True if any of `account`'s positions is CALLED. Such an owner cannot open
-    /// new positions until the call resolves.
+    /// True if any of `account`'s positions is CALLED. Informational only: a
+    /// pending call does not gate origination of further positions.
     pub fn has_called_position(&self, account: Address) -> Result<bool> {
         Ok(self.called_position_counts.read(&account)? > 0)
     }

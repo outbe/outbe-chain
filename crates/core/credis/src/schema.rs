@@ -169,8 +169,8 @@ pub struct CredisContract {
     #[attribute(order = 6)]
     pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Per-account count of positions currently `Called`. An owner with a
-    /// non-zero count cannot open new positions.
+    /// Per-account count of positions currently `Called`, backing the
+    /// `hasCalledPosition` view.
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 }

@@ -245,7 +245,7 @@ fn settle_accepts_a_third_party_payer() {
 }
 
 #[test]
-fn request_credis_rejects_an_owner_with_an_unresolved_call() {
+fn request_credis_allows_an_owner_with_an_unresolved_call() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
@@ -271,22 +271,11 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
             assert!(credis.mark_called(first, now_of(&storage)).unwrap());
         }
 
+        // The called position does not gate origination: the second one opens
+        // while the first is still unresolved, and both stand on their own.
         let spend = credis_spend_auth(alice(), second_handle, alice());
-        let err = runtime::request_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            second_handle,
-            spend,
-            pledge_stake(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("called position"), "got: {err}");
-
-        // Settling the call in full clears the block.
-        settle_principal(&storage, alice(), first, pledge_stables());
         fund_stake(&storage, pledge_stake());
-        runtime::request_credis(
+        let (second, _) = runtime::request_credis(
             storage.clone(),
             cca(),
             alice(),
@@ -295,6 +284,25 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
             pledge_stake(),
         )
         .unwrap();
+
+        assert_ne!(second, first);
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(
+            credis
+                .get_position(first)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Called
+        );
+        assert_eq!(
+            credis
+                .get_position(second)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Open
+        );
     });
     teardown();
 }
