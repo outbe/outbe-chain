@@ -7,7 +7,7 @@ name: mcp-publish
 #   - repo secret NPM_TOKEN = an npm token able to publish @outbe/mcp without an
 #     interactive OTP (Automation token, or a granular token with 2FA bypass).
 #     A token that still requires OTP will fail the publish step with EOTP.
-# No manual `npm publish` — push the tag and CI does it.
+# No manual `npm publish` - push the tag and CI does it.
 
 on:
   push:

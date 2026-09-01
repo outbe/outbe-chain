@@ -106,7 +106,7 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         // calendar-aware helpers (never `+1` on the key).
         if last_finalized < most_recent_closed {
             // On the very first finalization (watermark 0) only close the single
-            // most-recent day — do not sweep backward into pre-genesis history
+            // most-recent day - do not sweep backward into pre-genesis history
             // that has no data. Otherwise resume from the watermark.
             let lower_bound = if last_finalized == 0 {
                 previous_date_key(most_recent_closed)
@@ -117,7 +117,7 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
             // Collect up to the cap of most-recent unfinalized days walking
             // backward, then finalize ascending so writes/events stay
             // chronological. After a gap wider than the cap, the oldest days are
-            // skipped — their source aggregates are already evicted past
+            // skipped - their source aggregates are already evicted past
             // retention, so they could not be recomputed anyway.
             let mut days: Vec<u32> = Vec::new();
             let mut day = most_recent_closed;

@@ -44,7 +44,7 @@ contract WithdrawalLimitPolicyTest is Test {
     /// @dev Builds a PackedUserOperation whose callData encodes a CALLTYPE_SINGLE transfer.
     ///      callData layout:
     ///        [0:4]    = dummy selector (bytes4(0))
-    ///        [4:36]   = ExecMode = bytes32(0) → CALLTYPE_SINGLE, EXECTYPE_DEFAULT
+    ///        [4:36]   = ExecMode = bytes32(0) -> CALLTYPE_SINGLE, EXECTYPE_DEFAULT
     ///        [36:68]  = ABI offset = 64
     ///        [68:100] = execCalldata.length
     ///        [100:]   = execCalldata = abi.encodePacked(target, value=0, transferCalldata)
@@ -192,7 +192,7 @@ contract WithdrawalLimitPolicyTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // checkUserOpPolicy — pass cases
+    // checkUserOpPolicy - pass cases
     // -------------------------------------------------------------------------
 
     function test_CheckUserOpPolicy_PassesUnderLimit() public {
@@ -221,7 +221,7 @@ contract WithdrawalLimitPolicyTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // checkUserOpPolicy — revert cases
+    // checkUserOpPolicy - revert cases
     // -------------------------------------------------------------------------
 
     function test_RevertWhen_ExceedsLimit() public {
@@ -250,7 +250,7 @@ contract WithdrawalLimitPolicyTest is Test {
         // Hand-build callData with offset word = 96 (0x60) instead of the canonical 64 (0x40).
         bytes memory callData = abi.encodePacked(
             bytes4(0), // [0:4]   selector
-            bytes32(0), // [4:36]  ExecMode → CALLTYPE_SINGLE
+            bytes32(0), // [4:36]  ExecMode -> CALLTYPE_SINGLE
             uint256(96), // [36:68] non-canonical offset
             uint256(execCalldata.length), // [68:100] length
             execCalldata // [100:]  data
@@ -274,7 +274,7 @@ contract WithdrawalLimitPolicyTest is Test {
     }
 
     /// @dev T-04: a standalone policy must fail-closed on a batch that targets the configured token,
-    ///      not pass it through — otherwise a batch bypasses the daily limit entirely when the policy
+    ///      not pass it through - otherwise a batch bypasses the daily limit entirely when the policy
     ///      is reused without a call-type-restricting sibling hook.
     function test_W05_BatchTargetingConfiguredToken_Reverts() public {
         _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
@@ -337,7 +337,7 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         policy.checkUserOpPolicy(DEFAULT_ID, op2);
 
-        // Third transfer: 1 more → exceeds limit
+        // Third transfer: 1 more -> exceeds limit
         PackedUserOperation memory op3 = _buildUserOp(address(token), recipient, 1);
         vm.prank(kernelAccount);
         vm.expectRevert(
@@ -349,7 +349,7 @@ contract WithdrawalLimitPolicyTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // checkUserOpPolicy — window reset
+    // checkUserOpPolicy - window reset
     // -------------------------------------------------------------------------
 
     function test_CheckUserOpPolicy_ResetsAfterInterval() public {
@@ -395,7 +395,7 @@ contract WithdrawalLimitPolicyTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // checkUserOpPolicy — skip / pass-through cases
+    // checkUserOpPolicy - skip / pass-through cases
     // -------------------------------------------------------------------------
 
     function test_CheckUserOpPolicy_NonTargetToken() public {

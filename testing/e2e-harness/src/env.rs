@@ -1,19 +1,19 @@
 //! Test **environment** (from the CLI) vs. scenario **requirements** (from tags).
 //!
-//! The binary's clap flags describe the box we're running on — how many
+//! The binary's clap flags describe the box we're running on - how many
 //! validators to bootstrap, which enclave mode, whether we have `sudo`. Each
 //! Gherkin scenario declares what it *needs* via tags. The runner matches the
-//! two: a scenario the environment can't satisfy is **skipped**, or — with
-//! `--all` — turned into a **failure**. Explicit `@real-sgx` scenarios remain
+//! two: a scenario the environment can't satisfy is **skipped**, or - with
+//! `--all` - turned into a **failure**. Explicit `@real-sgx` scenarios remain
 //! skipped outside the DCAP lane even under `--all`.
 //!
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
-//!   - `min-validators-N` → requires `--validators >= N` (N parsed from the tag).
-//!   - `tee`              → requires an enabled enclave mode.
-//!   - `sudo`             → requires `sudo` (no `--no-sudo`).
-//!   - `real-sgx`         → always skipped outside `--tee real`, regardless of `--all`.
-//!   - `todo`             → always skipped (unimplemented stub), regardless of `--all`.
+//!   - `min-validators-N` -> requires `--validators >= N` (N parsed from the tag).
+//!   - `tee`              -> requires an enabled enclave mode.
+//!   - `sudo`             -> requires `sudo` (no `--no-sudo`).
+//!   - `real-sgx`         -> always skipped outside `--tee real`, regardless of `--all`.
+//!   - `todo`             -> always skipped (unimplemented stub), regardless of `--all`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,7 +40,7 @@ pub enum TeeMode {
     /// Test-only mock enclave binary under `gramine-direct` (no SGX).
     #[default]
     Mock,
-    /// Test-only mock enclave binary as a plain host process — no container, no
+    /// Test-only mock enclave binary as a plain host process - no container, no
     /// Gramine, no LibOS, no attestation. For hosts where Gramine cannot run
     /// (the amd64 image has no arm64 build and dies under emulation), which is
     /// every macOS box. Development only; it proves nothing Gramine proves.
@@ -114,7 +114,7 @@ pub struct EnvCli {
     #[arg(long, default_value_t = 4)]
     pub validators: usize,
 
-    /// Don't probe for free ports — take each node's block verbatim.
+    /// Don't probe for free ports - take each node's block verbatim.
     ///
     /// By default every node's block of 7 ports (rpc, tee, p2p, discv5, authrpc,
     /// metrics, consensus) is scanned for: the allocator walks forward past any
@@ -365,7 +365,7 @@ impl Default for Environment {
 ///
 /// True for Docker Desktop (macOS) and for any Linux host whose user is in the
 /// `docker` group; false for a rootful daemon, which still gets `sudo`. Mirrors
-/// `scripts/localnet-mongo.sh`. Probed once — the daemon does not change
+/// `scripts/localnet-mongo.sh`. Probed once - the daemon does not change
 /// reachability mid-run, and every `base_cmd` would otherwise pay for it.
 fn docker_reachable_without_sudo() -> bool {
     static REACHABLE: OnceLock<bool> = OnceLock::new();
@@ -438,7 +438,7 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 /// Why the environment can't satisfy this scenario, or `None` if it can.
 ///
 /// Every requirement is declared as a tag (`@tee`, `@min-validators-N`, `@sudo`),
-/// so the Given text stays purely descriptive — nothing here reparses step prose.
+/// so the Given text stays purely descriptive - nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
     if let Some(n) = required_validators(feature, scenario) {
         if env.validators < n {
@@ -557,7 +557,7 @@ mod tests {
     }
 
     /// The native profile runs the same mock binary and the same deterministic
-    /// seed, but outside Gramine — so it must carry its own evidence label and
+    /// seed, but outside Gramine - so it must carry its own evidence label and
     /// must not stand in for any profile that proves a Gramine or SGX property.
     #[test]
     fn native_host_mode_is_a_distinct_profile_that_proves_no_gramine_property() {

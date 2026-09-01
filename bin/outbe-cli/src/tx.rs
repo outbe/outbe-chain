@@ -1,6 +1,8 @@
-//! Transaction building and signing (EIP-155 legacy transactions).
+//! Transaction building and signing.
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_consensus::{SignableTransaction as _, TxEip7702};
+use alloy_eips::eip2718::Encodable2718 as _;
+use alloy_primitives::{keccak256, Address, Signature, U256};
 use eyre::Result;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::SigningKey;
@@ -8,13 +10,13 @@ use k256::ecdsa::SigningKey;
 use crate::rpc::Rpc;
 
 /// Price a legacy tx off the block's base fee, with `2x` headroom so it survives a
-/// base-fee rise between the read and inclusion — the begin-zone system txs and offer
+/// base-fee rise between the read and inclusion - the begin-zone system txs and offer
 /// decryption make blocks bursty enough for several steps.
 ///
 /// Deliberately not the `eth_gasPrice` suggestion: that figure includes the tips of
 /// recently mined txs, which on this chain are mostly our own. Doubling it fed the
 /// next suggestion, which we doubled again, and the advised price climbed 7, 14, 28,
-/// 56 with no demand behind it. Over-pricing is not free either — the sender must
+/// 56 with no demand behind it. Over-pricing is not free either - the sender must
 /// hold `gas_limit * gas_price` up front, so a runaway price locks a payer out.
 pub(crate) fn buffered_gas_price(base_fee: U256) -> U256 {
     base_fee
@@ -69,10 +71,28 @@ impl TxSigner {
     /// Borrow the underlying secp256k1 signing key.
     ///
     /// Exposed so subcommands can sign payloads other than legacy
-    /// transactions — e.g. the `keccak(0x05 || rlp(chain_id, address,
+    /// transactions - e.g. the `keccak(0x05 || rlp(chain_id, address,
     /// nonce))` digest defined by EIP-7702. Keep new use-sites narrow.
     pub fn key(&self) -> &SigningKey {
         &self.key
+    }
+
+    /// Sign and EIP-2718 encode an EIP-7702 transaction.
+    pub(crate) fn sign_eip7702_tx(&self, tx: TxEip7702) -> Result<Vec<u8>> {
+        let hash = tx.signature_hash();
+        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .key
+            .sign_prehash(hash.as_slice())
+            .map_err(|error| eyre::eyre!("EIP-7702 transaction signing failed: {error}"))?;
+        let signature = Signature::from_bytes_and_parity(
+            signature.to_bytes().as_slice(),
+            recovery_id.to_byte() != 0,
+        )
+        .normalized_s();
+        let signed = tx.into_signed(signature);
+        let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
+        signed.encode_2718(&mut raw_transaction);
+        Ok(raw_transaction)
     }
 
     /// Build, sign, and send a transaction to the given contract.
@@ -433,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_rlp_encode_list_long_payload() {
-        // 60 bytes of 0x01 items → payload > 55
+        // 60 bytes of 0x01 items -> payload > 55
         let items: Vec<Vec<u8>> = (0..60).map(|_| rlp_encode_u64(1)).collect();
         let refs: Vec<&[u8]> = items.iter().map(|v| v.as_slice()).collect();
         let mut out = Vec::new();

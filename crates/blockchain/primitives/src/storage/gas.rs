@@ -3,12 +3,12 @@
 //! Outbe runs a permissioned validator set and does not use a fee market.
 //! Pricing for SLOAD/SSTORE is sourced directly from revm upstream
 //! ([`revm::context_interface::cfg::gas::WARM_STORAGE_READ_COST`] and
-//! [`revm::context_interface::cfg::gas::SSTORE_RESET`]) — see their use in
+//! [`revm::context_interface::cfg::gas::SSTORE_RESET`]) - see their use in
 //! [`super::evm::EvmStorageProvider`]. Outbe does not distinguish warm/cold
 //! accesses and does not implement SSTORE refunds, so every read is billed
 //! at the warm price and every write at the reset price.
 //!
-//! The only Outbe-specific constant lives here: [`PRECOMPILE_BASE_GAS`] —
+//! The only Outbe-specific constant lives here: [`PRECOMPILE_BASE_GAS`] -
 //! a flat per-dispatch entry cost with no direct EIP-2929 counterpart.
 
 use crate::error::{PrecompileError, Result};
@@ -25,7 +25,7 @@ pub const PRECOMPILE_BASE_GAS: u64 = 200;
 ///
 /// The tracker remembers the original limit so [`Self::used`] is correct
 /// regardless of the starting value. A failed [`Self::deduct`] must not
-/// advance the meter — the invariant is exercised by unit tests below.
+/// advance the meter - the invariant is exercised by unit tests below.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GasTracker {
     limit: u64,

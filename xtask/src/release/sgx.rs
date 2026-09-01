@@ -1,4 +1,4 @@
-//! Testnet SGX release bundle preparation, signing and verification.
+//! Network-bound SGX release bundle preparation, signing and verification.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,10 +10,12 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use clap::ValueEnum;
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
-use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
-use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
+use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_primitives::chain::{OutbeNetwork, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -29,23 +31,133 @@ const REQUIRED_BUNDLE_FILES: [&str; 6] = [
     "rootfs/opt/outbe/sgx/outbe-tee-enclave.sig",
 ];
 
-const EXCLUDED_BUNDLE_FILES: [&str; 3] = [
+const EXCLUDED_BUNDLE_FILES: [&str; 4] = [
     "metadata/testnet-sgx-bundle.json",
+    "metadata/mainnet-sgx-bundle.json",
     "SHA256SUMS",
     "SHA256SUMS.unsigned",
 ];
 
-const TESTNET_RELEASE_CERTIFICATE_IDENTITY: &str =
-    "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main";
 const GITHUB_ACTIONS_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum SgxReleaseNetwork {
+    Testnet,
+    Mainnet,
+}
+
+impl SgxReleaseNetwork {
+    #[must_use]
+    pub const fn chain_id(self) -> u64 {
+        match self {
+            Self::Testnet => TESTNET_CHAIN_ID,
+            Self::Mainnet => MAINNET_CHAIN_ID,
+        }
+    }
+
+    #[must_use]
+    pub const fn chain_name(self) -> &'static str {
+        match self {
+            Self::Testnet => "outbe-testnet-1",
+            Self::Mainnet => "outbe-mainnet-1",
+        }
+    }
+
+    #[must_use]
+    pub const fn authorization_scope(self) -> &'static str {
+        match self {
+            Self::Testnet => "testnet",
+            Self::Mainnet => "mainnet",
+        }
+    }
+
+    #[must_use]
+    pub const fn bundle_spec_path(self) -> &'static str {
+        match self {
+            Self::Testnet => "release/testnet-sgx-bundle-v1.json",
+            Self::Mainnet => "release/mainnet-sgx-bundle-v1.json",
+        }
+    }
+
+    #[must_use]
+    pub const fn bundle_manifest_path(self) -> &'static str {
+        match self {
+            Self::Testnet => "metadata/testnet-sgx-bundle.json",
+            Self::Mainnet => "metadata/mainnet-sgx-bundle.json",
+        }
+    }
+
+    #[must_use]
+    pub const fn workflow_path(self) -> &'static str {
+        match self {
+            Self::Testnet => ".github/workflows/testnet-release.yml",
+            Self::Mainnet => ".github/workflows/mainnet-release.yml",
+        }
+    }
+
+    #[must_use]
+    pub const fn certificate_identity(self) -> &'static str {
+        match self {
+            Self::Testnet => "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main",
+            Self::Mainnet => "https://github.com/outbe/outbe-chain/.github/workflows/mainnet-release.yml@refs/heads/main",
+        }
+    }
+
+    #[must_use]
+    pub const fn genesis_artifact_name(self) -> &'static str {
+        self.dcap_artifact_set().genesis_artifact_path()
+    }
+
+    #[must_use]
+    pub const fn outbe_network(self) -> OutbeNetwork {
+        match self {
+            Self::Testnet => OutbeNetwork::Testnet,
+            Self::Mainnet => OutbeNetwork::Mainnet,
+        }
+    }
+
+    #[must_use]
+    pub const fn dcap_artifact_set(self) -> ReleaseDcapArtifactSetV1 {
+        match ReleaseDcapArtifactSetV1::for_network(self.outbe_network()) {
+            Some(contract) => contract,
+            None => unreachable!(),
+        }
+    }
+
+    #[must_use]
+    pub const fn oci_name(self) -> &'static str {
+        match self {
+            Self::Testnet => "outbe-tee-enclave-testnet",
+            Self::Mainnet => "outbe-tee-enclave-mainnet",
+        }
+    }
+
+    fn from_spec(spec: &BundleSpec) -> Result<Self> {
+        let network = match spec.network.as_str() {
+            "testnet" => Self::Testnet,
+            "mainnet" => Self::Mainnet,
+            _ => bail!("unsupported SGX release network {}", spec.network),
+        };
+        if spec.chain_id != network.chain_id()
+            || spec.network_name != network.chain_name()
+            || spec.authorization_scope != network.authorization_scope()
+        {
+            bail!("SGX bundle network identity is inconsistent");
+        }
+        Ok(network)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct BundleSpec {
     pub authorization_scope: String,
     pub bundle_version: u32,
+    pub chain_id: u64,
     pub gramine: GramineIdentity,
     pub inputs: Vec<String>,
     pub install_root: String,
+    pub network: String,
+    pub network_name: String,
     pub platform: String,
     pub project_toolchain: String,
     pub sealed_state_schema: u32,
@@ -70,11 +182,9 @@ impl BundleSpec {
 
     pub fn validate(&self) -> Result<()> {
         if self.spec_version != 1 || self.bundle_version != 1 {
-            bail!("unsupported testnet SGX bundle contract");
+            bail!("unsupported SGX bundle contract");
         }
-        if self.authorization_scope != "testnet" {
-            bail!("SGX bundle must be authorized only for testnet");
-        }
+        SgxReleaseNetwork::from_spec(self)?;
         let Some((image, digest)) = self.gramine.builder_image.split_once("@sha256:") else {
             bail!("Gramine builder image must be pinned by sha256 digest");
         };
@@ -85,13 +195,13 @@ impl BundleSpec {
             bail!("Gramine source commit must be a lowercase 40-character Git SHA");
         }
         if self.platform != "linux/amd64" {
-            bail!("testnet SGX bundle supports only linux/amd64");
+            bail!("SGX bundle supports only linux/amd64");
         }
         if self.project_toolchain != "release/project-toolchain-v1.json" {
-            bail!("testnet SGX bundle must bind the project toolchain version pin");
+            bail!("SGX bundle must bind the project toolchain version pin");
         }
         if self.install_root != "/opt/outbe/sgx" {
-            bail!("testnet SGX install root must remain /opt/outbe/sgx");
+            bail!("SGX install root must remain /opt/outbe/sgx");
         }
         if self.sgx.debug {
             bail!("release SGX bundle must use a non-debug enclave");
@@ -165,10 +275,13 @@ pub struct ManifestSource {
 pub struct BundleManifest {
     pub authorization_scope: String,
     pub bundle_version: u32,
+    pub chain_id: u64,
     pub files: Vec<BundleFile>,
     pub gramine: GramineIdentity,
     pub install_root: String,
     pub measurements: Measurements,
+    pub network: String,
+    pub network_name: String,
     pub platform: String,
     pub schema_version: String,
     pub sealed_state_schema: u32,
@@ -206,6 +319,7 @@ pub struct OciBuildEvidence {
 
 #[derive(Clone, Debug)]
 pub struct VerifiedReleaseInputs {
+    pub network: SgxReleaseNetwork,
     pub bundle: PathBuf,
     pub bundle_archive: PathBuf,
     pub cosign_image_verification: PathBuf,
@@ -219,7 +333,7 @@ pub struct VerifiedReleaseInputs {
     pub oci_evidence: PathBuf,
     pub sbom: PathBuf,
     pub sgx_evidence: PathBuf,
-    pub testnet_genesis: PathBuf,
+    pub genesis: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -253,15 +367,20 @@ fn build_release_manifest_from_evidence(
     inputs: &VerifiedReleaseInputs,
     lifecycle: &str,
 ) -> Result<Value> {
+    let network = inputs.network;
     let mut release: Value = read_canonical_json(&inputs.elf_manifest)?;
-    let bundle_manifest_path = inputs.bundle.join("metadata/testnet-sgx-bundle.json");
+    let bundle_manifest_path = inputs.bundle.join(network.bundle_manifest_path());
     let bundle: BundleManifest = read_canonical_json(&bundle_manifest_path)?;
+    require_bundle_network(&bundle, network)?;
     let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
     validate_final_release_identity(&release, &bundle, &oci)?;
-    require_nonempty_regular_file(&inputs.testnet_genesis, "testnet genesis ChainSpec")?;
-    let testnet_binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&inputs.testnet_genesis)
-        .map_err(|error| eyre!("testnet ChainSpec binding is invalid: {error}"))?;
-    require_bundle_measurement_binding(&testnet_binding, &bundle)?;
+    require_nonempty_regular_file(&inputs.genesis, "release genesis ChainSpec")?;
+    let chain_binding = DcapChainSpecBindingV1::from_genesis_path(&inputs.genesis)
+        .map_err(|error| eyre!("release ChainSpec binding is invalid: {error}"))?;
+    if chain_binding.chain_id != network.chain_id() {
+        bail!("release genesis belongs to a foreign network");
+    }
+    require_bundle_measurement_binding(&chain_binding, &bundle)?;
 
     if !oci.provenance_attestation || !oci.sbom_attestation {
         bail!("OCI image must carry BuildKit provenance and SBOM attestations");
@@ -294,13 +413,15 @@ fn build_release_manifest_from_evidence(
         "processor",
         &bundle,
         &oci,
-        &testnet_binding,
-        &inputs.testnet_genesis,
+        &chain_binding,
+        &inputs.genesis,
+        network,
     )?;
     verify_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &inputs.processor_dcap_evidence,
         &processor_dcap,
+        network.dcap_artifact_set(),
         bundle.source.source_date_epoch,
     )?;
     require_nonempty_regular_file(&inputs.bundle_archive, "signed SGX bundle archive")?;
@@ -361,11 +482,11 @@ fn build_release_manifest_from_evidence(
     );
     provenance.insert(
         "workflow".to_owned(),
-        Value::String(".github/workflows/testnet-release.yml".to_owned()),
+        Value::String(network.workflow_path().to_owned()),
     );
     provenance.insert(
         "certificate_identity".to_owned(),
-        Value::String(TESTNET_RELEASE_CERTIFICATE_IDENTITY.to_owned()),
+        Value::String(network.certificate_identity().to_owned()),
     );
     provenance.insert(
         "certificate_oidc_issuer".to_owned(),
@@ -374,6 +495,19 @@ fn build_release_manifest_from_evidence(
     provenance.insert(
         "certificate_workflow_sha".to_owned(),
         Value::String(bundle.source.commit.clone()),
+    );
+    release_object.insert(
+        "network".to_owned(),
+        serde_json::json!({
+            "chain_id": network.chain_id(),
+            "chain_name": network.chain_name(),
+            "genesis_hash": format!("{:#x}", chain_binding.genesis_hash),
+            "genesis_file": {
+                "path": network.genesis_artifact_name(),
+                "digest": file_digest(&inputs.genesis)?,
+                "size": fs::metadata(&inputs.genesis)?.len()
+            }
+        }),
     );
 
     let artifacts = release_object
@@ -395,10 +529,10 @@ fn build_release_manifest_from_evidence(
         "install_profiles": ["full-node", "validator"],
         "kind": "oci-manifest",
         "media_type": oci.image.media_type,
-        "name": "outbe-tee-enclave-testnet-oci",
+        "name": format!("{}-oci", network.oci_name()),
         "network_compatibility": "network-manifest-required",
         "package": "outbe-tee-enclave",
-        "path": format!("oci/outbe-tee-enclave-testnet@sha256:{}", oci.image.digest.value),
+        "path": format!("oci/{}@sha256:{}", network.oci_name(), oci.image.digest.value),
         "platform": release_platform(),
         "role": "tee-enclave",
         "size": oci.image.size,
@@ -445,13 +579,25 @@ fn build_release_manifest_from_evidence(
     Ok(release)
 }
 
+fn require_bundle_network(bundle: &BundleManifest, network: SgxReleaseNetwork) -> Result<()> {
+    if bundle.authorization_scope != network.authorization_scope()
+        || bundle.chain_id != network.chain_id()
+        || bundle.network != network.authorization_scope()
+        || bundle.network_name != network.chain_name()
+    {
+        bail!("signed SGX bundle belongs to a foreign release network");
+    }
+    Ok(())
+}
+
 fn require_fresh_dcap_hardware_evidence(
     path: &Path,
     expected_pck_ca: &str,
     bundle: &BundleManifest,
     oci: &OciBuildEvidence,
-    testnet_binding: &DcapTestnetChainSpecBindingV1,
-    testnet_genesis: &Path,
+    chain_binding: &DcapChainSpecBindingV1,
+    genesis: &Path,
+    network: SgxReleaseNetwork,
 ) -> Result<Value> {
     let evidence = require_evidence_result(path, &["passed"])?;
     let string_at = |pointer: &str| {
@@ -487,8 +633,8 @@ fn require_fresh_dcap_hardware_evidence(
             "{expected_pck_ca} DCAP evidence does not bind the exact release and public verifier"
         );
     }
-    require_testnet_chain_spec_evidence(&evidence, testnet_binding, testnet_genesis)
-        .wrap_err("testnet ChainSpec binding does not match retained DCAP evidence")?;
+    require_chain_spec_evidence(&evidence, chain_binding, genesis, network)
+        .wrap_err("release ChainSpec binding does not match retained DCAP evidence")?;
     // Guest-visible socket topology is retained as provenance only. The
     // enclave-verified Intel PCK issuer above is the PCK CA authority.
     let _ = u64_at("/environment/physical_package_count")?;
@@ -597,11 +743,11 @@ fn require_fresh_dcap_hardware_evidence(
 }
 
 fn require_bundle_measurement_binding(
-    binding: &DcapTestnetChainSpecBindingV1,
+    binding: &DcapChainSpecBindingV1,
     bundle: &BundleManifest,
 ) -> Result<()> {
     if bundle.measurements.debug {
-        bail!("testnet ChainSpec binding cannot authorize a debug enclave");
+        bail!("release ChainSpec binding cannot authorize a debug enclave");
     }
     let measurement = |value: &str, label: &str| -> Result<alloy_primitives::B256> {
         if !is_lower_hex(value, 64) {
@@ -617,13 +763,14 @@ fn require_bundle_measurement_binding(
             bundle.measurements.isv_prod_id,
             bundle.measurements.isv_svn,
         )
-        .map_err(|error| eyre!("testnet ChainSpec binding is invalid: {error}"))
+        .map_err(|error| eyre!("release ChainSpec binding is invalid: {error}"))
 }
 
-fn require_testnet_chain_spec_evidence(
+fn require_chain_spec_evidence(
     evidence: &Value,
-    binding: &DcapTestnetChainSpecBindingV1,
-    testnet_genesis: &Path,
+    binding: &DcapChainSpecBindingV1,
+    genesis: &Path,
+    network: SgxReleaseNetwork,
 ) -> Result<()> {
     let string_at = |pointer: &str| {
         evidence
@@ -648,14 +795,14 @@ fn require_testnet_chain_spec_evidence(
         || string_at("/policy/policy_schedule_hash")? != hex::encode(binding.policy_schedule_hash)
         || string_at("/policy/policy_schedule_sha256")? != schedule_sha256
     {
-        bail!("DCAP evidence policy does not equal the block-1 testnet policy");
+        bail!("DCAP evidence policy does not equal the block-1 release policy");
     }
 
-    let genesis_digest = file_digest(testnet_genesis)?;
-    let genesis_size = fs::metadata(testnet_genesis)?.len();
+    let genesis_digest = file_digest(genesis)?;
+    let genesis_size = fs::metadata(genesis)?.len();
     require_retained_binding(
         evidence,
-        "testnet-genesis.json",
+        network.genesis_artifact_name(),
         genesis_size,
         &genesis_digest.value,
     )?;
@@ -695,6 +842,7 @@ fn verify_processor_dcap_archive(
     archive_path: &Path,
     summary_path: &Path,
     evidence: &Value,
+    artifact_set: ReleaseDcapArtifactSetV1,
     source_date_epoch: i64,
 ) -> Result<()> {
     if source_date_epoch < 0 {
@@ -706,9 +854,7 @@ fn verify_processor_dcap_archive(
         .get("artifacts")
         .and_then(Value::as_object)
         .ok_or_else(|| eyre!("Processor DCAP evidence lacks retained artifact records"))?;
-    let required = RELEASE_DCAP_ARTIFACT_PATHS
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let required = artifact_set.paths();
     let declared = records.keys().map(String::as_str).collect::<BTreeSet<_>>();
     if declared != required {
         bail!("Processor DCAP evidence does not declare the exact canonical artifact set");
@@ -1191,10 +1337,13 @@ pub fn build_bundle_manifest(
     Ok(BundleManifest {
         authorization_scope: bundle_spec.authorization_scope.clone(),
         bundle_version: bundle_spec.bundle_version,
+        chain_id: bundle_spec.chain_id,
         files: bundle_files(bundle_root)?,
         gramine: bundle_spec.gramine.clone(),
         install_root: bundle_spec.install_root.clone(),
         measurements,
+        network: bundle_spec.network.clone(),
+        network_name: bundle_spec.network_name.clone(),
         platform: bundle_spec.platform.clone(),
         schema_version: "1.0.0".to_owned(),
         sealed_state_schema: bundle_spec.sealed_state_schema,
@@ -1215,14 +1364,17 @@ pub fn verify_signed_bundle(
 ) -> Result<()> {
     bundle_spec.validate()?;
     if manifest.schema_version != "1.0.0"
-        || manifest.authorization_scope != "testnet"
+        || manifest.authorization_scope != bundle_spec.authorization_scope
         || manifest.bundle_version != bundle_spec.bundle_version
+        || manifest.chain_id != bundle_spec.chain_id
         || manifest.gramine != bundle_spec.gramine
         || manifest.install_root != bundle_spec.install_root
+        || manifest.network != bundle_spec.network
+        || manifest.network_name != bundle_spec.network_name
         || manifest.platform != bundle_spec.platform
         || manifest.sealed_state_schema != bundle_spec.sealed_state_schema
     {
-        bail!("bundle metadata does not match the testnet SGX contract");
+        bail!("bundle metadata does not match the SGX network contract");
     }
     if manifest.files != bundle_files(bundle_root)? {
         bail!("bundle file matrix mismatch");
@@ -1381,9 +1533,14 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-pub fn prepare(repo_root: &Path, elf_output: &Path, output: &Path) -> Result<()> {
-    let spec = BundleSpec::read(&repo_root.join("release/testnet-sgx-bundle-v1.json"))?;
-    require_release_checkout(repo_root)?;
+pub fn prepare(
+    repo_root: &Path,
+    network: SgxReleaseNetwork,
+    elf_output: &Path,
+    output: &Path,
+) -> Result<()> {
+    let spec = BundleSpec::read(&repo_root.join(network.bundle_spec_path()))?;
+    require_release_checkout(repo_root, network)?;
     verify_checksums(elf_output, "SHA256SUMS")?;
     let identity = read_elf_identity(elf_output)?;
     require_clean_source(repo_root, &identity.source_commit)?;
@@ -1428,14 +1585,20 @@ pub fn compare(first: &Path, second: &Path, output: &Path) -> Result<()> {
     write_canonical(&output, &evidence)
 }
 
-pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -> Result<()> {
-    let spec = BundleSpec::read(&repo_root.join("release/testnet-sgx-bundle-v1.json"))?;
-    require_release_checkout(repo_root)?;
+pub fn sign(
+    repo_root: &Path,
+    network: SgxReleaseNetwork,
+    unsigned: &Path,
+    key_file: &Path,
+    output: &Path,
+) -> Result<()> {
+    let spec = BundleSpec::read(&repo_root.join(network.bundle_spec_path()))?;
+    require_release_checkout(repo_root, network)?;
     validate_signing_key(key_file)?;
     let unsigned = fs::canonicalize(unsigned)
         .wrap_err_with(|| format!("resolve unsigned SGX bundle: {}", unsigned.display()))?;
     let key_file = fs::canonicalize(key_file)
-        .wrap_err_with(|| format!("resolve testnet SGX signing key: {}", key_file.display()))?;
+        .wrap_err_with(|| format!("resolve SGX signing key: {}", key_file.display()))?;
     verify_checksums(&unsigned, "SHA256SUMS.unsigned")?;
     let identity: SourceIdentity =
         read_canonical_json(&unsigned.join("metadata/source-identity.json"))?;
@@ -1451,17 +1614,17 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
         .args(["-v", &format!("{}:/unsigned:ro", unsigned.display())])
         .args([
             "-v",
-            &format!("{}:/run/secrets/testnet-sgx-key.pem:ro", key_file.display()),
+            &format!("{}:/run/secrets/sgx-signing-key.pem:ro", key_file.display()),
         ])
         .args(["-v", &format!("{}:/out", output.display())])
         .arg(&toolchain_image)
         .args([container_adapter(), "sign"]);
-    run_status(&mut command, "sign testnet SGX bundle")?;
+    run_status(&mut command, "sign SGX bundle")?;
 
     let sigstruct_view = fs::read_to_string(output.join("metadata/sigstruct.txt"))
         .wrap_err("read signed bundle SIGSTRUCT evidence")?;
     let manifest = build_bundle_manifest(&output, &spec, &identity, &sigstruct_view)?;
-    write_canonical(&output.join("metadata/testnet-sgx-bundle.json"), &manifest)?;
+    write_canonical(&output.join(network.bundle_manifest_path()), &manifest)?;
     verify_signed_bundle(&output, &manifest, &spec, &sigstruct_view)?;
     write_checksums(&output, "SHA256SUMS")?;
     normalize_tree_mtime(&output, identity.source_date_epoch)?;
@@ -1469,13 +1632,13 @@ pub fn sign(repo_root: &Path, unsigned: &Path, key_file: &Path, output: &Path) -
     Ok(())
 }
 
-pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
-    let spec = BundleSpec::read(&repo_root.join("release/testnet-sgx-bundle-v1.json"))?;
-    require_release_checkout(repo_root)?;
+pub fn verify(repo_root: &Path, network: SgxReleaseNetwork, bundle: &Path) -> Result<()> {
+    let spec = BundleSpec::read(&repo_root.join(network.bundle_spec_path()))?;
+    require_release_checkout(repo_root, network)?;
     let bundle = fs::canonicalize(bundle)
         .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
     verify_checksums(&bundle, "SHA256SUMS")?;
-    let manifest_path = bundle.join("metadata/testnet-sgx-bundle.json");
+    let manifest_path = bundle.join(network.bundle_manifest_path());
     let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
     require_clean_source(repo_root, &manifest.source.commit)?;
     let toolchain_image = build_project_toolchain_image(repo_root, &spec, &manifest.source.commit)?;
@@ -1489,12 +1652,17 @@ pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
 }
 
-pub fn archive(repo_root: &Path, bundle: &Path, output: &Path) -> Result<()> {
-    verify(repo_root, bundle)?;
+pub fn archive(
+    repo_root: &Path,
+    network: SgxReleaseNetwork,
+    bundle: &Path,
+    output: &Path,
+) -> Result<()> {
+    verify(repo_root, network, bundle)?;
     let bundle = fs::canonicalize(bundle)
         .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
     let manifest: BundleManifest =
-        read_canonical_json(&bundle.join("metadata/testnet-sgx-bundle.json"))?;
+        read_canonical_json(&bundle.join(network.bundle_manifest_path()))?;
     let output = absolute_path(output)?;
     if output.starts_with(repo_root) || output.starts_with(&bundle) {
         bail!("signed SGX archive must be outside the checkout and bundle");
@@ -1643,6 +1811,7 @@ fn verify_bundle_archive(bundle: &Path, archive_path: &Path, source_date_epoch: 
 
 pub fn build_image(
     repo_root: &Path,
+    network: SgxReleaseNetwork,
     bundle: &Path,
     image_reference: &str,
     output: &Path,
@@ -1658,13 +1827,13 @@ pub fn build_image(
     if output.exists() {
         bail!("OCI build evidence already exists: {}", output.display());
     }
-    verify(repo_root, bundle)?;
+    verify(repo_root, network, bundle)?;
     let bundle = fs::canonicalize(bundle)
         .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
     if output.starts_with(&bundle) {
         bail!("OCI build evidence must be outside the signed bundle");
     }
-    let manifest_path = bundle.join("metadata/testnet-sgx-bundle.json");
+    let manifest_path = bundle.join(network.bundle_manifest_path());
     let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
     let metadata_file = tempfile::NamedTempFile::new().wrap_err("create BuildKit metadata file")?;
     let dockerfile = repo_root.join("bin/outbe-tee-enclave/gramine/Dockerfile");
@@ -1684,7 +1853,7 @@ pub fn build_image(
         command.args(["--load", "--provenance=false", "--sbom=false"]);
     }
     command.arg(&bundle);
-    run_status(&mut command, "build immutable testnet SGX OCI image")?;
+    run_status(&mut command, "build immutable SGX OCI image")?;
     let buildkit_metadata =
         fs::read_to_string(metadata_file.path()).wrap_err("read BuildKit OCI metadata")?;
     let descriptor = parse_oci_descriptor(&buildkit_metadata)?;
@@ -1707,7 +1876,7 @@ pub fn finalize_release_manifest(
     inputs: &VerifiedReleaseInputs,
     output: &Path,
 ) -> Result<()> {
-    verify(repo_root, &inputs.bundle)?;
+    verify(repo_root, inputs.network, &inputs.bundle)?;
     let output = absolute_path(output)?;
     if output.exists() {
         bail!(
@@ -1723,7 +1892,7 @@ pub fn finalize_release_manifest(
 fn refresh_cosign_evidence(inputs: &VerifiedReleaseInputs) -> Result<()> {
     let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
     let bundle: BundleManifest =
-        read_canonical_json(&inputs.bundle.join("metadata/testnet-sgx-bundle.json"))?;
+        read_canonical_json(&inputs.bundle.join(inputs.network.bundle_manifest_path()))?;
     let exact_image = exact_image_reference(&oci)?;
     let workflow_sha = bundle.source.commit.as_str();
 
@@ -1732,7 +1901,7 @@ fn refresh_cosign_evidence(inputs: &VerifiedReleaseInputs) -> Result<()> {
         .args([
             "verify",
             "--certificate-identity",
-            TESTNET_RELEASE_CERTIFICATE_IDENTITY,
+            inputs.network.certificate_identity(),
             "--certificate-oidc-issuer",
             GITHUB_ACTIONS_OIDC_ISSUER,
             "--certificate-github-workflow-sha",
@@ -1746,12 +1915,14 @@ fn refresh_cosign_evidence(inputs: &VerifiedReleaseInputs) -> Result<()> {
     )?;
 
     refresh_cosign_attestation(
+        inputs.network,
         &exact_image,
         workflow_sha,
         "spdxjson",
         &inputs.cosign_sbom_verification,
     )?;
     refresh_cosign_attestation(
+        inputs.network,
         &exact_image,
         workflow_sha,
         "slsaprovenance02",
@@ -1760,6 +1931,7 @@ fn refresh_cosign_evidence(inputs: &VerifiedReleaseInputs) -> Result<()> {
 }
 
 fn refresh_cosign_attestation(
+    network: SgxReleaseNetwork,
     exact_image: &str,
     workflow_sha: &str,
     predicate_type: &str,
@@ -1772,7 +1944,7 @@ fn refresh_cosign_attestation(
             "--type",
             predicate_type,
             "--certificate-identity",
-            TESTNET_RELEASE_CERTIFICATE_IDENTITY,
+            network.certificate_identity(),
             "--certificate-oidc-issuer",
             GITHUB_ACTIONS_OIDC_ISSUER,
             "--certificate-github-workflow-sha",
@@ -1827,10 +1999,10 @@ pub fn repository_root() -> Result<PathBuf> {
     fs::canonicalize(value.trim()).wrap_err("canonicalize repository root")
 }
 
-fn require_release_checkout(repo_root: &Path) -> Result<()> {
+fn require_release_checkout(repo_root: &Path, network: SgxReleaseNetwork) -> Result<()> {
     for relative in [
-        "release/testnet-sgx-bundle-v1.json",
-        "scripts/release/build-testnet-sgx-bundle-in-container.sh",
+        network.bundle_spec_path(),
+        "scripts/release/build-sgx-bundle-in-container.sh",
         "xtask/Cargo.toml",
     ] {
         if !repo_root.join(relative).is_file() {
@@ -1924,7 +2096,7 @@ fn require_clean_source(repo_root: &Path, expected_commit: &str) -> Result<()> {
         .arg(repo_root)
         .args(["status", "--porcelain=v1", "--untracked-files=all"]);
     if !run_output(&mut status, "inspect source tree state")?.is_empty() {
-        bail!("testnet SGX release operations require a clean source tree");
+        bail!("SGX release operations require a clean source tree");
     }
     let mut head = Command::new("git");
     head.arg("-C").arg(repo_root).args(["rev-parse", "HEAD"]);
@@ -1942,19 +2114,14 @@ fn validate_signing_key(key_file: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(key_file)
         .wrap_err_with(|| format!("read signing key metadata: {}", key_file.display()))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        bail!(
-            "missing or unsafe testnet SGX signing key: {}",
-            key_file.display()
-        );
+        bail!("missing or unsafe SGX signing key: {}", key_file.display());
     }
     let mode = metadata.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
-        bail!(
-            "unsafe testnet SGX signing key permissions: {mode:03o}; expected no group/other access"
-        );
+        bail!("unsafe SGX signing key permissions: {mode:03o}; expected no group/other access");
     }
     if metadata.len() == 0 {
-        bail!("testnet SGX signing key is empty");
+        bail!("SGX signing key is empty");
     }
     Ok(())
 }
@@ -2176,7 +2343,7 @@ fn current_id(flag: &str) -> Result<String> {
 }
 
 fn container_adapter() -> &'static str {
-    "/source/scripts/release/build-testnet-sgx-bundle-in-container.sh"
+    "/source/scripts/release/build-sgx-bundle-in-container.sh"
 }
 
 fn run_status(command: &mut Command, description: &str) -> Result<()> {

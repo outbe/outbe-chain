@@ -10,4 +10,4 @@ Feature: Permanent TEE offer-key onboarding
     When a production full node joins, starts, and restarts with its own enclave
     Then the full node reopens the exact permanent key before execution sync
     When finalized consensus time enters the renewal window
-    Then automatic renewal finalizes for the Validator and FullNode without changing their offer key
+    Then manual renewal finalizes for the Validator and FullNode without changing their offer key

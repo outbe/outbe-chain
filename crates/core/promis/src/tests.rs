@@ -99,7 +99,7 @@ fn mine_rejects_replayed_op_nonce() {
         let amount = U256::from(100u64);
         let a = auth(PromisOp::Mint, alice(), amount, 0);
         api::mint(storage.clone(), alice(), amount, a.clone()).unwrap();
-        // Replaying the same (amount, nonce=0, mac) must fail — nonce advanced to 1.
+        // Replaying the same (amount, nonce=0, mac) must fail - nonce advanced to 1.
         assert!(api::mint(storage.clone(), alice(), amount, a).is_err());
     });
 }
@@ -278,7 +278,7 @@ fn mine_rejects_total_supply_overflow_across_accounts() {
 
         // Minting to bob would push `total_supply` past U256::MAX. The host guards
         // the aggregate with `checked_add` and errors before advancing the supply
-        // (a Fatal — the real tx then reverts and rolls the balance write back; the
+        // (a Fatal - the real tx then reverts and rolls the balance write back; the
         // unit harness has no rollback, so we assert the supply invariant, which is
         // what the guard actually protects).
         let err = api::mint(

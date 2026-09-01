@@ -18,7 +18,7 @@ interface IValidatorSet {
 
     /// Emitted when a validator is JAILED (slashed + frozen) on a felony, instead
     /// of being force-exited. It is dropped from the next reshare and may later
-    /// unjail (→ PENDING → ACTIVE) or unstake out.
+    /// unjail (-> PENDING -> ACTIVE) or unstake out.
     event ValidatorJailed(address indexed validator, uint64 atHeight);
 
     /// Emitted when a JAILED validator calls unjailValidator() and returns to

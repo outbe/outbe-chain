@@ -42,7 +42,7 @@ pub struct SettlementCurrency {
 
 /// Deploy the asset and its vault, then register the vault with the VaultRouter.
 ///
-/// `owner_key` must be the router's owner — `addVault` admits nobody else. The
+/// `owner_key` must be the router's owner - `addVault` admits nobody else. The
 /// vault renounces its own owner in its constructor, which the router demands
 /// before it will adopt one.
 pub(crate) fn deploy(
@@ -115,7 +115,7 @@ pub(crate) fn deploy(
     }
 }
 
-/// The vaults the router routes `asset` to — the read `settle` gates on.
+/// The vaults the router routes `asset` to - the read `settle` gates on.
 pub(crate) fn registered_vaults(url: &str, asset: Address) -> Vec<Address> {
     let count = eth::read_call(
         url,

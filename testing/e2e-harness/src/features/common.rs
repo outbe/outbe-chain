@@ -2,7 +2,7 @@
 //! parity. These back the `Given`/`Then` lines that every flow reuses.
 //!
 //! Environment choices (validator count, TEE mode) come from the CLI, not the
-//! feature text — the setup step reads them off the `World` handles, and the
+//! feature text - the setup step reads them off the `World` handles, and the
 //! requirements themselves are declared as tags (see [`crate::env`]).
 
 use std::thread::sleep;
@@ -20,6 +20,16 @@ use crate::world::World;
 #[given(expr = "a fresh localnet with a {int}-block voting window")]
 fn fresh_localnet(world: &mut World, window: u64) {
     boot_localnet(world, window, &[]);
+}
+
+#[given(expr = "a fresh txpool-eviction localnet with a {int}-block voting window")]
+fn fresh_txpool_eviction_localnet(world: &mut World, window: u64) {
+    boot_localnet_with_opts(
+        world,
+        window,
+        &[],
+        StartOpts::with_txpool_eviction_profile(window),
+    );
 }
 
 #[given(expr = "a fresh stablecoin localnet with a {int}-block voting window")]

@@ -42,7 +42,7 @@ pub const MAX_EXTRA_DATA_SIZE: usize = 256;
 /// Default timeouts for Simplex consensus.
 ///
 /// These re-export the single source of truth in [`crate::timing`] so the values
-/// (and the gas↔consensus-timeout contract) are documented in one place. The
+/// (and the gas<->consensus-timeout contract) are documented in one place. The
 /// live values come from `genesis.json` with these as fallbacks; there is no CLI
 /// override. `DEFAULT_PROPOSAL_TIMEOUT_MS` == `timing::DEFAULT_LEADER_TIMEOUT_MS`
 /// (leader window); `DEFAULT_NOTARIZATION_TIMEOUT_MS` ==
@@ -70,7 +70,7 @@ pub const DEFAULT_PAYLOAD_RESOLVE_TIME: Duration = Duration::from_millis(200);
 /// The production default is 450ms.
 pub const DEFAULT_PAYLOAD_RETURN_TIME: Duration = Duration::from_millis(450);
 
-/// Maximum P2P message size (2 MB — enough for max block + overhead).
+/// Maximum P2P message size (2 MB - enough for max block + overhead).
 pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
 /// Internal mailbox size for consensus engine actors.
 pub const ENGINE_MAILBOX_SIZE: usize = 256;
@@ -78,7 +78,7 @@ pub const ENGINE_MAILBOX_SIZE: usize = 256;
 pub const CHANNEL_BACKLOG: usize = 16_384;
 
 /// Default epoch length in blocks, used when genesis.json does not specify
-/// `config.epochLengthBlocks`. ~1 hour at a ~3s block — the cadence for DKG
+/// `config.epochLengthBlocks`. ~1 hour at a ~3s block - the cadence for DKG
 /// reshare, active-set rotation, and the per-epoch slash-counter reset. A felony
 /// threshold must stay below this (see `outbe_slashindicator`). The DKG
 /// prepare/grace windows below are lookback/fallback bounds and stay < this epoch;
@@ -108,7 +108,7 @@ pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
 // Marshal block-resolution timing
 //
 // Read cross-module by the application handler, finalization actor, and the
-// verify / epoch-boundary resolution paths — so they live here rather than
+// verify / epoch-boundary resolution paths - so they live here rather than
 // inside the handler implementation module.
 // ---------------------------------------------------------------------------
 

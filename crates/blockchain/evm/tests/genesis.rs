@@ -5,7 +5,7 @@
 //! 1. `scripts/seed_genesis.py` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
 //!    with the canonical `0xef` marker bytecode and `slot 0 = 0`.
 //! 2. The Python seeder must not write any `ValidatorSet` storage entry at
-//!    the direct slots 31..40 — those are reserved for the runtime
+//!    the direct slots 31..40 - those are reserved for the runtime
 //!    `CommitteeSnapshotStore` whose first writer is block 1's
 //!    `BoundaryOutcome` system transaction.
 //! 3. The genesis JSON produced by the seeder must not embed private DKG
@@ -280,7 +280,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// must be preserved across state-root computation by EITHER the executor's
 /// runtime `0xEF` marker list (`OUTBE_RUNTIME_MARKER_ADDRESSES`) OR genesis
 /// `0xEF` bytecode seeded by `scripts/seed_genesis.py`. reth22-1 unified the
-/// marker list into one const and pinned marker ⊇ stateful-dispatch; this test
+/// marker list into one const and pinned marker superset-of stateful-dispatch; this test
 /// binds the genesis seed list as the third source of truth so a precompile
 /// that is neither marked nor seeded fails loudly instead of silently pruning.
 ///
@@ -325,13 +325,13 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
         assert!(
             in_marker || in_genesis,
             "stateful precompile {addr} is EIP-161-preserved by neither the executor marker \
-             list nor genesis 0xEF bytecode — its storage would be pruned at state-root"
+             list nor genesis 0xEF bytecode - its storage would be pruned at state-root"
         );
     }
 
     assert!(
         checked > 0,
-        "no stateful precompiles were checked — the iteration covered nothing, \
+        "no stateful precompiles were checked - the iteration covered nothing, \
          which would make this test vacuously pass"
     );
 }
@@ -360,7 +360,7 @@ fn zerofee_precompile_is_genesis_seeded_with_marker_bytecode() {
         .expect("ZEROFEE_ADDRESS entry has `code` field in seeded genesis");
     assert_eq!(
         code, MARKER_BYTECODE_HEX,
-        "ZEROFEE_ADDRESS must carry `{MARKER_BYTECODE_HEX}` genesis bytecode — it is the \
+        "ZEROFEE_ADDRESS must carry `{MARKER_BYTECODE_HEX}` genesis bytecode - it is the \
          marker-list exemption in marker_list_covers_stateful_precompiles, so its EIP-161 \
          preservation depends entirely on this genesis seed"
     );
@@ -396,7 +396,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
     for needle in forbidden_substrings {
         assert!(
             !haystack.contains(needle),
-            "seeded genesis.json must not contain `{needle}` — DKG / private \
+            "seeded genesis.json must not contain `{needle}` - DKG / private \
              key material is the runtime's responsibility, not genesis"
         );
     }
@@ -461,7 +461,7 @@ fn genesis_committee_snapshot_exists_before_block2_accounting() {
 
 /// T-6 / block 1 emits `BoundaryOutcome` strictly before any block 2
 /// activity. Block ordering is monotonic (`finalization is monotonic`), so a successful BoundaryOutcome
-/// at block 1 is observable to any block N ≥ 2 via the
+/// at block 1 is observable to any block N >= 2 via the
 /// `CommitteeSnapshotStore`.
 #[test]
 fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
@@ -475,7 +475,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
         "BoundaryOutcome must appear inside the block 1 begin-zone (any \
          position) so the snapshot write happens before block 1 finalizes"
     );
-    // No CertifiedParentAccounting at block 1 — the snapshot must be readable
+    // No CertifiedParentAccounting at block 1 - the snapshot must be readable
     // by block 2's Phase 1, not consumed in-block.
     assert!(
         !block1.contains(&SystemTxKind::CertifiedParentAccounting),
@@ -488,7 +488,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
 /// `runtime_genesis_dkg_boundary` angle. The runtime `DkgManager` (consensus
 /// crate) produces the `DkgBoundaryArtifact` consumed by the V2
 /// `BoundaryOutcome` system tx at block 1; verifying the expected kind set
-/// pins the genesis-DKG → epoch-0-snapshot path.
+/// pins the genesis-DKG -> epoch-0-snapshot path.
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let block1 = expected_begin_block_kinds(1, true, false);
@@ -507,7 +507,7 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     );
 }
 
-/// T-8 / block N ≥ 2 mandatorily carries
+/// T-8 / block N >= 2 mandatorily carries
 /// `CertifiedParentAccounting` as its first begin-zone tx. This is the V2
 /// replacement for the legacy exact-parent finalization invariant per Epic
 #[test]

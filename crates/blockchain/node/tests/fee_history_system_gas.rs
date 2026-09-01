@@ -48,6 +48,8 @@ use reth_tasks::Runtime;
 
 const GENESIS_VALIDATOR_PUBKEY: &str =
     "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
+const GENESIS_VALIDATOR_RADICLE_NODE_ID: &str =
+    "2121212121212121212121212121212121212121212121212121212121212121";
 
 /// Block-1 timestamp the reth payload harness generates: it starts at the
 /// genesis timestamp (`0x65f1b057`) and increments by one per block, so the
@@ -84,7 +86,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     // reverting "pair not registered" (which would abort pre-execution and leave
     // every payload empty). Production genesis always seeds oracle pairs; the
     // oracle itself is left uninitialized so its own begin-block tally/s-curve
-    // stays inert — the same minimal state the executor tests use.
+    // stays inert - the same minimal state the executor tests use.
     std::fs::write(
         &seed_path,
         r#"{
@@ -99,7 +101,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     std::fs::write(
         &validators_path,
         format!(
-            r#"[{{ "address": "0x{addr:x}", "public_key": "{GENESIS_VALIDATOR_PUBKEY}" }}]"#,
+            r#"[{{ "address": "0x{addr:x}", "public_key": "{GENESIS_VALIDATOR_PUBKEY}", "radicle_node_id": "{GENESIS_VALIDATOR_RADICLE_NODE_ID}" }}]"#,
             addr = signer.address()
         ),
     )?;
@@ -241,8 +243,8 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     let ce_directory = tempfile::tempdir()?;
 
     // The OST3 payload binds the epoch-0 committee snapshot that the block-1
-    // BoundaryOutcome writes before TeeBootstrap runs — the same hash the boundary
-    // artifact carries — and is signed by the single genesis validator.
+    // BoundaryOutcome writes before TeeBootstrap runs - the same hash the boundary
+    // artifact carries - and is signed by the single genesis validator.
     let bridge = ConsensusExecutionBridge::new();
     bridge.set_pending_tee_bootstrap(
         gramine_direct_bootstrap_v2(

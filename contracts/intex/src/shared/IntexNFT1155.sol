@@ -127,7 +127,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         calledAt = d.calledAt;
         totalSupply = d.totalSupply;
         status = d.status;
-        state = d.state;
+        state = _effectiveState(d);
     }
 
     /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
@@ -190,7 +190,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         seed.status = IIntexNFT1155.IntexStatus.Settled;
         $.seriesData[sTok] = seed;
 
-        // Series remain in allSeries permanently even after supply reaches 0 —
+        // Series remain in allSeries permanently even after supply reaches 0 -
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
@@ -225,8 +225,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // CEI ok: write totalSupply before _mint so the ERC1155 receiver callback observes a
-        // consistent (totalSupply == Σ balanceOf) snapshot — closes the read-only-reentrancy
-        // window. Cast is safe because the cap check bounded `newTotal ≤ issuedIntexCount ≤ uint32.max`.
+        // consistent (totalSupply == sum balanceOf) snapshot - closes the read-only-reentrancy
+        // window. Cast is safe because the cap check bounded `newTotal <= issuedIntexCount <= uint32.max`.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, quantity, "");
@@ -288,11 +288,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IERC1155Bridgeable
     /// @dev Bridge crosschainBurn gating:
-    ///      - Settled token ids are soulbound — always reverts.
+    ///      - Settled token ids are soulbound - always reverts.
     ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, holder-initiated moves while the series is tradable).
-    ///      - Series state `Called`: allowed only when the destination holder is the source holder —
-    ///        ownership is frozen once a series is Called — and only inside the call window.
+    ///      - Series state `Called`: allowed only when the destination holder is the source holder -
+    ///        ownership is frozen once a series is Called - and only inside the call window.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
@@ -341,7 +341,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // A crosschainMinted balance can be a holder's full transferable balance (<= totalSupply, uint32).
         if (amount > type(uint32).max) revert QuantityTooLarge(amount);
 
-        // Bridge-in cap: enforce `totalSupply + amount ≤ issuedIntexCount` at all times. The
+        // Bridge-in cap: enforce `totalSupply + amount <= issuedIntexCount` at all times. The
         // live-supply invariant matches mint, which also caps on live `totalSupply`.
         // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
         // even at the `issuedIntexCount == type(uint32).max` boundary.
@@ -352,7 +352,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // CEI ok: write totalSupply before _mint (see mint()). Cast is safe because the cap
-        // check bounded `newTotal ≤ issuedIntexCount ≤ uint32.max`.
+        // check bounded `newTotal <= issuedIntexCount <= uint32.max`.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, amount, "");
@@ -384,7 +384,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 sTok = _settledTokenId(seriesId);
 
         // CEI ok: update both Issued and Settled totalSupply mirrors before the external _mint
-        // callback fires — keeps (totalSupply == Σ balanceOf) consistent mid-callback.
+        // callback fires - keeps (totalSupply == sum balanceOf) consistent mid-callback.
         // Burn `amount` Issued from `from` and mint the same `amount` of Settled to `to`.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
@@ -411,8 +411,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Mirror `settle`'s precondition: Settled balances only exist after a settle, which
         // is only permitted from Qualified or Called. Making the gate explicit (instead of
         // relying on `_burn`'s zero-balance revert) keeps a future change that pre-mints
-        // Settled tokens — e.g. an airdrop variant — from accidentally opening an early-burn
-        // window. The gate is `state ∈ {Qualified, Called}`, not a fictional Settled state value.
+        // Settled tokens - e.g. an airdrop variant - from accidentally opening an early-burn
+        // window. The gate is `state in {Qualified, Called}`, not a fictional Settled state value.
         if (iData.state != IIntexNFT1155.IntexState.Qualified && iData.state != IIntexNFT1155.IntexState.Called) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(iData.state));
         }
@@ -492,7 +492,20 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if ($.seriesData[tokenId].issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
-        return $.seriesData[tokenId];
+        IIntexNFT1155.SeriesData memory data = $.seriesData[tokenId];
+        data.state = _effectiveState(data);
+        return data;
+    }
+
+    /// @dev Derived, never stored: no transaction arrives at the deadline to write it.
+    function _effectiveState(IIntexNFT1155.SeriesData memory data) private view returns (IIntexNFT1155.IntexState) {
+        if (
+            data.state == IIntexNFT1155.IntexState.Called
+                && block.timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod
+        ) {
+            return IIntexNFT1155.IntexState.Expired;
+        }
+        return data.state;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -520,7 +533,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
-        return IntexMetadata.tokenURI(_s().seriesData[tokenId], block.timestamp);
+        IIntexNFT1155.SeriesData memory data = _s().seriesData[tokenId];
+        data.state = _effectiveState(data);
+        return IntexMetadata.tokenURI(data);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -534,7 +549,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
     ///      - Holder-to-holder transfers:
-    ///          * Settled token ids are soulbound — always reverts.
+    ///          * Settled token ids are soulbound - always reverts.
     ///          * Issued token ids are transferable while the series is Issued or Qualified.
     ///            A Called series freezes holder-to-holder transfers: the settlement
     ///            obligation stays with the holder and cannot be passed on. Bridge gating
@@ -557,7 +572,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             }
         }
 
-        // Snapshot pre-transfer balances — checked BEFORE super._update, verified AFTER
+        // Snapshot pre-transfer balances - checked BEFORE super._update, verified AFTER
         // to handle duplicate tokenIds in batch correctly.
         bool[] memory fromHadTokens = new bool[](ids.length);
         bool[] memory toHadTokens = new bool[](ids.length);

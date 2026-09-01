@@ -38,6 +38,10 @@ interface IIntex {
         uint16 referenceCurrency;
         uint32 worldwideDay;
         uint256 costAmountMinor;
+        /// @notice Units settled so far; their load belongs to the settler.
+        uint32 settledUnits;
+        /// @notice Units parked into Gem positions; their load moved with them.
+        uint32 parkedUnits;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

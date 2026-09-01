@@ -267,7 +267,7 @@ impl NodContract<'_> {
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
     /// Maps a six-decimal `floor_price_minor` (or oracle rate) to a 24-bit
-    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` —
+    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
     /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
         if price_minor.is_zero() {
@@ -277,7 +277,7 @@ impl NodContract<'_> {
     }
 
     /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// six-decimal minor units. Diagnostic-only — `bin_to_price_floor` may
+    /// six-decimal minor units. Diagnostic-only - `bin_to_price_floor` may
     /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
         reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
@@ -286,7 +286,7 @@ impl NodContract<'_> {
     /// Namespaces a bin-column key by the bucket's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing — the ISO has to occupy real
+    /// integer type alone namespaces nothing - the ISO has to occupy real
     /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
     /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
     /// value that would alias the un-namespaced key; `record_nod_issued`
@@ -506,7 +506,7 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
 // `outbe_intexfactory::state::QualifiedBinTree`, which runs two tries on one
 // contract the same way.
 //
-// The trait functions take `&self` — storage writes go through the DSL's
+// The trait functions take `&self` - storage writes go through the DSL's
 // interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
 // Construct the view inline at each `tree_math` call rather than binding it,
 // so it never conflicts with a `&mut NodContract` borrow.

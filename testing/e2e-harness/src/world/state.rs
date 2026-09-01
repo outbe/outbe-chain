@@ -154,6 +154,23 @@ pub struct OcompExecutionTraceObservationV1 {
     pub forbidden_calculation_entries: u64,
 }
 
+/// Public AgentReward observations attached to the full OCOMP production-path
+/// scenario. Beneficiary private keys remain deterministic harness constants
+/// and are deliberately excluded from scenario evidence.
+#[derive(Clone, Debug, Serialize)]
+pub struct OcompAgentRewardObservationV1 {
+    pub waa_beneficiary: alloy_primitives::Address,
+    pub sra_beneficiary: alloy_primitives::Address,
+    pub offer_execution_block_number: Option<u64>,
+    pub offer_execution_timestamp: Option<u64>,
+    pub reward_utc_day: Option<u32>,
+    pub escrow_before_settlement_coen_units: Option<alloy_primitives::U256>,
+    pub cca_before_settlement_coen_units: Option<alloy_primitives::U256>,
+    pub waa_claimable_coen_units: Option<alloy_primitives::U256>,
+    pub sra_claimable_coen_units: Option<alloy_primitives::U256>,
+    pub claim_finalized_height: Option<u64>,
+}
+
 /// Public-path observations retained after behavioral assertions complete.
 ///
 /// This is evidence, not a control surface: every field is populated from
@@ -168,6 +185,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
     pub vote_accountability: Option<crate::world::rpc::OcompPublicVoteAccountabilityV1>,
+    pub agent_reward: Option<OcompAgentRewardObservationV1>,
     pub validator_balances_before: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub validator_balances_after: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub atomic_quorum_apply_verified: bool,
@@ -218,6 +236,14 @@ pub struct FixtureState {
     /// offline long enough for the protocol's documented share-reveal path.
     /// Every other reveal/fatal/alarm remains forbidden by the log audit.
     pub expected_dkg_reveal: Option<String>,
+    /// One manual-lease scenario deliberately fail-stops this validator after
+    /// its finalized lease expires. Only the exact two-sink Reth shutdown
+    /// trailers causally bound to that guard are accepted by the log audit.
+    pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    /// The same manual-lease scenario deliberately fail-stops this role-neutral
+    /// FullNode. Its execution-engine path emits one exact guarded fatal trailer
+    /// bundle, distinct from the validator's graceful shutdown profile.
+    pub expected_tee_lease_guard_shutdown_full_node: Option<usize>,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -257,6 +283,8 @@ pub struct FixtureState {
     pub slash_stake_after: Option<alloy_primitives::U256>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
+    /// WAA/SRA public-path observations for the full OCOMP Tribute.
+    pub ocomp_agent_reward: Option<OcompAgentRewardObservationV1>,
     /// Private keys of deterministic genesis-funded owners used only by the
     /// OCM-26 maximum-shaped public capacity fixture. They are never emitted
     /// into scenario evidence.
@@ -281,6 +309,15 @@ pub struct FixtureState {
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Successor activation evidence captured while a V1 job remains live.
+    pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
+    pub ocomp_successor_activation_height: Option<u64>,
+    pub ocomp_successor_node_pids_before_activation: Vec<u32>,
+    pub ocomp_successor_node_pids_after_activation: Vec<u32>,
+    /// Fresh post-activation request pinned to and completed by the successor.
+    pub ocomp_successor_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Deterministic predecessor retention deadline observed after V1 release.
+    pub ocomp_predecessor_retention_until: Option<u64>,
     /// Finalized automatic successor to an expired public OCOMP request.
     pub ocomp_retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Finalized height observed after the retry completed and finality advanced.
@@ -411,6 +448,7 @@ pub struct FixtureState {
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// The stablecoin holders settle Intex in, and its reserve vault.
+    #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
@@ -439,6 +477,7 @@ impl Default for FixtureState {
     fn default() -> Self {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
+            #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),
             settled_units: 0,
@@ -449,6 +488,8 @@ impl Default for FixtureState {
             voting_window: 6,
             allow_unsupported_update_fatal: false,
             expected_dkg_reveal: None,
+            expected_tee_lease_guard_shutdown_validator: None,
+            expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,
             promoted_validator_pid: None,
             wwd: None,
@@ -468,6 +509,7 @@ impl Default for FixtureState {
             slash_count_before: None,
             slash_stake_after: None,
             tribute_tx_hash: None,
+            ocomp_agent_reward: None,
             ocomp_capacity_tribute_private_keys: Vec::new(),
             ocomp_capacity_tribute_tx_hashes: Vec::new(),
             ocomp_nod_materialization: None,
@@ -477,6 +519,12 @@ impl Default for FixtureState {
             projection_outage_finalized_before: None,
             ocomp_activation_height: None,
             ocomp_job_request: None,
+            ocomp_successor_bundle_hash: None,
+            ocomp_successor_activation_height: None,
+            ocomp_successor_node_pids_before_activation: Vec::new(),
+            ocomp_successor_node_pids_after_activation: Vec::new(),
+            ocomp_successor_job_request: None,
+            ocomp_predecessor_retention_until: None,
             ocomp_retry_job_request: None,
             ocomp_retry_completed_finality: None,
             ocomp_dynamic_worldwide_days: Vec::new(),
@@ -571,6 +619,7 @@ impl FixtureState {
             certified_generation: self.ocomp_certified_generation.clone(),
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
             vote_accountability: self.ocomp_vote_accountability.clone(),
+            agent_reward: self.ocomp_agent_reward.clone(),
             validator_balances_before: self.ocomp_validator_balances_before.clone(),
             validator_balances_after: self.ocomp_validator_balances_after.clone(),
             atomic_quorum_apply_verified: self.ocomp_atomic_quorum_apply_verified,

@@ -11,12 +11,12 @@ abstract contract OrderStatusStorage {
 
     bytes32 public constant UNKNOWN = "";
 
-    // — Origin statuses —
+    // - Origin statuses -
     bytes32 public constant OPENED = "OPENED";
     bytes32 public constant SETTLED = "SETTLED";
     bytes32 public constant REFUNDED = "REFUNDED";
 
-    // — Destination statuses —
+    // - Destination statuses -
     bytes32 public constant CLAIMED = "CLAIMED";
     bytes32 public constant FILLED = "FILLED";
 
@@ -29,10 +29,10 @@ abstract contract OrderStatusStorage {
 
     // ============ Public Storage ============
 
-    /// @notice Tracks the origin-side lifecycle of each order (UNKNOWN → OPENED → SETTLED/REFUNDED)
+    /// @notice Tracks the origin-side lifecycle of each order (UNKNOWN -> OPENED -> SETTLED/REFUNDED)
     mapping(bytes32 orderId => bytes32 status) public orderStatus;
 
-    /// @notice Tracks the destination-side lifecycle of each order (UNKNOWN → CLAIMED → FILLED).
+    /// @notice Tracks the destination-side lifecycle of each order (UNKNOWN -> CLAIMED -> FILLED).
     ///         Split from `orderStatus` so a same-chain order (originDomain == destinationDomain)
     ///         on a single router instance does not collapse both lifecycles into one slot.
     mapping(bytes32 orderId => bytes32 status) public destinationOrderStatus;

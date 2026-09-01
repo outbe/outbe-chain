@@ -33,8 +33,8 @@ use outbe_ocomp::{
     embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
         EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
-        EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1, EmbeddedOcompRuntimeErrorV1,
-        EmbeddedPayoutOutcomeV1, EmbeddedVoteOutcomeV1,
+        EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1,
+        EmbeddedOcompRuntimeErrorV1, EmbeddedPayoutOutcomeV1, EmbeddedVoteOutcomeV1,
     },
     supervisor::DiscoveryRecord,
 };
@@ -66,18 +66,24 @@ use reth_provider::{
 };
 use tracing::{error, info, warn};
 
-/// Days a payout tick looks back over, matching the standalone Supervisor.
+/// Days each embedded payout tick looks back over.
 const PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
-pub struct OcompExExConfigV1 {
-    pub domain_root: PathBuf,
+pub struct OcompExExBundleConfigV1 {
     pub worker_address: std::net::SocketAddr,
     pub identity: EndpointIdentity,
     pub protocol_bundle: PinnedProtocolBundle,
+}
+
+#[derive(Clone)]
+pub struct OcompExExConfigV1 {
+    pub domain_root: PathBuf,
+    pub bundles: Vec<OcompExExBundleConfigV1>,
     pub policy: EmbeddedNodePolicyV1,
     pub validator_rpc_url: Option<String>,
+    pub chain_id: u64,
     pub genesis_hash: B256,
 }
 
@@ -406,10 +412,16 @@ where
     let provider = ctx.provider().clone();
     let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
         domain_root: config.domain_root,
-        worker_address: config.worker_address,
-        identity: config.identity,
         registry_generation: 1,
-        protocol_bundle: config.protocol_bundle,
+        bundles: config
+            .bundles
+            .into_iter()
+            .map(|bundle| EmbeddedOcompBundleConfigV1 {
+                worker_address: bundle.worker_address,
+                identity: bundle.identity,
+                protocol_bundle: bundle.protocol_bundle,
+            })
+            .collect(),
         policy: config.policy,
         validator_rpc_url: config.validator_rpc_url,
         limits: poc_schema_limits(),
@@ -518,7 +530,7 @@ where
         payout_rx,
         payout_active: false,
         materialization_attempt_heights: BTreeMap::new(),
-        chain_id: config.identity.chain_id,
+        chain_id: config.chain_id,
         genesis_hash: config.genesis_hash,
         fatal: None,
     };
@@ -543,12 +555,12 @@ where
             }
             _ = poll.tick() => {
                 if let Err(error) = runtime.reconcile() {
-                    runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                    runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                     wait_for_node_teardown().await;
                 }
                 while let Ok(outcome) = runtime.compute_rx.try_recv() {
                     if let Err(error) = runtime.handle_compute(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -557,7 +569,7 @@ where
                 }
                 while let Ok(outcome) = runtime.vote_rx.try_recv() {
                     if let Err(error) = runtime.handle_vote(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -1252,7 +1264,7 @@ where
         match classified {
             Ok(projection) => Ok(Some(projection)),
             Err(error) => {
-                self.latch_fatal(job_id, error.to_string())?;
+                self.latch_fatal(job_id, format!("{error:#}"))?;
                 Ok(None)
             }
         }
@@ -1299,7 +1311,7 @@ where
                 outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
         };
         let represented_validator = match self.domain.validator_sender_address() {
-            Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage)
+            Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage.clone())
                 .resolve_validator_for_role(
                     sender,
                     outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
@@ -1331,7 +1343,14 @@ where
         {
             return Ok(());
         }
+        // The bundle the generation was certified under is chain state, not runtime
+        // state: a node that has forgotten every terminal job still materializes.
+        let protocol_bundle_hash = outbe_nod::NodContract::new(storage)
+            .ocomp_certified_generation(outbe_common::WorldwideDay::from(head.worldwide_day))?
+            .ok_or_else(|| eyre::eyre!("materialization head has no certified generation"))?
+            .protocol_bundle_hash;
         self.domain.spawn_validator_materialization(
+            protocol_bundle_hash,
             head,
             profile.batch_subtree_height,
             self.materialization_tx.clone(),
@@ -1346,7 +1365,7 @@ where
         Ok(())
     }
 
-    /// Ticks the payout sender the standalone Supervisor process would tick.
+    /// Ticks the payout sender owned by the embedded Supervisor.
     /// One tick at a time: the submitter journals its own progress, so a later
     /// block simply resumes where this one stopped.
     fn drive_payout(&mut self, head: B256) {
@@ -2083,7 +2102,7 @@ mod tests {
         );
     }
 
-    /// A hole at or below the tip is not a persistence lag — the history this
+    /// A hole at or below the tip is not a persistence lag - the history this
     /// node claims to have is inconsistent, so it must not start.
     #[test]
     fn checkpoint_missing_below_the_canonical_tip_fails_closed() {

@@ -69,7 +69,7 @@ pub fn slash_window_proposers(
 ///
 /// Called once per finalized block from the Phase 1 (`CertifiedParentAccounting`)
 /// path, which sees every finalized block exactly once as a direct parent. The
-/// evicted block is `SLASH_GUARD_RETAIN` ≫ K blocks old, so its window can no
+/// evicted block is `SLASH_GUARD_RETAIN` >> K blocks old, so its window can no
 /// longer be replayed and clearing its guards cannot weaken replay protection
 /// for any block still inside the window. Without this, `voter_window_slashed`
 /// and `proposer_window_slashed` accumulate one entry per finalized block with

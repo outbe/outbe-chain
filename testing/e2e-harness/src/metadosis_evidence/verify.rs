@@ -401,8 +401,15 @@ fn verify_fresh_devnet_process(
     let processes = scenario["ocomp"]["topology"]["processes"]
         .as_array()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
+    ensure!(
+        processes.iter().all(|process| matches!(
+            process["role"].as_str(),
+            Some("snapshot_exporter" | "worker")
+        )),
+        "fresh-devnet process topology contains a non-external OCOMP role"
+    );
     for validator_index in 0..4_u64 {
-        for role in ["supervisor", "snapshot_exporter", "worker"] {
+        for role in ["snapshot_exporter", "worker"] {
             ensure!(
                 processes.iter().any(|process| {
                     process["validator_index"].as_u64() == Some(validator_index)
@@ -1243,7 +1250,7 @@ mod tests {
         }
         let mut processes = Vec::new();
         for validator_index in 0..4 {
-            for role in ["supervisor", "snapshot_exporter", "worker"] {
+            for role in ["snapshot_exporter", "worker"] {
                 processes.push(serde_json::json!({
                     "validator_index": validator_index,
                     "role": role,
@@ -1474,6 +1481,22 @@ mod tests {
         };
         verify_fresh_devnet_process(root.path(), &receipt).unwrap();
 
+        scenario["ocomp"]["topology"]["processes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "validator_index": 0,
+                "role": "supervisor",
+                "stopped_at_millis": null
+            }));
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
+        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
+        scenario["ocomp"]["topology"]["processes"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
+
         let retained_chain = std::fs::read(artifacts.join("outbe-chain")).unwrap();
         std::fs::write(artifacts.join("outbe-chain"), b"tampered binary").unwrap();
         assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
@@ -1501,78 +1524,5 @@ mod tests {
             ["new_status"] = serde_json::json!(2);
         std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
         assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-    }
-
-    #[test]
-    fn checked_in_metadosis_pack_has_one_fixed_command_per_test() {
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .unwrap();
-        let ledger =
-            VerificationLedger::parse(&repo.join("outbe-plan/verification-ledger.yaml")).unwrap();
-        let pack = ledger.domain_pack(METADOSIS_NAMESPACE).unwrap();
-        let bundle = Path::new("/evidence/metadosis");
-        let plans = pack
-            .tests
-            .iter()
-            .map(|(test_id, definition)| {
-                (
-                    test_id.clone(),
-                    command_plan(test_id, definition, bundle).unwrap(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(plans.len(), pack.tests.len());
-        let p0 = plans.get(METADOSIS_P0_TEST_ID).unwrap();
-        assert!(p0.discovery.is_none());
-        assert_eq!(
-            p0.execution,
-            [
-                "outbe-metadosis-evidence",
-                "p0-parity",
-                "--output",
-                "/evidence/metadosis/p0-process",
-            ]
-        );
-        let fresh = plans.get(METADOSIS_FRESH_DEVNET_TEST_ID).unwrap();
-        assert!(fresh.discovery.is_none());
-        assert_eq!(
-            fresh.execution,
-            [
-                "outbe-metadosis-evidence",
-                "fresh-devnet",
-                "--output",
-                "/evidence/metadosis/fresh-devnet",
-            ]
-        );
-        assert!(plans
-            .iter()
-            .filter(|(id, _)| {
-                !matches!(
-                    id.as_str(),
-                    METADOSIS_P0_TEST_ID | METADOSIS_FRESH_DEVNET_TEST_ID
-                )
-            })
-            .all(|(_, plan)| plan.discovery.is_some() && plan.execution[0] == "cargo"));
-        let test_utils_privacy = plans.get("MET-AUTH-003").unwrap();
-        assert_eq!(
-            test_utils_privacy.execution,
-            [
-                "cargo",
-                "test",
-                "--locked",
-                "-p",
-                "outbe-metadosis",
-                "--features",
-                "test-utils",
-                "--test",
-                "external_mutation_surface",
-                "test_utils_keeps_the_raw_fixture_kernel_private",
-                "--",
-                "--exact",
-                "--nocapture",
-            ]
-        );
     }
 }

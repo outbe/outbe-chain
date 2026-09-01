@@ -27,10 +27,13 @@ outbe-rpc.workspace = true
 outbe-node.workspace = true
 outbe-ocomp.workspace = true
 outbe-ocomp-protocol.workspace = true
+outbe-ocompregistry.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-metadosis.workspace = true
+outbe-update.workspace = true
 outbe-nod.workspace = true
+outbe-common.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-operator.workspace = true
@@ -48,6 +51,7 @@ reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true
+commonware-macros.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true

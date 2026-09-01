@@ -6,7 +6,7 @@ import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
 /// @dev The USDT route: canonical USDT on the external chain, ERC-7802 synthetic on Outbe.
-///      Everything specific to USDT lives here — the salt labels, which side is canonical, the token metadata and the
+///      Everything specific to USDT lives here - the salt labels, which side is canonical, the token metadata and the
 ///      dev-mock bootstrap. Adding another token means adding a sibling of this file, not editing shared code.
 abstract contract UsdtRoute is BaseRoute {
     /// @dev Labels are part of the CREATE3 address. Changing either string relocates every USDT deployment.

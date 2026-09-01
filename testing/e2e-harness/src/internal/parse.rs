@@ -2,7 +2,7 @@
 //!
 //! These replace the `sed -n '4p'` / `awk` / `jq` one-liners in
 //! shell parsing with small, testable
-//! functions. No `regex` crate — the patterns are simple enough by hand.
+//! functions. No `regex` crate - the patterns are simple enough by hand.
 
 /// Parse a value that may be decimal or `0x`-hex (uint values from `cast`).
 pub(crate) fn hex_or_dec(s: &str) -> Option<u64> {
@@ -14,7 +14,7 @@ pub(crate) fn hex_or_dec(s: &str) -> Option<u64> {
     }
 }
 
-/// Extract the first `0x…64hex` after "…ransaction sent:" — matches the bash
+/// Extract the first `0x...64hex` after "...ransaction sent:" - matches the bash
 /// `extract_tx_hash` regex (`update_operator_flow.sh:141`). Works for both the
 /// "Proposal transaction sent:" and "Vote transaction sent:" CLI lines.
 pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
@@ -29,7 +29,7 @@ pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
             }
         }
     }
-    // Tribute uses the product-facing `offerTribute tx: 0x…` label.
+    // Tribute uses the product-facing `offerTribute tx: 0x...` label.
     for line in stdout
         .lines()
         .filter(|line| line.contains("offerTribute tx:"))

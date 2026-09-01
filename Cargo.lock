@@ -8139,6 +8139,7 @@ dependencies = [
  "alloy-sol-types",
  "clap",
  "commonware-consensus",
+ "commonware-macros",
  "commonware-runtime",
  "commonware-storage",
  "commonware-utils",
@@ -8147,6 +8148,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-chain-constants",
+ "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
@@ -8156,12 +8158,14 @@ dependencies = [
  "outbe-node",
  "outbe-ocomp",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
  "outbe-rpc",
  "outbe-tee",
  "outbe-txpool",
+ "outbe-update",
  "outbe-validatorset",
  "outbe-zkproof",
  "reqwest 0.12.28",
@@ -8196,6 +8200,7 @@ dependencies = [
 name = "outbe-cli"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
@@ -8208,6 +8213,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tee",
+ "outbe-zerofee",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -8442,6 +8448,7 @@ dependencies = [
  "outbe-node",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-operator",
@@ -8587,6 +8594,7 @@ dependencies = [
  "outbe-node",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
@@ -8786,6 +8794,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promisfactory",
+ "outbe-promislimit",
  "outbe-vaultrouter",
  "ring",
  "thiserror 2.0.18",
@@ -8902,6 +8911,7 @@ dependencies = [
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
@@ -9111,6 +9121,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-ocompregistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-chain-constants",
+ "outbe-consensus",
+ "outbe-macros",
+ "outbe-ocomp-protocol",
+ "outbe-primitives",
+]
+
+[[package]]
 name = "outbe-offchain-data"
 version = "0.1.0"
 dependencies = [
@@ -9143,9 +9166,11 @@ dependencies = [
 name = "outbe-operator"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "k256 0.13.4",
@@ -9280,6 +9305,61 @@ dependencies = [
  "outbe-poseidon",
  "thiserror 2.0.18",
  "zeroize",
+]
+
+[[package]]
+name = "outbe-protocol-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "hex",
+ "outbe-chain-constants",
+ "outbe-common",
+ "outbe-compressed-entities",
+ "outbe-credis",
+ "outbe-credisfactory",
+ "outbe-fidelity",
+ "outbe-gem",
+ "outbe-gemfactory",
+ "outbe-gratis",
+ "outbe-gratisfactory",
+ "outbe-intex",
+ "outbe-intexfactory",
+ "outbe-l2registry",
+ "outbe-metadosis",
+ "outbe-nod",
+ "outbe-nodfactory",
+ "outbe-ocomp-protocol",
+ "outbe-oracle",
+ "outbe-primitives",
+ "outbe-promis",
+ "outbe-promisfactory",
+ "outbe-protocol",
+ "outbe-protocol-derive",
+ "outbe-stablecoin",
+ "outbe-stablecoinfactory",
+ "outbe-tee",
+ "outbe-tee-enclave",
+ "outbe-tribute",
+ "outbe-tributefactory",
+ "outbe-validatorset",
+ "outbe-vaultrouter",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
+ "outbe-zkproof",
+ "rand 0.8.6",
+ "revm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -9639,6 +9719,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-sol-types",
  "eyre",
  "futures",
@@ -9673,6 +9755,8 @@ dependencies = [
  "alloy-sol-types",
  "hex",
  "outbe-macros",
+ "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-primitives",
  "outbe-teeregistry",
  "outbe-validatorset",
@@ -17811,6 +17895,7 @@ dependencies = [
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",
+ "outbe-tee",
  "reth-chainspec",
  "reth-ethereum",
  "serde",

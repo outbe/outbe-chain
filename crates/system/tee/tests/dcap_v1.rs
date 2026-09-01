@@ -12,8 +12,8 @@ use serde::Deserialize;
 const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
 const COLLATERAL_WRAPPER: &str =
     include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
-const INTENT_BOUND_PROCESSOR_CAPTURE_TIME: u64 = 1_785_491_440;
-const INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT: u64 = 1_787_808_799;
+const INTENT_BOUND_PROCESSOR_CAPTURE_TIME: u64 = 1_787_850_648;
+const INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT: u64 = 1_790_380_006;
 const PEM_CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
 
 #[derive(Deserialize)]

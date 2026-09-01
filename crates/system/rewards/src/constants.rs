@@ -2,7 +2,7 @@
 //!
 //! Block `N`'s fees are escrowed and, at `N+K`, split across the full voter set
 //! with a **distance-decayed, fixed-denominator** payout (residue burned). All
-//! weights are scaled-`U256` integers — **no `f32`/`f64`** (CLAUDE.md numeric
+//! weights are scaled-`U256` integers - **no `f32`/`f64`** (CLAUDE.md numeric
 //! rule).
 //!
 //! `K` itself lives in [`outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K`]
@@ -16,16 +16,16 @@ use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 /// Validator rewards are denominated in USD by protocol policy
 pub const REWARD_GEM_CURRENCY: u16 = 840;
 
-/// Number of inclusion-distance slots, `k ∈ {0..=K}` ⇒ `K + 1` weights.
+/// Number of inclusion-distance slots, `k in {0..=K}` => `K + 1` weights.
 pub const LATE_FINALIZE_SLOTS: usize = LATE_FINALIZE_WINDOW_K as usize + 1;
 
-/// Decay weight `w(k)` by inclusion distance `k = inclusion_block − N`.
+/// Decay weight `w(k)` by inclusion distance `k = inclusion_block - N`.
 ///
 /// Flat full weight through the geo-latency band, hard cliff at `k = K`:
 /// `[100, 100, 100, 0]` for `K = 3`. `w(0) = w_max`. A voter first seen at
 /// `k = K` (the settle slot) earns nothing; a slow-but-honest validator that
-/// lands at `k = 1` earns full weight, so a proposer pushing a victim `k0→k1`
-/// (or `k1→k2`) inflicts ~0 — and under the fixed denominator earns nothing by
+/// lands at `k = 1` earns full weight, so a proposer pushing a victim `k0->k1`
+/// (or `k1->k2`) inflicts ~0 - and under the fixed denominator earns nothing by
 /// excluding it anyway.
 ///
 /// The literal length is checked against `K + 1` at compile time.
@@ -37,7 +37,7 @@ pub const LATE_FINALIZE_DECAY: [U256; LATE_FINALIZE_SLOTS] = [
 ];
 
 /// `w_max = max_k w(k) = w(0)`. The fixed per-block denominator is
-/// `D = committee_size · w_max` — constant per block, independent of who voted,
+/// `D = committee_size * w_max` - constant per block, independent of who voted,
 /// so excluding a peer enriches nobody.
 pub const LATE_FINALIZE_W_MAX: U256 = LATE_FINALIZE_DECAY[0];
 
@@ -53,10 +53,10 @@ pub fn decay_weight(k: u64) -> U256 {
         .unwrap_or(U256::ZERO)
 }
 
-/// Fixed per-block denominator `D = committee_size · w_max`.
+/// Fixed per-block denominator `D = committee_size * w_max`.
 ///
 /// `committee_size` is the epoch `CommitteeSnapshot` participant count for the
-/// settled block — fixed per block, so the divisor never depends on attendance.
+/// settled block - fixed per block, so the divisor never depends on attendance.
 pub fn fixed_denominator(committee_size: u64) -> U256 {
     U256::from(committee_size).saturating_mul(LATE_FINALIZE_W_MAX)
 }
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn decay_curve_values() {
-        assert_eq!(LATE_FINALIZE_SLOTS, 4, "K=3 ⇒ 4 inclusion slots");
+        assert_eq!(LATE_FINALIZE_SLOTS, 4, "K=3 => 4 inclusion slots");
         assert_eq!(
             LATE_FINALIZE_DECAY,
             [
@@ -90,8 +90,8 @@ mod tests {
         assert_eq!(decay_weight(u64::MAX), U256::ZERO);
     }
 
-    /// full attendance at `k ≤ 2` pays exactly the pool and never
-    /// more (`N·w_max / D = 1`); the fixed denominator means an absent voter's
+    /// full attendance at `k <= 2` pays exactly the pool and never
+    /// more (`N*w_max / D = 1`); the fixed denominator means an absent voter's
     /// share burns rather than redistributing.
     #[test]
     fn w_max_solvency_full_attendance() {

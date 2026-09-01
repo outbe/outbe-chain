@@ -479,7 +479,6 @@ fn ensure_ocomp_process_inventory(
     counts: OcompRuntimeCountsV1,
 ) -> Result<()> {
     let mut pids = BTreeSet::new();
-    let mut supervisors = 0usize;
     let mut snapshot_exporters = 0usize;
     let mut workers = 0usize;
     for process in processes {
@@ -489,7 +488,6 @@ fn ensure_ocomp_process_inventory(
             process.pid
         );
         match process.role.as_str() {
-            "supervisor" => supervisors += 1,
             "snapshot_exporter" => snapshot_exporters += 1,
             "worker" => workers += 1,
             role => {
@@ -498,8 +496,7 @@ fn ensure_ocomp_process_inventory(
         }
     }
     ensure!(
-        supervisors == 0
-            && counts.supervisors == counts.snapshot_exporters
+        counts.supervisors == counts.snapshot_exporters
             && snapshot_exporters == counts.snapshot_exporters
             && workers == counts.workers,
         "exact OCOMP process inventory differs from readiness counts"
@@ -744,12 +741,8 @@ fn snapshot_ocomp_processes(
         .filter(|record| record.stopped_at_millis.is_none())
     {
         let role = match record.role {
-            OcompProcessRole::Supervisor => "supervisor",
             OcompProcessRole::SnapshotExporter => "snapshot_exporter",
             OcompProcessRole::Worker => "worker",
-            OcompProcessRole::Follower => {
-                bail!("baseline LocalNet unexpectedly owns an OCOMP follower process");
-            }
         };
         let process_identity = process_identity(record.pid).ok_or_else(|| {
             eyre!(
@@ -1032,7 +1025,7 @@ fn enclave_profile_banner() -> String {
     } else {
         "mock enclave under gramine-direct in the pinned test container"
     };
-    format!("{} — {detail}", mode.evidence_name())
+    format!("{} - {detail}", mode.evidence_name())
 }
 
 /// The enclave execution profile this host can actually run.
@@ -1040,7 +1033,7 @@ fn enclave_profile_banner() -> String {
 /// The Gramine test image is published for `linux/amd64` only and does not
 /// survive emulation, so every non-Linux host runs the mock enclave as a native
 /// host process instead. This is a distinct named profile with its own evidence
-/// label — never a silent fallback to `mock`'s.
+/// label - never a silent fallback to `mock`'s.
 const fn localnet_tee_mode() -> TeeMode {
     if cfg!(target_os = "linux") {
         TeeMode::Mock
@@ -1282,6 +1275,31 @@ mod tests {
             assert_eq!(cli.data_dir, PathBuf::from("/tmp/localnet-a"));
             assert_eq!(cli.validators, 5);
         }
+    }
+
+    #[test]
+    fn persistent_inventory_rejects_an_external_supervisor_process() {
+        let error = ensure_ocomp_process_inventory(
+            &[OwnedOcompProcessV1 {
+                validator_index: Some(0),
+                role: "supervisor".to_owned(),
+                worker_ordinal: None,
+                pid: 1,
+                process_identity: "test".to_owned(),
+            }],
+            OcompRuntimeCountsV1 {
+                supervisors: 1,
+                snapshot_exporters: 0,
+                workers: 0,
+                registered_workers: 0,
+                connected_workers: 0,
+            },
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("unexpected persistent LocalNet OCOMP role supervisor"));
     }
 
     #[tokio::test]

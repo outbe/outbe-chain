@@ -1,6 +1,10 @@
 {
+  "capture": {
+    "completed_at": 1787853506,
+    "started_at": 1787853506
+  },
   "collateral_abi": {
-    "allocation_size": 15301,
+    "allocation_size": 15303,
     "major_version": 3,
     "minor_version": 0,
     "normalized_minor_version": 1,
@@ -16,15 +20,15 @@
       "size": 1908
     },
     "pck.crl.der": {
-      "sha256": "be4a7a21daed46f3fbcadffc5e90c18d64a7a56fc39f784586a33512a74cfb90",
-      "size": 1002
+      "sha256": "f207eebcf9f4701d634bb01f5ef8d5f940d4ba441b2aa23e8fcd5f66101a275d",
+      "size": 1003
     },
     "qe-identity-issuer-chain.pem": {
       "sha256": "c550544e4442d9be583a5eddd48df8ba0149ddeef40efd3737ebe0f885dc3711",
       "size": 1892
     },
     "qe-identity.json": {
-      "sha256": "ca1c8de12b5ad98f7eb30a4cec29debdab1a8fa01daa253da50fb287cdb2b3e0",
+      "sha256": "186c10aaf06eae04cd362afc9761198485d52dd7c76b0b4c9483de2889178b25",
       "size": 1380
     },
     "root-ca.crl.der": {
@@ -36,10 +40,29 @@
       "size": 1892
     },
     "tcb-info.json": {
-      "sha256": "cdc7abf40909ef1dc5507987f34196c99b9a35d928a00e5f07e4a33d1166c2e6",
+      "sha256": "3d0a70af8c671b1f5738ec7ed494562f440e83439cb2d6699509ad4fe7ac2751",
       "size": 5510
     }
   },
+  "crls": {
+    "pck": {
+      "issuer": "CN = Intel SGX PCK Processor CA, O = Intel Corporation, L = Santa Clara, ST = CA, C = US",
+      "next_update": "2026-09-25T23:46:46Z",
+      "sha256": "f207eebcf9f4701d634bb01f5ef8d5f940d4ba441b2aa23e8fcd5f66101a275d",
+      "size": 1003,
+      "this_update": "2026-08-26T23:46:46Z",
+      "type": "processor"
+    },
+    "root": {
+      "issuer": "CN = Intel SGX Root CA, O = Intel Corporation, L = Santa Clara, ST = CA, C = US",
+      "next_update": "2027-02-26T13:04:00Z",
+      "sha256": "c114be5d5ca7aab2d37817eca55aa8a2353853809904ff3695b31c26bcb7465b",
+      "size": 294,
+      "this_update": "2026-02-26T13:04:00Z",
+      "type": "root"
+    }
+  },
+  "openssl_version": "OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)",
   "qcnl": {
     "package": "libsgx-dcap-default-qpl",
     "package_version": "1.26.100.1-noble1",
@@ -56,7 +79,7 @@
   },
   "quote": {
     "path": "quote.bin",
-    "sha256": "f7626ab64e0c2d182984390e9bab26d20f7b96af10dab20b43e6559edc118b1d",
+    "sha256": "2c6114cf7a3da7a915bf5d510f6be59308deee9e916b146b9be4088d2b7b10a2",
     "size": 4600
   },
   "qvl": {

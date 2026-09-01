@@ -2,7 +2,7 @@
 //!
 //! Single source of truth for:
 //! * Hybrid certificate wire codec (`HybridCertificate`, `VrfProof`)
-//! * V2 self-contained verifier (`verify_v2_proof`) — BLS aggregate vote + mandatory
+//! * V2 self-contained verifier (`verify_v2_proof`) - BLS aggregate vote + mandatory
 //!   threshold VRF proof, no validator runtime required
 //! * Canonical fingerprint helpers used by Rewards, the certified-parent proof store,
 //!   and slashing evidence (`committee_set_hash_v2`, `canonical_signer_set_hash`,
@@ -32,7 +32,7 @@ pub use committee::{
 pub use constants::{
     consensus_chain_id, finalize_namespace, hybrid_seed_namespace, init_consensus_chain_id,
     notarize_namespace, nullify_namespace, outbe_app_namespace, participant_set_commitment,
-    seed_attest_namespace, seed_namespace_and_message, simplex_namespace,
+    seed_attest_namespace, seed_namespace_and_message, simplex_namespace, ConsensusChainIdError,
 };
 pub use error::V2VerifyError;
 pub use fingerprint::{

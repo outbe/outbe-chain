@@ -77,7 +77,7 @@ fn committee_set_hash_v2_test_vector_matches_plan_a4() {
         b256!("61e5cd9eb3bd1a53545d83ce8462b9f8476dbf95312152b69468d2d34c0032d7");
     assert_eq!(
         actual, A4_FROZEN,
-        "hash test vector drift — wire-format-breaking change",
+        "hash test vector drift - wire-format-breaking change",
     );
 }
 

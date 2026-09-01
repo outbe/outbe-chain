@@ -92,8 +92,14 @@ fn the_load_steps_down_only_past_the_widened_upper_edge() {
 #[test]
 fn the_load_steps_up_only_below_the_widened_lower_edge() {
     // Coming from the decade above, the same boundary releases at 9_800.
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 10_000), LAUNCH_EXPONENT - 1);
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_800), LAUNCH_EXPONENT - 1);
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT - 1), 10_000),
+        LAUNCH_EXPONENT - 1
+    );
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT - 1), 9_800),
+        LAUNCH_EXPONENT - 1
+    );
     assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_799), LAUNCH_EXPONENT);
 }
 
@@ -110,7 +116,10 @@ fn the_deadband_is_held_from_whichever_side_the_chain_arrived() {
 
 #[test]
 fn a_rate_that_gaps_several_decades_lands_where_the_anchor_says() {
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1_000_000), LAUNCH_EXPONENT - 3);
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT), 1_000_000),
+        LAUNCH_EXPONENT - 3
+    );
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1), LAUNCH_EXPONENT + 3);
 }
 
@@ -226,6 +235,38 @@ fn mark_done(s: &StorageHandle, chain: u32, gen: u32, total_batches: u16, total_
         total_bids,
     )
     .unwrap();
+}
+
+/// Relay `n` bids the way the codec does: batches no wider than one message, then
+/// the done marker. A single oversized batch is refused at the intake.
+fn relay_bids(s: &StorageHandle, chain: u32, gen: u32, n: u8, rate: u32) {
+    let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
+    let total_batches = u16::from(n.div_ceil(cap));
+    for batch_index in 0..total_batches {
+        let start = u8::try_from(batch_index).unwrap() * cap;
+        let end = start.saturating_add(cap).min(n);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            gen,
+            batch_index,
+            total_batches,
+            (start..end)
+                .map(|i| BidData {
+                    bidder_address: bidder(i),
+                    intex_bid_rate: rate,
+                    timestamp: i as u32,
+                    intex_quantity: 1,
+                    issuance_currency: REFERENCE_ISO,
+                    reference_currency: REFERENCE_ISO,
+                })
+                .collect(),
+        )
+        .unwrap();
+    }
+    mark_done(s, chain, gen, total_batches, u32::from(n));
 }
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
@@ -1049,22 +1090,17 @@ fn schedule_retires_an_overdue_day() {
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
         open_clearing(&s, 100);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            bids(100, 200),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        relay_bids(&s, SRC_CHAIN, 1, 100, 200);
         assert_eq!(clear(&s).issued_intex_count, 100);
 
         // Ten times the rate of the fixture, which is past the deadband.
-        brief_at_rate(&s, NEXT_WORLDWIDE_DAY, 100 * LOAD_MINOR, 10 * ENTRY_PRICE, true);
+        brief_at_rate(
+            &s,
+            NEXT_WORLDWIDE_DAY,
+            100 * LOAD_MINOR,
+            10 * ENTRY_PRICE,
+            true,
+        );
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
@@ -1101,27 +1137,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         open_clearing(&s, 100);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            (0..100u8)
-                .map(|i| BidData {
-                    bidder_address: bidder(i),
-                    intex_bid_rate: 200,
-                    timestamp: i as u32,
-                    intex_quantity: 1,
-                    issuance_currency: REFERENCE_ISO,
-                    reference_currency: REFERENCE_ISO,
-                })
-                .collect(),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        relay_bids(&s, SRC_CHAIN, 1, 100, 200);
         clear(&s);
 
         brief_at(&s, NEXT_WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
@@ -1142,7 +1158,7 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        // Stage is Started, not Revealing — must be rejected.
+        // Stage is Started, not Revealing - must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1179,6 +1195,33 @@ fn process_bids_rejects_non_origin_caller() {
     });
 }
 
+#[test]
+fn process_bids_rejects_an_oversized_batch() {
+    use crate::constants::MAX_BIDS_PER_BATCH;
+    with_storage(|s| {
+        open_revealing(&s);
+        let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
+        let error = runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(over, 200),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("over the"),
+            "unexpected error: {error:?}"
+        );
+        // Refused at the intake, so clearing never sees a day it cannot refund.
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+    });
+}
+
 // --- Bid ingestion ---
 
 #[test]
@@ -1187,7 +1230,7 @@ fn process_bids_accumulate_across_batches() {
         open_revealing(&s);
 
         // Two batches of generation 1 (total_batches=2) accumulate for the chain. Intake stays
-        // Revealing — nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
+        // Revealing - nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -1616,7 +1659,7 @@ fn clearing_uniform_price_is_last_allocated_bid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result = clear(&s);
-        // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
+        // Supply 2 -> top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
     });
@@ -1923,7 +1966,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             AuctionStage::Clearing
         );
 
-        // Chain B reports → the gate opens and the tick clears.
+        // Chain B reports -> the gate opens and the tick clears.
         runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
@@ -2050,7 +2093,7 @@ fn test_iface_id_matches_selector_xor() {
     use alloy_sol_types::SolCall;
 
     // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) — the four
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) - the four
     // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
     // isChainDone) are not part of that interface, so they are excluded from the XOR.
     let xor: [u8; 4] = [
@@ -2207,10 +2250,13 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
-    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
-        iso_code: REFERENCE_ISO,
-        entry_price_minor: U256::from(1_000_150u64),
-    }], LOAD_MINOR);
+    let cfg = AuctionConfig::from_reference_prices(
+        vec![crate::schema::ReferenceCurrencyPrice {
+            iso_code: REFERENCE_ISO,
+            entry_price_minor: U256::from(1_000_150u64),
+        }],
+        LOAD_MINOR,
+    );
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
 
@@ -2229,7 +2275,7 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
         2
     );
 
-    // Intake's own ceiling — 64 bids across 256 batches — is exactly what the
+    // Intake's own ceiling - 64 bids across 256 batches - is exactly what the
     // arrival set can carry, and one bidder more is refused rather than truncated.
     let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
@@ -2243,7 +2289,7 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
-    // An oracle gap prices nothing — the same condition that makes a day red.
+    // An oracle gap prices nothing - the same condition that makes a day red.
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
@@ -2275,7 +2321,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
-        // It was briefed green, so it holds the day's PROMIS — unlike a red day, which
+        // It was briefed green, so it holds the day's PROMIS - unlike a red day, which
         // is briefed with none. Cancelling it must give that supply back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())

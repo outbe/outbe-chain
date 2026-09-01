@@ -1,4 +1,4 @@
-//! V2 protocol schedule — the single source of truth for V2 timing, sizing,
+//! V2 protocol schedule - the single source of truth for V2 timing, sizing,
 //! retention, evidence, and performance constants.
 //!
 //! Every field below is part of the V2 on-chain / off-chain operational

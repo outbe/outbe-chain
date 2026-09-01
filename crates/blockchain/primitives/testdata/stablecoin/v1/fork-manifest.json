@@ -7,9 +7,9 @@
     "namespaceReservation": "reserved-in-genesis",
     "supportedNetworks": [
       "outbe-devnet-1-fresh-genesis",
-      "outbe-testnet-1-fresh-genesis"
-    ],
-    "mainnet": "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen"
+      "outbe-testnet-1-fresh-genesis",
+      "outbe-mainnet-1-fresh-genesis"
+    ]
   },
   "proposal": {
     "bondBaseUnits": "1000000000000",

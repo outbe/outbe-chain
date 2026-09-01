@@ -8,7 +8,7 @@ import {WcoenRoute} from "./routes/WcoenRoute.sol";
 /// @dev Assembles the routes defined in `script/routes/` and deploys them on the connected chain. Which side of each
 ///      route is canonical is derived from `OUTBE_CHAIN_ID`, so the same command runs on every chain.
 ///
-///      Adding a token is a new file in `script/routes/` plus two lines here — no shared code changes.
+///      Adding a token is a new file in `script/routes/` plus two lines here - no shared code changes.
 contract DeployRoutes is UsdtRoute, UsdcRoute, WcoenRoute {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");

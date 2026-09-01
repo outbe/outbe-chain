@@ -321,7 +321,7 @@ pub fn set_authorized_settler(
 /// paid once every winning chain has routed its proceeds (or the fan-in deadline
 /// passes); the payout itself runs in the begin-block drain. Because proceeds
 /// arrive once per winning chain (loopback same-block, remote minutes later),
-/// the credit only accumulates — it never reverts on a repeat or ownerless day,
+/// the credit only accumulates - it never reverts on a repeat or ownerless day,
 /// which would strand that chain's delivery.
 pub fn distribute(
     storage: &StorageHandle<'_>,
@@ -342,6 +342,14 @@ pub fn distribute(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
     outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::ProceedsCredited {
+            worldwideDay: worldwide_day.value(),
+            srcChainId: src_chain_id,
+            amount,
+        },
+    )?;
     let now = storage.timestamp()?.to::<u64>();
     try_settle_proceeds(storage, worldwide_day, now)
 }
@@ -360,7 +368,7 @@ pub(crate) fn try_settle_proceeds(
         return Ok(());
     }
     // Batches drain a certified round, not this sweep, and a day gets exactly
-    // one — anything arriving after it opened missed the window.
+    // one - anything arriving after it opened missed the window.
     if outbe_intex::api::certified_payout_round(storage, worldwide_day.value())?.is_some() {
         let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
         if !late.is_zero() {
@@ -370,7 +378,7 @@ pub(crate) fn try_settle_proceeds(
     }
     let deadline = outbe_intex::api::proceeds_deadline(storage, worldwide_day)?;
     if deadline == 0 {
-        // Never armed — or already finalized. A certified day past finalization
+        // Never armed - or already finalized. A certified day past finalization
         // (an ownerless one never opens a round) treats any re-delivery as late.
         if outbe_intex::api::certified_contributor_generation(storage, worldwide_day)?.is_some() {
             let late = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
@@ -395,11 +403,11 @@ pub(crate) fn try_settle_proceeds(
 
     let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
     if pot.is_zero() {
-        // Nothing new to pay. Once every chain is in, finalize (clears the map);
-        // a forced empty round just idles until a late arrival tops the pot up.
-        if complete {
-            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
-        }
+        // Nothing to pay, and nothing left to wait for: an incomplete fan-in only
+        // reaches here past its deadline. Finalize either way, so a day no chain
+        // ever paid into leaves the awaiting set instead of being re-swept forever.
+        // A later arrival is still caught, and burned, by the branches above.
+        outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         return Ok(());
     }
 
@@ -605,10 +613,12 @@ fn decode_contributor_leaf(
 }
 
 /// Begin-block sweep: settle every series whose proceeds fan-in deadline has
-/// passed. Each series runs in its own checkpoint so one failure is retried next
-/// block instead of halting the block.
+/// passed. The set holds one entry per day and releases it once its deadline is
+/// out, so a whole pass is a handful of reads. Each series runs in its own
+/// checkpoint so one failure is retried next block instead of halting the block.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
+    // Read the set before settling: settling swap-removes from it.
     let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
         worldwide_days.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
@@ -694,7 +704,7 @@ pub(crate) fn pay_chunk(
             // A straggler (or a chain sending its proceeds in parts) can top the
             // pot up while this final round drains. finalize clears the map, so
             // pay any such top-up over it first and finalize only once the pot is
-            // empty — otherwise the top-up is later burned as ownerless.
+            // empty - otherwise the top-up is later burned as ownerless.
             let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
             if pot.is_zero() {
                 outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
@@ -717,6 +727,8 @@ pub(crate) fn pay_chunk(
 /// that mutates underneath us.
 pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     let count = outbe_intex::api::active_dist_count(storage)?;
+    // One open round per day, and each pays at most a chunk per block, so the
+    // set is a handful. Read it before paying: finishing a round removes from it.
     let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
         worldwide_days.push(outbe_intex::api::active_dist_at(storage, i)?);
@@ -774,7 +786,7 @@ pub fn settle(
     }
 
     // Dual-wallet authorization: only the holder or its authorized settler.
-    let mut factory = IntexFactoryContract::new(storage.clone());
+    let factory = IntexFactoryContract::new(storage.clone());
     if intex_holder != settler
         && factory.read_authorized_settler(intex_holder, series_id)? != settler
     {
@@ -837,7 +849,9 @@ pub fn settle(
         .into(),
     )?;
 
-    factory.bump_settle_count(series_id)?;
+    let settled_units = u32::try_from(amount)
+        .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+    outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
     emit_event(
         storage,

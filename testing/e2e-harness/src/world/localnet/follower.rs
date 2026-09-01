@@ -1,10 +1,9 @@
 //! Full-execution follower nodes (`--upstream`). Ported `launch_follower`.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::process::Command;
 
-use eyre::{bail, eyre, Result};
+use eyre::{bail, ensure, eyre, Result};
 
 use crate::env::TeeMode;
 use crate::internal::{
@@ -13,12 +12,101 @@ use crate::internal::{
     shell::Sh,
 };
 
-use super::Localnet;
+use super::{committee::validator_protocol_environment, Localnet};
+
+const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
+    "--validator",
+    "--consensus.signing-key",
+    "--validator.evm-key",
+    "--radicle.control-socket",
+    "--radicle.status-address",
+    "--upstream.nocertify",
+];
+
+const VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS: &[(&str, bool)] = &[
+    ("--validator", false),
+    ("--consensus.signing-key", true),
+    ("--validator.evm-key", true),
+    ("--radicle.control-socket", true),
+    ("--radicle.status-address", true),
+];
+
+fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
+    ensure!(
+        args.iter()
+            .any(|arg| arg == "--upstream" || arg.starts_with("--upstream=")),
+        "validator recovery follower requires a certified --upstream"
+    );
+    if let Some(option) = args.iter().find(|arg| {
+        VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS
+            .iter()
+            .any(|forbidden| {
+                arg.as_str() == *forbidden
+                    || arg
+                        .strip_prefix(forbidden)
+                        .is_some_and(|suffix| suffix.starts_with('='))
+            })
+    }) {
+        bail!("validator recovery follower command contains forbidden authority/bypass option {option}");
+    }
+    Ok(())
+}
+
+fn derive_validator_recovery_follower_args(
+    original: &[String],
+    certified_upstream: &str,
+) -> Result<Vec<String>> {
+    let mut follower = Vec::with_capacity(original.len() + 2);
+    let mut index = 0;
+    while index < original.len() {
+        let arg = &original[index];
+        if arg == "--upstream"
+            || arg.starts_with("--upstream=")
+            || arg == "--upstream.nocertify"
+            || arg.starts_with("--upstream.nocertify=")
+        {
+            bail!("validator argv unexpectedly contains follower option {arg}");
+        }
+
+        let mut stripped = false;
+        for (option, takes_value) in VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS {
+            if arg == option {
+                if *takes_value {
+                    ensure!(
+                        index + 1 < original.len(),
+                        "validator option {option} is missing its value"
+                    );
+                    index += 1;
+                }
+                stripped = true;
+                break;
+            }
+            if arg
+                .strip_prefix(option)
+                .is_some_and(|suffix| suffix.starts_with('='))
+            {
+                stripped = true;
+                break;
+            }
+        }
+        if !stripped {
+            follower.push(arg.clone());
+        }
+        index += 1;
+    }
+    follower.extend(args!["--upstream", certified_upstream]);
+    ensure_validator_recovery_follower_args(&follower)?;
+    Ok(follower)
+}
+
+fn validator_projection_identity(index: usize) -> String {
+    format!("validator-{index}")
+}
 
 impl Localnet {
-    /// Provision a production full-node enclave with its own persistent Reth
-    /// identity and a distinct funded relay signer. The relay submits the
-    /// Registry transaction but never authorizes the NodeHost manifest.
+    /// Provision a production full-node enclave with its persistent Reth and
+    /// EVM identities. The global EVM key owns both the Registry association
+    /// and the transaction envelope.
     pub fn provision_dcap_full_node(&mut self, index: usize) -> Result<()> {
         if !matches!(self.cfg.tee_mode, TeeMode::Real) {
             bail!("DcapRequired full-node provisioning requires --tee real");
@@ -30,6 +118,21 @@ impl Localnet {
     /// policy. DCAP and GramineDirectDev differ only in attestation authority;
     /// both require the same resident offer-key delivery before node startup.
     pub fn provision_full_node_node_host(&mut self, index: usize) -> Result<()> {
+        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
+            .checked_add(outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1)
+            .ok_or_else(|| eyre!("full-node tee join lease deadline overflow"))?;
+        self.provision_full_node_node_host_until(index, valid_until)
+    }
+
+    /// Provision a FullNode with an exact lease deadline. The lease E2E aligns
+    /// it with the founding committee so one canonical timestamp exercises
+    /// validator and FullNode expiry together.
+    pub(crate) fn provision_full_node_node_host_until(
+        &mut self,
+        index: usize,
+        valid_until: u64,
+    ) -> Result<()> {
         let node_dir = self.cfg.validator_dir(index);
         let data_dir = node_dir.join("data");
         fs::create_dir_all(&data_dir)?;
@@ -39,21 +142,14 @@ impl Localnet {
         if !reth_secret_path.is_file() {
             fs::write(&reth_secret_path, random_hex_32()?)?;
         }
-        let relay_key = random_hex_32()?;
-        let relay_address = eth::address_of(&relay_key)
-            .ok_or_else(|| eyre!("generated full-node relay key is invalid"))?;
-        let relay_key_path = node_dir.join("relay-evm-key.hex");
-        fs::write(&relay_key_path, &relay_key)?;
-        fs::set_permissions(&relay_key_path, fs::Permissions::from_mode(0o600))?;
+        let evm_key = read_evm_key(&node_dir)?;
+        let evm_address = eth::address_of(&evm_key)
+            .ok_or_else(|| eyre!("provisioned full-node EVM key is invalid"))?;
 
         let funder = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, relay_address, &funder, eth::coen(100))?;
+        eth::send_value(&self.cfg.rpc0, evm_address, &funder, eth::coen(100))?;
 
         self.start_node_enclave(index)?;
-        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
-            .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
-            .checked_add(7_200)
-            .ok_or_else(|| eyre!("full-node tee join lease deadline overflow"))?;
         let mut join = args![
             "tee",
             "join",
@@ -61,8 +157,6 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--reth-p2p-secret-key",
             reth_secret_path.display(),
-            "--node-evm-key",
-            node_dir.join("evm-key.hex").display(),
             "--binding-id",
             random_hex_32()?,
             "--valid-until",
@@ -70,7 +164,7 @@ impl Localnet {
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
-            relay_key,
+            evm_key,
             "--timeout-secs",
             "180",
         ];
@@ -83,9 +177,7 @@ impl Localnet {
 
     /// Launch a DcapRequired full node against its own initialized enclave.
     /// Startup itself verifies the resident offer key against the selected
-    /// upstream before opening networking or execution. Renewal uses that same
-    /// reachable upstream as its transaction relay; the harness follower has no
-    /// independent P2P route into the committee mempool.
+    /// upstream before opening networking or execution.
     pub fn launch_dcap_full_node(
         &mut self,
         name: &str,
@@ -102,12 +194,6 @@ impl Localnet {
             p2p_secret_file.display(),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--tee-renewal.relay-key",
-            node_dir.join("relay-evm-key.hex").display(),
-            "--tee-renewal.rpc-url",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
-            "--tee-renewal.poll-secs",
-            "2",
             "--upstream",
             format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             "--consensus.listen-addr",
@@ -115,18 +201,107 @@ impl Localnet {
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
+        self.launch_certified_follower_with_args(name, name, index, args, Vec::new())
+    }
+
+    fn launch_certified_follower_with_args(
+        &mut self,
+        name: &str,
+        projection_identity: &str,
+        index: usize,
+        args: Vec<String>,
+        protocol_environment: Vec<(&'static str, String)>,
+    ) -> Result<()> {
+        let node_dir = self.cfg.validator_dir(index);
+        ensure_validator_recovery_follower_args(&args)?;
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .env("RUST_MIN_STACK", "16777216")
-            .env("RUST_LOG", "info,outbe_consensus::follow=debug")
-            .args(&args);
+            .env("RUST_LOG", "info,outbe_consensus=debug");
+        for (name, value) in protocol_environment {
+            command.env(name, value);
+        }
+        command.args(&args);
         attach_log(&mut command, &node_dir)?;
-        let guard = self.spawn_node(name, &node_dir, command)?;
+        let guard = self.spawn_node_with_projection_identity(
+            name,
+            projection_identity,
+            &node_dir,
+            command,
+        )?;
         self.followers.insert(name.to_owned(), guard);
         Ok(())
     }
 
-    /// Stop all follower nodes (drop owned handles → kill + reap).
+    /// Start an excluded validator's existing datadir as the ordinary certified
+    /// follower. The validator node and its Radicle signer are removed first so
+    /// this phase has one database writer and no validator authority process.
+    pub fn launch_validator_recovery_follower(
+        &mut self,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<String> {
+        if index >= self.committee_size() {
+            bail!("validator index {index} is outside the committee");
+        }
+        if self
+            .validators
+            .get_mut(&index)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("validator-{index} is still running; refusing a second datadir writer");
+        }
+        self.validators.remove(&index);
+        self.radicle_sidecars.remove(&index);
+
+        let name = Self::validator_recovery_follower_name(index);
+        if self
+            .followers
+            .get_mut(&name)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("{name} is already running");
+        }
+        self.followers.remove(&name);
+        let original = self
+            .validator_argv
+            .get(&index)
+            .cloned()
+            .ok_or_else(|| eyre!("validator-{index} has no captured original argv"))?;
+        let upstream = format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot));
+        let follower_args = derive_validator_recovery_follower_args(&original, &upstream)?;
+        self.validator_recovery_original_argv
+            .entry(index)
+            .or_insert(original);
+        let protocol_environment = validator_protocol_environment(&self.start_opts);
+        let projection_identity = validator_projection_identity(index);
+        self.launch_certified_follower_with_args(
+            &name,
+            &projection_identity,
+            index,
+            follower_args,
+            protocol_environment,
+        )?;
+        Ok(name)
+    }
+
+    pub fn validator_recovery_follower_name(index: usize) -> String {
+        format!("validator-{index}-recovery-follower")
+    }
+
+    pub fn follower_running(&mut self, name: &str) -> bool {
+        self.followers
+            .get_mut(name)
+            .is_some_and(|guard| !guard.exited())
+    }
+
+    pub fn validator_radicle_sidecar_running(&mut self, index: usize) -> bool {
+        self.radicle_sidecars
+            .get_mut(&index)
+            .is_some_and(|guard| !guard.exited())
+    }
+
+    /// Stop all follower nodes (drop owned handles -> kill + reap).
     pub fn stop_followers(&mut self) -> Result<()> {
         self.followers.clear();
         Ok(())
@@ -134,7 +309,104 @@ impl Localnet {
 
     /// Stop one follower while preserving its durable datadir for restart/catch-up tests.
     pub fn stop_follower(&mut self, name: &str) -> Result<()> {
-        self.followers.remove(name);
+        if let Some(mut follower) = self.followers.remove(name) {
+            follower.interrupt();
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validator_recovery_follower_requires_certified_non_authority_arguments() {
+        let safe = vec![
+            "node".to_owned(),
+            "--datadir".to_owned(),
+            "/srv/outbe/validator-3/data".to_owned(),
+            "--upstream".to_owned(),
+            "http://validator-0:8545".to_owned(),
+            "--tee-enclave-socket".to_owned(),
+            "127.0.0.1:7003".to_owned(),
+        ];
+        super::ensure_validator_recovery_follower_args(&safe)
+            .expect("a certified authority-free follower command is valid");
+
+        for forbidden in [
+            "--validator",
+            "--consensus.signing-key",
+            "--validator.evm-key",
+            "--radicle.control-socket",
+            "--radicle.status-address",
+            "--upstream.nocertify",
+        ] {
+            let mut unsafe_args = safe.clone();
+            unsafe_args.push(forbidden.to_owned());
+            assert!(
+                super::ensure_validator_recovery_follower_args(&unsafe_args).is_err(),
+                "recovery follower accepted authority/bypass option {forbidden}"
+            );
+
+            let mut inline_unsafe_args = safe.clone();
+            inline_unsafe_args.push(format!("{forbidden}=value"));
+            assert!(
+                super::ensure_validator_recovery_follower_args(&inline_unsafe_args).is_err(),
+                "recovery follower accepted inline authority/bypass option {forbidden}"
+            );
+        }
+
+        let no_upstream = vec!["node".to_owned(), "--datadir".to_owned(), "data".to_owned()];
+        assert!(super::ensure_validator_recovery_follower_args(&no_upstream).is_err());
+    }
+
+    #[test]
+    fn validator_recovery_follower_is_derived_from_and_preserves_exact_validator_argv() {
+        let original = vec![
+            "node".to_owned(),
+            "--chain".to_owned(),
+            "/srv/outbe/genesis.json".to_owned(),
+            "--datadir".to_owned(),
+            "/srv/outbe/validator-3/data".to_owned(),
+            "--bootnodes=enode://canonical".to_owned(),
+            "--validator".to_owned(),
+            "--consensus.signing-key".to_owned(),
+            "/srv/outbe/validator-3/signing-key.hex".to_owned(),
+            "--validator.evm-key=/srv/outbe/validator-3/evm-key.hex".to_owned(),
+            "--consensus.listen-addr".to_owned(),
+            "127.0.0.1:6103".to_owned(),
+            "--consensus.use-local-defaults".to_owned(),
+            "--radicle.control-socket".to_owned(),
+            "/srv/outbe/validator-3/radicle.sock".to_owned(),
+            "--radicle.status-address=127.0.0.1:6203".to_owned(),
+            "--tee-canary.interval-secs".to_owned(),
+            "5".to_owned(),
+        ];
+        let exact_restore = original.clone();
+
+        let follower =
+            super::derive_validator_recovery_follower_args(&original, "http://validator-0:8545")
+                .expect("derive authority-free certified follower argv");
+
+        assert_eq!(original, exact_restore, "derivation mutated original argv");
+        assert!(follower.contains(&"--bootnodes=enode://canonical".to_owned()));
+        assert!(follower.contains(&"--tee-canary.interval-secs".to_owned()));
+        assert!(follower.contains(&"--consensus.use-local-defaults".to_owned()));
+        assert!(follower.windows(2).any(|pair| {
+            pair == [
+                "--upstream".to_owned(),
+                "http://validator-0:8545".to_owned(),
+            ]
+        }));
+        super::ensure_validator_recovery_follower_args(&follower)
+            .expect("derived follower argv must stay certified and authority-free");
+        assert_eq!(
+            exact_restore, original,
+            "validator restart must retain byte-for-byte original argv"
+        );
+        assert_eq!(
+            super::validator_projection_identity(3),
+            "validator-3",
+            "recovery follower must reuse the validator's durable projection identity"
+        );
     }
 }

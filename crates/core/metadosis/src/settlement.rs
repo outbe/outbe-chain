@@ -13,7 +13,7 @@ use crate::{
     commit::commit_outer_transition,
     constants::{RED_DAY_REDUCTION_COEF, SYMBOLIC_RATE},
     errors::MetadosisError,
-    ocomp::schema::OcompRequestProfile,
+    ocomp::{schema::OcompRequestProfile, OcompRequestProfileExt},
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
     schema::MetadosisContract,
@@ -321,7 +321,7 @@ pub(crate) fn day_entry_prices(
     )?;
     // A zero price is not a price. The projection carries the day-type row even
     // when the oracle has nothing for it, so that the OCOMP envelope always has
-    // one currency; here an empty table is load-bearing in the other direction —
+    // one currency; here an empty table is load-bearing in the other direction -
     // it is how Desis is told the day is unpriced, and it cancels and refunds on
     // it rather than opening an auction nobody can bid in.
     let priced: Vec<_> = projection

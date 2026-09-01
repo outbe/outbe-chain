@@ -57,7 +57,7 @@ fn accounting_progress_address_is_ee04_and_user_calls_do_not_dispatch() {
         !outbe_evm::precompiles::outbe_precompile_addresses()
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "ACCOUNTING_PROGRESS_ADDRESS must NOT be a registered dispatching precompile \
-         (outbe_precompile_addresses) — it is a system-only marker; user CALLs must not dispatch",
+         (outbe_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
     );
 }
 

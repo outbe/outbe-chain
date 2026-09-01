@@ -7,7 +7,7 @@
 //! transport and is not accepted by the production enclave.
 //!
 //! The client is fully synchronous: it is meant to be driven straight from the
-//! `offerTributeBatch` precompile path with a blocking UDS round-trip — no
+//! `offerTributeBatch` precompile path with a blocking UDS round-trip - no
 //! async, no `spawn`, nothing that would capture a `StorageHandle`.
 
 use std::fs::{File, OpenOptions};
@@ -77,7 +77,7 @@ struct QuoteIdentity {
     mrsigner: B256,
     isv_svn: u16,
     attestation_pub: [u8; 32],
-    /// The enclave's Noise static key as pinned by [`verify_quote`] — the key
+    /// The enclave's Noise static key as pinned by [`verify_quote`] - the key
     /// the Noise-IK handshake actually authenticated. Retained so a session
     /// reconnect can require the byte-identical peer.
     noise_static_pub: [u8; 32],
@@ -261,7 +261,7 @@ pub struct RemoteEnclavePublicKeysV1 {
 
 /// Bound on a single blocking enclave read/write: a wedged enclave that accepts
 /// the connection but never responds surfaces as a timeout error instead of hanging
-/// the caller (e.g. node startup) forever. Generous — every real enclave op (quote,
+/// the caller (e.g. node startup) forever. Generous - every real enclave op (quote,
 /// Noise handshake, seal, offer-batch decrypt) completes well within this.
 const DEFAULT_ENCLAVE_IO_TIMEOUT_SECS: u64 = 30;
 
@@ -315,7 +315,7 @@ impl EnclaveClient {
         Self::from_transport(Transport::Unix(stream))
     }
 
-    /// Connect to the enclave over TCP (`host:port`) — used when the enclave runs
+    /// Connect to the enclave over TCP (`host:port`) - used when the enclave runs
     /// under Gramine, whose pathname UDS cannot be reached from a host process.
     pub fn connect_tcp(addr: &str) -> Result<Self, TransportError> {
         let stream = TcpStream::connect(addr)?;
@@ -354,7 +354,7 @@ impl EnclaveClient {
 
     /// The enclave's Ed25519 attestation public key, pinned from this session's
     /// structurally validated quote response. Used to verify
-    /// per-offer attestation tags (`verify_tribute_offer_attestation`) — a local
+    /// per-offer attestation tags (`verify_tribute_offer_attestation`) - a local
     /// verify-then-discard check that binds a batch's results to the peer holding
     /// this session key. Production enclave identity is established separately.
     pub fn attestation_pub(&self) -> [u8; 32] {
@@ -367,7 +367,7 @@ impl EnclaveClient {
         self.identity.noise_static_pub
     }
 
-    /// Connect using an endpoint string: `host:port` → TCP, otherwise a UDS path.
+    /// Connect using an endpoint string: `host:port` -> TCP, otherwise a UDS path.
     pub fn connect_endpoint(endpoint: &str) -> Result<Self, TransportError> {
         if endpoint.contains(':') {
             Self::connect_tcp(endpoint)
@@ -1352,8 +1352,8 @@ fn verify_quote(quote: &EnclaveResponse) -> Result<[u8; 32], TransportError> {
     Ok(verify_peer_quote(quote)?.noise_static_pub)
 }
 
-/// Verify a per-offer attestation tag — an Ed25519 signature over
-/// [`crate::protocol::tribute_offer_attestation_preimage`] — against the peer's
+/// Verify a per-offer attestation tag - an Ed25519 signature over
+/// [`crate::protocol::tribute_offer_attestation_preimage`] - against the peer's
 /// session attestation public key, which [`verify_peer_quote`] binds to the quote
 /// report data. This proves that the session-key holder signed the results; it is
 /// not an independent enclave-attestation verdict. The tag is never persisted.
@@ -1379,8 +1379,8 @@ pub fn verify_tribute_offer_attestation(
         .map_err(|e| TransportError::TributeOfferAttestation(format!("signature invalid: {e}")))
 }
 
-/// Verify a Gratis-op attestation tag — an Ed25519 signature over
-/// [`crate::protocol::gratis_op_attestation_preimage`] — against the peer's
+/// Verify a Gratis-op attestation tag - an Ed25519 signature over
+/// [`crate::protocol::gratis_op_attestation_preimage`] - against the peer's
 /// session attestation key. Same session-key-holder and verify-then-discard
 /// semantics as [`verify_tribute_offer_attestation`]; the tag is never persisted.
 pub fn verify_gratis_op_attestation(
@@ -1402,7 +1402,7 @@ pub fn verify_gratis_op_attestation(
         .map_err(|e| TransportError::GratisOpAttestation(format!("signature invalid: {e}")))
 }
 
-/// Verify a Promis-op attestation tag — the [`verify_gratis_op_attestation`]
+/// Verify a Promis-op attestation tag - the [`verify_gratis_op_attestation`]
 /// analogue over [`crate::protocol::promis_op_attestation_preimage`]. Same
 /// session-key-holder and verify-then-discard semantics; the tag is never
 /// persisted.
@@ -1870,34 +1870,34 @@ mod tests {
         // Happy path.
         verify_tribute_offer_attestation(&pk, hash, &results, &tag).expect("valid tag verifies");
 
-        // Tampered result → reject.
+        // Tampered result -> reject.
         let mut tampered = results.clone();
         tampered[0].effective_reference_price_minor += U256::ONE;
         assert!(verify_tribute_offer_attestation(&pk, hash, &tampered, &tag).is_err());
 
-        // Tampered inputs hash → reject.
+        // Tampered inputs hash -> reject.
         assert!(
             verify_tribute_offer_attestation(&pk, B256::repeat_byte(0xCD), &results, &tag).is_err()
         );
 
-        // Wrong key → reject.
+        // Wrong key -> reject.
         let other = SigningKey::from_bytes(&[8u8; 32])
             .verifying_key()
             .to_bytes();
         assert!(verify_tribute_offer_attestation(&other, hash, &results, &tag).is_err());
 
-        // Bad tag length → reject.
+        // Bad tag length -> reject.
         assert!(verify_tribute_offer_attestation(&pk, hash, &results, &[0u8; 10]).is_err());
     }
 
     /// Pin the REPORT_DATA preimage byte order on the host side. The host
-    /// binds `keccak256(noise ‖ recipient ‖ attestation)`; a quote whose
+    /// binds `keccak256(noise || recipient || attestation)`; a quote whose
     /// report_data uses any other field order must fail the binding. Mirrors the
     /// enclave's `report_data_preimage_order_is_pinned`.
     #[test]
     fn report_data_preimage_order_is_pinned_host() {
         let (noise, offer, attest) = ([1u8; 32], [2u8; 32], [3u8; 32]);
-        // Wrong order (noise ‖ attest ‖ offer) must NOT satisfy the binding.
+        // Wrong order (noise || attest || offer) must NOT satisfy the binding.
         let mut wrong = Vec::new();
         wrong.extend_from_slice(&noise);
         wrong.extend_from_slice(&attest);

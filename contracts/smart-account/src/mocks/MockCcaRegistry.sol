@@ -8,8 +8,8 @@ import {ICca} from "@precompiles/ICca.sol";
 /// @dev Written to be usable through `vm.etch`, which copies runtime code but **not** storage.
 ///      An etched copy therefore starts with every slot zero, so the mapping stores
 ///      `uint8(state) + 1` and reads zero as "unset". That makes an untouched, freshly etched
-///      registry answer `Active` for every address — matching the `outbe_cca` precompile stub it
-///      replaces — while `setState` can still pin any individual agent to another state.
+///      registry answer `Active` for every address - matching the `outbe_cca` precompile stub it
+///      replaces - while `setState` can still pin any individual agent to another state.
 contract MockCcaRegistry is ICca {
     /// @dev 0 = unset (answer `Active`); otherwise `uint8(state) + 1`.
     mapping(address => uint8) private _states;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{WwdDayType, WwdStatus};
+use crate::{ocomp::OcompRequestProfileExt, WwdDayType, WwdStatus};
 use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
 use outbe_oracle::schema::OracleContract;
@@ -2319,8 +2319,8 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
 
 /// `advance_active_worldwide_days` (the 12:00 UTC `wwd_advance_noon` Cycle
 /// trigger handler) must walk the status machine forward exactly like the
-/// midnight path — including the FORMING→OFFERING side effects (tribute day
-/// unseal) — but must NOT create a new worldwide day and must NOT settle a
+/// midnight path - including the FORMING->OFFERING side effects (tribute day
+/// unseal) - but must NOT create a new worldwide day and must NOT settle a
 /// READY one; day creation and settlement stay midnight-owned in
 /// `start_metadosis`.
 #[test]
@@ -2360,7 +2360,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
         };
 
         // At the offering-entry edge the day opens and the tribute day
-        // unseals — offers stop reverting `not in OFFERING status`.
+        // unseals - offers stop reverting `not in OFFERING status`.
         advance(2, offering_entry);
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
@@ -3380,8 +3380,8 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
         );
 
         // The COEN/USD pair is not registered here, so the rule the settlement
-        // path used to carry of its own — which resolved every row through
-        // `require_coen_pair` — could never price this day at all.
+        // path used to carry of its own - which resolved every row through
+        // `require_coen_pair` - could never price this day at all.
         assert!(outbe_oracle::api::require_coen_pair(storage.clone(), 840).is_err());
 
         let current_vwap = U256::from(110_u64);

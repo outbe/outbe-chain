@@ -1,4 +1,4 @@
-//! Localnet: the whole network in one handle — bootstrap plus every owned node
+//! Localnet: the whole network in one handle - bootstrap plus every owned node
 //! (committee validators, joiner, followers) and their enclaves.
 //!
 //! A localnet *is* its set of nodes, so adding/removing a validator, attaching a
@@ -9,12 +9,12 @@
 //! stateless datadir/run-tag sweep as the SIGINT backstop. The distinct
 //! lifecycles live in submodules over this one struct:
 //!
-//! - [`bootstrap`] — genesis/key generation glue (`dkg bootstrap` + `seed_genesis.py`).
-//! - [`committee`] — the bootstrapped validator set (start/stop/restart/kill).
-//! - [`joiner`] — a validator that joins a running localnet (index = committee size).
-//! - [`follower`] — full-execution follower nodes (`--upstream`).
-//! - [`log_audit`] — runtime-log normalization, policy, and evidence.
-//! - [`probes`] — datadir, compressed-entity, and timing observations.
+//! - [`bootstrap`] - genesis/key generation glue (`dkg bootstrap` + `seed_genesis.py`).
+//! - [`committee`] - the bootstrapped validator set (start/stop/restart/kill).
+//! - [`joiner`] - a validator that joins a running localnet (index = committee size).
+//! - [`follower`] - full-execution follower nodes (`--upstream`).
+//! - [`log_audit`] - runtime-log normalization, policy, and evidence.
+//! - [`probes`] - datadir, compressed-entity, and timing observations.
 
 mod bootstrap;
 mod committee;
@@ -49,7 +49,7 @@ use crate::internal::shell::Sh;
 /// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
-/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
+/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here -
 /// it's an environment decision read from [`Config::tee_mode`]. Only per-scenario
 /// parameters live on this struct.
 #[derive(Debug, Clone, Default)]
@@ -63,6 +63,8 @@ pub struct StartOpts {
     /// immutable manifest binding from it. Nodes still receive the clock
     /// offset, but the common start path must not shift genesis a second time.
     pub genesis_timestamp_pre_shifted: bool,
+    /// Short-lived pool policy used only by the dedicated eviction scenario.
+    pub is_txpool_eviction_profile: bool,
 }
 
 impl StartOpts {
@@ -72,6 +74,15 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
+            is_txpool_eviction_profile: false,
+        }
+    }
+
+    pub fn with_txpool_eviction_profile(window: u64) -> Self {
+        Self {
+            voting_window: Some(window),
+            is_txpool_eviction_profile: true,
+            ..Self::default()
         }
     }
 
@@ -96,6 +107,7 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
+            is_txpool_eviction_profile: false,
         }
     }
 }
@@ -103,7 +115,7 @@ impl StartOpts {
 #[derive(Debug)]
 pub struct Localnet {
     cfg: Config,
-    /// Owned validator-indexed nodes — the committee (`0..n`) and, when attached,
+    /// Owned validator-indexed nodes - the committee (`0..n`) and, when attached,
     /// the joiner (index = committee size).
     validators: HashMap<usize, ChildGuard>,
     /// Operator-owned validator-indexed Radicle sidecars.
@@ -120,6 +132,12 @@ pub struct Localnet {
     /// with a different immutable fork install cannot join the canonical
     /// consensus namespace. All ordinary validators use `genesis.json`.
     validator_chain_manifests: HashMap<usize, PathBuf>,
+    /// Exact last-launched argv for each validator. Recovery derives its
+    /// authority-free follower argv from this snapshot and later restores it.
+    validator_argv: HashMap<usize, Vec<String>>,
+    /// Validator argv retained across one or more interrupted recovery-follower
+    /// runs until the original validator role is relaunched.
+    validator_recovery_original_argv: HashMap<usize, Vec<String>>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
 }
@@ -135,6 +153,8 @@ impl Localnet {
             enclaves: HashMap::new(),
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
+            validator_argv: HashMap::new(),
+            validator_recovery_original_argv: HashMap::new(),
             start_opts: StartOpts::default(),
         }
     }
@@ -228,11 +248,13 @@ impl Localnet {
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
-    /// per-request deadlines; keep the harness outside its ten-minute
-    /// co-located-EPC allowance so it observes the node's verdict.
+    /// per-request deadlines. A host with 187.5 MiB EPC needed more than ten
+    /// minutes while all enclave calls still made progress, so keep the harness
+    /// outside its thirty-minute co-located-EPC allowance and let it observe the
+    /// node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            132
+            372
         } else {
             18
         }
@@ -252,13 +274,13 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "600"]);
+            args.extend(args!["--tee-bootstrap-timeout-secs", "1800"]);
         }
     }
 
     /// The flags common to every node process (committee, joiner, follower):
     /// reth http/p2p/discovery/authrpc/ipc/log for port index `i`, rooted at
-    /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
+    /// `node_dir`. Callers `.extend(args![...])` with their role-specific tail.
     fn reth_base_args(&self, node_dir: &Path, i: usize) -> Vec<String> {
         let data = node_dir.join("data");
         let chain_manifest = self
@@ -324,9 +346,9 @@ impl Localnet {
     }
 
     /// Run a one-shot setup subprocess (`dkg bootstrap`, `seed_genesis.py`).
-    /// Quiet by default — stdout/stderr are captured and only surfaced when the
+    /// Quiet by default - stdout/stderr are captured and only surfaced when the
     /// command fails; under `--debug` it streams live so the full DKG/seed
-    /// progress (`balance: … entries`, `Total storage entries: …`, …) is shown.
+    /// progress (`balance: ... entries`, `Total storage entries: ...`, ...) is shown.
     fn run_setup(&self, cmd: &mut Command, label: &str) -> Result<()> {
         if self.cfg.debug {
             let status = cmd.status().wrap_err_with(|| format!("run {label}"))?;
@@ -345,9 +367,24 @@ impl Localnet {
     /// Spawn an owned node process, logging its launch **metadata** (command,
     /// PID, log path) under `--debug`. The node's own runtime stdout/stderr are
     /// already attached to `<node_dir>/node.log` by the caller (via
-    /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
+    /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
+        self.spawn_node_with_projection_identity(label, label, node_dir, cmd)
+    }
+
+    fn spawn_node_with_projection_identity(
+        &self,
+        label: &str,
+        projection_identity: &str,
+        node_dir: &Path,
+        mut cmd: Command,
+    ) -> Result<ChildGuard> {
+        let node_args = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
         cmd.env(
             "OUTBE_PROJECTION_MONGODB_URI",
@@ -355,10 +392,7 @@ impl Localnet {
         )
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
-            format!(
-                "{}_scenario_{}_{}",
-                self.cfg.projection_database_prefix, self.cfg.scenario, label
-            ),
+            self.projection_database_name(projection_identity),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -377,6 +411,13 @@ impl Localnet {
         Ok(guard)
     }
 
+    fn projection_database_name(&self, identity: &str) -> String {
+        format!(
+            "{}_scenario_{}_{}",
+            self.cfg.projection_database_prefix, self.cfg.scenario, identity
+        )
+    }
+
     // ---- teardown ------------------------------------------------------------
 
     /// Drop the owned node handles (killing nodes + `docker rm -f`ing enclaves),
@@ -390,7 +431,7 @@ impl Localnet {
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
-        // Nodes first (release MDBX locks), then their enclaves — matching the
+        // Nodes first (release MDBX locks), then their enclaves - matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
         self.validators.clear();
         self.followers.clear();
@@ -426,7 +467,7 @@ impl Localnet {
     ///
     /// `validator-<i>/tee` is the enclave container's only writable mount
     /// (`proc::spawn_enclave`), so under `--sudo` it is the only thing this user
-    /// can't unlink — drop those with `sudo rm` first. Everything else the
+    /// can't unlink - drop those with `sudo rm` first. Everything else the
     /// harness created itself, and a failure to remove it is a real error.
     pub fn wipe(&self) -> Result<()> {
         if !self.cfg.dir.exists() {
@@ -456,6 +497,17 @@ impl Localnet {
     }
 }
 
+fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
+    if let Some(option) = args.iter().find(|arg| {
+        arg.as_str() == "--node-evm-key"
+            || arg.starts_with("--node-evm-key=")
+            || arg.starts_with("--tee-renewal.")
+    }) {
+        bail!("generated node command contains removed TEE renewal option {option}");
+    }
+    Ok(())
+}
+
 /// Co-located real enclaves share one physical EPC. A request can therefore
 /// complete in the enclave after the production-oriented 30-second host timeout:
 /// the enclave then observes a broken pipe even though it produced and sealed the
@@ -467,7 +519,7 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
     }
 }
 
-/// The sealed-state dirs under `root` — the only paths the (root) enclave
+/// The sealed-state dirs under `root` - the only paths the (root) enclave
 /// container writes. `root` is either a scenario dir (`validator-<i>/tee`) or a
 /// run dir (`scenario-<n>/validator-<i>/tee`); both shapes are checked.
 ///
@@ -583,12 +635,12 @@ mod tests {
             .expect("allocate deterministic scenario ports");
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
 
-        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 132);
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 372);
         let mut args = Vec::new();
         localnet.extend_real_sgx_startup_timeout(&mut args);
         assert_eq!(
             args,
-            ["--tee-bootstrap-timeout-secs", "600"],
+            ["--tee-bootstrap-timeout-secs", "1800"],
             "the node deadline must stay inside the harness observation envelope"
         );
     }
@@ -639,7 +691,28 @@ mod tests {
             .any(|pair| pair[0] == "--color" && pair[1] == "never"));
     }
 
-    /// Both layouts, and nothing else — in particular not `validator-*/data`.
+    #[test]
+    fn generated_node_commands_reject_removed_tee_renewal_key_options() {
+        let ordinary = vec!["node".to_owned(), "--validator".to_owned()];
+        assert!(ensure_manual_tee_lease_node_args(&ordinary).is_ok());
+
+        for removed in [
+            "--node-evm-key",
+            "--node-evm-key=/tmp/evm-key.hex",
+            "--tee-renewal.relay-key",
+            "--tee-renewal.rpc-url=http://127.0.0.1:8545",
+            "--tee-renewal.poll-secs",
+            "--tee-renewal.warning-blocks",
+            "--tee-renewal.critical-blocks",
+        ] {
+            assert!(
+                ensure_manual_tee_lease_node_args(&[removed.to_owned()]).is_err(),
+                "removed option still accepted: {removed}"
+            );
+        }
+    }
+
+    /// Both layouts, and nothing else - in particular not `validator-*/data`.
     #[test]
     fn sealed_dirs_finds_only_enclave_mounts() {
         let root = std::env::temp_dir().join(format!("outbe-sealed-{}", std::process::id()));
@@ -686,5 +759,17 @@ mod tests {
             Some((next_day - LEAD) as i64 - NOW as i64)
         );
         assert!(!opts.genesis_timestamp_pre_shifted);
+        assert!(!opts.is_txpool_eviction_profile);
+    }
+
+    #[test]
+    fn shortened_txpool_policy_is_an_explicit_scenario_profile() {
+        let ordinary = StartOpts::with_voting_window(6);
+        let eviction = StartOpts::with_txpool_eviction_profile(6);
+
+        assert!(!ordinary.is_txpool_eviction_profile);
+        assert!(eviction.is_txpool_eviction_profile);
+        assert_eq!(eviction.voting_window, Some(6));
+        assert_eq!(eviction.unix_time_offset_secs, None);
     }
 }

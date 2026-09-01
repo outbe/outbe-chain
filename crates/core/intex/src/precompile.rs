@@ -35,8 +35,11 @@ pub fn dispatch(
         use IIntex::IIntexCalls::*;
         match call {
             seriesData(c) => view(c, |c| {
-                let record = registry.load_series(SeriesId::from(c.seriesId))?;
-                to_abi_data(&record)
+                let series_id = SeriesId::from(c.seriesId);
+                let record = registry.load_series(series_id)?;
+                let settled = registry.settled_units.read(&series_id)?;
+                let parked = registry.parked_units.read(&series_id)?;
+                to_abi_data(&record, settled, parked)
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
@@ -71,7 +74,7 @@ fn to_abi_generation(
     )
 }
 
-fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
+fn to_abi_data(r: &SeriesRecord, settled: u32, parked: u32) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
         seriesId: r.series_id.into(),
         promisLoadMinor: r.promis_load_minor,
@@ -89,5 +92,7 @@ fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
         referenceCurrency: r.reference_currency,
         worldwideDay: r.worldwide_day.into(),
         costAmountMinor: r.cost_amount_minor()?,
+        settledUnits: settled,
+        parkedUnits: parked,
     })
 }

@@ -36,7 +36,7 @@ pub const GEM_ADDRESS: Address = address!("0x00000000000000000000000000000000000
 pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
-/// Issued→Qualified→Called lifecycle, and two-step settlement; series state is
+/// Issued->Qualified->Called lifecycle, and two-step settlement; series state is
 /// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
@@ -120,16 +120,16 @@ pub const ORACLE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// authorization time, it includes the transaction in the block with a
 /// `status=0` receipt carrying one `OutbeFailure(code, reason)` log
 /// emitted from this address. No EVM execution and no state mutation
-/// happen at this address — it is purely a logical namespace for
+/// happen at this address - it is purely a logical namespace for
 /// `eth_getLogs` filtering. The matching log builder, the `OutbeFailure`
-/// event definition, and the zero-fee error → code mapping live in
+/// event definition, and the zero-fee error -> code mapping live in
 /// `outbe-evm` and `outbe-zerofee` respectively. See EPIC.
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE06");
 
 /// Poseidon-BN254 hash precompile address (stateless).
 ///
-/// Raw byte ABI: input is `N×32` BE-encoded field elements (`1 ≤ N ≤ 12`,
+/// Raw byte ABI: input is `Nx32` BE-encoded field elements (`1 <= N <= 12`,
 /// each mod-reduced to BN254 Fr); output is the 32-byte BE-encoded
 /// Poseidon hash. Matches `outbe-poseidon`'s Circom parameter set, so a
 /// hash computed by a wallet and the precompile agree byte-for-byte.
@@ -148,22 +148,22 @@ pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x00000000000000000000000
 
 /// ZeroFee paymaster precompile address (stateful).
 ///
-/// Acts as the EIP-7702 delegation target for "void sponsorship" — users
+/// Acts as the EIP-7702 delegation target for "void sponsorship" - users
 /// who delegate their EOA to this address may submit up to
 /// `FREE_TX_DAILY_LIMIT` (8) free transactions per UTC day, each capped by
 /// hard envelope limits (`gas_limit`, `calldata_size`, `value == 0`,
-/// `to ∈ SPONSORED_TARGET_WHITELIST`). The contract holds a single
+/// `to in SPONSORED_TARGET_WHITELIST`). The contract holds a single
 /// `Mapping<Address, u64>` packing `(date_key: u32, count: u32)` per
 /// signer; lazy reset on day flip.
 ///
 /// View ABI (see `interfaces/IZeroFee.sol` for the authoritative
-/// definition) — two methods, both anchored to the current block's
+/// definition) - two methods, both anchored to the current block's
 /// UTC day so callers never supply or reconcile the day themselves:
-///   - `authorizeSponsorship(address signer) view returns (bool)` —
+///   - `authorizeSponsorship(address signer) view returns (bool)` -
 ///     `true` if `signer` would be admitted to the sponsored path for
 ///     this block (mirrors the executor pre-fee gate: not self,
 ///     `balance > 0`, `count < FREE_TX_DAILY_LIMIT` for today).
-///   - `getCounter(address signer) view returns (uint32 day, uint32 count)` —
+///   - `getCounter(address signer) view returns (uint32 day, uint32 count)` -
 ///     the effective `(day, count)` for today with the lazy day-reset
 ///     already applied (`day` = today, `count` = 0 if the stored slot
 ///     is from an earlier day).
@@ -231,6 +231,13 @@ pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
 /// Permissionless append-only registry of public Heartwood repository ids.
 pub const RADICLE_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE11");
+
+/// OCOMP protocol authority registry precompile.
+///
+/// Owns the genesis, active, staged, and retiring protocol bundles. OCOMP
+/// consumers such as Metadosis pin work to an authority exposed here rather
+/// than storing a private copy of the protocol policy.
+pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE12");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
@@ -304,7 +311,7 @@ pub const SENDER_CREATOR_V07_ADDRESS: Address =
 /// `0x000000000000000000000000000000000000C0DE` (see
 /// `scripts/contracts/counter.code.hex` and `e2e/evm/README.md`) is the
 /// canonical target for the localnet smoke flow, but the precompile is
-/// target-agnostic — any contract implementing `inc(int256)` works.
+/// target-agnostic - any contract implementing `inc(int256)` works.
 pub const DEBUG_SUBCALL_PRECOMPILE_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000F999");
 

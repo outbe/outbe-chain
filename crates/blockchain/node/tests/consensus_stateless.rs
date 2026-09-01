@@ -5,7 +5,7 @@
 //! height and rejects malformed V2 envelopes (wrong version byte, unknown
 //! selector, missing body-index 0 for block N >= 2, missing `BoundaryOutcome`
 //! for block 1, any system tx for block 0) **without** running any stateful
-//! BLS / VRF / accounting verification — those live exclusively in
+//! BLS / VRF / accounting verification - those live exclusively in
 //! `OutbeBlockExecutor::apply_pre_execution_changes`.
 //!
 //! Most tests drive the public stateless entry point
@@ -140,7 +140,7 @@ fn signed_with_raw_input(signer: &OutbeEvmSigner, nonce: u64, input: Vec<u8>) ->
 
 /// Build a properly-formed V2 system tx via the canonical helper. Used by the
 /// happy-path baselines and by the unknown-body / wrong-body-index tests where
-/// only the layout — not the calldata — is exercised.
+/// only the layout - not the calldata - is exercised.
 fn signed_v2(
     signer: &OutbeEvmSigner,
     kind: SystemTxKind,
@@ -206,6 +206,10 @@ fn ocomp_transactions(
     }
     for (kind, input) in [
         (SystemTxKind::CycleTick, SystemTxInputV2::CycleTick),
+        (
+            SystemTxKind::RewardsGemDelivery,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
         (
             SystemTxKind::OracleSlashWindow,
             SystemTxInputV2::OracleSlashWindow,
@@ -301,15 +305,22 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
         ),
         signed_v2(
             &signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            &signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             &signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),
@@ -454,7 +465,7 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
 fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let signer = signer();
 
-    // (a) block 2 with only CycleTick + OracleSlashWindow — no CertifiedParentAccounting.
+    // (a) block 2 with only CycleTick + OracleSlashWindow - no CertifiedParentAccounting.
     let cycle = signed_v2(
         &signer,
         SystemTxKind::CycleTick,
@@ -482,7 +493,7 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     );
 
     // (b) block 2 with CertifiedParentAccounting present but pointing to a
-    // hash that does not match the header's parent_hash — also rejected.
+    // hash that does not match the header's parent_hash - also rejected.
     let parent_hash = B256::with_last_byte(0xAA);
     let wrong_parent = B256::with_last_byte(0xBB);
     let phase1 = signed_v2(
@@ -510,21 +521,28 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
         2,
         SystemTxInputV2::CycleTick,
     );
+    let rewards2 = signed_v2(
+        &signer,
+        SystemTxKind::RewardsGemDelivery,
+        3,
+        2,
+        SystemTxInputV2::RewardsGemDelivery,
+    );
     let oracle2 = signed_v2(
         &signer,
         SystemTxKind::OracleSlashWindow,
-        3,
+        4,
         2,
         SystemTxInputV2::OracleSlashWindow,
     );
     let hook_events2 = signed_v2(
         &signer,
         SystemTxKind::HookEvents,
-        4,
+        5,
         2,
         SystemTxInputV2::HookEvents,
     );
-    let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2, hook_events2]);
+    let body_bad_hash = body(vec![phase1, late2, cycle2, rewards2, oracle2, hook_events2]);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
         .expect_err(
@@ -538,7 +556,7 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
 }
 
 // ---------------------------------------------------------------------------
-// T-5: source-text scan — consensus.rs runs no stateful checks.
+// T-5: source-text scan - consensus.rs runs no stateful checks.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -606,7 +624,7 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
     let consensus = OutbeBeaconConsensus::new(chain_spec);
 
     // The v2.2 PRIMARY entrypoint must reject it. The boundary check runs before
-    // the tx-root delegation, so `None` is fine — it errors first.
+    // the tx-root delegation, so `None` is fine - it errors first.
     let with_tx_root = consensus.validate_block_pre_execution_with_tx_root(&block, None);
     assert!(
         with_tx_root.is_err(),
@@ -624,7 +642,7 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
 /// the caller-provided transaction_root to the inner Eth impl, not swallow it. On a
 /// well-formed block (which passes the Outbe system-tx boundary check), a WRONG
 /// Some(tx_root) must be rejected via the inner tx-root mismatch, and the CORRECT
-/// tx_root must pass — proving the override delegates rather than ignoring tx_root.
+/// tx_root must pass - proving the override delegates rather than ignoring tx_root.
 #[test]
 fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     let signer = signer();
@@ -657,15 +675,22 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
         ),
         signed_v2(
             &signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            &signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             &signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),
@@ -697,13 +722,13 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     );
 
     // Wrong tx_root: boundary passes, but the inner Eth impl must reject on the
-    // tx-root mismatch — only possible if the override forwarded tx_root.
+    // tx-root mismatch - only possible if the override forwarded tx_root.
     let wrong_tx_root = B256::repeat_byte(0xEE);
     assert_ne!(wrong_tx_root, correct_tx_root);
     let err = consensus.validate_block_pre_execution_with_tx_root(&block, Some(wrong_tx_root));
     assert!(
         err.is_err(),
-        "a wrong tx_root must be rejected via the inner mismatch — proving _with_tx_root \
+        "a wrong tx_root must be rejected via the inner mismatch - proving _with_tx_root \
          forwards the provided root rather than swallowing it; got {err:?}"
     );
 }
@@ -747,8 +772,8 @@ fn v2_envelope_with_unknown_selector_rejects() {
 // ---------------------------------------------------------------------------
 
 /// Build the canonical block-2 begin-zone set with a chosen LateFinalizeCredits
-/// body artifact (ordinals 0..=3): CPA, LateFinalizeCredits, CycleTick,
-/// OracleSlashWindow, HookEvents.
+/// body artifact (ordinals 0..=5): CPA, LateFinalizeCredits, CycleTick,
+/// RewardsGemDelivery, OracleSlashWindow, HookEvents.
 fn begin_zone_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
@@ -782,15 +807,22 @@ fn begin_zone_txs_block2(
         ),
         signed_v2(
             signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),
@@ -850,7 +882,7 @@ fn mandatory_late_phase_cannot_be_skipped() {
     let parent_hash = B256::with_last_byte(0xA4);
     let mut txs =
         begin_zone_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
-    // Drop the LateFinalizeCredits tx (ordinal 1) — leaving CPA, CycleTick, OracleSlashWindow, HookEvents.
+    // Drop the LateFinalizeCredits tx (ordinal 1) - leaving CPA, CycleTick, OracleSlashWindow, HookEvents.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)

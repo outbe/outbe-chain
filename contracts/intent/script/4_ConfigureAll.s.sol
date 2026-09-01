@@ -15,17 +15,20 @@ import {Router} from "../src/router/Router.sol";
 ///   2. auction.setRouter(router)
 ///   3. allocator.addOperator(router)
 ///   4. router.setRemoteRouter(chainId, ...) for each REMOTE_CHAIN_IDS (same CREATE3 address across chains)
-/// (router→auction is immutable, bound at router construction.)
+/// (router->auction is immutable, bound at router construction.)
 /// ConfigureRouter.s.sol remains as a standalone helper to add/update a single remote later.
 ///
 /// Required env vars:
-///   DEPLOYER_PK       — deployer private key
-///   ROUTER_ADDRESS    — deployed Router address
-///   AUCTION_ADDRESS   — deployed Auction address
-///   ESCROW_ADDRESS    — deployed SolverEscrow address
-///   ALLOCATOR_ADDRESS — deployed RouterAllocator address
+///   DEPLOYER_PK       - deployer private key
+///   ROUTER_ADDRESS    - deployed Router address
+///   AUCTION_ADDRESS   - deployed Auction address
+///   ESCROW_ADDRESS    - deployed SolverEscrow address
+///   ALLOCATOR_ADDRESS - deployed RouterAllocator address
 /// Optional:
-///   REMOTE_CHAIN_IDS  — csv of remote EVM chain ids to register (skipped if unset)
+///   REMOTE_CHAIN_IDS      - csv of remote EVM chain ids to register (skipped if unset)
+///   AUCTION_COMMIT_PERIOD - commit window in seconds (skipped if unset; set per target chain)
+///   AUCTION_REVEAL_PERIOD - reveal window in seconds (skipped if unset; set per target chain)
+///   AUCTION_MAX_QUOTES    - max revealed quotes per order (skipped if unset)
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -47,15 +50,33 @@ contract ConfigureAll is Script {
         address escrowAddress,
         address allocatorAddress
     ) public {
-        // 1. Escrow → Router
+        // 1. Escrow -> Router
         SolverEscrow(escrowAddress).setAuthorizedCaller(routerAddress);
         console2.log("  escrow.setAuthorizedCaller done");
 
-        // 2. Auction → Router
+        // 2. Auction -> Router
         Auction(auctionAddress).setRouter(routerAddress);
         console2.log("  auction.setRouter done");
 
-        // 3. Allocator → Router (skipped when the router was reused: its allocator is already wired)
+        uint256 commitPeriod = vm.envOr("AUCTION_COMMIT_PERIOD", uint256(0));
+        if (commitPeriod != 0) {
+            Auction(auctionAddress).setCommitPeriod(commitPeriod);
+            console2.log("  auction.setCommitPeriod:", commitPeriod);
+        }
+
+        uint256 revealPeriod = vm.envOr("AUCTION_REVEAL_PERIOD", uint256(0));
+        if (revealPeriod != 0) {
+            Auction(auctionAddress).setRevealPeriod(revealPeriod);
+            console2.log("  auction.setRevealPeriod:", revealPeriod);
+        }
+
+        uint256 maxQuotes = vm.envOr("AUCTION_MAX_QUOTES", uint256(0));
+        if (maxQuotes != 0) {
+            Auction(auctionAddress).setMaxQuotesPerOrder(maxQuotes);
+            console2.log("  auction.setMaxQuotesPerOrder:", maxQuotes);
+        }
+
+        // 3. Allocator -> Router (skipped when the router was reused: its allocator is already wired)
         if (allocatorAddress != address(0)) {
             RouterAllocator(allocatorAddress).addOperator(routerAddress);
             console2.log("  allocator.addOperator done");
@@ -63,7 +84,7 @@ contract ConfigureAll is Script {
             console2.log("  allocator.addOperator skipped (router reused)");
         }
 
-        // Router → Auction binding is immutable (set at router construction); no setAuction step.
+        // Router -> Auction binding is immutable (set at router construction); no setAuction step.
 
         // 4. Cross-chain: register the matching Router on each remote chain. The remote Router shares this Router's
         //    CREATE3 address, so its interop address is (chainId, routerAddress).

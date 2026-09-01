@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::chain::TESTNET_CHAIN_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_primitives::storage::StorageHandle;
@@ -20,18 +21,54 @@ use crate::state::{
     active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus, VoteKind,
 };
 
-const LOCALNET_CHAIN_ID: u64 = 54_322_345;
-
 fn voting_window_blocks(chain_id: u64) -> u64 {
-    if chain_id != LOCALNET_CHAIN_ID {
+    voting_window_blocks_with_override(
+        chain_id,
+        std::env::var("OUTBE_TEST_VOTING_WINDOW_BLOCKS").ok(),
+    )
+}
+
+fn voting_window_blocks_with_override(chain_id: u64, override_value: Option<String>) -> u64 {
+    if chain_id != TESTNET_CHAIN_ID {
         return VOTING_WINDOW_BLOCKS;
     }
 
-    std::env::var("OUTBE_TEST_VOTING_WINDOW_BLOCKS")
-        .ok()
+    override_value
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(VOTING_WINDOW_BLOCKS)
+}
+
+#[cfg(test)]
+mod voting_window_tests {
+    use super::*;
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID};
+
+    #[test]
+    fn only_testnet_accepts_the_test_voting_window_override() {
+        let override_value = Some("17".to_owned());
+
+        assert_eq!(
+            voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value.clone()),
+            17
+        );
+        for chain_id in [DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, 1_000_000_001] {
+            assert_eq!(
+                voting_window_blocks_with_override(chain_id, override_value.clone()),
+                VOTING_WINDOW_BLOCKS
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_test_voting_window_overrides_use_the_protocol_default() {
+        for override_value in [None, Some("0".to_owned()), Some("invalid".to_owned())] {
+            assert_eq!(
+                voting_window_blocks_with_override(TESTNET_CHAIN_ID, override_value),
+                VOTING_WINDOW_BLOCKS
+            );
+        }
+    }
 }
 
 /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
@@ -43,7 +80,7 @@ pub fn ensure_active_validator(storage: StorageHandle<'_>, caller: Address) -> R
     Ok(())
 }
 
-/// Returns `Ok(())` when `caller` is a registered validator with `status ∈ {PENDING, ACTIVE}`.
+/// Returns `Ok(())` when `caller` is a registered validator with `status in {PENDING, ACTIVE}`.
 pub fn ensure_voting_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     let vs = ValidatorSet::new(storage);
     let lifecycle = vs.validator_lifecycle(caller)?;

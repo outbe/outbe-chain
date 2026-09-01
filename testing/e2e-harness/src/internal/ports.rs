@@ -11,8 +11,8 @@
 //!
 //! Blocks are handed out from a cursor that only ever moves forward, so they are
 //! disjoint by construction and no two services can collide. A node index the
-//! harness has never seen — the joiner at `i = committee size`, the followers at
-//! their high slots — simply takes the next block on first use, so the committee
+//! harness has never seen - the joiner at `i = committee size`, the followers at
+//! their high slots - simply takes the next block on first use, so the committee
 //! size need not be known up front.
 //!
 //! A block is *scanned* for by default: the cursor walks forward until it finds
@@ -20,11 +20,11 @@
 //! so a block stays contiguous. `--no-resolve-ports` skips the scan and takes the
 //! cursor's block verbatim.
 //!
-//! A block's ports follow from *allocation order*, not from the node index — so a
+//! A block's ports follow from *allocation order*, not from the node index - so a
 //! node whose first candidate port is busy shifts only itself, never the nodes
 //! allocated after it.
 //!
-//! [`Ports::start_scenario`] forgets the node→block map but leaves the cursor
+//! [`Ports::start_scenario`] forgets the node->block map but leaves the cursor
 //! alone, so each scenario's nodes land above the previous scenario's. A port is
 //! never reused within a process, which keeps a torn-down node's lingering socket
 //! (or a peer still dialing it) from bleeding into the next scenario.
@@ -164,9 +164,9 @@ pub(crate) struct Ports {
 
 #[derive(Debug)]
 struct Resolver {
-    /// Node index → first port of its block.
+    /// Node index -> first port of its block.
     blocks: HashMap<usize, u16>,
-    /// Node index → first port of its separate Radicle block.
+    /// Node index -> first port of its separate Radicle block.
     radicle_blocks: HashMap<usize, u16>,
     /// Lowest port not yet handed out. Only ever moves forward.
     cursor: u16,
@@ -193,7 +193,7 @@ impl Ports {
         }
     }
 
-    /// Reconstruct a previously resolved validator→service layout.
+    /// Reconstruct a previously resolved validator->service layout.
     ///
     /// The order is validator order. Each entry is the first port of that
     /// validator's complete [`BLOCK`]-wide service block.
@@ -226,7 +226,7 @@ impl Ports {
         })
     }
 
-    /// Begin a scenario: forget the previous one's node→block map, then allocate
+    /// Begin a scenario: forget the previous one's node->block map, then allocate
     /// the committee's blocks (`0..n`) so their consensus/p2p ports are fixed
     /// before bootstrap bakes them into genesis.
     ///
@@ -250,7 +250,7 @@ impl Ports {
 
     /// The port node `i` uses for `svc`, allocating its block on first use.
     ///
-    /// Panics only when the port space above the cursor is exhausted — an
+    /// Panics only when the port space above the cursor is exhausted - an
     /// unrecoverable property of the machine, not of the caller.
     pub(crate) fn port(&self, svc: Service, i: usize) -> u16 {
         let mut resolver = lock(&self.inner);
@@ -304,7 +304,7 @@ fn lock(inner: &Mutex<Resolver>) -> MutexGuard<'_, Resolver> {
 }
 
 impl Resolver {
-    /// First port of node `i`'s block — the one already allocated, or the next.
+    /// First port of node `i`'s block - the one already allocated, or the next.
     fn block_start(&mut self, i: usize) -> Result<u16> {
         if let Some(&start) = self.blocks.get(&i) {
             return Ok(start);
@@ -381,8 +381,8 @@ fn radicle_window_free(start: u16) -> bool {
 /// A bind probe alone is not enough for TCP: nodes bind their service ports on
 /// the wildcard address, and BSD `SO_REUSEADDR` semantics let a later
 /// loopback-specific bind succeed over a live `0.0.0.0` listener. Ask for a
-/// connection first — an answer proves somebody owns the port whatever address
-/// they bound — and only then try to bind, so the probe's own listener can
+/// connection first - an answer proves somebody owns the port whatever address
+/// they bound - and only then try to bind, so the probe's own listener can
 /// never answer its own connect.
 fn is_free(port: u16, proto: Proto) -> bool {
     let tcp = || {

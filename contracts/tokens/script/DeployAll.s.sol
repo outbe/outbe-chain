@@ -9,15 +9,15 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 
 /// @dev Full token-route deploy on one chain, in one command:
 ///   1. CreateX factory (reused when `CREATEX_ADDRESS` is set, or when one already sits at the deterministic address)
-///   2. USDT route — canonical on the external chain, ERC-7802 synthetic on Outbe
-///   3. WCOEN route — canonical on Outbe, ERC-7802 synthetic on the external chain
+///   2. USDT route - canonical on the external chain, ERC-7802 synthetic on Outbe
+///   3. WCOEN route - canonical on Outbe, ERC-7802 synthetic on the external chain
 ///   4. Remote wiring for each `REMOTE_CHAIN_IDS`
 ///
 /// Every step self-checks against on-chain state, so a re-run on a finished chain sends no transactions. That is
 /// deliberately per-step rather than one top-level short-circuit: a partial state (token deployed, Safe has not yet
 /// executed `setTokenBridge`) must still be completed on the next run.
 ///
-/// Addresses come from CREATE3 and depend only on (factory, salt, deployer) — so the same command on every chain
+/// Addresses come from CREATE3 and depend only on (factory, salt, deployer) - so the same command on every chain
 /// produces the same four addresses, and step 4 is safe before the other chains exist.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.

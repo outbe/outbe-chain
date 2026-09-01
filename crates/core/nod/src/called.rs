@@ -18,7 +18,7 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Unlike qualification — which reads the *live* COEN rate in `hooks.rs` — the
+//! Unlike qualification - which reads the *live* COEN rate in `hooks.rs` - the
 //! call reads the *finalized daily VWAP*. Gem splits the two feeds the same way.
 
 use alloy_primitives::{B256, U256};
@@ -74,7 +74,7 @@ pub fn scan_and_call(
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke — skip loudly instead of
+    // a lagging watermark means the ordering broke - skip loudly instead of
     // misreading an unfinalized day as one with no published price.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
@@ -176,7 +176,7 @@ pub fn scan_and_call(
 /// simply fail to count, so the window absorbs up to
 /// `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either. The walk stops at the
 /// first day preceding the bucket's worldwide day so a bucket can never inherit
-/// a breach run that predates it — the window is newest-first, so everything
+/// a breach run that predates it - the window is newest-first, so everything
 /// beyond that point is older still.
 fn breached_enough(window: &[(u32, Option<U256>)], call_price: U256, start_day: u32) -> bool {
     let mut breaches: u32 = 0;

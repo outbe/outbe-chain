@@ -32,27 +32,28 @@ use outbe_node::{
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
-use outbe_operator::{
-    rpc::HttpRenewalRpc,
-    tee::{
-        inspect_upgrade_journal_v1, read_renewal_status_v1, record_upgrade_finalized_v1,
-        record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, run_renewal_once_v1,
-        NodeBindingSelectorV1, RenewalAlertLevelV1, RenewalEnclaveV1, RenewalModeV1,
-        RenewalNodeSignerV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeJournalStateV1,
-    },
-    tx::RelaySignerV1,
+use outbe_operator::tee::{
+    inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
+    record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
+    UpgradeJournalStateV1,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
 };
 use outbe_primitives::OutbeHeader;
-use reth_chainspec::ChainSpec;
+use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 use tokio::sync::oneshot;
 use tracing::info;
 
@@ -60,140 +61,149 @@ mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
-struct RenewalNodeAuthorityV1(k256::ecdsa::SigningKey);
+const TEE_UPGRADE_POLL_SECS: u64 = 30;
+const TEE_UPGRADE_WARNING_BLOCKS: u64 = 600;
+const TEE_UPGRADE_CRITICAL_BLOCKS: u64 = 120;
+const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
 
-impl RenewalNodeSignerV1 for RenewalNodeAuthorityV1 {
-    fn sign_node_hash(&self, hash: alloy_primitives::B256) -> eyre::Result<[u8; 65]> {
-        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
-            .0
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| eyre::eyre!("NodeHost renewal signing failed: {error}"))?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(&signature.to_bytes());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    }
-}
-
-struct GlobalRenewalEnclaveV1;
-
-impl RenewalEnclaveV1 for GlobalRenewalEnclaveV1 {
-    fn generate_dcap_quote(
-        &mut self,
-        intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
-    ) -> eyre::Result<outbe_tee::GeneratedDcapQuoteV1> {
-        outbe_tee::generate_dcap_quote_v1(intent)
-            .map_err(|error| eyre::eyre!("generate renewal quote: {error}"))
-    }
-}
-
-struct RenewalWorkerV1 {
-    rpc_url: String,
-    relay: RelaySignerV1,
-    authority: RenewalNodeAuthorityV1,
-    config: RenewalServiceConfigV1,
-    poll_secs: u64,
-    warning_blocks: u64,
-    critical_blocks: u64,
-}
-
-async fn run_renewal_worker_v1(
-    worker: RenewalWorkerV1,
-    shutdown: tokio_util::sync::CancellationToken,
-) {
-    let rpc = HttpRenewalRpc::new(worker.rpc_url);
-    let mut enclave = GlobalRenewalEnclaveV1;
-    loop {
-        let upgrade_blocks_renewal = match inspect_upgrade_journal_v1(&worker.config.node_data_dir)
-        {
-            Ok(Some(snapshot)) => matches!(
-                snapshot.lifecycle,
-                UpgradeJournalStateV1::CandidatePrepared { .. }
-                    | UpgradeJournalStateV1::RootCopied { .. }
-                    | UpgradeJournalStateV1::CandidateKeyReady { .. }
-                    | UpgradeJournalStateV1::SubmissionPrepared { .. }
-                    | UpgradeJournalStateV1::Submitted { .. }
-                    | UpgradeJournalStateV1::Finalized { .. }
-                    | UpgradeJournalStateV1::Promoted { .. }
-                    | UpgradeJournalStateV1::TerminalMissedCutoff { .. }
-            ),
-            Ok(None) => false,
-            Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "read upgrade checkpoint before renewal failed; renewal paused fail-closed");
-                true
-            }
-        };
-        let renewal = if upgrade_blocks_renewal {
-            None
-        } else {
-            Some(
-                run_renewal_once_v1(
-                    &rpc,
-                    &worker.relay,
-                    &mut enclave,
-                    &worker.authority,
-                    &worker.config,
-                    RenewalModeV1::Automatic,
-                )
-                .await,
+fn load_installed_ocomp_bundles(
+    domain_root: &Path,
+    initial: outbe_ocomp::bundle::PinnedProtocolBundle,
+    configured_hashes: Option<&str>,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> eyre::Result<Vec<outbe_ocomp::bundle::PinnedProtocolBundle>> {
+    let catalog_root = domain_root.join("protocol-bundles-v1");
+    let initial_hash = initial.hash();
+    let mut bundles = BTreeMap::new();
+    let metadata = match std::fs::symlink_metadata(&catalog_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return select_installed_ocomp_bundles(
+                initial,
+                initial_hash,
+                bundles,
+                configured_hashes,
             )
-        };
-        match renewal {
-            None => {}
-            Some(Ok(RenewalOutcomeV1::Submitted {
-                transaction_hash,
-                replayed,
-            })) => info!(%transaction_hash, replayed, "automatic DCAP renewal submitted"),
-            Some(Ok(RenewalOutcomeV1::Finalized {
-                finalized_height,
-                valid_until,
-            })) => info!(
-                finalized_height,
-                valid_until, "automatic DCAP renewal finalized"
-            ),
-            Some(Ok(RenewalOutcomeV1::Abandoned {
-                finalized_height,
-                reason,
-            })) => {
-                tracing::warn!(finalized_height, %reason, "stale DCAP renewal abandoned; next pass will rebuild")
-            }
-            Some(Ok(RenewalOutcomeV1::NotDue { .. })) => {}
-            Some(Err(error)) => {
-                tracing::error!(error = %format!("{error:#}"), "automatic DCAP renewal reconciliation failed")
-            }
         }
-        match read_renewal_status_v1(
-            &rpc,
-            &worker.config.node_data_dir,
-            &worker.config.selector,
-            worker.warning_blocks,
-            worker.critical_blocks,
-        )
-        .await
+        Err(error) => return Err(error).wrap_err("inspect OCOMP bundle catalog"),
+    };
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        eyre::bail!("OCOMP bundle catalog must be a real directory");
+    }
+    for entry in std::fs::read_dir(&catalog_root).wrap_err("read OCOMP bundle catalog")? {
+        let entry = entry.wrap_err("read OCOMP bundle catalog entry")?;
+        let metadata = std::fs::symlink_metadata(entry.path())
+            .wrap_err("inspect OCOMP bundle catalog entry")?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            eyre::bail!("OCOMP bundle catalog entries must be regular files");
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| eyre::eyre!("OCOMP bundle filename is not UTF-8"))?;
+        let hash_hex = name
+            .strip_suffix(".ocb1")
+            .ok_or_else(|| eyre::eyre!("OCOMP bundle filename must end in .ocb1"))?;
+        if hash_hex.len() != 64
+            || !hash_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            Ok(status) if status.alert == RenewalAlertLevelV1::Critical => tracing::error!(
-                finalized_height = status.finalized_height,
-                next_freeze_height = status.next_freeze_height,
-                valid_until = status.valid_until,
-                "DCAP renewal is unsafe at the critical DKG-freeze margin"
-            ),
-            Ok(status) if status.alert == RenewalAlertLevelV1::Warning => tracing::warn!(
-                finalized_height = status.finalized_height,
-                next_freeze_height = status.next_freeze_height,
-                valid_until = status.valid_until,
-                "DCAP renewal is unsafe at the warning DKG-freeze margin"
-            ),
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "read automatic DCAP renewal status failed")
-            }
+            eyre::bail!("OCOMP bundle filename must be 64 lowercase hex characters plus .ocb1");
         }
-        tokio::select! {
-            () = shutdown.cancelled() => break,
-            () = tokio::time::sleep(std::time::Duration::from_secs(worker.poll_secs)) => {}
+        let canonical = std::fs::read(entry.path()).wrap_err("read installed OCOMP bundle")?;
+        let bundle =
+            outbe_ocomp::bundle::PinnedProtocolBundle::decode_canonical(&canonical, limits)
+                .wrap_err("decode installed OCOMP bundle")?;
+        if hex::encode(bundle.hash().as_slice()) != hash_hex {
+            eyre::bail!("installed OCOMP bundle filename does not match its canonical hash");
+        }
+        if let Some(existing) = bundles.insert(bundle.hash(), bundle.clone()) {
+            if existing != bundle {
+                eyre::bail!("conflicting installed OCOMP bundle bytes");
+            }
         }
     }
+    select_installed_ocomp_bundles(initial, initial_hash, bundles, configured_hashes)
+}
+
+fn select_installed_ocomp_bundles(
+    initial: outbe_ocomp::bundle::PinnedProtocolBundle,
+    initial_hash: alloy_primitives::B256,
+    bundles: BTreeMap<alloy_primitives::B256, outbe_ocomp::bundle::PinnedProtocolBundle>,
+    configured_hashes: Option<&str>,
+) -> eyre::Result<Vec<outbe_ocomp::bundle::PinnedProtocolBundle>> {
+    if bundles.is_empty() {
+        if let Some(configured) = configured_hashes {
+            let hashes = parse_ocomp_bundle_hashes(configured)?;
+            if hashes.as_slice() != [initial_hash] {
+                eyre::bail!(
+                    "configured OCOMP bundle hashes require a populated hash-addressed catalog"
+                );
+            }
+        }
+        return Ok(vec![initial]);
+    }
+    ordered_installed_ocomp_bundle_hashes(initial_hash, &bundles, configured_hashes)?
+        .into_iter()
+        .map(|hash| {
+            bundles.get(&hash).cloned().ok_or_else(|| {
+                eyre::eyre!("configured OCOMP bundle {hash} is not installed in the catalog")
+            })
+        })
+        .collect()
+}
+
+fn ordered_installed_ocomp_bundle_hashes<V>(
+    initial_hash: alloy_primitives::B256,
+    bundles: &BTreeMap<alloy_primitives::B256, V>,
+    configured_hashes: Option<&str>,
+) -> eyre::Result<Vec<alloy_primitives::B256>> {
+    if bundles.is_empty() || bundles.len() > 2 {
+        eyre::bail!("OCOMP runtime supports exactly active plus one staged/retiring bundle");
+    }
+    if let Some(configured) = configured_hashes {
+        let hashes = parse_ocomp_bundle_hashes(configured)?;
+        if hashes.len() != bundles.len() || hashes.iter().any(|hash| !bundles.contains_key(hash)) {
+            eyre::bail!("OCOMP bundle catalog must exactly match OCOMP_PROTOCOL_BUNDLE_HASHES");
+        }
+        return Ok(hashes);
+    }
+
+    if bundles.len() > 1 && !bundles.contains_key(&initial_hash) {
+        eyre::bail!(
+            "OCOMP_PROTOCOL_BUNDLE_HASHES is required to order a post-genesis two-bundle catalog"
+        );
+    }
+    let mut hashes = bundles.keys().copied().collect::<Vec<_>>();
+    hashes.sort_by_key(|hash| *hash != initial_hash);
+    Ok(hashes)
+}
+
+fn parse_ocomp_bundle_hashes(value: &str) -> eyre::Result<Vec<alloy_primitives::B256>> {
+    let mut hashes = Vec::new();
+    for encoded in value.split(',') {
+        let hex_value = encoded
+            .strip_prefix("0x")
+            .ok_or_else(|| eyre::eyre!("OCOMP bundle hash must have a 0x prefix"))?;
+        if hex_value.len() != 64
+            || !hex_value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            eyre::bail!("OCOMP bundle hash must be 64 lowercase hex characters after 0x");
+        }
+        let decoded = hex::decode(hex_value).wrap_err("decode configured OCOMP bundle hash")?;
+        let hash = alloy_primitives::B256::from_slice(&decoded);
+        if hashes.contains(&hash) {
+            eyre::bail!("OCOMP bundle hash list contains a duplicate");
+        }
+        hashes.push(hash);
+    }
+    if hashes.is_empty() || hashes.len() > 2 {
+        eyre::bail!("OCOMP bundle hash list must contain one or two adjacent authorities");
+    }
+    Ok(hashes)
 }
 
 struct UpgradePromotionWorkerConfigV1 {
@@ -204,6 +214,373 @@ struct UpgradePromotionWorkerConfigV1 {
     warning_blocks: u64,
     critical_blocks: u64,
     promoted: Arc<tokio::sync::Notify>,
+}
+
+/// Exact finalized checkpoint at which a node may arm its local lease guard
+/// after replaying stale or pre-registration history. This is process-local
+/// startup authority, never consensus or wire state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocalTeeAdmissionAnchorV1 {
+    finalized_height: u64,
+    finalized_hash: alloy_primitives::B256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TeeLeaseGuardGateV1 {
+    pending_anchor: Option<LocalTeeAdmissionAnchorV1>,
+}
+
+impl TeeLeaseGuardGateV1 {
+    const fn new(pending_anchor: Option<LocalTeeAdmissionAnchorV1>) -> Self {
+        Self { pending_anchor }
+    }
+
+    const fn is_armed(self) -> bool {
+        self.pending_anchor.is_none()
+    }
+
+    const fn anchor_to_validate(
+        self,
+        local_finalized_height: u64,
+    ) -> Option<LocalTeeAdmissionAnchorV1> {
+        match self.pending_anchor {
+            Some(anchor) if local_finalized_height >= anchor.finalized_height => Some(anchor),
+            _ => None,
+        }
+    }
+
+    fn validate_and_arm(
+        &mut self,
+        observed_hash: alloy_primitives::B256,
+        admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    ) -> eyre::Result<()> {
+        let Some(anchor) = self.pending_anchor else {
+            return Ok(());
+        };
+        eyre::ensure!(
+            observed_hash == anchor.finalized_hash,
+            "TEE admission anchor hash mismatch at height {}: expected {}, local {}",
+            anchor.finalized_height,
+            anchor.finalized_hash,
+            observed_hash
+        );
+        match admission {
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => {
+                self.pending_anchor = None;
+                Ok(())
+            }
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
+                eyre::bail!("TEE admission anchor unexpectedly has bootstrap-pending TEE state")
+            }
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+                eyre::bail!(
+                    "TEE admission anchor rejected the local identity: {}",
+                    local_tee_rejection_message(reason)
+                )
+            }
+        }
+    }
+}
+
+fn require_validator_tee_recovery_complete_v1(
+    is_validator: bool,
+    gate: TeeLeaseGuardGateV1,
+    node_data_dir: &Path,
+) -> eyre::Result<()> {
+    if !is_validator || gate.is_armed() {
+        return Ok(());
+    }
+
+    let Some(anchor) = gate.pending_anchor else {
+        return Ok(());
+    };
+    eyre::bail!(
+        "validator recovery requires certified follower catch-up before authority startup: local finalized state has not reached the durable TEE join anchor at height {} ({}) in {}. Stop this process; start the same outbe-chain binary with this same datadir and the same network/TEE options, omit --validator and every validator signing/Radicle authority flag, and add --upstream <healthy-certified-rpc> (do not use --upstream.nocertify). Wait for `local TEE lease guard armed at authenticated catch-up anchor`, stop the follower, then restart the original validator command. Submit readiness only after the validator is caught up; signing authority returns only after a fresh DKG installs current private material",
+        anchor.finalized_height,
+        anchor.finalized_hash,
+        node_data_dir.display(),
+    )
+}
+
+fn validator_admission_anchor_from_durable_v1(
+    durable: outbe_tee::FinalizedJoinAdmissionAnchorV1,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
+    use outbe_primitives::tee_attestation_v1::NodeIdV1;
+
+    let node_id_hash = NodeIdV1 {
+        reth_p2p_public: identity.reth_p2p_public,
+    }
+    .node_id_hash()
+    .map_err(|error| eyre::eyre!("derive local NodeHost identity: {error}"))?;
+    eyre::ensure!(
+        durable.chain_id == alloy_primitives::U256::from(chain_id).to_be_bytes(),
+        "finalized join admission anchor chain id mismatch"
+    );
+    eyre::ensure!(
+        durable.genesis_hash == genesis_hash,
+        "finalized join admission anchor genesis mismatch"
+    );
+    eyre::ensure!(
+        durable.node_id_hash == node_id_hash,
+        "finalized join admission anchor NodeHost identity mismatch"
+    );
+    eyre::ensure!(
+        identity.expected_enclave_id == Some(durable.enclave_id),
+        "finalized join admission anchor enclave identity mismatch"
+    );
+    Ok(LocalTeeAdmissionAnchorV1 {
+        finalized_height: durable.finalized_height,
+        finalized_hash: durable.finalized_hash,
+    })
+}
+
+fn local_tee_rejection_message(
+    rejection: outbe_engine::validators::LocalTeeRuntimeRejectionV1,
+) -> String {
+    use outbe_engine::validators::LocalTeeRuntimeRejectionV1;
+
+    match rejection {
+        LocalTeeRuntimeRejectionV1::MissingBinding => {
+            "finalized Registry has no binding for the local NodeHost; run tee join".to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch => {
+            "finalized Registry binding does not match the committed local enclave; run tee join"
+                .to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch => {
+            "finalized validator and local NodeHost bindings disagree; refusing consensus startup"
+                .to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::ValidatorJailed => {
+            "validator is jailed; complete ordinary unjail and then run tee join".to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::Expired { valid_until } => {
+            format!("finalized TEE lease expired at {valid_until}; stop node and run tee join")
+        }
+    }
+}
+
+fn tee_lease_admission_rejection(
+    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+) -> Option<String> {
+    match admission {
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending
+        | outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => None,
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+            Some(local_tee_rejection_message(reason))
+        }
+    }
+}
+
+fn validator_recovery_startup_admission_rejection(
+    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+) -> Option<String> {
+    match admission {
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => Some(
+            "finalized TEE admission is bootstrap-pending; refusing validator authority startup"
+                .to_owned(),
+        ),
+        other => tee_lease_admission_rejection(other),
+    }
+}
+
+fn read_local_tee_admission_at_height<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    block_number: u64,
+) -> eyre::Result<(
+    alloy_primitives::B256,
+    outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+)>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let header = provider
+        .sealed_header(block_number)
+        .wrap_err("read exact header for TEE lease admission")?
+        .ok_or_else(|| eyre::eyre!("exact TEE lease admission header is unavailable"))?;
+    let block_hash = header.hash();
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .wrap_err("read exact state for TEE lease admission")?;
+    let admission = outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+        &state,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
+            chain_id,
+            genesis_hash,
+            block_number,
+            timestamp: header.header().inner.timestamp,
+        },
+        identity,
+    )?;
+    Ok((block_hash, admission))
+}
+
+fn read_finalized_local_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err("read finalized head for TEE lease admission")?
+    else {
+        return Ok(None);
+    };
+    if finalized.number == 0 {
+        return Ok(None);
+    }
+    let (header_hash, admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        finalized.number,
+    )?;
+    eyre::ensure!(
+        header_hash == finalized.hash,
+        "finalized TEE lease header hash mismatch: marker {}, header {}",
+        finalized.hash,
+        header_hash
+    );
+    Ok(Some(admission))
+}
+
+fn read_gated_finalized_local_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    gate: &mut TeeLeaseGuardGateV1,
+) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err("read finalized head for gated TEE lease admission")?
+    else {
+        return Ok(None);
+    };
+    if finalized.number == 0 {
+        return Ok(None);
+    }
+    let Some(anchor) = gate.anchor_to_validate(finalized.number) else {
+        return if gate.is_armed() {
+            read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+        } else {
+            Ok(None)
+        };
+    };
+
+    let (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        anchor.finalized_height,
+    )?;
+    gate.validate_and_arm(anchor_hash, anchor_admission)?;
+    info!(
+        anchor_height = anchor.finalized_height,
+        anchor_hash = %anchor.finalized_hash,
+        local_finalized_height = finalized.number,
+        "local TEE lease guard armed at authenticated catch-up anchor"
+    );
+    if finalized.number == anchor.finalized_height {
+        return Ok(Some(anchor_admission));
+    }
+    read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+}
+
+async fn require_upstream_fullnode_tee_admission(
+    upstream: &str,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<LocalTeeAdmissionAnchorV1> {
+    let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream);
+    let view = read_finalized_registry_view_v1(
+        &rpc,
+        &NodeBindingSelectorV1::NodeHost(identity.reth_p2p_public),
+    )
+    .await
+    .wrap_err("read upstream finalized FullNode TEE admission")?;
+    let binding = view.binding.ok_or_else(|| {
+        eyre::eyre!("finalized Registry has no binding for this FullNode; run tee join first")
+    })?;
+    if identity
+        .expected_enclave_id
+        .is_some_and(|expected| expected != binding.enclave_id)
+    {
+        eyre::bail!(
+            "finalized FullNode binding does not match the committed local enclave; run tee join"
+        );
+    }
+    if binding.valid_until <= view.schedule.finalized_timestamp {
+        eyre::bail!(
+            "finalized FullNode TEE lease expired at {}; run tee join before startup",
+            binding.valid_until
+        );
+    }
+    Ok(LocalTeeAdmissionAnchorV1 {
+        finalized_height: view.view.block_number,
+        finalized_hash: view.view.block_hash,
+    })
+}
+
+async fn run_tee_lease_guard_v1<P>(
+    provider: P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    mut gate: TeeLeaseGuardGateV1,
+    shutdown: tokio_util::sync::CancellationToken,
+    rejected: tokio::sync::mpsc::UnboundedSender<String>,
+) where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        match read_gated_finalized_local_tee_admission(
+            &provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            &mut gate,
+        ) {
+            Ok(None) => {}
+            Ok(Some(admission)) => {
+                if let Some(reason) = tee_lease_admission_rejection(admission) {
+                    let _ = rejected.send(reason);
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = rejected.send(format!(
+                    "finalized TEE lease admission failed closed: {error:#}"
+                ));
+                return;
+            }
+        }
+    }
 }
 
 async fn run_upgrade_promotion_worker_v1<P>(provider: P, config: UpgradePromotionWorkerConfigV1)
@@ -473,22 +850,34 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            chain_spec.as_ref(),
-        )
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
-        outbe_chain_constants::initialize(
-            chain_spec
-                .genesis
-                .config
-                .extra_fields
-                .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
-        )
-        .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+        validate_outbe_chain_spec(chain_spec.as_ref())?;
+        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
+            .map_err(|error| eyre::eyre!("invalid consensus chain identity: {error}"))?;
         Ok(chain_spec)
     }
+}
+
+fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Result<()> {
+    let chain_id = chain_spec.chain().id();
+    eyre::ensure!(
+        outbe_primitives::chain::network_for_chain_id(chain_id).is_some(),
+        "unknown Outbe chain ID {chain_id}"
+    );
+    outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        chain_spec,
+    )
+    .activation()
+    .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec)?;
+    outbe_chain_constants::initialize(
+        chain_spec
+            .genesis
+            .config
+            .extra_fields
+            .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+    )
+    .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+    Ok(())
 }
 
 /// Ceiling for advised gas price: one COEN per gas, already far above anything
@@ -572,6 +961,7 @@ enum LauncherExitCause {
     ProjectionRequested,
     OcompRequested,
     UpgradeRequested,
+    TeeLeaseRejected,
     CtrlC,
 }
 
@@ -579,7 +969,10 @@ impl LauncherExitCause {
     const fn requests_engine_shutdown(self) -> bool {
         matches!(
             self,
-            Self::ProjectionRequested | Self::OcompRequested | Self::UpgradeRequested
+            Self::ProjectionRequested
+                | Self::OcompRequested
+                | Self::UpgradeRequested
+                | Self::TeeLeaseRejected
         )
     }
 }
@@ -868,7 +1261,7 @@ fn load_reth_p2p_node_host_signer(
 /// Run the main node (Reth execution + Commonware consensus).
 fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` → persistent production NodeHost authorization);
+    // (`--tee-enclave-socket` -> persistent production NodeHost authorization);
     // the offer-decryption key exists only inside the enclave (single path, no
     // in-process key material).
 
@@ -909,7 +1302,7 @@ fn run_node() -> eyre::Result<()> {
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
-    // Consensus thread is spawned conditionally — see inside run_with_components
+    // Consensus thread is spawned conditionally - see inside run_with_components
     // where `args.is_validator` is known. For now, prepare the closure.
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
@@ -959,6 +1352,16 @@ fn run_node() -> eyre::Result<()> {
             args.keys_dir = Some(keys_dir.clone());
         }
 
+        let chain_id = reth_ethereum::chainspec::EthChainSpec::chain(&*node.chain_spec()).id();
+        outbe_consensus::proof::init_consensus_chain_id(chain_id)
+            .wrap_err("bind consensus process to the selected chain id")?;
+        outbe_consensus::storage_identity::bind_consensus_storage_identity(
+            &consensus_storage,
+            chain_id,
+            node.chain_spec().genesis_hash(),
+        )
+        .wrap_err("validate consensus restart storage identity")?;
+
         // Migrate DKG files from legacy location (consensus/) to keys/.
         outbe_engine::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;
 
@@ -971,14 +1374,14 @@ fn run_node() -> eyre::Result<()> {
         // `<consensus_storage>/slashing-journal.jsonl`. The journal
         // captures every SlashIndicator/ValidatorSet state transition
         // in JSONL form and is independent of reth log rotation. If
-        // initialization fails, log a warning and continue — the
+        // initialization fails, log a warning and continue - the
         // journal is best-effort observability and must not block node
         // startup.
         if let Err(error) = outbe_primitives::slashing_journal::init(&consensus_storage) {
             tracing::warn!(
                 target: "outbe::slashing::journal",
                 %error,
-                "failed to initialize slashing journal — events will not be persisted to a sidecar file",
+                "failed to initialize slashing journal - events will not be persisted to a sidecar file",
             );
         }
 
@@ -986,7 +1389,7 @@ fn run_node() -> eyre::Result<()> {
             tracing::warn!(
                 target: "outbe::governance::journal",
                 %error,
-                "failed to initialize governance journal — events will not be persisted to a sidecar file",
+                "failed to initialize governance journal - events will not be persisted to a sidecar file",
             );
         }
 
@@ -1002,9 +1405,9 @@ fn run_node() -> eyre::Result<()> {
         let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
             runner.start(async move |ctx| {
                 let graceful_shutdown = ctx.child("shutdown");
-                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| async move {
+                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
                     outbe_engine::run_consensus_stack(
-                        &stack_ctx,
+                        stack_ctx,
                         args,
                         node,
                         bridge_for_consensus,
@@ -1023,10 +1426,8 @@ fn run_node() -> eyre::Result<()> {
                             services
                         },
                     )
-                    .await
                 });
-                tokio::select! {
-                    biased;
+                commonware_macros::select! {
                     _ = shutdown_token_clone.cancelled() => {
                         info!("consensus stack shutting down");
                         let stop_result = graceful_shutdown
@@ -1037,7 +1438,7 @@ fn run_node() -> eyre::Result<()> {
                                 "consensus graceful shutdown did not complete within 5 seconds: {error}"
                             ))?;
                         Ok(())
-                    }
+                    },
                     result = &mut stack_handle => {
                         let result = result.map_err(|error| {
                             eyre::eyre!("consensus stack task failed: {error:?}")
@@ -1046,7 +1447,7 @@ fn run_node() -> eyre::Result<()> {
                             tracing::error!(%e, "consensus stack failed");
                         }
                         result
-                    }
+                    },
                 }
             })
         });
@@ -1215,15 +1616,56 @@ fn run_node() -> eyre::Result<()> {
             ocomp_fork_install.request_profile.protocol_bundle_hash,
             &ocomp_limits,
         )?;
-        let ocomp_worker_port = args
+        let configured_ocomp_bundle_hashes =
+            std::env::var("OCOMP_PROTOCOL_BUNDLE_HASHES").ok();
+        let ocomp_bundles = load_installed_ocomp_bundles(
+            &ocomp_domain_root,
+            ocomp_bundle,
+            configured_ocomp_bundle_hashes.as_deref(),
+            &ocomp_limits,
+        )?;
+        let ocomp_worker_base_port = args
             .listen_address
             .port()
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
-        let ocomp_worker_address = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            ocomp_worker_port,
-        );
+        let mut ocomp_runtime_bundles = Vec::with_capacity(ocomp_bundles.len());
+        let ocomp_lane_port_stride = u16::try_from(
+            outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS,
+        )
+        .map_err(|_| eyre::eyre!("OCOMP worker limit exceeds u16"))?
+        .checked_add(2)
+        .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port stride overflow"))?;
+        for (index, bundle) in ocomp_bundles.into_iter().enumerate() {
+            let lane = u16::try_from(index)
+                .map_err(|_| eyre::eyre!("OCOMP bundle lane count exceeds u16"))?;
+            let port_offset = lane
+                .checked_mul(ocomp_lane_port_stride)
+                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port offset overflow"))?;
+            let worker_port = ocomp_worker_base_port
+                .checked_add(port_offset)
+                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane leaves no Worker endpoint port"))?;
+            let worker_address = std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                worker_port,
+            );
+            info!(
+                bundle_hash = %bundle.hash(),
+                lane = index,
+                %worker_address,
+                "loaded pinned OCOMP runtime bundle lane"
+            );
+            ocomp_runtime_bundles.push(ocomp_exex::OcompExExBundleConfigV1 {
+                worker_address,
+                identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
+                    chain_id: builder.config().chain.chain().id(),
+                    genesis_hash: builder.config().chain.genesis_hash(),
+                    boot_nonce: ocomp_install_hash,
+                    protocol_bundle_hash: bundle.hash(),
+                },
+                protocol_bundle: bundle,
+            });
+        }
         let ocomp_policy = if args.is_validator {
             outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::Validator
         } else {
@@ -1242,16 +1684,10 @@ fn run_node() -> eyre::Result<()> {
         };
         let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
             domain_root: ocomp_domain_root,
-            worker_address: ocomp_worker_address,
-            identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
-                chain_id: builder.config().chain.chain().id(),
-                genesis_hash: builder.config().chain.genesis_hash(),
-                boot_nonce: ocomp_install_hash,
-                protocol_bundle_hash: ocomp_fork_install.request_profile.protocol_bundle_hash,
-            },
-            protocol_bundle: ocomp_bundle,
+            bundles: ocomp_runtime_bundles,
             policy: ocomp_policy,
             validator_rpc_url: ocomp_validator_rpc_url,
+            chain_id: builder.config().chain.chain().id(),
             genesis_hash: builder.config().chain.genesis_hash(),
         };
         let ocomp_baseline = ProjectionCheckpoint {
@@ -1287,8 +1723,7 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
-        let mut renewal_node_host_authority = None;
-
+        let validator_evm_address = evm_signer.as_ref().map(|signer| signer.address());
         // Every network declares exactly one attestation policy in genesis. The
         // local session protocol is an independent, explicit operator choice:
         // GramineDirectDev may use either the development transport or a real
@@ -1306,14 +1741,14 @@ fn run_node() -> eyre::Result<()> {
             .tee_session_mode
             .resolve(initial_tee_policy.attestation_mode)
             .map_err(eyre::Report::msg)?;
-        match tee_session {
+        let (node_host_signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+            &builder.config().network,
+            builder.config().datadir().p2p_secret(),
+        )?;
+        let expected_enclave_id = match tee_session {
             outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
                 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 
-                let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
-                    &builder.config().network,
-                    builder.config().datadir().p2p_secret(),
-                )?;
                 let client = outbe_tee::connect_or_initialize_node_host_enclave(
                     endpoint,
                     &node_data_dir,
@@ -1326,7 +1761,7 @@ fn run_node() -> eyre::Result<()> {
                         let (signature, recovery): (
                             k256::ecdsa::Signature,
                             k256::ecdsa::RecoveryId,
-                        ) = signing
+                        ) = node_host_signing
                             .sign_prehash(hash.as_slice())
                             .map_err(|error| error.to_string())?;
                         let mut bytes = [0_u8; 65];
@@ -1336,13 +1771,15 @@ fn run_node() -> eyre::Result<()> {
                     },
                 )
                 .wrap_err("NodeHost enclave initialization failed")?;
-                renewal_node_host_authority = Some(signing);
                 // Session material for reconnect-with-identity-revalidation:
                 // loaded once here (takes the NodeHost file lock), never in the
                 // request hot path.
                 let (manifest, node_host) =
                     outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
                         .wrap_err("committed NodeHost session material load failed")?;
+                let enclave_id = manifest
+                    .enclave_id()
+                    .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?;
                 outbe_tee::install_authorized_enclave_client(
                     client,
                     endpoint.to_owned(),
@@ -1351,14 +1788,21 @@ fn run_node() -> eyre::Result<()> {
                     node_host,
                 )
                 .wrap_err("enclave session install failed")?;
+                Some(enclave_id)
             }
             outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                     .wrap_err("development enclave connection failed")?;
                 outbe_tee::install_enclave_client(client, endpoint.to_owned())
                     .wrap_err("enclave session install failed")?;
+                None
             }
-        }
+        };
+        let local_tee_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+            reth_p2p_public,
+            expected_enclave_id,
+            validator: validator_evm_address,
+        };
         info!(
             socket = %socket.display(),
             node_host_identity = "reth-p2p-secp256k1",
@@ -1367,17 +1811,35 @@ fn run_node() -> eyre::Result<()> {
             "mandatory TEE enclave sidecar connected before execution launch",
         );
 
-        // A follower re-executes every protected transaction and therefore must
-        // already hold the exact permanent offer key committed by the running
-        // chain. Prove that invariant before Reth opens networking, RPC, sync or
-        // execution. Losing the key is terminal for this node identity: startup
-        // never invokes recovery, replacement or another bootstrap path.
-        if !args.is_validator {
+        let tee_admission_anchor = if args.is_validator {
+            if expected_enclave_id.is_some() {
+                outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
+                    .wrap_err("load durable validator join admission anchor")?
+                    .map(|durable| {
+                        validator_admission_anchor_from_durable_v1(
+                            durable,
+                            builder.config().chain.chain().id(),
+                            builder.config().chain.genesis_hash(),
+                            local_tee_identity,
+                        )
+                    })
+                    .transpose()?
+            } else {
+                None
+            }
+        } else {
+            // A follower re-executes every protected transaction and therefore must
+            // already hold the exact permanent offer key committed by the running
+            // chain. Prove that invariant before Reth opens networking, RPC, sync or
+            // execution. Losing the key is terminal for this node identity: startup
+            // never invokes recovery, replacement or another bootstrap path.
             let upstream = args.upstream.as_deref().ok_or_else(|| {
                 eyre::eyre!(
                     "full-node startup requires --upstream to authenticate the chain offer key"
                 )
             })?;
+            let admission_anchor =
+                require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
             let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
                 .await
                 .wrap_err("failed to read mandatory offer key from the selected upstream")?;
@@ -1398,43 +1860,7 @@ fn run_node() -> eyre::Result<()> {
                 %upstream,
                 "full-node resident offer key matched upstream before execution launch"
             );
-        }
-
-        let renewal_worker = match initial_tee_policy.attestation_mode {
-            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
-                let relay_path = args.tee_renewal_relay_key.as_deref().ok_or_else(|| {
-                    eyre::eyre!(
-                        "DcapRequired automatic renewal requires --tee-renewal.relay-key"
-                    )
-                })?;
-                let relay = RelaySignerV1::from_file(relay_path).wrap_err_with(|| {
-                    format!("load funded TEE renewal relay key {}", relay_path.display())
-                })?;
-                let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
-                    .wrap_err("load committed NodeHost manifest for renewal")?;
-                let selector = NodeBindingSelectorV1::NodeHost(
-                    manifest.node_id.reth_p2p_public,
-                );
-                let authority = RenewalNodeAuthorityV1(
-                    renewal_node_host_authority.take().ok_or_else(|| {
-                        eyre::eyre!("NodeHost renewal authority is unavailable")
-                    })?,
-                );
-                Some(RenewalWorkerV1 {
-                    rpc_url: args.tee_renewal_rpc_url.clone(),
-                    relay,
-                    authority,
-                    config: RenewalServiceConfigV1 {
-                        node_data_dir: node_data_dir.clone(),
-                        selector,
-                        manifest,
-                    },
-                    poll_secs: args.tee_renewal_poll_secs,
-                    warning_blocks: args.tee_renewal_warning_blocks,
-                    critical_blocks: args.tee_renewal_critical_blocks,
-                })
-            }
-            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => None,
+            Some(admission_anchor)
         };
 
         let offchain_data = args.offchain_data()?;
@@ -1673,6 +2099,42 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        let validator_has_recovery_anchor = args.is_validator && tee_admission_anchor.is_some();
+        let mut tee_lease_guard_gate = TeeLeaseGuardGateV1::new(tee_admission_anchor);
+        if let Some(admission) = read_gated_finalized_local_tee_admission(
+            &node.provider,
+            proof_chain_id,
+            genesis_hash,
+            local_tee_identity,
+            &mut tee_lease_guard_gate,
+        )?
+        {
+            let rejection = if validator_has_recovery_anchor {
+                validator_recovery_startup_admission_rejection(admission)
+            } else {
+                tee_lease_admission_rejection(admission)
+            };
+            if let Some(reason) = rejection {
+                eyre::bail!("local node rejected by finalized TEE lease state: {reason}");
+            }
+        }
+        require_validator_tee_recovery_complete_v1(
+            args.is_validator,
+            tee_lease_guard_gate,
+            &node_data_dir,
+        )?;
+        let (tee_lease_exit_tx, mut tee_lease_exit_rx) =
+            tokio::sync::mpsc::unbounded_channel();
+        let tee_lease_guard_handle = tokio::spawn(run_tee_lease_guard_v1(
+            node.provider.clone(),
+            proof_chain_id,
+            genesis_hash,
+            local_tee_identity,
+            tee_lease_guard_gate,
+            shutdown_token.clone(),
+            tee_lease_exit_tx,
+        ));
+
         let (radicle_consensus, radicle_observer) = if let Some((
             validator,
             sidecar,
@@ -1853,9 +2315,6 @@ fn run_node() -> eyre::Result<()> {
             (None, None)
         };
 
-        let renewal_handle = renewal_worker.map(|worker| {
-            tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
-        });
         // Periodic enclave canary (signal only): known-plaintext decrypt +
         // Health telemetry through the process-global session. `0` disables.
         let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
@@ -1870,7 +2329,7 @@ fn run_node() -> eyre::Result<()> {
             ))
         });
         // Pending staleness eviction. Node-local pool policy, so it runs in
-        // every mode — full nodes are the public RPC ingress and shed stuck
+        // every mode - full nodes are the public RPC ingress and shed stuck
         // transactions that would otherwise be re-gossiped to validators.
         let txpool_maintenance_handle = tokio::spawn(outbe_txpool::maintain::maintain_outbe_pool(
             node.provider.clone(),
@@ -1891,9 +2350,9 @@ fn run_node() -> eyre::Result<()> {
                     chain_id: proof_chain_id,
                     genesis_hash,
                     node_data_dir: node_data_dir.clone(),
-                    poll_secs: args.tee_renewal_poll_secs,
-                    warning_blocks: args.tee_renewal_warning_blocks,
-                    critical_blocks: args.tee_renewal_critical_blocks,
+                    poll_secs: TEE_UPGRADE_POLL_SECS,
+                    warning_blocks: TEE_UPGRADE_WARNING_BLOCKS,
+                    critical_blocks: TEE_UPGRADE_CRITICAL_BLOCKS,
                     promoted,
                 },
             )))
@@ -1976,6 +2435,13 @@ fn run_node() -> eyre::Result<()> {
                     info!("finalized enclave upgrade requested execution restart");
                     LauncherExitCause::UpgradeRequested
                 }
+                rejection = tee_lease_exit_rx.recv() => {
+                    tracing::error!(
+                        reason = %rejection.unwrap_or_else(|| "TEE lease guard stopped without a verdict".to_owned()),
+                        "finalized TEE lease guard requested node shutdown"
+                    );
+                    LauncherExitCause::TeeLeaseRejected
+                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
                     LauncherExitCause::CtrlC
@@ -1990,7 +2456,7 @@ fn run_node() -> eyre::Result<()> {
             }
             handle_consensus_thread_join(consensus_joined)?;
         } else {
-            info!("outbe node launched in FULL NODE mode — no consensus thread spawned");
+            info!("outbe node launched in FULL NODE mode - no consensus thread spawned");
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
 
             tokio::select! {
@@ -2030,18 +2496,27 @@ fn run_node() -> eyre::Result<()> {
                         let _ = done.await;
                     }
                 }
+                rejection = tee_lease_exit_rx.recv() => {
+                    tracing::error!(
+                        reason = %rejection.unwrap_or_else(|| "TEE lease guard stopped without a verdict".to_owned()),
+                        "finalized TEE lease guard requested full-node shutdown"
+                    );
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
             }
         }
 
         shutdown_token.cancel();
+        tee_lease_guard_handle
+            .await
+            .wrap_err("TEE lease guard panicked")?;
         if let Some(handle) = radicle_observer {
             match tokio::time::timeout(std::time::Duration::from_secs(6), handle).await {
                 Ok(result) => result.wrap_err("Radicle observer panicked")?,
                 Err(_) => tracing::warn!("Radicle observer join deadline exceeded"),
             }
-        }
-        if let Some(handle) = renewal_handle {
-            handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
         }
         if let Some(handle) = tee_canary_handle {
             handle.await.wrap_err("TEE canary worker panicked")?;
@@ -2104,7 +2579,7 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
 /// proposals which fail to finalize is re-injected by the reorg path and stays
 /// pending indefinitely. Two upstream defaults made that worse:
 ///
-/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours — far longer
+/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours - far longer
 ///   than any legitimate parked transaction needs on a two-second chain.
 /// - RPC-submitted transactions are treated as "local" and are exempt from
 ///   lifetime eviction. The incident transactions arrived over public RPC, so
@@ -2119,7 +2594,7 @@ fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
         .with_disable_transactions_backup(OUTBE_TXPOOL_DISABLE_BACKUP)
 }
 
-/// Parked-transaction lifetime. Reth's own default is three hours — orders of
+/// Parked-transaction lifetime. Reth's own default is three hours - orders of
 /// magnitude longer than a two-second chain needs.
 const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
 /// RPC-submitted transactions must NOT be exempt from lifetime eviction.
@@ -2151,6 +2626,293 @@ mod tests {
     }
 
     struct ExecutionTeardownSentinel(Arc<AtomicBool>);
+
+    fn full_node_admission_anchor() -> super::LocalTeeAdmissionAnchorV1 {
+        super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: alloy_primitives::B256::repeat_byte(0x77),
+        }
+    }
+
+    #[test]
+    fn full_node_lease_guard_waits_strictly_below_authenticated_anchor() {
+        let anchor = full_node_admission_anchor();
+        let gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        assert!(!gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(0), None);
+        assert_eq!(gate.anchor_to_validate(6), None);
+        assert_eq!(gate.anchor_to_validate(7), Some(anchor));
+        assert_eq!(gate.anchor_to_validate(70), Some(anchor));
+    }
+
+    #[test]
+    fn full_node_lease_guard_arms_only_on_exact_ready_anchor() {
+        let anchor = full_node_admission_anchor();
+        let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        gate.validate_and_arm(
+            anchor.finalized_hash,
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+                valid_until: 1_800_000_000,
+            },
+        )
+        .expect("exact live anchor must arm the local guard");
+
+        assert!(gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(anchor.finalized_height), None);
+    }
+
+    #[test]
+    fn full_node_lease_guard_fails_closed_on_anchor_hash_mismatch() {
+        let anchor = full_node_admission_anchor();
+        let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        let error = gate
+            .validate_and_arm(
+                alloy_primitives::B256::repeat_byte(0x78),
+                outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+                    valid_until: 1_800_000_000,
+                },
+            )
+            .expect_err("a different local canonical hash must fail closed");
+
+        assert!(error.to_string().contains("anchor hash mismatch"));
+        assert!(!gate.is_armed());
+    }
+
+    #[test]
+    fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
+        use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+
+        for admission in [
+            LocalTeeRuntimeAdmissionV1::BootstrapPending,
+            LocalTeeRuntimeAdmissionV1::Rejected(LocalTeeRuntimeRejectionV1::MissingBinding),
+            LocalTeeRuntimeAdmissionV1::Rejected(
+                LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch,
+            ),
+            LocalTeeRuntimeAdmissionV1::Rejected(LocalTeeRuntimeRejectionV1::Expired {
+                valid_until: 1_700_000_000,
+            }),
+        ] {
+            let anchor = full_node_admission_anchor();
+            let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+            assert!(gate
+                .validate_and_arm(anchor.finalized_hash, admission)
+                .is_err());
+            assert!(!gate.is_armed());
+        }
+    }
+
+    #[test]
+    fn validators_start_armed_and_later_rejections_remain_terminal() {
+        use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+
+        let gate = super::TeeLeaseGuardGateV1::new(None);
+        assert!(gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(u64::MAX), None);
+
+        let reason = super::tee_lease_admission_rejection(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::Expired { valid_until: 42 },
+        ))
+        .expect("an armed guard must preserve fail-stop semantics");
+        assert!(reason.contains("expired at 42"));
+    }
+
+    #[test]
+    fn validator_current_bootstrap_pending_admission_is_terminal() {
+        use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+
+        let reason = super::validator_recovery_startup_admission_rejection(
+            LocalTeeRuntimeAdmissionV1::BootstrapPending,
+        )
+        .expect("current finalized BootstrapPending admission must fail closed");
+        assert!(reason.contains("bootstrap-pending"));
+        assert_eq!(
+            super::tee_lease_admission_rejection(LocalTeeRuntimeAdmissionV1::BootstrapPending),
+            None,
+            "legacy no-anchor startup must preserve bootstrap compatibility"
+        );
+    }
+
+    #[test]
+    fn full_node_restart_revalidates_the_new_upstream_anchor() {
+        use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+
+        let old_anchor = full_node_admission_anchor();
+        let mut before_restart = super::TeeLeaseGuardGateV1::new(Some(old_anchor));
+        before_restart
+            .validate_and_arm(
+                old_anchor.finalized_hash,
+                LocalTeeRuntimeAdmissionV1::Ready { valid_until: 100 },
+            )
+            .unwrap();
+        assert!(before_restart.is_armed());
+
+        let new_anchor = super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 12,
+            finalized_hash: alloy_primitives::B256::repeat_byte(0x12),
+        };
+        let mut after_restart = super::TeeLeaseGuardGateV1::new(Some(new_anchor));
+        assert!(!after_restart.is_armed());
+        assert_eq!(after_restart.anchor_to_validate(11), None);
+        assert_eq!(after_restart.anchor_to_validate(12), Some(new_anchor));
+        after_restart
+            .validate_and_arm(
+                new_anchor.finalized_hash,
+                LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
+            )
+            .unwrap();
+        assert!(after_restart.is_armed());
+    }
+
+    #[test]
+    fn validator_below_durable_join_anchor_fails_with_certified_follower_recovery() {
+        let anchor = full_node_admission_anchor();
+        let mut recovery = super::TeeLeaseGuardGateV1::new(Some(anchor));
+        let data_dir = std::path::Path::new("/srv/outbe/validator-3");
+
+        let error = super::require_validator_tee_recovery_complete_v1(true, recovery, data_dir)
+            .expect_err("a stale validator must not start authority services");
+        let message = error.to_string();
+        assert!(message.contains("certified follower"));
+        assert!(message.contains("/srv/outbe/validator-3"));
+        assert!(message.contains("omit --validator"));
+        assert!(message.contains("--upstream <healthy-certified-rpc>"));
+        assert!(message.contains("do not use --upstream.nocertify"));
+        assert!(message.contains("stop the follower"));
+        assert!(message.contains("fresh DKG"));
+
+        super::require_validator_tee_recovery_complete_v1(false, recovery, data_dir)
+            .expect("a FullNode keeps its existing asynchronous gate");
+        super::require_validator_tee_recovery_complete_v1(
+            true,
+            super::TeeLeaseGuardGateV1::new(None),
+            data_dir,
+        )
+        .expect("a legacy validator without recovery state remains compatible");
+
+        recovery
+            .validate_and_arm(
+                anchor.finalized_hash,
+                outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
+            )
+            .unwrap();
+        super::require_validator_tee_recovery_complete_v1(true, recovery, data_dir)
+            .expect("an exact Ready anchor permits ordinary validator startup");
+    }
+
+    #[test]
+    fn durable_validator_anchor_must_match_the_running_chain_node_and_enclave() {
+        use alloy_primitives::U256;
+        use outbe_primitives::tee_attestation_v1::NodeIdV1;
+
+        let reth_p2p_public: [u8; 33] = k256::ecdsa::SigningKey::from_bytes((&[0x41; 32]).into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let node_id_hash = NodeIdV1 { reth_p2p_public }.node_id_hash().unwrap();
+        let enclave_id = alloy_primitives::B256::repeat_byte(0x42);
+        let durable = outbe_tee::FinalizedJoinAdmissionAnchorV1 {
+            chain_id: U256::from(676_u64).to_be_bytes(),
+            genesis_hash: alloy_primitives::B256::repeat_byte(0x43),
+            node_id_hash,
+            enclave_id,
+            intent_hash: alloy_primitives::B256::repeat_byte(0x44),
+            finalized_height: 91,
+            finalized_hash: alloy_primitives::B256::repeat_byte(0x45),
+            finalized_state_root: alloy_primitives::B256::repeat_byte(0x46),
+            finalized_consensus_timestamp: 19_000,
+        };
+        let identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+            reth_p2p_public,
+            expected_enclave_id: Some(enclave_id),
+            validator: Some(alloy_primitives::Address::repeat_byte(0x47)),
+        };
+
+        assert_eq!(
+            super::validator_admission_anchor_from_durable_v1(
+                durable,
+                676,
+                durable.genesis_hash,
+                identity,
+            )
+            .unwrap(),
+            super::LocalTeeAdmissionAnchorV1 {
+                finalized_height: durable.finalized_height,
+                finalized_hash: durable.finalized_hash,
+            }
+        );
+
+        let wrong_enclave = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+            expected_enclave_id: Some(alloy_primitives::B256::repeat_byte(0x48)),
+            ..identity
+        };
+        assert!(super::validator_admission_anchor_from_durable_v1(
+            durable,
+            676,
+            durable.genesis_hash,
+            wrong_enclave,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("enclave"));
+    }
+
+    #[test]
+    fn ocomp_bundle_catalog_can_rotate_from_v1_v2_to_v2_v3() {
+        let v1 = alloy_primitives::B256::repeat_byte(0x11);
+        let v2 = alloy_primitives::B256::repeat_byte(0x22);
+        let v3 = alloy_primitives::B256::repeat_byte(0x33);
+        let installed = std::collections::BTreeMap::from([(v2, ()), (v3, ())]);
+        let configured = format!("{v2:#x},{v3:#x}");
+
+        let ordered =
+            super::ordered_installed_ocomp_bundle_hashes(v1, &installed, Some(&configured))
+                .expect("post-genesis adjacent authorities should not force V1");
+
+        assert_eq!(ordered, vec![v2, v3]);
+    }
+
+    #[test]
+    fn post_genesis_two_bundle_catalog_requires_explicit_lane_order() {
+        let v1 = alloy_primitives::B256::repeat_byte(0x11);
+        let v2 = alloy_primitives::B256::repeat_byte(0x22);
+        let v3 = alloy_primitives::B256::repeat_byte(0x33);
+        let installed = std::collections::BTreeMap::from([(v2, ()), (v3, ())]);
+
+        let error = super::ordered_installed_ocomp_bundle_hashes(v1, &installed, None)
+            .expect_err("hash order must be explicit after genesis V1 is retired");
+
+        assert!(error
+            .to_string()
+            .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required"));
+    }
+
+    #[test]
+    fn configured_ocomp_bundle_hashes_are_exact_lowercase_and_unique() {
+        let hash = alloy_primitives::B256::repeat_byte(0xab);
+        assert_eq!(
+            super::parse_ocomp_bundle_hashes(&format!("{hash:#x}"))
+                .expect("canonical hash should parse"),
+            vec![hash]
+        );
+        assert!(
+            super::parse_ocomp_bundle_hashes(&format!("{hash:#x},{hash:#x}"))
+                .expect_err("duplicate must fail")
+                .to_string()
+                .contains("duplicate")
+        );
+        assert!(super::parse_ocomp_bundle_hashes(
+            "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+        )
+        .expect_err("uppercase must fail")
+        .to_string()
+        .contains("lowercase"));
+    }
 
     impl Drop for ExecutionTeardownSentinel {
         fn drop(&mut self) {
@@ -2326,7 +3088,7 @@ mod tests {
     /// restart must not resurrect what the node evicted.
     ///
     /// Asserted through `TxPoolArgs::default()`, which reads the installed
-    /// global defaults — the same values clap hands the node when no
+    /// global defaults - the same values clap hands the node when no
     /// `--txpool.*` flag is given.
     #[test]
     fn txpool_defaults_bound_transaction_lifetime() {
@@ -2420,7 +3182,7 @@ mod tests {
         // Simulate full-node path: drop sender without sending.
         drop(node_tx);
 
-        // Consensus thread would call blocking_recv — should return Err immediately.
+        // Consensus thread would call blocking_recv - should return Err immediately.
         let result = node_rx.blocking_recv();
         assert!(
             result.is_err(),
@@ -2428,7 +3190,7 @@ mod tests {
         );
     }
 
-    /// Full-node mode: RPC handler created without bridge → is_validator = false.
+    /// Full-node mode: RPC handler created without bridge -> is_validator = false.
     #[test]
     fn test_fullnode_rpc_no_bridge_means_not_validator() {
         // When OutbeApiHandler::new(provider) is called (no bridge),
@@ -2436,18 +3198,18 @@ mod tests {
         let bridge: Option<outbe_engine::bridge::ConsensusExecutionBridge> = None;
         assert!(
             bridge.is_none(),
-            "full node must have bridge=None → is_validator=false"
+            "full node must have bridge=None -> is_validator=false"
         );
     }
 
-    /// Validator mode: RPC handler created with bridge → is_validator = true.
+    /// Validator mode: RPC handler created with bridge -> is_validator = true.
     #[test]
     fn test_validator_rpc_with_bridge_means_validator() {
         let bridge = outbe_engine::bridge::ConsensusExecutionBridge::new();
         let bridge_opt: Option<outbe_engine::bridge::ConsensusExecutionBridge> = Some(bridge);
         assert!(
             bridge_opt.is_some(),
-            "validator must have bridge=Some → is_validator=true"
+            "validator must have bridge=Some -> is_validator=true"
         );
     }
 
@@ -2518,7 +3280,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_ethereum_mainnet_remains_invalid_for_outbe() {
+    fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
         install_cli_defaults_for_test();
         type OutbeCli = reth_ethereum::cli::interface::Cli<
             super::OutbeChainSpecParser,
@@ -2537,9 +3299,9 @@ mod tests {
 
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         let rendered = error.to_string();
+        assert!(rendered.contains("unknown Outbe chain ID 1"), "{rendered}");
         assert!(
-            rendered.contains("mandatory teeAttestationV1")
-                || rendered.contains("mandatory OCOMP fork install"),
+            !rendered.contains("unknown Outbe chain ID 676"),
             "{rendered}"
         );
     }

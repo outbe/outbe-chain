@@ -53,6 +53,12 @@ SECP256K1_G = (
 DEFAULT_PREFUND_COEN_UNITS = 10_000 * 10**6
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
+MAINNET_CHAIN_ID = 676
+NETWORK_IDENTITIES = {
+    "devnet": (DEVNET_CHAIN_ID, "outbe-devnet-1"),
+    "testnet": (TESTNET_CHAIN_ID, "outbe-testnet-1"),
+    "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
+}
 # OCOMP jobs can live for 1,868 blocks. The canonical localnet and retained
 # final-artifact fixture use a 300-block epoch, so the fixed eight-epoch
 # committee snapshot ring retains 7 * 300 = 2,100 blocks of history.
@@ -60,6 +66,68 @@ DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
 DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS = 30
 DEFAULT_GAS_LIMIT = "0x1c9c380"
+
+
+def resolve_network_profile(
+    network: str | None, chain_id: int | None, tee_mode: str
+) -> tuple[str, int, str]:
+    if chain_id is None:
+        if tee_mode == "dcap-required":
+            raise ValueError("dcap-required requires an explicit --chain-id")
+        chain_id = DEVNET_CHAIN_ID
+    inferred = next(
+        (name for name, (known_id, _) in NETWORK_IDENTITIES.items() if known_id == chain_id),
+        None,
+    )
+    if inferred is None:
+        raise ValueError(f"unknown Outbe chain id {chain_id}")
+    if network is None:
+        if inferred == "mainnet":
+            raise ValueError("Mainnet chain id 676 requires --network mainnet")
+        network = inferred
+    if network not in NETWORK_IDENTITIES:
+        raise ValueError(f"unknown Outbe network {network!r}")
+    expected_id, chain_name = NETWORK_IDENTITIES[network]
+    if chain_id != expected_id:
+        raise ValueError(f"{network} requires chain id {expected_id}, not {chain_id}")
+    if network == "mainnet" and tee_mode != "dcap-required":
+        raise ValueError("Mainnet requires --tee-mode dcap-required")
+    if tee_mode == "gramine-direct-dev" and network not in ("devnet", "testnet"):
+        raise ValueError("gramine-direct-dev requires the devnet or testnet profile")
+    if tee_mode == "dcap-required" and network not in (
+        "devnet",
+        "testnet",
+        "mainnet",
+    ):
+        raise ValueError("dcap-required requires a canonical Outbe network profile")
+    return network, chain_id, chain_name
+
+
+def validate_mainnet_options(args: argparse.Namespace) -> None:
+    forbidden = (
+        ("generate_validators", "--generate-validators"),
+        ("include_private_keys", "--include-private-keys"),
+        ("use_local_defaults", "--use-local-defaults"),
+        ("force_reth_secrets", "--force-reth-secrets"),
+    )
+    for attribute, option in forbidden:
+        if getattr(args, attribute, None):
+            raise ValueError(f"Mainnet forbids {option}")
+
+
+def require_mainnet_ocomp_material(material_dir: Path, count: int) -> None:
+    required = ("ocomp-key-v1.hex", "ocomp-registration-v1.ocb1")
+    missing = [
+        str(material_dir / f"validator-{index}" / name)
+        for index in range(count)
+        for name in required
+        if not (material_dir / f"validator-{index}" / name).is_file()
+    ]
+    if missing:
+        raise ValueError(
+            "Mainnet requires operator-owned OCOMP material; missing "
+            + ", ".join(missing)
+        )
 
 
 def load_json(path: Path) -> Any:
@@ -450,7 +518,12 @@ def validate_founder_radicle_material(
 
 
 def import_founder_material(
-    source: Path, output_dir: Path, count: int, validators: list[dict[str, Any]]
+    source: Path,
+    output_dir: Path,
+    count: int,
+    validators: list[dict[str, Any]],
+    *,
+    include_ocomp: bool = False,
 ) -> None:
     validate_founder_radicle_material(validators, source, count)
     required_private = ("signing-key.hex", "evm-key.hex")
@@ -468,6 +541,11 @@ def import_founder_material(
             source / f"validator-{index}" / "radicle",
             destination / "radicle",
         )
+        if include_ocomp:
+            for name in ("ocomp-key-v1.hex", "ocomp-registration-v1.ocb1"):
+                destination_path = destination / name
+                shutil.copyfile(source / f"validator-{index}" / name, destination_path)
+                destination_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 def verify_founder_material(
@@ -853,6 +931,8 @@ def build_network_markdown(
     enclave_commands: list[tuple[int, str, list[str]]],
     reth_rows: list[dict[str, Any]],
     runtime_base_dir: str,
+    network_name: str,
+    chain_id: int,
     include_private_keys: bool,
     wallet_private_keys: dict[int, str] | None = None,
 ) -> str:
@@ -861,6 +941,7 @@ def build_network_markdown(
     lines.append("# Outbe Network Launch Plan")
     lines.append("")
     lines.append("Generated as one chain-bound four-founder deployment bundle.")
+    lines.append(f"Canonical network: `{network_name}` (chain ID `{chain_id}`).")
     lines.append("")
     lines.append("## Artifacts")
     lines.append("")
@@ -995,6 +1076,7 @@ def main() -> None:
         "--prefund-coen-units", type=int, default=DEFAULT_PREFUND_COEN_UNITS
     )
     parser.add_argument("--chain-id", type=int)
+    parser.add_argument("--network", choices=tuple(NETWORK_IDENTITIES))
     parser.add_argument("--epoch-length-blocks", type=int, default=DEFAULT_EPOCH_LENGTH_BLOCKS)
     parser.add_argument("--dkg-prepare-window-blocks", type=int, default=DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
     parser.add_argument("--dkg-activation-grace-blocks", type=int, default=DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
@@ -1015,20 +1097,11 @@ def main() -> None:
     parser.add_argument("--force-reth-secrets", action="store_true")
     args = parser.parse_args()
 
-    if args.chain_id is None:
-        if args.tee_mode == "dcap-required":
-            raise ValueError(
-                f"dcap-required requires explicit testnet --chain-id {TESTNET_CHAIN_ID}"
-            )
-        args.chain_id = DEVNET_CHAIN_ID
-    if args.tee_mode == "gramine-direct-dev" and args.chain_id != DEVNET_CHAIN_ID:
-        raise ValueError(
-            f"gramine-direct-dev requires devnet chain id {DEVNET_CHAIN_ID}"
-        )
-    if args.tee_mode == "dcap-required" and args.chain_id != TESTNET_CHAIN_ID:
-        raise ValueError(
-            f"dcap-required requires testnet chain id {TESTNET_CHAIN_ID}"
-        )
+    network, args.chain_id, network_name = resolve_network_profile(
+        args.network, args.chain_id, args.tee_mode
+    )
+    if network == "mainnet":
+        validate_mainnet_options(args)
     if args.tee_mode == "dcap-required" and re.fullmatch(
         r"[^\s]+@sha256:[0-9a-f]{64}", args.enclave_image
     ) is None:
@@ -1049,8 +1122,7 @@ def main() -> None:
     projection_scope = secrets.token_hex(8)
     write_secret_hex(output_dir / "projection-scope", projection_scope)
     projection_database_prefix = args.projection_database_prefix or (
-        ("outbe_testnet" if args.tee_mode == "dcap-required" else "outbe_devnet")
-        + f"_{projection_scope}"
+        f"outbe_{network}_{projection_scope}"
     )
 
     if args.validators and args.generate_validators:
@@ -1105,8 +1177,14 @@ def main() -> None:
             validators_path=validators_path,
             material_dir=args.founder_material_dir,
         )
+        if network == "mainnet":
+            require_mainnet_ocomp_material(args.founder_material_dir, 4)
         import_founder_material(
-            args.founder_material_dir, output_dir, 4, external_validators
+            args.founder_material_dir,
+            output_dir,
+            4,
+            external_validators,
+            include_ocomp=network == "mainnet",
         )
 
     validators_raw = load_json(validators_path)
@@ -1176,12 +1254,13 @@ def main() -> None:
         validators=copied_validators_path,
         output=ocomp_bindings_path,
     )
-    run_ocomp_keygen(
-        keygen_binary=args.keygen_binary,
-        output_dir=output_dir,
-        bindings=ocomp_bindings,
-        validators=validators,
-    )
+    if network != "mainnet":
+        run_ocomp_keygen(
+            keygen_binary=args.keygen_binary,
+            output_dir=output_dir,
+            bindings=ocomp_bindings,
+            validators=validators,
+        )
     protocol_bundle_path = output_dir / "protocol-bundle-v1.ocb1"
     run_ocomp_genesis(
         chain_binary=args.chain_binary,
@@ -1369,11 +1448,17 @@ def main() -> None:
         enclave_commands=enclave_commands,
         reth_rows=rows,
         runtime_base_dir=runtime_base_dir,
+        network_name=network_name,
+        chain_id=args.chain_id,
         include_private_keys=args.include_private_keys,
         wallet_private_keys=wallet_private_keys,
     )
     network_path = output_dir / "network.md"
     network_path.write_text(network_md)
+    write_json(
+        output_dir / "network-identity.json",
+        {"network": network, "chainId": args.chain_id, "chainName": network_name},
+    )
 
     print("Prepared Outbe network:")
     print(f"  genesis:        {genesis_path}")

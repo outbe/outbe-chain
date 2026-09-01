@@ -1,4 +1,4 @@
-//! Outbe EVM config — wraps `EthEvmConfig<ChainSpec, OutbeEvmFactory>` and
+//! Outbe EVM config - wraps `EthEvmConfig<ChainSpec, OutbeEvmFactory>` and
 //! replaces the executor factory so that every block goes through
 //! [`OutbeBlockExecutor`] instead of [`EthBlockExecutor`] directly.
 
@@ -172,7 +172,7 @@ impl AccountedParentArtifactProvider for BridgeAccountedParentArtifactProvider {
 /// Lookup order (per trait contract):
 /// 1. Exact `(block_number, block_hash)` cache hit (when `summary_cache` is
 ///    present).
-/// 2. `provider.sealed_header_by_hash(block_hash)` — exact-hash, tree-state
+/// 2. `provider.sealed_header_by_hash(block_hash)` - exact-hash, tree-state
 ///    aware. Caller of [`HeaderProvider::sealed_header_by_hash`] sees both
 ///    canonical AND unfinalized side-chain headers, so this branch is the
 ///    primary V2 path and resolves correctly across reorgs.
@@ -184,7 +184,7 @@ impl AccountedParentArtifactProvider for BridgeAccountedParentArtifactProvider {
 /// **Visibility-miss normalization**: the trait contract for
 /// `execution_summary_by_hash` says `Ok(None)` means "I do not currently have
 /// this parent". Reth's `HeaderProvider` surfaces a not-yet-visible header as
-/// `Err(ProviderError::HeaderNotFound)` (e.g. during the FCU-Valid → MDBX-commit
+/// `Err(ProviderError::HeaderNotFound)` (e.g. during the FCU-Valid -> MDBX-commit
 /// race, when consensus has finalized the parent but Reth has not persisted
 /// the sealed header yet). Both provider branches normalize that variant to
 /// `Ok(None)` so the executor's checked `parent_artifact_hint` fallback can
@@ -226,14 +226,14 @@ where
         block_number: u64,
         block_hash: B256,
     ) -> Result<Option<AccountedParentArtifact>, reth_evm::execute::ProviderError> {
-        // (1) Cache hit — exact `(block_number, block_hash)` only.
+        // (1) Cache hit - exact `(block_number, block_hash)` only.
         if let Some(cached) = self.cached_artifact(block_number, block_hash) {
             return Ok(Some(cached));
         }
 
         // (2) Exact-hash provider lookup. Sees tree-state, so unfinalized
         // side-chain parents are resolvable as long as the import path has
-        // already inserted the header. During the FCU-Valid → MDBX-commit
+        // already inserted the header. During the FCU-Valid -> MDBX-commit
         // race the provider may surface `HeaderNotFound`; the trait
         // contract treats that as a visibility miss (`Ok(None)`), letting
         // the executor fall through to its checked `parent_artifact_hint`.
@@ -241,7 +241,7 @@ where
             Ok(Some(sealed)) => {
                 // `(block_number, block_hash)` must match the resolved
                 // header. A header whose number diverges from the metadata is
-                // a protocol violation — reject loudly rather than silently
+                // a protocol violation - reject loudly rather than silently
                 // using a wrong block. This is NOT a visibility miss.
                 if sealed.header().number() != block_number {
                     return Err(reth_evm::execute::ProviderError::HeaderNotFound(
@@ -255,10 +255,10 @@ where
             Err(error) => return Err(error),
         }
 
-        // (3) Canonical-by-number fallback — gated by explicit hash equality
+        // (3) Canonical-by-number fallback - gated by explicit hash equality
         //. If the canonical entry at `block_number` does not hash to
         // `block_hash`, return `Ok(None)`. The caller (executor) maps `None`
-        // to a `BlockExecutionError` — never a silent wrong-parent acceptance.
+        // to a `BlockExecutionError` - never a silent wrong-parent acceptance.
         // `HeaderNotFound` here is also a visibility miss; other `Err`
         // variants propagate.
         match self.provider.sealed_header(block_number) {
@@ -433,7 +433,7 @@ impl BlockAssembler<OutbeEvmConfig> for OutbeBlockAssembler {
         ))?;
 
         // `inner.extra_data` already encodes `timestamp_millis_part`
-        // (under tag 0x05) — see `OutbeBlockBuilder::finish` in
+        // (under tag 0x05) - see `OutbeBlockBuilder::finish` in
         // `crates/blockchain/evm/src/builder.rs`. The wrapper carries
         // no extra RLP fields, so the resulting block hash is exactly
         // `keccak256(rlp(standard_ethereum_header))`.
@@ -504,12 +504,16 @@ impl OutbeEvmConfig {
     /// live validator and full node. Previously only `::new` installed it, but
     /// production never builds via `::new`, so `consensus_chain_id()` stayed at
     /// its default `0` and the signing namespace collapsed to `b"outbe" || 0` on
-    /// every chain — silently disabling the cross-chain-replay binding.
+    /// every chain - silently disabling the cross-chain-replay binding.
     ///
-    /// Idempotent: the first value wins (the chain id is genesis-fixed and
-    /// constant for the process), so duplicate constructions are no-ops.
+    /// Reinstalling the same genesis-fixed id is idempotent. A conflicting
+    /// construction is a process configuration error and fails immediately
+    /// instead of silently retaining the first namespace.
     fn install_consensus_chain_id(chain_spec: &Arc<ChainSpec<OutbeHeader>>) {
-        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id());
+        if let Err(error) = outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
+        {
+            panic!("failed to bind the EVM to its consensus chain id: {error}");
+        }
         // Surface the actually-bound id exactly once so operators can confirm the
         // namespace is chain-separated (a `0` here would mean it is degenerate).
         static LOG_ONCE: std::sync::Once = std::sync::Once::new();
@@ -659,7 +663,7 @@ impl OutbeEvmConfig {
     /// full-node constructor. Installs an
     /// [`AccountedParentArtifactProvider`] backed solely by a Reth
     /// [`HeaderProvider`] (no consensus bridge / proof cache). Used by
-    /// `OutbeExecutorBuilder` when the node runs without a consensus bridge —
+    /// `OutbeExecutorBuilder` when the node runs without a consensus bridge -
     /// e.g., a full node syncing the chain. Without this path the executor's
     /// Phase 1 lookup would fail with "missing provider" on every block, and
     /// full nodes would be unable to re-execute the chain.
@@ -1404,7 +1408,7 @@ impl ConfigureEvm for OutbeEvmConfig {
     type Primitives = OutbePrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = OutbeNextBlockEnvAttributes;
-    /// The block executor factory IS `OutbeEvmConfig` itself — it creates
+    /// The block executor factory IS `OutbeEvmConfig` itself - it creates
     /// `OutbeBlockExecutor` instances.
     type BlockExecutorFactory = Self;
     type BlockAssembler = OutbeBlockAssembler;
@@ -1494,7 +1498,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             // time the executor runs (validation happens after import), so
             // `sealed_header_by_hash` resolves the artifact via the provider
             // (lookup ladder step 2 in `RethAccountedParentArtifactProvider`).
-            // The FCU-Valid → MDBX-commit race is a proposer-side window only;
+            // The FCU-Valid -> MDBX-commit race is a proposer-side window only;
             // validators do not need the in-memory `parent_artifact_hint`
             // fallback here.
             parent_artifact_hint: None,
@@ -1865,6 +1869,7 @@ mod tests {
             encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
             LateFinalizeCreditsArtifact, OutbeBlockArtifacts, PerBlockCredit,
         },
+        tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
         OutbeHeader,
     };
     use reth_chainspec::ChainInfo;
@@ -1954,7 +1959,20 @@ mod tests {
     }
 
     fn test_chain_spec() -> std::sync::Arc<ChainSpec<OutbeHeader>> {
-        MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+        let mut spec = MAINNET.as_ref().clone();
+        spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+        spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+        spec.map_header(OutbeHeader::new).into()
+    }
+
+    #[test]
+    fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
+        let chain_spec = test_chain_spec();
+        assert_eq!(chain_spec.chain().id(), GRAMINE_DIRECT_DEV_CHAIN_ID);
+        assert_eq!(
+            chain_spec.genesis.config.chain_id,
+            GRAMINE_DIRECT_DEV_CHAIN_ID
+        );
     }
 
     #[test]
@@ -2055,7 +2073,7 @@ mod tests {
         let parent = test_parent_with_millis_part(7);
         // Post-refactor (sub-second timestamp moved into `extra_data`)
         // the wrapper hash and the inner Ethereum hash are identical
-        // by design — that is the Ethereum-spec compatibility this
+        // by design - that is the Ethereum-spec compatibility this
         // refactor guarantees. The test still verifies that
         // `context_for_next_block` propagates the sealed parent hash
         // unchanged.
@@ -2125,7 +2143,7 @@ mod tests {
 
     /// `sanitize_next_block_extra_data` must PRESERVE a non-empty
     /// `late_finalize_credits` artifact (while resetting `execution_summary` and
-    /// `timestamp_millis_part`, which the payload builder recomputes) — otherwise
+    /// `timestamp_millis_part`, which the payload builder recomputes) - otherwise
     /// the proposer-packed late credits would be silently dropped before sealing.
     #[test]
     fn sanitizer_preserves_late_credits() {

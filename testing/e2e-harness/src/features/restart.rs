@@ -184,7 +184,7 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
         world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
         "post-committee-restart offer did not land (supply != 1)"
     );
-    // The offer above went through every restarted enclave — its per-request
+    // The offer above went through every restarted enclave - its per-request
     // telemetry line proves the post-restart enclave served the decrypt.
     for index in 0..world.validators.size() {
         assert!(
@@ -244,7 +244,7 @@ fn resumes_without_new_ceremony(world: &mut World) {
     );
 }
 
-/// Complete a 4→5 DKG while the joiner is still PENDING, leaving a durable
+/// Complete a 4->5 DKG while the joiner is still PENDING, leaving a durable
 /// recovery checkpoint and a real block interval before activation.
 #[when("a joiner completes DKG and waits below the activation boundary")]
 fn joiner_completes_dkg_before_activation(world: &mut World) {
@@ -373,7 +373,7 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
     );
 }
 
-/// Catch the first observable freeze of a 4→5 target and immediately restart
+/// Catch the first observable freeze of a 4->5 target and immediately restart
 /// the joining node plus enclave, before it can persist completed material.
 #[when("a joining validator is restarted during its DKG ceremony")]
 fn restart_joiner_during_dkg(world: &mut World) {
@@ -641,7 +641,7 @@ fn registered_restart_then_join_activates(world: &mut World) {
     }
 }
 
-/// Interrupt one existing committee member only after the scheduled 4→5
+/// Interrupt one existing committee member only after the scheduled 4->5
 /// reshare has actually frozen and entered DKG. The restart must not create a
 /// second target or permit a partial activation.
 #[when("an active validator and enclave restart during a joining reshare")]

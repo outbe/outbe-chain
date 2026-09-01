@@ -8,11 +8,11 @@
 //!
 //! The proptest exercises the *deterministic core* of upstream
 //! `revm-interpreter-35.0.1/src/instructions/contract/call_helpers.rs:55`
-//! `load_acc_and_calc_gas` — namely the EIP-150 forward-cap formula
+//! `load_acc_and_calc_gas` - namely the EIP-150 forward-cap formula
 //! `min(parent_remaining - parent_remaining / 64, stack_gas_limit)` and
 //! the call stipend addition. Two independent implementations
 //! (`local_calc_subcall_gas_cap` and `reference_calc_subcall_gas_cap`)
-//! must produce byte-equal `u64` on ≥1000 random fixtures.
+//! must produce byte-equal `u64` on >=1000 random fixtures.
 //!
 //! ## What this spike does NOT cover (deferred to T4)
 //!
@@ -44,7 +44,7 @@ use proptest::prelude::*;
 
 /// Local (spike) re-implementation of the EIP-150 gas cap formula plus
 /// stipend addition, modeled after upstream
-/// `load_acc_and_calc_gas` lines 86–101.
+/// `load_acc_and_calc_gas` lines 86-101.
 ///
 /// `stipend_reduction_divisor` defaults to 64 mainnet (per
 /// `revm-context-interface-17.0.1/src/cfg/gas_params.rs:211`); kept as a

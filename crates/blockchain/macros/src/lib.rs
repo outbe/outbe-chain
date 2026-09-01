@@ -429,10 +429,10 @@ pub fn storage_schema(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `pub fn dispatch(storage, data, caller, value) -> Result<Bytes>`.
 ///
 /// Companion markers on individual methods:
-/// - `#[contract_view]` — read-only; method takes only ABI args.
-/// - `#[contract_payable]` — `caller: Address, value: U256` are the first
+/// - `#[contract_view]` - read-only; method takes only ABI args.
+/// - `#[contract_payable]` - `caller: Address, value: U256` are the first
 ///   two parameters after `&mut self`, followed by ABI args.
-/// - (no marker) — default mutating: `caller: Address` is the first
+/// - (no marker) - default mutating: `caller: Address` is the first
 ///   parameter after `&mut self`, followed by ABI args.
 #[proc_macro_attribute]
 pub fn contract_dispatch(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -515,7 +515,7 @@ fn generate_contract(
         if n == "address" || n == "storage" {
             return Err(syn::Error::new_spanned(
                 field_name,
-                format!("field name `{n}` is reserved — generated automatically"),
+                format!("field name `{n}` is reserved - generated automatically"),
             ));
         }
         fields.push(ContractFieldInfo {

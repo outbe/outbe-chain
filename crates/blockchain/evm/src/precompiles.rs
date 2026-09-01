@@ -486,7 +486,7 @@ where
     // `CALLCODE` frame cannot give it the borrowed-code semantics those opcodes
     // promise: dispatch would read and write the precompile's own storage while
     // `caller` stays the frame's inherited caller. Any contract could then take
-    // caller-authenticated actions — unstaking, voting, spending — as whoever
+    // caller-authenticated actions - unstaking, voting, spending - as whoever
     // called it. Refuse the frame instead of executing it under a caller it does
     // not belong to.
     //
@@ -920,8 +920,8 @@ mod boundary_value_tests {
 
     /// Pins which exact routes declare `Payable`. This catches an edit to the
     /// route table. A module that grows a payable selector without publishing it
-    /// has that selector's funded calls refused — by the route before dispatch
-    /// and again by the module — so the omission shows up as its own broken
+    /// has that selector's funded calls refused - by the route before dispatch
+    /// and again by the module - so the omission shows up as its own broken
     /// entrypoint rather than as stranded value.
     #[test]
     fn only_the_expected_routes_accept_value_among_exact_routes() {
@@ -1089,7 +1089,7 @@ mod lysis_activation_entitlement_tests {
         });
 
         // With the OCOMP lifecycle inactive, the selector reaches the view
-        // dispatcher. The mapped outcome must be an ordinary revert output —
+        // dispatcher. The mapped outcome must be an ordinary revert output -
         // an `Err` here becomes a revm `Fatal` that aborts the whole payload
         // build for a transaction any external account can submit.
         let output = map_outbe_precompile_result(result, PRECOMPILE_BASE_GAS)

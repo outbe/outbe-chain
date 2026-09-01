@@ -1,4 +1,4 @@
-//! `CtxStorageProvider` — sub-call-driver-aware `PrecompileStorageProvider`.
+//! `CtxStorageProvider` - sub-call-driver-aware `PrecompileStorageProvider`.
 //!
 //! Holds `&'a mut EthEvmContext<DB>` directly so the `sub_call` body can hand
 //! the full `&mut Context` to `revm_handler::EthFrame::make_call_frame` (via
@@ -20,7 +20,7 @@
 //! dispatch path inside [`crate::precompiles::extend_outbe_precompiles`].
 //! `CtxStorageProvider` is constructed by the ctx-dispatch hook
 //! whenever the dispatch needs sub-call. Both providers must agree
-//! byte-for-byte on non-sub-call semantics — they share the same upstream
+//! byte-for-byte on non-sub-call semantics - they share the same upstream
 //! `EvmInternals` primitives.
 
 use alloy_evm::{eth::EthEvmContext, EvmInternals};

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title IGratisFactory — Gratis orchestration entry point.
+/// @title IGratisFactory - Gratis orchestration entry point.
 interface IGratisFactory {
     /// @notice Emitted when `sender` converts gratis to native COEN.
     event CoenMined(address indexed sender, uint256 amount);

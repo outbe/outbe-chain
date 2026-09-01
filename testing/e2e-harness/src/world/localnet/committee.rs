@@ -7,7 +7,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::ensure;
@@ -19,6 +19,19 @@ use super::{Localnet, StartOpts};
 
 fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
+}
+
+fn restore_validator_argv(
+    rebuilt: Vec<String>,
+    recovery_original: Option<Vec<String>>,
+) -> Vec<String> {
+    recovery_original.unwrap_or(rebuilt)
+}
+
+pub(super) fn validator_protocol_environment(opts: &StartOpts) -> Vec<(&'static str, String)> {
+    opts.voting_window
+        .map(|window| vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string())])
+        .unwrap_or_default()
 }
 
 fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
@@ -42,6 +55,18 @@ fn signal_committee(pids: &[u32], signal: &str) -> Result<()> {
         bail!("failed to signal validator committee with SIG{signal}");
     }
     Ok(())
+}
+
+fn quiesce_and_terminate_committee_with(
+    pids: &[u32],
+    mut signal: impl FnMut(&[u32], &str) -> Result<()>,
+) -> Result<()> {
+    signal(pids, "STOP")?;
+    if let Err(error) = signal(pids, "TERM") {
+        let _ = signal(pids, "CONT");
+        return Err(error);
+    }
+    signal(pids, "CONT")
 }
 
 impl Localnet {
@@ -71,7 +96,7 @@ impl Localnet {
         }
 
         // Bring the complete enclave cohort up before the first validator can
-        // enter genesis DKG. Starting enclave→validator per index gave the first
+        // enter genesis DKG. Starting enclave->validator per index gave the first
         // nodes several seconds' head start and made them finalize before the
         // last dealings existed (`MissingPlayerDealing`).
         for &i in &launched {
@@ -87,7 +112,7 @@ impl Localnet {
         }
 
         // Survival check: a node that dies in the first couple seconds is a
-        // config error — surface it with its log tail (`run-testnet.sh:386-407`).
+        // config error - surface it with its log tail (`run-testnet.sh:386-407`).
         sleep(Duration::from_secs(2));
         for &i in &launched {
             if self.validators.get_mut(&i).is_some_and(|g| g.exited()) {
@@ -139,6 +164,23 @@ impl Localnet {
         self.start(&opts)
     }
 
+    /// Point the test-only committee clock at a target consensus timestamp.
+    /// Canonical time remains subject to the production drift band and may
+    /// ratchet toward a distant target across multiple finalized blocks.
+    pub(crate) fn restart_committee_at_consensus_timestamp(
+        &mut self,
+        target_timestamp: u64,
+    ) -> Result<()> {
+        let host_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| eyre::eyre!("host clock predates Unix epoch: {error}"))?
+            .as_secs();
+        let offset = i128::from(target_timestamp) - i128::from(host_timestamp);
+        let offset = i64::try_from(offset)
+            .map_err(|_| eyre::eyre!("test consensus clock offset exceeds i64"))?;
+        self.restart_committee_at_unix_time_offset(offset)
+    }
+
     /// Restart the complete validator cohort at one quiescent barrier while
     /// preserving datadirs, running enclaves and the current logical clock.
     pub fn restart_committee_preserving_enclaves(&mut self) -> Result<()> {
@@ -160,7 +202,7 @@ impl Localnet {
                 validator_pids.len()
             );
         }
-        signal_committee(&validator_pids, "STOP")?;
+        quiesce_and_terminate_committee_with(&validator_pids, signal_committee)?;
         self.validators.clear();
         if !self.validators.is_empty() {
             bail!("committee stop barrier retained a validator process");
@@ -317,7 +359,7 @@ impl Localnet {
 
     /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
     /// state; the node keeps running. Its enclave session must reconnect (with
-    /// identity re-validation) on the next request — a node restart is not
+    /// identity re-validation) on the next request - a node restart is not
     /// required and this verb is the first that proves it.
     pub fn restart_enclave_only(&mut self, i: usize) -> Result<()> {
         self.enclaves.remove(&i);
@@ -443,12 +485,6 @@ impl Localnet {
             vd.join("signing-key.hex").display(),
             "--validator.evm-key",
             vd.join("evm-key.hex").display(),
-            "--tee-renewal.relay-key",
-            vd.join("evm-key.hex").display(),
-            "--tee-renewal.rpc-url",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(i)),
-            "--tee-renewal.poll-secs",
-            "2",
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(i)),
             "--consensus.use-local-defaults",
@@ -456,14 +492,17 @@ impl Localnet {
             self.radicle_control_socket(i).display(),
             "--radicle.status-address",
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(i)),
-            // Pool-eviction scenarios must converge in seconds, not the
-            // production 600s / 120s: shorten both the pending staleness
-            // interval and the parked lifetime.
-            "--txpool.outbe.pending-staleness-secs",
-            "20",
-            "--txpool.lifetime",
-            "30s",
         ]);
+        if opts.is_txpool_eviction_profile {
+            // The dedicated pool-eviction scenario must converge in seconds,
+            // while every ordinary localnet retains production pool policy.
+            a.extend(args![
+                "--txpool.outbe.pending-staleness-secs",
+                "20",
+                "--txpool.lifetime",
+                "30s",
+            ]);
+        }
         if self.tee_enabled() {
             a.extend(args![
                 "--tee-enclave-socket",
@@ -478,12 +517,18 @@ impl Localnet {
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        if let Some(w) = opts.voting_window {
-            cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
+        for (name, value) in validator_protocol_environment(opts) {
+            cmd.env(name, value);
         }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }
+        // The recovery follower is derived from an exact validator argv
+        // snapshot. Its first subsequent validator launch consumes that
+        // snapshot verbatim instead of reconstructing a merely equivalent
+        // command from mutable harness inputs.
+        a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
+        self.validator_argv.insert(i, a.clone());
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;
@@ -507,7 +552,7 @@ impl Localnet {
         self.start_enclave_with_seed(i, chain_id_hex, seed)
     }
 
-    /// [`Self::start_enclave`] with an explicit DKG-seed override — the
+    /// [`Self::start_enclave`] with an explicit DKG-seed override - the
     /// fresh-identity restart verb uses a different seed so the relaunched
     /// enclave presents different keys.
     fn start_enclave_with_seed(
@@ -603,7 +648,41 @@ mod owned_committee_tests {
     use crate::internal::config::Config;
     use crate::internal::proc::{ChildGuard, DockerImageId};
 
-    use super::Localnet;
+    use super::{quiesce_and_terminate_committee_with, Localnet};
+
+    #[test]
+    fn controlled_time_restart_resumes_the_frozen_cohort_for_graceful_shutdown() {
+        let pids = [11, 22, 33, 44];
+        let mut delivered = Vec::new();
+
+        quiesce_and_terminate_committee_with(&pids, |actual_pids, signal| {
+            assert_eq!(actual_pids, pids);
+            delivered.push(signal.to_owned());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(delivered, ["STOP", "TERM", "CONT"]);
+    }
+
+    #[test]
+    fn controlled_time_restart_resumes_the_cohort_when_term_delivery_fails() {
+        let pids = [11, 22, 33, 44];
+        let mut delivered = Vec::new();
+
+        let error = quiesce_and_terminate_committee_with(&pids, |actual_pids, signal| {
+            assert_eq!(actual_pids, pids);
+            delivered.push(signal.to_owned());
+            if signal == "TERM" {
+                eyre::bail!("injected TERM failure");
+            }
+            Ok(())
+        })
+        .expect_err("TERM failure must abort the controlled-time restart");
+
+        assert!(error.to_string().contains("injected TERM failure"));
+        assert_eq!(delivered, ["STOP", "TERM", "CONT"]);
+    }
 
     #[test]
     fn readiness_rejects_an_owned_validator_that_exited() {
@@ -800,6 +879,31 @@ mod tests {
         assert_eq!(
             committee_signal_args(&[101, 202, 303, 404], "STOP"),
             ["-STOP", "--", "101", "202", "303", "404"]
+        );
+    }
+
+    #[test]
+    fn validator_restart_restores_exact_pre_recovery_argv() {
+        let rebuilt = vec!["node".to_owned(), "--validator".to_owned()];
+        let original = vec![
+            "node".to_owned(),
+            "--chain=/pinned/genesis.json".to_owned(),
+            "--validator".to_owned(),
+            "--testnet.unix-time-offset-secs=-37".to_owned(),
+        ];
+
+        assert_eq!(
+            super::restore_validator_argv(rebuilt, Some(original.clone())),
+            original
+        );
+    }
+
+    #[test]
+    fn validator_recovery_preserves_consensus_relevant_environment() {
+        let opts = super::StartOpts::with_voting_window(41);
+        assert_eq!(
+            super::validator_protocol_environment(&opts),
+            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "41".to_owned())]
         );
     }
 

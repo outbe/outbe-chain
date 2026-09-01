@@ -3,9 +3,9 @@
 //!
 //! Two precompiles are exposed:
 //!
-//! - `0xEE07` Poseidon-BN254 hash (raw bytes in → 32-byte hash out).
+//! - `0xEE07` Poseidon-BN254 hash (raw bytes in -> 32-byte hash out).
 //! - `0xEE08` UltraHonkKeccak verifier (`abi.encode(bytes32 circuit_hash,
-//!   bytes proof)` in → 32 bytes 0/1 out).
+//!   bytes proof)` in -> 32 bytes 0/1 out).
 //!
 //! Both are stateless; the `StorageHandle` argument is ignored by the
 //! dispatch functions.

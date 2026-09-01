@@ -9,8 +9,11 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
 use crate::{
-    aggregate::ValidatedWwdAggregate, lifecycle,
-    ocomp::schema::require_active_ocomp_profile as load_active_ocomp_profile,
+    aggregate::ValidatedWwdAggregate,
+    lifecycle,
+    ocomp::{
+        schema::require_active_ocomp_profile as load_active_ocomp_profile, OcompRequestProfileExt,
+    },
     settlement::process_ocomp_ready_candidate,
 };
 

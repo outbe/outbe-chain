@@ -14,7 +14,7 @@ impl UpdateLifecycle {
     ///
     /// Unlike other lifecycle modules, Update does not implement
     /// [`BlockLifecycle`](outbe_primitives::block::BlockLifecycle) directly. Callers
-    /// must pass the node-level upgrade handler registry explicitly — in production
+    /// must pass the node-level upgrade handler registry explicitly - in production
     /// this is `outbe_evm::handlers::update::registry()`.
     ///
     /// The registry is owned outside `outbe-update` so migration handlers can live

@@ -31,7 +31,7 @@ impl VoteKind {
         self as u8
     }
 
-    /// ABI `castVote(bool approve)` — `true` = Yes, `false` = No.
+    /// ABI `castVote(bool approve)` - `true` = Yes, `false` = No.
     pub const fn from_approve(approve: bool) -> Self {
         if approve {
             Self::Yes
@@ -52,7 +52,7 @@ pub struct VoteTally {
     pub no: u64,
 }
 
-/// `IVote.ProposalInfo` — external view with computed tally, no voter list.
+/// `IVote.ProposalInfo` - external view with computed tally, no voter list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposalInfo {
     pub id: U256,

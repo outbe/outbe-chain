@@ -6,7 +6,7 @@ pragma solidity ^0.8.30;
 ///         metadata extension (`name`, `symbol`, `decimals`).
 /// @dev Declared standalone rather than imported from OpenZeppelin because the
 ///      Rust precompiles bind this file directly through `sol!("<path>")`, and
-///      that macro discards `import` directives — an inherited interface would
+///      that macro discards `import` directives - an inherited interface would
 ///      expand with its members missing.
 interface IERC20 {
     /// @notice Emitted when `value` tokens move from `from` to `to`.

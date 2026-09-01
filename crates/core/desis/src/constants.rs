@@ -66,11 +66,22 @@ pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
 /// Bidders per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`. Issuance uses its own,
-/// narrower cap — a recipient costs a mint, a bidder costs a lock update.
+/// narrower cap - a recipient costs a mint, a bidder costs a lock update.
 pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
 pub const MAX_REFUND_CHUNKS: usize = 256;
+
+/// Bids one PROCESS_BIDS_BATCH message may carry; mirrors the codec's `MAX_BIDS_BATCH`.
+pub const MAX_BIDS_PER_BATCH: usize = 64;
+
+/// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
+pub const MAX_BID_BATCHES: u16 = 256;
+
+// Everything the intake admits from one chain must still fit its refund fan-out;
+// otherwise clearing fails on bids the intake already took.
+const _: () =
+    assert!(MAX_BIDS_PER_BATCH * MAX_BID_BATCHES as usize <= REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS);
 
 /// Reference currencies one day may price. Mirrors the codec's `MAX_REFERENCE_PRICES`:
 /// a day over it could not be started on any chain.

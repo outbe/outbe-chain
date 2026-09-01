@@ -22,7 +22,7 @@ const CALLER: Address = Address::new([0xC0; 20]);
 #[test]
 fn sub_call_to_eoa_returns_success_empty() {
     let db = CacheDB::new(EmptyDB::default());
-    // No insert_account_info(target, ...) — target is an EOA / empty account.
+    // No insert_account_info(target, ...) - target is an EOA / empty account.
     let mut ctx = Context::mainnet().with_db(db);
 
     let result = sub_call::run(

@@ -71,7 +71,7 @@ pub struct GemFactoryContract {
 }
 
 impl GemFactoryContract<'_> {
-    /// `position_id = keccak256("gemposition" ‖ source_intex_id_be ‖ block_number_be)`.
+    /// `position_id = keccak256("gemposition" || source_intex_id_be || block_number_be)`.
     /// A source Intex is parked once, so `source_intex_id` alone disambiguates.
     pub fn generate_position_id(source_intex_id: SeriesId, block_number: u64) -> U256 {
         let mut buf = [0u8; 11 + SERIES_ID_LEN + 8];

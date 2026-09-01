@@ -30,25 +30,25 @@ pub struct OpenPositionParams {
     pub issuance_currency: u16,
     /// `r`, 1e18 scaled, already multiplied by the policy-rate factor.
     pub policy_rate: U256,
-    /// `P` — stablecoin minor units disbursed.
+    /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// `P₀` — COEN price in the position's currency, 1e18 oracle scale.
+    /// `P0` - COEN price in the position's currency, 1e18 oracle scale.
     pub entry_price: U256,
-    /// `G` — pledged Gratis collateral.
+    /// `G` - pledged Gratis collateral.
     pub collateral: U256,
     pub originated_at: u64,
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
 /// `total_paid` from the payer into the vault and releases `gratis_released` to
-/// the pledger — never to the payer.
+/// the pledger - never to the payer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settlement {
     /// Interest collected, in full, before any principal.
     pub interest: U256,
     /// Principal covered by this payment.
     pub principal_paid: U256,
-    /// `interest + principal_paid` — what the payer owes for this settlement.
+    /// `interest + principal_paid` - what the payer owes for this settlement.
     pub total_paid: U256,
     /// Collateral freed and owed back to the pledger.
     pub gratis_released: U256,
@@ -71,11 +71,11 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Sealed pledger EOA — the caller opens it to key the confidential ledgers.
+    /// Sealed pledger EOA - the caller opens it to key the confidential ledgers.
     pub eoa_ct: Vec<u8>,
 }
 
-/// `price × (100 + rate_pct) / 100`.
+/// `price x (100 + rate_pct) / 100`.
 pub fn calc_call_price(price: U256) -> Result<U256> {
     price
         .checked_mul(U256::from(PRICE_RATE_DEN + CALL_RATE_PCT))
@@ -189,7 +189,7 @@ impl CredisContract<'_> {
         Ok(true)
     }
 
-    /// Applies a settlement of `amount` — interest first, principal second.
+    /// Applies a settlement of `amount` - interest first, principal second.
     ///
     /// Any payer may settle any open or called position: the collateral
     /// released is owed to the pledger recorded on the position, so a payer can
@@ -197,7 +197,7 @@ impl CredisContract<'_> {
     ///
     /// - a payment below the accrued interest is rejected outright;
     /// - only what the position needs is consumed, so an over-payment is not
-    ///   over-pulled — the caller charges `Settlement::total_paid`;
+    ///   over-pulled - the caller charges `Settlement::total_paid`;
     /// - collateral release is principal-proportional and floored, except on the
     ///   final settlement, which releases exactly what is left so no dust
     ///   remains locked.
@@ -293,8 +293,8 @@ impl CredisContract<'_> {
     /// lapsed. Only the unpaid share is written off: every settlement already
     /// released its proportional share, so whatever the owner settled they have
     /// already reclaimed. The invariant that holds exactly is
-    /// `Σ released + collateral_locked == G`; because each partial release is
-    /// floored, `collateral_locked >= floor(G × P_out / P)`, with the drift
+    /// `sum released + collateral_locked == G`; because each partial release is
+    /// floored, `collateral_locked >= floor(G x P_out / P)`, with the drift
     /// always toward the protocol.
     ///
     /// Returns what the caller must burn and credit; the position itself is
@@ -362,7 +362,7 @@ impl CredisContract<'_> {
         Ok(self.called_position_counts.read(&account)? > 0)
     }
 
-    /// Number of positions still on the price path — those the daily scan visits.
+    /// Number of positions still on the price path - those the daily scan visits.
     pub fn active_len(&self) -> Result<u32> {
         self.read_active_len()
     }

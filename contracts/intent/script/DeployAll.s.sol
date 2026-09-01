@@ -15,16 +15,16 @@ import {ConfigureAll} from "./4_ConfigureAll.s.sol";
 ///   1. CreateX factory
 ///   2. SolverEscrow
 ///   3. Auction
-///   4. RouterAllocator + composition Router (via CreateX) — talks to the ERC7786Bridge hub
+///   4. RouterAllocator + composition Router (via CreateX) - talks to the ERC7786Bridge hub
 ///   5. Wire all contracts together (same-chain)
 ///
 /// Required env vars:
-///   DEPLOYER_PK      — deployer private key
-///   CONTRACT_SALT    — salt string for deterministic deployment
-///   BRIDGE_ADDRESS   — deployed ERC7786Bridge (the cross-chain hub facade)
-///   ROUTER_OWNER     — contract owner (admin)
-///   COMPACT_ADDRESS  — The Compact address
-///   COLLATERAL_BPS   — collateral requirement in basis points (e.g. 1000 = 10%)
+///   DEPLOYER_PK      - deployer private key
+///   CONTRACT_SALT    - salt string for deterministic deployment
+///   BRIDGE_ADDRESS   - deployed ERC7786Bridge (the cross-chain hub facade)
+///   ROUTER_OWNER     - contract owner (admin)
+///   COMPACT_ADDRESS  - The Compact address
+///   COLLATERAL_BPS   - collateral requirement in basis points (e.g. 1000 = 10%)
 ///
 /// Cross-chain wiring (remote routers) is a separate step: ConfigureRouter.s.sol.
 contract DeployAll is DeployCreateXDeterministic, DeployRouter, DeploySolverEscrow, DeployAuction, ConfigureAll {
@@ -42,14 +42,14 @@ contract DeployAll is DeployCreateXDeterministic, DeployRouter, DeploySolverEscr
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. CreateX factory — reuse CREATEX_ADDRESS if set, otherwise deploy a fresh one
+        // 1. CreateX factory - reuse CREATEX_ADDRESS if set, otherwise deploy a fresh one
         console2.log("[1/5] CreateX...");
         address createXAddr = vm.envOr("CREATEX_ADDRESS", address(0));
         if (createXAddr == address(0)) createXAddr = deployCreateX(salt);
         console2.log("  CreateX:", createXAddr);
 
         // Everything below is deterministic from (CreateX, salt, deployer). If the router already exists, the whole
-        // stack is already deployed — skip it: re-deploying escrow/auction/allocator would waste gas and the router's
+        // stack is already deployed - skip it: re-deploying escrow/auction/allocator would waste gas and the router's
         // CREATE3 would revert on collision anyway.
         address routerAddr = CreateX(createXAddr).computeCreate3Address(getRouterSaltHash(salt));
         if (routerAddr.code.length != 0) {

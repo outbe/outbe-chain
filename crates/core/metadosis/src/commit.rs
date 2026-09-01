@@ -554,6 +554,7 @@ mod tests {
         constants::MAX_RECORDS_KEPT,
         fixture_kernel::ActivationFixture,
         ocomp::schema::{poc_schema_limits, OcompRequestProfile, ResponseDeadlineKey},
+        ocomp::OcompRequestProfileExt,
         schema::{
             day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
             WorldwideDayEntryExt,

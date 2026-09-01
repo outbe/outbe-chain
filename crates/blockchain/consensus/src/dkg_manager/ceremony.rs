@@ -4,17 +4,17 @@
 //! Two concerns that used to be tangled inside `dkg_manager`'s `CeremonyState`
 //! are split here by trust level:
 //!
-//! - [`DkgCeremony`] — the **canonical** state. It is driven *only* by
+//! - [`DkgCeremony`] - the **canonical** state. It is driven *only* by
 //!   chain-finalized dealer logs (deterministic, consensus-ordered) and is a
 //!   pure fold: the recovered group [`Output`] is a function of the *set* of
 //!   finalized dealer logs, independent of arrival order and of the `OsRng`
 //!   used for batch verification (RNG only gates accept/reject of a signature,
 //!   never the recovered value). After a crash the canonical state is rebuilt
 //!   by replaying the same on-chain logs. The state machine has two phases:
-//!   `Collecting` → `Reconstructed(output)`; the transition is one-way and
+//!   `Collecting` -> `Reconstructed(output)`; the transition is one-way and
 //!   happens once (the output is frozen on first successful reconstruction).
 //!
-//! - [`DealerLogGossip`] — the **non-consensus** emit buffer (this node's own
+//! - [`DealerLogGossip`] - the **non-consensus** emit buffer (this node's own
 //!   dealer log plus P2P-received candidates). It is an abuse/prod-influenced
 //!   mempool of "what to gossip/emit next" and never feeds canonical state; a
 //!   chain-finalized log only prunes the corresponding gossip entry.
@@ -54,7 +54,7 @@ pub(crate) struct VerifiedDealerLog {
 /// `Collecting` accumulates chain-finalized dealer logs; `Reconstructed` holds
 /// the frozen canonical group output. The finalized-log set lives as a sibling
 /// field of [`DkgCeremony`] (not inside this enum) because it keeps growing in
-/// both phases — only the *reconstruction* is one-shot.
+/// both phases - only the *reconstruction* is one-shot.
 #[derive(Debug)]
 pub(crate) enum DkgCeremonyPhase {
     Collecting,
@@ -373,7 +373,7 @@ mod tests {
         g.record_local(&d1, Bytes::from_static(b"L"));
         let _ = g.record_pending(d2.clone(), Bytes::from_static(b"P"), false);
         g.prune_finalized(&d1, &Bytes::from_static(b"L"));
-        // local cleared (bytes matched) → next best is the pending candidate.
+        // local cleared (bytes matched) -> next best is the pending candidate.
         assert_eq!(g.best_to_emit(), Some(Bytes::from_static(b"P")));
         g.prune_finalized(&d2, &Bytes::from_static(b"P"));
         assert_eq!(g.best_to_emit(), None);
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(g.best_to_emit(), None);
         let _ = g.record_pending(pk(5), Bytes::from_static(b"five"), false);
         let _ = g.record_pending(pk(9), Bytes::from_static(b"nine"), false);
-        // first pending by dealer order (BTreeMap) — deterministic.
+        // first pending by dealer order (BTreeMap) - deterministic.
         assert!(g.best_to_emit().is_some());
         g.record_local(&pk(1), Bytes::from_static(b"L"));
         assert_eq!(g.best_to_emit(), Some(Bytes::from_static(b"L")));

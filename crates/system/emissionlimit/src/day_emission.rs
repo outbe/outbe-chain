@@ -1,6 +1,6 @@
 //! Closed-form day emission cap.
 //!
-//! Computes `INITIAL_DAY_EMISSION × exp(-K_SOFT × day_number)` clamped to
+//! Computes `INITIAL_DAY_EMISSION x exp(-K_SOFT x day_number)` clamped to
 //! `FLOOR_DAY_EMISSION` past `FLOOR_DAY_THRESHOLD`. Taylor terms are COEN
 //! amounts in six-decimal `unit`, with alternating positive/negative sums in
 //! unsigned U256 and saturating subtraction. The legacy per-block
@@ -21,7 +21,7 @@ pub const INITIAL_DAY_EMISSION: U256 = uint!(1_073_741_824_000_000_U256);
 /// Floor day emission: 2^26 COEN expressed in six-decimal `unit`.
 pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_U256);
 
-/// Decay coefficient k_soft = ln(2^4) / 2920 ≈ 9.4952e-4 per day.
+/// Decay coefficient k_soft = ln(2^4) / 2920 ~= 9.4952e-4 per day.
 /// Encoded as integer ratio K_NUM / K_DEN.
 const K_NUM: U256 = uint!(9_4952_U256);
 const K_DEN: U256 = uint!(100_000_000_U256);
@@ -38,13 +38,13 @@ const TAYLOR_TERMS: usize = 32;
 /// for `day_number >= FLOOR_DAY_THRESHOLD`.
 ///
 /// Each recurrence step divides before the next term. At the maximum formula
-/// day, `term × K_NUM × day` remains comfortably within U256.
+/// day, `term x K_NUM x day` remains comfortably within U256.
 pub fn day_emission_limit(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
         return FLOOR_DAY_EMISSION;
     }
 
-    // Taylor series for INITIAL × exp(-x), directly in COEN `unit`:
+    // Taylor series for INITIAL x exp(-x), directly in COEN `unit`:
     // INITIAL - INITIAL*x + INITIAL*x^2/2! - ...
     let day = U256::from(day_number);
     let mut pos_sum = INITIAL_DAY_EMISSION;

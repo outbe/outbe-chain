@@ -63,7 +63,7 @@ pub struct AuctionConfig {
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
     pub call_trigger: IntexCallTrigger,
-    /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 → no floor.
+    /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
@@ -172,7 +172,8 @@ pub struct DesisContract {
     /// keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32) -> bidder address.
     #[attribute(order = 5)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
-    /// Packed bid fields: limbs[0]=rate(u32), limbs[1]=quantity(u16)<<32|timestamp(u32).
+    /// Packed bid fields: limbs[0]=rate(u32); limbs[1]=issuance(u16)<<48|
+    /// quantity(u16)<<32|timestamp(u32); limbs[2]=reference(u16).
     #[attribute(order = 6)]
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 

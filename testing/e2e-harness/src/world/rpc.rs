@@ -4,7 +4,7 @@
 //!
 //! This is the typed replacement for the `cast`-based RPC readers and the
 //! scenario polling helpers used by the lifecycle and update flows.
-//! Reads return `Option` — `None` is the analogue of the shell
+//! Reads return `Option` - `None` is the analogue of the shell
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
@@ -28,6 +28,8 @@ use outbe_ocomp_protocol::{
     state::{ActiveGenerationV1, OcompJobRecordV1},
     vote::OcompVoteAccountabilityV1,
 };
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocompregistry::precompile::IOcompRegistry;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
@@ -37,9 +39,9 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry, ISlashIndicator,
-        IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote,
-        IZeroFee,
+        self, IAgentReward, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry,
+        ISlashIndicator, IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet,
+        IValidatorSetRaw, IVote, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -73,6 +75,34 @@ fn zerofee_rollover_wait_budget_secs(latest_timestamp: u64) -> u64 {
     remaining
         .saturating_add(FINALITY_SLACK_SECONDS)
         .max(MINIMUM_WAIT_SECONDS)
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn encode_reward_bearing_tribute_plaintext(
+    creator: Address,
+    tribute_draft_id: B256,
+    amount_base: &str,
+    amount_atto: &str,
+    su_hash: B256,
+    wallet_addresses: &[Address],
+    sra_addresses: &[Address],
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "creator": format!("{creator:#x}"),
+        "tribute_draft_id": format!("{tribute_draft_id:#x}"),
+        "amount_base": amount_base,
+        "amount_atto": amount_atto,
+        "su_hashes": [format!("{su_hash:#x}")],
+        "wallet_addresses": wallet_addresses
+            .iter()
+            .map(|address| format!("{address:#x}"))
+            .collect::<Vec<_>>(),
+        "sra_addresses": sra_addresses
+            .iter()
+            .map(|address| format!("{address:#x}"))
+            .collect::<Vec<_>>(),
+    }))
+    .map_err(Into::into)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -892,6 +922,46 @@ impl Rpc {
         self.active_version_on_url(&self.cfg.rpc0)
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    pub fn active_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::activeProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn retiring_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retiringProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_live_lineage_count_on(&self, port: u16, bundle_hash: B256) -> Option<u32> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::liveLineageCountCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_retention_until_on(&self, port: u16, bundle_hash: B256) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retentionUntilCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
+    }
+
     /// Active protocol version on the node at `port`.
     pub fn active_version_on(&self, port: u16) -> Option<u64> {
         self.active_version_on_url(&self.url(port))
@@ -931,7 +1001,7 @@ impl Rpc {
         })
     }
 
-    /// OIP record (`IGovernance.getOip`) — `(status, author, text)`.
+    /// OIP record (`IGovernance.getOip`) - `(status, author, text)`.
     pub fn get_oip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,
@@ -941,7 +1011,7 @@ impl Rpc {
         Some((r.status, r.author, r.text))
     }
 
-    /// GIP record (`IGovernance.getGip`) — `(status, author, text)`.
+    /// GIP record (`IGovernance.getGip`) - `(status, author, text)`.
     pub fn get_gip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,
@@ -1337,6 +1407,36 @@ impl Rpc {
         })
     }
 
+    /// The full `validatorByAddress` record at one exact canonical block.
+    pub fn validator_record_at(
+        &self,
+        port: u16,
+        addr: &str,
+        block_number: u64,
+    ) -> Option<ValidatorRecord> {
+        let v: Address = addr.parse().ok()?;
+        let record = eth::read_call_at(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorByAddressCall { addr: v },
+            block_number,
+        )?;
+        Some(ValidatorRecord {
+            address: record.validatorAddress,
+            consensus_pubkey: record.consensusPubkey,
+            stake: record.stake,
+            status: record.status,
+            slash_count: record.slashCount,
+            missed_blocks: record.missedBlocks,
+            missed_votes: record.missedVotes,
+            blocks_proposed: record.blocksProposed,
+            joined_at_height: record.joinedAtHeight,
+            deactivated_at_height: record.deactivatedAtHeight,
+            unbonding_end: record.unbondingEnd,
+            has_bls_share: record.hasBLSShare,
+        })
+    }
+
     /// The full record at the one-based dense ValidatorSet index.
     pub fn validator_record_by_index(&self, port: u16, index: u64) -> Option<ValidatorRecord> {
         let record = eth::read_call(
@@ -1512,6 +1612,38 @@ impl Rpc {
     /// Native balance on a specific node, including precompile balances.
     pub fn balance_on(&self, port: u16, addr: &str) -> Option<U256> {
         eth::balance(&self.url(port), addr.parse().ok()?)
+    }
+
+    /// AgentReward claimable balance observed through the public ABI on one
+    /// validator.
+    pub fn get_agent_reward_claimable_balance_on(
+        &self,
+        port: u16,
+        account: Address,
+    ) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::AGENT_REWARD_ADDR,
+            &IAgentReward::getClaimableBalanceCall { account },
+        )
+    }
+
+    /// Claim the caller's complete AgentReward through an ordinary paid
+    /// transaction and return its public receipt.
+    pub fn claim_all_agent_reward(&self, key: &str) -> Result<serde_json::Value> {
+        let tx_hash = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::AGENT_REWARD_ADDR,
+            key,
+            &IAgentReward::claimRewardCall { amount: U256::ZERO },
+            None,
+        )?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx_hash)
+            .ok_or_else(|| eyre!("AgentReward claim receipt unavailable: {tx_hash}"))?;
+        if !receipt_status(&receipt) {
+            return Err(eyre!("AgentReward claim reverted: {tx_hash}"));
+        }
+        Ok(receipt)
     }
 
     pub fn staking_balance_on(&self, port: u16) -> Option<U256> {
@@ -2017,6 +2149,86 @@ impl Rpc {
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
         );
         Some(tx_hash)
+    }
+
+    /// Submit one real encrypted Tribute whose enclave result attributes one
+    /// WAA and one SRA beneficiary. This is a harness-only producer for the
+    /// existing public ABI; production reward accounting remains unchanged.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn submit_tribute_offer_with_agent_rewards(
+        &self,
+        key: &str,
+        wwd: &str,
+        wallet_addresses: &[Address],
+        sra_addresses: &[Address],
+    ) -> Option<String> {
+        let worldwide_day = wwd.parse::<u32>().ok()?;
+        let creator = eth::address_of(key)?;
+        let bootstrapped: bool = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::isBootstrappedCall {},
+        )?;
+        if !bootstrapped {
+            return None;
+        }
+        let offer_public_key: U256 = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+        )?;
+        let entropy = format!(
+            "agent-reward-tribute:{creator:#x}:{worldwide_day}:{}",
+            unix_time_millis()
+        );
+        let tribute_draft_id = keccak256(entropy.as_bytes());
+        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
+        let plaintext = encode_reward_bearing_tribute_plaintext(
+            creator,
+            tribute_draft_id,
+            "100",
+            "0",
+            su_hash,
+            wallet_addresses,
+            sra_addresses,
+        )
+        .ok()?;
+        let (cipher_text, nonce, ephemeral_public_key) =
+            outbe_tee::offer_encrypt::encrypt_tribute_offer(
+                &offer_public_key.to_be_bytes::<32>(),
+                &plaintext,
+            )
+            .ok()?;
+        let call = ITributeFactory::offerTributeCall {
+            cipherText: cipher_text.into(),
+            nonce: nonce.to_vec().into(),
+            ephemeralPubkey: U256::from_be_bytes(ephemeral_public_key),
+            worldwideDay: worldwide_day,
+            tributeCurrency: 840,
+            referenceCurrency: 840,
+            excludeFromIntexIssuance: false,
+            zkProof: Bytes::new(),
+            zkVerificationKey: Bytes::new(),
+            zkPublicKey: Bytes::new(),
+            zkMerkleRoot: Bytes::new(),
+            signature: Bytes::new(),
+        };
+        let outcome = eth::send_call_outcome(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS,
+            key,
+            &call,
+            Some(U256::ZERO),
+        )
+        .ok()?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=agent-reward-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} waa={} sra={}",
+            unix_time_millis(),
+            outcome.transaction_hash,
+            wallet_addresses.len(),
+            sra_addresses.len(),
+        );
+        Some(outcome.transaction_hash)
     }
 
     /// Submit one real encrypted Tribute while keeping issuance and reference
@@ -2696,6 +2908,8 @@ impl Rpc {
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
             job_id: active.job_id,
+            // The public read does not surface it, and no assertion here looks at it.
+            protocol_bundle_hash: B256::ZERO,
             program_semantics_hash: active.program_semantics_hash,
             nod_root: nod.nodRoot,
             bucket_root: nod.bucketRoot,
@@ -3239,11 +3453,19 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        // This signer must pay for the EIP-7702 delegation and, in the quota
-        // lifecycle scenario, one deliberately non-sponsored fallback call.
-        // Sponsored calls themselves must leave this post-delegation balance
-        // unchanged; the assertions below verify that separately.
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
+        // Seed the exact eligibility boundary: one atomic unit is 0.000001
+        // COEN. The bootstrap itself must neither consume that unit nor touch
+        // the daily quota.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, U256::from(1))?;
+        let bootstrap_balance_before = eth::balance(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read pre-bootstrap balance"))?;
+        if bootstrap_balance_before != U256::from(1) {
+            return Err(eyre!(
+                "bootstrap fixture balance must be exactly one atomic unit, got {bootstrap_balance_before}"
+            ));
+        }
+        let bootstrap_nonce_before =
+            eth::nonce(&self.cfg.rpc0, address).ok_or_else(|| eyre!("read bootstrap nonce"))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,
@@ -3261,11 +3483,63 @@ impl Rpc {
             return Err(eyre!("fresh counter must be (today, 0), got {counter:?}"));
         }
 
-        state.zerofee_delegation_receipt = Some(eth::install_delegation(
-            &self.cfg.rpc0,
-            key,
-            addresses::ZEROFEE_ADDR,
-        )?);
+        let bootstrap_hash = self
+            .sh()
+            .cli_required([
+                "--private-key",
+                key,
+                "--rpc-url",
+                self.cfg.rpc0.as_str(),
+                "zero-fee",
+                "bootstrap",
+            ])?
+            .trim()
+            .to_owned();
+        if !self.wait_successful_receipt(&bootstrap_hash, 20) {
+            return Err(eyre!(
+                "product CLI ZeroFee bootstrap was not mined successfully: {bootstrap_hash}"
+            ));
+        }
+        state.zerofee_delegation_receipt = Some(
+            eth::receipt_json(&self.cfg.rpc0, &bootstrap_hash)
+                .ok_or_else(|| eyre!("read product CLI bootstrap receipt"))?,
+        );
+        let bootstrap_receipt = state
+            .zerofee_delegation_receipt
+            .as_ref()
+            .expect("bootstrap receipt was just stored");
+        if !receipt_status(bootstrap_receipt) {
+            return Err(eyre!("one-unit ZeroFee bootstrap receipt failed"));
+        }
+        let bootstrap_balance_after = eth::balance(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read post-bootstrap balance"))?;
+        if bootstrap_balance_after != bootstrap_balance_before {
+            return Err(eyre!(
+                "bootstrap changed native balance: before={bootstrap_balance_before}, after={bootstrap_balance_after}"
+            ));
+        }
+        let bootstrap_nonce_after = eth::nonce(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read post-bootstrap nonce"))?;
+        let expected_bootstrap_nonce = bootstrap_nonce_before
+            .checked_add(2)
+            .ok_or_else(|| eyre!("bootstrap nonce overflow"))?;
+        if bootstrap_nonce_after != expected_bootstrap_nonce {
+            return Err(eyre!(
+                "bootstrap nonce must advance by two: before={bootstrap_nonce_before}, after={bootstrap_nonce_after}"
+            ));
+        }
+        let counter_after_bootstrap = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read post-bootstrap ZeroFee counter"))?;
+        if counter_after_bootstrap.1 != 0 {
+            return Err(eyre!(
+                "bootstrap must not consume quota, got {counter_after_bootstrap:?}"
+            ));
+        }
+
+        // Top up only after bootstrap evidence is captured; the main scenario
+        // later needs enough COEN for its deliberately paid fallback call.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
         let delegation_hash = state
             .zerofee_delegation_receipt
             .as_ref()
@@ -3324,6 +3598,37 @@ impl Rpc {
             before_counter,
             "replay changed ZeroFee counter"
         );
+        self.assert_zerofee_delegation(state);
+        Ok(())
+    }
+
+    pub fn replay_zerofee_bootstrap_transaction(&self, state: &FixtureState) -> Result<()> {
+        let raw = state
+            .zerofee_delegation_raw
+            .as_deref()
+            .ok_or_else(|| eyre!("missing exact included bootstrap transaction"))?;
+        let address = zerofee_address(state);
+        let before_balance = eth::balance(&self.cfg.rpc0, address);
+        let before_nonce = eth::nonce(&self.cfg.rpc0, address);
+        let before_counter = self.zerofee_counter(address);
+        let error = eth::raw_json_result(
+            &self.cfg.rpc0,
+            "eth_sendRawTransaction",
+            serde_json::json!([raw]),
+        )
+        .expect_err("exact included bootstrap transaction replay unexpectedly accepted");
+        if error.to_string().is_empty() {
+            return Err(eyre!("bootstrap replay returned an empty RPC error"));
+        }
+        if eth::balance(&self.cfg.rpc0, address) != before_balance {
+            return Err(eyre!("bootstrap replay changed signer balance"));
+        }
+        if eth::nonce(&self.cfg.rpc0, address) != before_nonce {
+            return Err(eyre!("bootstrap replay changed signer nonce"));
+        }
+        if self.zerofee_counter(address) != before_counter {
+            return Err(eyre!("bootstrap replay changed ZeroFee counter"));
+        }
         self.assert_zerofee_delegation(state);
         Ok(())
     }
@@ -4102,5 +4407,34 @@ mod ocomp_tests {
     fn zerofee_rollover_wait_budget_covers_the_canonical_distance_to_boundary() {
         assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_641), 419);
         assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_950), 150);
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn encoded_reward_bearing_tribute_plaintext_preserves_waa_and_sra_beneficiaries() {
+        let creator = Address::repeat_byte(0x11);
+        let waa = Address::repeat_byte(0x22);
+        let sra = Address::repeat_byte(0x33);
+        let plaintext = encode_reward_bearing_tribute_plaintext(
+            creator,
+            B256::repeat_byte(0x44),
+            "100",
+            "0",
+            B256::repeat_byte(0x55),
+            &[waa],
+            &[sra],
+        )
+        .expect("encode reward-bearing Tribute plaintext");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&plaintext).expect("decode Tribute plaintext");
+
+        assert_eq!(
+            payload["wallet_addresses"],
+            serde_json::json!([format!("{waa:#x}")])
+        );
+        assert_eq!(
+            payload["sra_addresses"],
+            serde_json::json!([format!("{sra:#x}")])
+        );
     }
 }

@@ -42,7 +42,7 @@ contract OriginRouterTest is CrossChainTest {
     address private admin = address(this);
     address private user = address(0x1);
 
-    uint32 private constant WORLDWIDE_DAY = 20250115; // yyyymmdd — the auction day (root)
+    uint32 private constant WORLDWIDE_DAY = 20250115; // yyyymmdd - the auction day (root)
     bytes14 private constant SERIES_ID = "20250115-USD-U";
 
     function setUp() public {

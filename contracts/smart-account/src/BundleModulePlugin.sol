@@ -12,19 +12,19 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     // --- State (keyed by Kernel account address = msg.sender during lifecycle calls) ---
     mapping(address => bool) private installed;
     mapping(address account => address[]) private bundleTokens;
-    /// @dev token-minor units. Stores 2× the deposited amount (purchase leg + COEN-buy leg); topUp
+    /// @dev token-minor units. Stores 2x the deposited amount (purchase leg + COEN-buy leg); topUp
     ///      credits `received * 2` and decreaseBundleBalance burns `amount * 2`. BundleSpendProtectorHook
-    ///      reads it as the reserve in `freeBalance = totalBalance − bundleBalance`.
+    ///      reads it as the reserve in `freeBalance = totalBalance - bundleBalance`.
     mapping(address account => mapping(address token => uint256)) private bundleBalance;
 
-    /// @notice The sole authorized caller of `dispatchDecreaseBalance` — the BundleWithdrawHook.
+    /// @notice The sole authorized caller of `dispatchDecreaseBalance` - the BundleWithdrawHook.
     /// @dev Wired once post-deploy via `setWithdrawHook`: the hook takes this plugin's address as a
     ///      constructor immutable and so is deployed after this plugin, forbidding a constructor
     ///      immutable here. While unset, `dispatchDecreaseBalance` reverts for everyone (fail-closed).
     address public withdrawHook;
     /// @dev Authorized to call `setWithdrawHook`. Passed as a constructor arg (not captured from
     ///      `msg.sender`) because CREATE2-factory deploys run the constructor with `msg.sender` = the
-    ///      deployment proxy (0x4e59…), not the operator.
+    ///      deployment proxy (0x4e59...), not the operator.
     address private immutable _OWNER;
 
     error HasBundleBalance(address token);
@@ -99,11 +99,11 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         // through the account's executor (msg.sender must be the account, so SafeERC20 can't wrap it), and
         // a no-return / false-return or fee-on-transfer token would let a over-state the reserve.
         uint256 balBefore = IERC20(token).balanceOf(thisAccount);
-        // ERC-7579 single execution encoding: target(20) ‖ value(32) ‖ callData.
+        // ERC-7579 single execution encoding: target(20) || value(32) || callData.
         IERC7579Account(thisAccount).executeFromExecutor(execMode, abi.encodePacked(token, uint256(0), transferCall));
         uint256 received = IERC20(token).balanceOf(thisAccount) - balBefore;
 
-        // NB: double the received amount — 50% funds purchases, 50% funds Coen buys.
+        // NB: double the received amount - 50% funds purchases, 50% funds Coen buys.
         bundleBalance[thisAccount][token] += received * 2;
         emit BundleTransfer(sender, thisAccount, token, received);
     }

@@ -5,7 +5,7 @@ use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status::is_valid_status;
 
-/// Lightweight proposal projection for listings — every field except the text.
+/// Lightweight proposal projection for listings - every field except the text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposalMeta {
     pub id: U256,
@@ -16,7 +16,7 @@ pub struct ProposalMeta {
     pub text_hash: B256,
 }
 
-/// Storage key for the per-author id list: `keccak256(author ‖ index_be)`.
+/// Storage key for the per-author id list: `keccak256(author || index_be)`.
 /// Shared by the writer (runtime submit) and the reader (below).
 pub(crate) fn author_index_key(author: Address, index: u32) -> B256 {
     let mut buf = [0u8; 24];

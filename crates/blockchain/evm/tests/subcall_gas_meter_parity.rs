@@ -9,7 +9,7 @@
 //! 3. Asserts byte-equal post-state on `(limit, remaining, refunded,
 //!    state_gas_spent, reservoir)` after each step.
 //!
-//! Total fixtures: 5 × 100 = 500 cases minimum.
+//! Total fixtures: 5 x 100 = 500 cases minimum.
 
 use outbe_evm::gas::SubcallGasMeter;
 use proptest::prelude::*;
@@ -63,7 +63,7 @@ proptest! {
 
     /// Mirrors `revm::Gas::erase_cost`. Inputs bounded below `u64::MAX / 32`
     /// per step to avoid `remaining + returned` overflow in upstream's
-    /// unchecked add (which is the documented production-realistic range —
+    /// unchecked add (which is the documented production-realistic range -
     /// gas budgets are sub-tx and never approach `u64::MAX`).
     #[test]
     fn erase_cost_byte_equal(
@@ -91,7 +91,7 @@ proptest! {
         }
     }
 
-    /// Mirrors `revm::Gas::record_refund`. Inputs bounded to ±1B per step
+    /// Mirrors `revm::Gas::record_refund`. Inputs bounded to +/-1B per step
     /// to avoid `refunded += refund` i64-overflow in upstream. Realistic
     /// per-call refund values (EIP-3529 cap) are bounded by tx gas limit,
     /// always within `i64` headroom.

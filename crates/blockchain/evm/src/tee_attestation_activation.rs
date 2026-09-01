@@ -1,20 +1,20 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
-//! Every runnable chain must carry this field. Testnet may explicitly select
-//! `DcapRequired` or `GramineDirectDev`; devnet selects `GramineDirectDev`.
-//! Both use OST3, and neither can fall back at runtime.
+//! Every runnable chain must carry this field. Devnet and testnet may
+//! explicitly select `DcapRequired` or `GramineDirectDev`; mainnet requires
+//! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
 
 use alloy_primitives::B256;
 use outbe_primitives::{
-    chain::TESTNET_CHAIN_ID,
+    chain::{MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
         TeeAttestationManifestV1, TeePolicyScheduleV1, TeePolicyV1, MAX_TEE_POLICY_SCHEDULE_BYTES,
     },
     tee_genesis_v1::{
-        initial_tee_policy_v1, is_gramine_direct_dev_chain_id, InitialTeeProfileV1,
+        initial_tee_policy_v1, is_attestation_mode_allowed_for_chain_id, InitialTeeProfileV1,
         ProductionSgxMeasurementV1, GRAMINE_DIRECT_DEV_CHAIN_ID,
     },
     OutbeHeader,
@@ -39,14 +39,14 @@ impl TeeAttestationActivationV1 {
     }
 }
 
-/// Exact canonical block-1 DCAP authority derived from the testnet ChainSpec.
+/// Exact canonical block-1 DCAP authority derived from a Testnet or Mainnet ChainSpec.
 ///
 /// Release tooling uses this value instead of reconstructing policy from image
 /// measurements. Construction reuses the same fail-closed parser as block
 /// execution, so callers cannot supply chain, genesis or policy fields
 /// independently.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DcapTestnetChainSpecBindingV1 {
+pub struct DcapChainSpecBindingV1 {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub activation_height: u64,
@@ -59,13 +59,13 @@ pub struct DcapTestnetChainSpecBindingV1 {
     pub policy_schedule_hash: B256,
 }
 
-impl DcapTestnetChainSpecBindingV1 {
+impl DcapChainSpecBindingV1 {
     pub fn from_genesis_path(path: &std::path::Path) -> Result<Self, String> {
         let path = path
             .to_str()
-            .ok_or_else(|| "testnet genesis path is not UTF-8".to_owned())?;
+            .ok_or_else(|| "DCAP genesis path is not UTF-8".to_owned())?;
         let spec = reth_ethereum::cli::chainspec::chain_value_parser(path)
-            .map_err(|error| format!("parse testnet genesis ChainSpec: {error}"))?
+            .map_err(|error| format!("parse DCAP genesis ChainSpec: {error}"))?
             .as_ref()
             .clone()
             .map_header(OutbeHeader::new);
@@ -79,18 +79,18 @@ impl DcapTestnetChainSpecBindingV1 {
             .policy_at(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
             .clone();
         if policy.attestation_mode != AttestationMode::DcapRequired {
-            return Err("testnet release ChainSpec requires DcapRequired policy".into());
+            return Err("DCAP release ChainSpec requires DcapRequired policy".into());
         }
         let policy_bytes = policy
             .encode_canonical()
-            .map_err(|error| format!("encode testnet TEE policy: {error}"))?;
+            .map_err(|error| format!("encode DCAP TEE policy: {error}"))?;
         let policy_hash = policy
             .policy_hash()
-            .map_err(|error| format!("hash testnet TEE policy: {error}"))?;
+            .map_err(|error| format!("hash DCAP TEE policy: {error}"))?;
         let policy_schedule = activation.policy_schedule.clone();
         let policy_schedule_bytes = policy_schedule
             .encode_canonical()
-            .map_err(|error| format!("encode testnet TEE policy schedule: {error}"))?;
+            .map_err(|error| format!("encode DCAP TEE policy schedule: {error}"))?;
         Ok(Self {
             chain_id: spec.chain().id(),
             genesis_hash: spec.genesis_hash(),
@@ -118,7 +118,7 @@ impl DcapTestnetChainSpecBindingV1 {
             || policy.accepted_qe_tcb_status != QvlTcbStatusV1::UpToDate
         {
             return Err(
-                "active testnet policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
+                "active DCAP policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
                     .into(),
             );
         }
@@ -132,7 +132,7 @@ impl DcapTestnetChainSpecBindingV1 {
         });
         if policy.measurement_rules.len() != 1 || !matches_rule {
             return Err(
-                "active testnet policy does not exactly bind the signed bundle measurement".into(),
+                "active DCAP policy does not exactly bind the signed bundle measurement".into(),
             );
         }
         let expected = initial_tee_policy_v1(
@@ -146,10 +146,10 @@ impl DcapTestnetChainSpecBindingV1 {
             self.chain_id,
             self.genesis_hash,
         )
-        .map_err(|error| format!("derive canonical initial testnet policy: {error}"))?;
+        .map_err(|error| format!("derive canonical initial DCAP policy: {error}"))?;
         if *policy != expected {
             return Err(
-                "active testnet policy does not equal the canonical initial policy for the signed release"
+                "active DCAP policy does not equal the canonical initial policy for the signed release"
                     .into(),
             );
         }
@@ -246,23 +246,15 @@ fn validate_activation(
     let initial_policy = policy_schedule
         .active_policy(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(|error| format!("TEE schedule has no block-1 policy: {error}"))?;
-    match initial_policy.attestation_mode {
-        AttestationMode::DcapRequired if chain_id == GRAMINE_DIRECT_DEV_CHAIN_ID => {
-            return Err(format!(
-                "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
-            ));
-        }
-        AttestationMode::DcapRequired if chain_id != TESTNET_CHAIN_ID => {
-            return Err(format!(
-                "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
-            ));
-        }
-        AttestationMode::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
-            return Err(format!(
+    if !is_attestation_mode_allowed_for_chain_id(chain_id, initial_policy.attestation_mode) {
+        return Err(match initial_policy.attestation_mode {
+            AttestationMode::DcapRequired => format!(
+                "DcapRequired requires devnet, testnet, or mainnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
+            ),
+            AttestationMode::GramineDirectDev => format!(
                 "GramineDirectDev requires devnet or testnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID} or {TESTNET_CHAIN_ID})"
-            ));
-        }
-        AttestationMode::DcapRequired | AttestationMode::GramineDirectDev => {}
+            ),
+        });
     }
     if initial_policy.resource_schedule_hash != raw.resource_schedule_hash {
         return Err("initial TEE policy does not bind the manifest resource schedule".into());
@@ -305,6 +297,7 @@ fn chain_id_word(chain_id: u64) -> [u8; 32] {
 mod tests {
     use super::*;
     use outbe_primitives::{
+        chain::MAINNET_CHAIN_ID,
         tee_attestation_v1::{
             AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1,
             TeePolicyScheduleEntryV1,
@@ -315,16 +308,18 @@ mod tests {
         },
     };
 
-    fn testnet_chain_spec() -> (
+    fn dcap_chain_spec(
+        chain_id: u64,
+    ) -> (
         tempfile::TempDir,
         std::path::PathBuf,
         ChainSpec<OutbeHeader>,
     ) {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("testnet-genesis.json");
+        let path = root.path().join("dcap-genesis.json");
         let mut genesis = serde_json::json!({
             "config": {
-                "chainId": TESTNET_CHAIN_ID,
+                "chainId": chain_id,
                 "homesteadBlock": 0,
                 "eip150Block": 0,
                 "eip155Block": 0,
@@ -357,7 +352,7 @@ mod tests {
                 minimum_isv_svn: 2,
                 minimum_tcb_evaluation_data_number: 17,
             }),
-            TESTNET_CHAIN_ID,
+            chain_id,
             base.genesis_hash(),
         )
         .unwrap();
@@ -434,25 +429,26 @@ mod tests {
 
     #[test]
     fn valid_activation_binds_chain_policy_and_normative_resources() {
-        let chain_id = TESTNET_CHAIN_ID;
         let genesis_hash = B256::repeat_byte(0x44);
-        let parsed = validate_activation(
-            activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
-            chain_id,
-            genesis_hash,
-        )
-        .unwrap();
-        assert_eq!(parsed.manifest.activation_height, 1);
-        assert_eq!(
-            parsed.policy_at(1).unwrap().attestation_mode,
-            AttestationMode::DcapRequired
-        );
+        for chain_id in [TESTNET_CHAIN_ID, MAINNET_CHAIN_ID] {
+            let parsed = validate_activation(
+                activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
+                chain_id,
+                genesis_hash,
+            )
+            .unwrap();
+            assert_eq!(parsed.manifest.activation_height, 1);
+            assert_eq!(
+                parsed.policy_at(1).unwrap().attestation_mode,
+                AttestationMode::DcapRequired
+            );
+        }
     }
 
     #[test]
     fn dcap_testnet_binding_exposes_exact_chainspec_policy_bytes() {
-        let (_, _, spec) = testnet_chain_spec();
-        let binding = DcapTestnetChainSpecBindingV1::from_chain_spec(&spec).unwrap();
+        let (_, _, spec) = dcap_chain_spec(TESTNET_CHAIN_ID);
+        let binding = DcapChainSpecBindingV1::from_chain_spec(&spec).unwrap();
         assert_eq!(binding.chain_id, TESTNET_CHAIN_ID);
         assert_eq!(binding.genesis_hash, spec.genesis_hash());
         assert_eq!(
@@ -477,16 +473,16 @@ mod tests {
 
     #[test]
     fn dcap_testnet_binding_loads_the_exact_genesis_file() {
-        let (_root, path, expected) = testnet_chain_spec();
-        let binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&path).unwrap();
+        let (_root, path, expected) = dcap_chain_spec(TESTNET_CHAIN_ID);
+        let binding = DcapChainSpecBindingV1::from_genesis_path(&path).unwrap();
         assert_eq!(binding.chain_id, TESTNET_CHAIN_ID);
         assert_eq!(binding.genesis_hash, expected.genesis_hash());
     }
 
     #[test]
     fn dcap_testnet_binding_requires_exact_role_neutral_release_measurement() {
-        let (_, _, spec) = testnet_chain_spec();
-        let binding = DcapTestnetChainSpecBindingV1::from_chain_spec(&spec).unwrap();
+        let (_, _, spec) = dcap_chain_spec(TESTNET_CHAIN_ID);
+        let binding = DcapChainSpecBindingV1::from_chain_spec(&spec).unwrap();
         binding
             .ensure_exact_release_measurements(
                 B256::repeat_byte(0x22),
@@ -528,6 +524,15 @@ mod tests {
             )
             .unwrap_err()
             .contains("UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded"));
+    }
+
+    #[test]
+    fn dcap_mainnet_binding_exposes_the_mainnet_chain_identity() {
+        let (_root, path, spec) = dcap_chain_spec(MAINNET_CHAIN_ID);
+        let binding = DcapChainSpecBindingV1::from_genesis_path(&path).unwrap();
+        assert_eq!(binding.chain_id, MAINNET_CHAIN_ID);
+        assert_eq!(binding.genesis_hash, spec.genesis_hash());
+        assert_eq!(binding.policy.chain_id, chain_id_word(MAINNET_CHAIN_ID));
     }
 
     #[test]
@@ -597,15 +602,30 @@ mod tests {
 
         assert!(validate_activation(
             activation(
+                MAINNET_CHAIN_ID,
+                dev_genesis_hash,
+                AttestationMode::GramineDirectDev,
+            ),
+            MAINNET_CHAIN_ID,
+            dev_genesis_hash,
+        )
+        .unwrap_err()
+        .contains("devnet or testnet chain ID"));
+
+        let devnet_dcap = validate_activation(
+            activation(
                 dev_chain_id,
                 dev_genesis_hash,
-                AttestationMode::DcapRequired
+                AttestationMode::DcapRequired,
             ),
             dev_chain_id,
             dev_genesis_hash,
         )
-        .unwrap_err()
-        .contains("may not use reserved GramineDirectDev chain ID"));
+        .unwrap();
+        assert_eq!(
+            devnet_dcap.policy_at(1).unwrap().attestation_mode,
+            AttestationMode::DcapRequired
+        );
 
         assert!(validate_activation(
             activation(
@@ -617,7 +637,7 @@ mod tests {
             dev_genesis_hash,
         )
         .unwrap_err()
-        .contains("testnet chain ID"));
+        .contains("devnet, testnet, or mainnet chain ID"));
     }
 
     #[test]

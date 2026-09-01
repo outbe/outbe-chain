@@ -1,7 +1,7 @@
 //! Low-level storage access for the confidential Gratis token.
 //!
 //! CRUD over the encrypted blob slots, the plaintext aggregates, and the
-//! modify-auth replay counter. Ciphertext is read/written verbatim — this layer
+//! modify-auth replay counter. Ciphertext is read/written verbatim - this layer
 //! never decrypts. Business orchestration (building enclave requests, applying
 //! the returned receipt, emitting events) lives in [`crate::runtime`]; the
 //! cross-crate surface is [`crate::api`].

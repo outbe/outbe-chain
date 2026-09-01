@@ -924,7 +924,7 @@ fn dispatch_with_initialization(
                 None => keys.tribute_offer_key_material(),
             };
             let (results, inputs_canonical_hash) = process_tribute_offer_batch(&km, &offers);
-            // Sign (inputs_canonical_hash ‖ results) with the enclave's
+            // Sign (inputs_canonical_hash || results) with the enclave's
             // Ed25519 attestation key. The host verifies this against the
             // attestation key it pinned from the quote, proving the results were
             // produced inside this attested enclave (not substituted by the host).
@@ -941,7 +941,7 @@ fn dispatch_with_initialization(
         }
         EnclaveRequest::ApplyGratisOp { request } => {
             // Derive the resident Gratis state key from the same DKG group
-            // signature as the offer key — identical on every enclave, so the
+            // signature as the offer key - identical on every enclave, so the
             // re-encrypted state is byte-identical (consensus determinism).
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
@@ -960,7 +960,7 @@ fn dispatch_with_initialization(
             let mut result = crate::gratis::apply_op(&state_key, &request);
             // Co-located Fidelity cohort section: applied atomically with the
             // Gratis op under its own independent key domain. A failing section
-            // rejects the WHOLE op — the host writes neither ledger.
+            // rejects the WHOLE op - the host writes neither ledger.
             if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
                 (&result.status, &request.fidelity)
             {
@@ -984,7 +984,7 @@ fn dispatch_with_initialization(
                     }
                 }
             }
-            // Sign (inputs_canonical_hash ‖ result) with the attestation key so the
+            // Sign (inputs_canonical_hash || result) with the attestation key so the
             // host can prove the result came from this attested enclave.
             let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
                 result.inputs_canonical_hash,
@@ -1058,7 +1058,7 @@ fn dispatch_with_initialization(
         }
         EnclaveRequest::QueryFidelityIndex { request } => {
             // Owner-authorized read (eth_call path, NOT consensus). The signed,
-            // expiring authorization is verified inside the engine — the trust
+            // expiring authorization is verified inside the engine - the trust
             // boundary is the enclave, not the host that forwards the call.
             let Some(derived) = offer_key.get() else {
                 return EnclaveResponse::Error {
@@ -1270,7 +1270,7 @@ fn dispatch_with_initialization(
             let derived = (|| -> crate::errors::Result<DerivedTributeOfferKey> {
                 let blob = crate::crypto::EncryptedShare::from_bytes(&sealed)?;
                 // Decrypt with the secret behind this enclave's advertised
-                // `recipient_x25519` (its `tribute_offer` X25519 key) — the key the
+                // `recipient_x25519` (its `tribute_offer` X25519 key) - the key the
                 // finalized registry artifact was sealed to.
                 let group_sig = Zeroizing::new(crate::crypto::decrypt_share(
                     keys.tribute_offer_x25519_secret(),
@@ -1408,7 +1408,7 @@ fn dispatch_with_initialization(
                         .with_epochs(0, tribute_offer_epoch);
                     // Write-once: the first ceremony's key is canonical. A re-run
                     // that derives the SAME key is idempotent; a DIVERGENT key is a
-                    // determinism fault — reject rather than keep a stale key.
+                    // determinism fault - reject rather than keep a stale key.
                     if let Err(rejected) = offer_key.set(derived) {
                         if offer_key.get().map(|k| k.public) != Some(rejected.public) {
                             return EnclaveResponse::Error {
@@ -1511,7 +1511,7 @@ fn dispatch_dkg_open(
     let result = (|| {
         // The host relays each `(bls, enc, sig)` it gathered from peers' GetPublicKeys.
         // Before trusting any pairing: verify every enc key is signed by the BLS
-        // identity it is paired with, and reject duplicate enc keys / identities — so
+        // identity it is paired with, and reject duplicate enc keys / identities - so
         // an untrusted host cannot mis-pair an enc key onto a foreign identity or
         // collapse two participants onto one enc key (cross-decryption of shares).
         let mut enc_by_bls = std::collections::BTreeMap::new();
@@ -1579,7 +1579,7 @@ fn validate_generated_quote_binding(
 }
 
 /// Accept loop (used by the enclave binary). Each connection is served on its
-/// own thread so multiple long-lived clients are handled concurrently — the node
+/// own thread so multiple long-lived clients are handled concurrently - the node
 /// keeps one connection open for offer decryption for its whole lifetime *and*
 /// opens a second one for the startup TEE-bootstrap registration fetch; a
 /// sequential loop would deadlock the second behind the first. `keys` is
@@ -1621,7 +1621,7 @@ pub fn serve(
     Ok(())
 }
 
-/// TCP accept loop — same thread-per-connection model as [`serve`], but over
+/// TCP accept loop - same thread-per-connection model as [`serve`], but over
 /// TCP. Used when the enclave runs under Gramine, where pathname Unix domain
 /// sockets are process-internal and a host process (the node) cannot reach them;
 /// Gramine passes TCP through to the host network. The Noise-IK handshake still
@@ -2086,7 +2086,7 @@ mod tests {
         let (evidence, policy) = intent_bound_processor_fixture_wire_bytes();
 
         let DcapVerificationOutcomeV1::Accepted(verdict) = client
-            .verify_dcap_evidence_v1(&evidence, &policy, 1_785_491_440)
+            .verify_dcap_evidence_v1(&evidence, &policy, 1_787_850_648)
             .unwrap()
         else {
             panic!("testnet policy must accept the authenticated Processor fixture")
@@ -2116,7 +2116,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             client
-                .verify_dcap_evidence_v1(&unattested, &policy, 1_785_491_440)
+                .verify_dcap_evidence_v1(&unattested, &policy, 1_787_850_648)
                 .unwrap(),
             DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical)
         );
@@ -2455,10 +2455,10 @@ mod tests {
         assert_eq!(sorted.len(), n, "share commitments must be distinct");
 
         // Seam F: every enclave threshold-signs the fixed offer message and SEALS
-        // its partial to every recipient (n² sealed blobs). The host only ever
+        // its partial to every recipient (n^2 sealed blobs). The host only ever
         // relays ciphertexts: `(recipient_bls, sealed_blob)`. Each enclave then
         // decrypts in-SGX the blobs addressed to it and recovers the group
-        // signature → shared offer key.
+        // signature -> shared offer key.
         let mut all_sealed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for e in enclaves.iter_mut() {
             match e.call(EnclaveRequest::DkgTributeOfferPartial { ceremony_id }) {
@@ -2693,7 +2693,7 @@ mod tests {
     }
 
     /// Seal the DKG-derived offer key + group signature, then a fresh boot unseals
-    /// and restores the byte-identical offer public key AND the group signature —
+    /// and restores the byte-identical offer public key AND the group signature -
     /// the restart fast-path that skips the ceremony.
     #[test]
     fn ws_c_seal_then_unseal_restores_tribute_offer_key_and_group_sig() {
@@ -2717,7 +2717,7 @@ mod tests {
     }
 
     /// vA seals at SVN 1; a vB enclave of the SAME signer (same mock MRSIGNER key,
-    /// different build) boots at SVN 2 and unseals vA's blob — cross-version
+    /// different build) boots at SVN 2 and unseals vA's blob - cross-version
     /// unseal with the anti-rollback floor satisfied.
     #[test]
     fn ws_c_cross_version_unseal_same_signer_key() {
@@ -2801,7 +2801,7 @@ mod tests {
         );
     }
 
-    /// The encoded share is only present inside the AEAD ciphertext — it never
+    /// The encoded share is only present inside the AEAD ciphertext - it never
     /// appears as plaintext bytes in the on-disk blob (secret-at-rest invariant).
     #[test]
     fn ws_c_share_never_in_host_plaintext() {
@@ -2945,7 +2945,7 @@ mod tests {
         (sk, addr)
     }
 
-    /// EIP-191 owner signature over the shared derive-keys message — the exact
+    /// EIP-191 owner signature over the shared derive-keys message - the exact
     /// preimage the enclave arm recomputes.
     fn owner_sig(
         sk: &k256::ecdsa::SigningKey,

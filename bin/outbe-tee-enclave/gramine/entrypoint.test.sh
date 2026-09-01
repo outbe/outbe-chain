@@ -8,7 +8,7 @@ readonly ARCH_LIBDIR=/lib/x86_64-linux-gnu
 readonly TEST_SIGNING_KEY=/run/secrets/outbe-test-sgx-key.pem
 
 if [[ ! -x "${ENTRY}" ]]; then
-  echo "test entrypoint: ${ENTRY} missing — mount the enclave binary" >&2
+  echo "test entrypoint: ${ENTRY} missing - mount the enclave binary" >&2
   exit 2
 fi
 if [[ ! -f "${TEST_SIGNING_KEY}" ]]; then

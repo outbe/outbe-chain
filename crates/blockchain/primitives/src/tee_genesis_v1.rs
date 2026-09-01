@@ -11,7 +11,7 @@ use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
 
 use crate::{
-    chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID},
+    chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
@@ -28,6 +28,24 @@ pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
 }
 
+/// Returns whether the chain has a production DCAP identity.
+pub const fn is_dcap_required_chain_id(chain_id: u64) -> bool {
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
+}
+
+/// Returns whether a product network may select this explicit attestation
+/// mode at genesis. The selected mode is subsequently fixed for the life of
+/// the chain by TeeRegistry successor-policy validation.
+pub const fn is_attestation_mode_allowed_for_chain_id(
+    chain_id: u64,
+    mode: AttestationMode,
+) -> bool {
+    match mode {
+        AttestationMode::DcapRequired => is_dcap_required_chain_id(chain_id),
+        AttestationMode::GramineDirectDev => is_gramine_direct_dev_chain_id(chain_id),
+    }
+}
+
 /// SHA-256 of Intel's pinned SGX Root CA DER certificate.
 pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
     0x44, 0xa0, 0x19, 0x6b, 0x2b, 0x99, 0xf8, 0x89, 0xb8, 0xe1, 0x49, 0xe9, 0x5b, 0x80, 0x7a, 0x35,
@@ -37,6 +55,9 @@ pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
 const INTEL_QE_VENDOR_ID: [u8; 16] = [
     0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f, 0x06, 0x07,
 ];
+
+/// Canonical production enclave lease period: fourteen consensus days.
+pub const PRODUCTION_TEE_LEASE_SECONDS_V1: u64 = 14 * 24 * 60 * 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProductionSgxMeasurementV1 {
@@ -74,18 +95,23 @@ pub fn initial_tee_policy_v1(
     if genesis_hash.is_zero() {
         return Err("TEE genesis policy requires a non-zero genesis hash".into());
     }
-    match profile {
-        InitialTeeProfileV1::DcapRequired(_) if chain_id == GRAMINE_DIRECT_DEV_CHAIN_ID => {
+    match profile.attestation_mode() {
+        AttestationMode::DcapRequired
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::DcapRequired,
+            ) =>
+        {
             return Err(format!(
-                "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
+                "DcapRequired requires devnet, testnet, or mainnet chain ID ({DEVNET_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
             ));
         }
-        InitialTeeProfileV1::DcapRequired(_) if chain_id != TESTNET_CHAIN_ID => {
-            return Err(format!(
-                "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
-            ));
-        }
-        InitialTeeProfileV1::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
+        AttestationMode::GramineDirectDev
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::GramineDirectDev,
+            ) =>
+        {
             return Err(format!(
                 "GramineDirectDev requires devnet or testnet chain ID ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID})"
             ));
@@ -151,7 +177,7 @@ pub fn initial_tee_policy_v1(
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 2_592_000,
+        maximum_lease: PRODUCTION_TEE_LEASE_SECONDS_V1,
         collateral_margin: 3_600,
         resource_schedule_hash,
         measurement_rules: vec![measurement_rule],
@@ -190,7 +216,7 @@ pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
+    use crate::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
     fn dcap_measurement() -> ProductionSgxMeasurementV1 {
         ProductionSgxMeasurementV1 {
@@ -203,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn dcap_stays_testnet_only_while_gramine_accepts_devnet_and_testnet() {
+    fn devnet_and_testnet_accept_both_modes_while_mainnet_requires_dcap() {
         let genesis_hash = B256::repeat_byte(0x33);
         assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
         assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
@@ -215,18 +241,23 @@ mod tests {
         .is_ok());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
+            MAINNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(dcap_measurement()),
             DEVNET_CHAIN_ID,
             genesis_hash,
         )
-        .unwrap_err()
-        .contains("reserved"));
+        .is_ok());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
             DEVNET_CHAIN_ID + 1,
             genesis_hash,
         )
         .unwrap_err()
-        .contains("testnet"));
+        .contains("devnet, testnet, or mainnet"));
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID,
@@ -239,6 +270,12 @@ mod tests {
             genesis_hash,
         )
         .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            MAINNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_err());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID + 1,
@@ -270,7 +307,8 @@ mod tests {
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
-        assert_eq!(policy.maximum_lease, 30 * 24 * 60 * 60);
+        assert_eq!(policy.minimum_lease, 3_600);
+        assert_eq!(policy.maximum_lease, 14 * 24 * 60 * 60);
     }
 
     #[test]
@@ -319,17 +357,21 @@ mod tests {
             schedule.active_policy(1).unwrap().attestation_mode,
             AttestationMode::GramineDirectDev
         );
+        assert_eq!(schedule.active_policy(1).unwrap(), &policy);
         assert_eq!(
             field["policyScheduleHash"],
             json!(schedule.schedule_hash().unwrap())
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrenclave,
-            policy.measurement_rules[1].mrenclave
+        assert_eq!(policy.measurement_rules.len(), 1);
+        let rule = &policy.measurement_rules[0];
+        assert_eq!(
+            rule.mrenclave,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrenclave/v1")
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrsigner,
-            policy.measurement_rules[1].mrsigner
+        assert_eq!(
+            rule.mrsigner,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrsigner/v1")
         );
+        assert_ne!(rule.mrenclave, rule.mrsigner);
     }
 }

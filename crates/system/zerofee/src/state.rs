@@ -3,7 +3,7 @@
 //! All access goes through `ZeroFeeContract::counter` which is a
 //! `Map<Address, u64>` of packed `(date_key, count)`. The day reset is
 //! lazy: a stored day that no longer matches the current UTC day is
-//! treated as count = 0 without an explicit overwrite — the next
+//! treated as count = 0 without an explicit overwrite - the next
 //! `record_use` will rewrite the slot with the new day.
 
 use alloy_primitives::Address;

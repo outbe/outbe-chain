@@ -74,7 +74,7 @@ fn committee_snapshot() -> CommitteeSnapshot {
     }
 }
 
-/// Committee-bound consensus sub-namespace — must match what the
+/// Committee-bound consensus sub-namespace - must match what the
 /// SlashIndicator evidence verifier derives from the epoch's committee snapshot.
 fn ns_with(suffix: &[u8]) -> Vec<u8> {
     let c = committee_set();
@@ -251,7 +251,7 @@ fn wrong_namespace_signature_rejected() {
     with_storage(|storage| {
         let sk = accused_sk();
         setup(storage.clone(), &sk);
-        // Finalize-signed blocks submitted as conflicting NOTARIZE → verify fails.
+        // Finalize-signed blocks submitted as conflicting NOTARIZE -> verify fails.
         let b1 = evidence_block(&sk, &ns_with(b"_FINALIZE"), &proposal_bytes(1, 5, 4, 0xA1));
         let b2 = evidence_block(&sk, &ns_with(b"_FINALIZE"), &proposal_bytes(1, 5, 4, 0xB2));
         let mut si = SlashIndicator::new(storage.clone());

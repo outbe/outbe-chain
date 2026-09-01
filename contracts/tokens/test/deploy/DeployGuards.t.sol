@@ -45,7 +45,7 @@ contract DeployHarness is DeployAll {
 }
 
 /// @dev Every test here relies on the constant env values written by `setUp`. That is load-bearing: `vm.setEnv` writes
-///      the process environment while forge runs test contracts — and tests within a contract — concurrently, so a
+///      the process environment while forge runs test contracts - and tests within a contract - concurrently, so a
 ///      test that sets its own env values would race its siblings. Anything computed (a deployed mock's address) is
 ///      injected with `vm.etch` at a fixed address instead of being written into the environment.
 ///
@@ -53,11 +53,11 @@ contract DeployHarness is DeployAll {
 contract DeployGuardsTest is Test {
     uint256 internal constant EXTERNAL_CHAIN = 11_155_111; // Sepolia
     uint256 internal constant OUTBE_CHAIN = 54_322_345;
-    uint256 internal constant UNDECLARED_CHAIN = 97; // BSC testnet — no longer privileged by a hardcoded chain id
+    uint256 internal constant UNDECLARED_CHAIN = 97; // BSC testnet - no longer privileged by a hardcoded chain id
     uint256 internal constant LOCAL_CHAIN = 31_337;
 
     address internal constant HUB = 0x0000000000000000000000000000000000B41D6E;
-    /// @dev Stands in for a canonical token that already exists on chain — see the adoption test.
+    /// @dev Stands in for a canonical token that already exists on chain - see the adoption test.
     address internal constant ADOPTED_USDT = address(uint160(0xADD7ED));
     string internal constant SALT = "TEST_V1";
 
@@ -130,7 +130,7 @@ contract DeployGuardsTest is Test {
 
     // === Declared-chain guard ===
     // A wrong `--rpc-url` must not deploy anything. Without this an unrecognised chain counts as "not Outbe", i.e. as
-    // the external end of every route, and a full set of contracts — including the mintable USDT mock — lands on it.
+    // the external end of every route, and a full set of contracts - including the mintable USDT mock - lands on it.
 
     function test_DeclaredChainGuard_AllowsExternalChain() public {
         vm.chainId(EXTERNAL_CHAIN);
@@ -158,7 +158,7 @@ contract DeployGuardsTest is Test {
         deploy.exposedRequireDeclaredChain();
     }
 
-    /// @dev The guard has to bite through the deploy entrypoint, not only in isolation — that is where a wrong
+    /// @dev The guard has to bite through the deploy entrypoint, not only in isolation - that is where a wrong
     ///      `--rpc-url` actually arrives.
     function test_DeployRoute_RevertsOnUndeclaredChain() public {
         vm.chainId(UNDECLARED_CHAIN);
@@ -219,7 +219,7 @@ contract DeployGuardsTest is Test {
     }
 
     /// @dev On a real network the canonical USDT already exists at the issuer's address, so the script must adopt it
-    ///      instead of deploying a mock next to it — and the bridge address must not move because of that.
+    ///      instead of deploying a mock next to it - and the bridge address must not move because of that.
     ///      The spec is returned by value, so the test can point it at a fixed env var rather than writing a computed
     ///      address into the shared environment.
     function test_CanonicalToken_AdoptsConfiguredAddress() public {

@@ -11,8 +11,11 @@ use outbe_primitives::{
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     errors::storage_corruption_message,
-    ocomp::state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
+    ocomp::{
+        state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
+        OcompRequestProfileExt,
+    },
     schema::{day_type, status, terminal_outcome, MetadosisContract},
     terminal::{
         validate_capacity_forfeiture_detail, validate_terminal_receipt_state,

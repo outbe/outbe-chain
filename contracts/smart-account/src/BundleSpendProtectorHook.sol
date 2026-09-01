@@ -12,7 +12,7 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///         bundled (reserved) portion of a smart account. The owner may freely spend their own
 ///         (free) balance, but must not touch the reserve. Enforced as a post-execution invariant:
 ///         after an owner UserOp, for every bundled token the account must
-///           (1) retain its reserve — it may remove at most its pre-op free balance, and
+///           (1) retain its reserve - it may remove at most its pre-op free balance, and
 ///           (2) leave no standing allowance on the token (an approve is fine only if it is
 ///               consumed within the same UserOp, e.g. by a factory precompile's transferFrom).
 ///         This is spender/mechanism-agnostic: it covers plain transfers, transferFrom, batches,
@@ -21,7 +21,7 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///         hook (BundleWithdrawHook) and is unaffected.
 /// @dev Wired as the root validator execution hook when bundleTokens.length > 0. preCheck snapshots
 ///      pre-op state; postCheck verifies the invariant and reverts (failing the UserOp) on breach.
-///      Using pre-op balance+reserve (captured in preCheck) is deliberate — it neither false-reverts
+///      Using pre-op balance+reserve (captured in preCheck) is deliberate - it neither false-reverts
 ///      unrelated ops on an over-reserved account (topUp doubles the reserve) nor lets the owner
 ///      lower their own reserve mid-op to slip funds past the check.
 ///      msgData layout (from Kernel.executeUserOp -> preCheck):
@@ -29,7 +29,7 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///        [4:36]    ExecMode (bytes32; byte [4] = callType: 0x00 = SINGLE, 0x01 = BATCH)
 ///        [36:68]   ABI offset to bytes param (= 64)
 ///        [68:100]  length of executionCalldata
-///        [100:]    executionCalldata (SINGLE: packed address‖uint256‖callData; BATCH: abi.encode(Execution[]))
+///        [100:]    executionCalldata (SINGLE: packed address||uint256||callData; BATCH: abi.encode(Execution[]))
 ///
 ///      Known limitation (unchanged from prior versions): only root-validated ops run this hook;
 ///      executeFromExecutor / fallback paths use different or no hooks, so a future executor module

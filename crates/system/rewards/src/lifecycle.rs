@@ -74,13 +74,13 @@ mod tests {
                 BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle.clone());
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx0).unwrap();
 
-            // Block 1, slightly later — must not move the locked-in day.
+            // Block 1, slightly later - must not move the locked-in day.
             let ctx1 =
                 BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle.clone());
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
             assert_eq!(runtime::genesis_utc_day(&ctx1).unwrap(), 20240101);
 
-            // Block 100, 30 days later — still 20240101.
+            // Block 100, 30 days later - still 20240101.
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
                 handle,

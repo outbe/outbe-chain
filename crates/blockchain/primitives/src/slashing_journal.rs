@@ -10,14 +10,14 @@
 //!
 //! Standard `reth.log` rotates when each file reaches the configured size
 //! (~200 MB). At testnet finalization rates this can mean a few hours of
-//! runtime fits in the ~5-file rotation window — slash and validator-exit
+//! runtime fits in the ~5-file rotation window - slash and validator-exit
 //! events are routinely lost from on-host evidence by the time anyone
 //! investigates. The journal closes that gap with a single tiny file (one
 //! JSON line per event; ~10 events/day typical) that survives indefinitely.
 //!
 //! ## Best-effort semantics
 //!
-//! The journal is **best-effort** observability — writes that fail (disk
+//! The journal is **best-effort** observability - writes that fail (disk
 //! full, permission error, file unwritable) emit a `tracing::warn!` and
 //! are dropped. They never block the consensus / state-transition path
 //! that produced them. Determinism is unaffected: the journal is a side
@@ -145,7 +145,7 @@ pub enum JournalRecord {
         slashed_amount: String,
     },
 
-    /// Validator self-deactivated (or owner deactivated): ACTIVE→EXITING.
+    /// Validator self-deactivated (or owner deactivated): ACTIVE->EXITING.
     ValidatorDeactivated {
         wall_clock: String,
         block_number: u64,
@@ -154,7 +154,7 @@ pub enum JournalRecord {
         self_initiated: bool,
     },
 
-    /// Validator force-exited from a status path: ACTIVE→EXITING (or
+    /// Validator force-exited from a status path: ACTIVE->EXITING (or
     /// EXITING re-emit, or no-op for UNBONDING/INACTIVE).
     ValidatorForcedExit {
         wall_clock: String,
@@ -246,7 +246,7 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
 
 /// Append `record` to the journal. If [`init`] has not been called, this
 /// is a no-op (test-friendly). Write errors are logged at WARN and
-/// swallowed — never blocks the caller's state-transition path.
+/// swallowed - never blocks the caller's state-transition path.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn iso8601_format_shape() {
         let s = iso8601_now();
-        // YYYY-MM-DDTHH:MM:SS.mmmZ — 24 chars including separators
+        // YYYY-MM-DDTHH:MM:SS.mmmZ - 24 chars including separators
         assert_eq!(s.len(), 24);
         assert!(s.ends_with('Z'));
         assert!(s.chars().nth(4) == Some('-'));

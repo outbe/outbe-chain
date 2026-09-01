@@ -410,9 +410,9 @@ pub fn execute_dkg_status(storage_dir: &Path, backend: &KeyBackend) -> Result<()
     };
 
     if triplet_ok {
-        println!("  status: READY — threshold material is valid");
+        println!("  status: READY - threshold material is valid");
     } else {
-        println!("  status: NOT READY — missing or invalid key material");
+        println!("  status: NOT READY - missing or invalid key material");
     }
 
     Ok(())
@@ -460,17 +460,17 @@ pub fn execute_dkg_export_share(
 
     println!("exported DKG material to: {}", output.display());
     println!(
-        "  {}  →  {}",
+        "  {}  ->  {}",
         DKG_SHARE_FILE,
         output.join(DKG_SHARE_FILE).display()
     );
     println!(
-        "  {}  →  {}",
+        "  {}  ->  {}",
         DKG_POLYNOMIAL_FILE,
         output.join(DKG_POLYNOMIAL_FILE).display()
     );
     println!(
-        "  {}  →  {}",
+        "  {}  ->  {}",
         DKG_OUTPUT_FILE,
         output.join(DKG_OUTPUT_FILE).display()
     );
@@ -557,17 +557,17 @@ pub fn execute_dkg_import_share(
 
     println!("imported DKG material into: {}", storage_dir.display());
     println!(
-        "  share:       {} → {}",
+        "  share:       {} -> {}",
         share_file.display(),
         storage_dir.join(DKG_SHARE_FILE).display()
     );
     println!(
-        "  polynomial:  {} → {}",
+        "  polynomial:  {} -> {}",
         polynomial_file.display(),
         storage_dir.join(DKG_POLYNOMIAL_FILE).display()
     );
     println!(
-        "  DKG output:  {} → {}",
+        "  DKG output:  {} -> {}",
         output_file.display(),
         storage_dir.join(DKG_OUTPUT_FILE).display()
     );

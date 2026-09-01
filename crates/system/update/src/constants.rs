@@ -5,15 +5,12 @@
 /// Minimum blocks between vote approval and activation height.
 pub const MIN_ACTIVATION_BUFFER: u64 = 100;
 
-/// Localnet chain id (mirrors `outbe_vote`'s `LOCALNET_CHAIN_ID` / testnet).
-const LOCALNET_CHAIN_ID: u64 = 54_322_345;
-
 /// Activation buffer for `chain_id`. Zero on the localnet chain so e2e updates
 /// activate promptly; the standard [`MIN_ACTIVATION_BUFFER`] everywhere else.
-/// Mirrors how `outbe_vote` shortens the voting window for localnet — but
+/// Mirrors how `outbe_vote` shortens the voting window for localnet - but
 /// keyed purely on the chain id, with no env/config override.
 pub fn min_activation_buffer(chain_id: u64) -> u64 {
-    if chain_id == LOCALNET_CHAIN_ID {
+    if chain_id == outbe_primitives::chain::TESTNET_CHAIN_ID {
         0
     } else {
         MIN_ACTIVATION_BUFFER
@@ -50,14 +47,20 @@ pub(crate) const PROTOCOL_VERSION_MINOR: u32 =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
-
-    const PRODUCTION_CHAIN_ID: u64 = 1;
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
     #[test]
     fn every_network_is_strictly_capped_to_the_binary_version() {
-        for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, PRODUCTION_CHAIN_ID] {
+        for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID] {
             assert_eq!(max_activatable_version(chain_id), PROTOCOL_VERSION);
+        }
+    }
+
+    #[test]
+    fn only_testnet_skips_the_activation_buffer() {
+        assert_eq!(min_activation_buffer(TESTNET_CHAIN_ID), 0);
+        for chain_id in [DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, 1_000_000_001] {
+            assert_eq!(min_activation_buffer(chain_id), MIN_ACTIVATION_BUFFER);
         }
     }
 }

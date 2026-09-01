@@ -1,7 +1,7 @@
 //! CLI-derived configuration for the harness.
 //!
 //! Paths and toggles for isolated localnet scenarios and
-//! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] — the
+//! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] - the
 //! harness reads no product configuration from the process environment.
 //! (`PATH`/`HOME` are only read to build the child's `PATH` so `cast` resolves;
 //! the explicit Metadosis P0 lane separately records its removed env input.)
@@ -63,7 +63,7 @@ pub(crate) struct Config {
     /// past the committee (joiner, followers) resolve without pre-declaration.
     pub ports: Ports,
     /// A stable, run-dir-derived tag that scopes this run's enclave containers
-    /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep —
+    /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep -
     /// independent of ports.
     pub run_tag: String,
     /// This scenario's 1-based id, or `0` for the run-level config (which only
@@ -129,7 +129,7 @@ impl Config {
     /// containers.
     ///
     /// The caller must have advanced [`Ports::start_scenario`](crate::internal::ports::Ports::start_scenario)
-    /// first — `rpc0` below reads this scenario's validator-0 block.
+    /// first - `rpc0` below reads this scenario's validator-0 block.
     pub fn for_scenario(env: &Environment, id: usize) -> Self {
         let mut cfg = Self::resolve(env);
         cfg.dir = env.data_dir.join(format!("scenario-{id}"));
@@ -190,7 +190,7 @@ impl Config {
 
     /// Loopback HTTP port where validator `i`'s OCOMP Supervisor accepts workers.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub fn ocomp_supervisor_port(&self, i: usize) -> u16 {
+    pub fn ocomp_endpoint_port(&self, i: usize) -> u16 {
         self.ports.port(Service::OcompSupervisor, i)
     }
 
@@ -215,7 +215,7 @@ impl Config {
     /// Enclave container name for validator index `i`.
     ///
     /// Scoped by run tag *and* scenario, so two scenarios never contend for the
-    /// same docker name — the same isolation their dirs and ports already have.
+    /// same docker name - the same isolation their dirs and ports already have.
     /// The teardown sweep matches on the `outbe-tee-gramine-<run_tag>-` prefix,
     /// which still covers every scenario's containers.
     pub fn tee_container(&self, i: usize) -> String {
@@ -306,14 +306,14 @@ mod tests {
         assert_eq!(cfg.tee_port(joiner), cfg.http_port(joiner) + 1);
         assert!(cfg.http_port(14) > cfg.http_port(joiner));
         assert!(cfg.consensus_port(15) > cfg.http_port(14));
-        assert_eq!(cfg.ocomp_supervisor_port(15), cfg.consensus_port(15) + 1);
+        assert_eq!(cfg.ocomp_endpoint_port(15), cfg.consensus_port(15) + 1);
 
         // The committee size never moves, however many nodes are added.
         assert_eq!(cfg.validators, env.validators);
     }
 
     /// A scenario's data lives in its own subdir, but the enclave `run_tag` stays
-    /// the run's — the SIGINT sweep only ever sees the run-level `Config`.
+    /// the run's - the SIGINT sweep only ever sees the run-level `Config`.
     #[test]
     fn scenario_dir_is_nested_under_the_run_dir() {
         let env = Environment::default();

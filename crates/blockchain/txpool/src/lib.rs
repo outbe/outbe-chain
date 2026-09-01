@@ -6,7 +6,7 @@
 pub mod maintain;
 
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_ocomp_protocol::system_carrier::{
     classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
     OcompSystemCarrierView,
@@ -20,7 +20,7 @@ use outbe_primitives::{
     system_tx::OcompLifecycleActivation,
     OutbePrimitives,
 };
-use outbe_zerofee::{ZeroFeeHookId, ZeroFeeTransaction};
+use outbe_zerofee::{BootstrapTransactionView, ZeroFeeHookId, ZeroFeeTransaction};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
@@ -60,6 +60,31 @@ where
         max_fee_per_gas: tx.max_fee_per_gas(),
         max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
     }
+}
+
+fn bootstrap_transaction<'a, T>(
+    tx: &'a T,
+    signer: Address,
+    network_chain_id: u64,
+) -> Option<BootstrapTransactionView<'a>>
+where
+    T: alloy_consensus::Transaction + ?Sized,
+{
+    let authorization_list = tx.authorization_list()?;
+    Some(BootstrapTransactionView {
+        signer,
+        tx_chain_id: tx.chain_id(),
+        network_chain_id,
+        nonce: tx.nonce(),
+        to: tx.to(),
+        value: tx.value(),
+        input: tx.input().as_ref(),
+        gas_limit: tx.gas_limit(),
+        max_fee_per_gas: tx.max_fee_per_gas(),
+        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        access_list_empty: tx.access_list().is_some_and(|list| list.is_empty()),
+        authorization_list,
+    })
 }
 
 fn classify_ocomp_carrier<T>(
@@ -593,6 +618,18 @@ where
         let tx = parts.transaction.transaction();
         let signer = tx.sender();
         let zero_fee_tx = zero_fee_transaction(tx, signer);
+        let normal_fee_outcome = |parts: ValidOutcomeParts<Tx>| {
+            let cost = *parts.transaction.transaction().cost();
+            if cost > parts.balance {
+                let balance = parts.balance;
+                TransactionValidationOutcome::Invalid(
+                    parts.transaction.into_transaction(),
+                    InvalidPoolTransactionError::Overdraft { cost, balance },
+                )
+            } else {
+                valid_outcome(parts)
+            }
+        };
         let classification = outbe_zerofee::registry().classify(&zero_fee_tx);
         match classification {
             Ok(Some(candidate)) => match self.validate_zero_fee_state(candidate) {
@@ -605,28 +642,43 @@ where
                     InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
                 ),
             },
-            Ok(None) => match self.try_eip7702_sponsorship(signer, &zero_fee_tx) {
-                Ok(SponsorshipOutcome::Accepted) => {
-                    parts.balance = U256::MAX;
-                    valid_outcome(parts)
-                }
-                Ok(SponsorshipOutcome::NotSponsored) => {
-                    let cost = *parts.transaction.transaction().cost();
-                    if cost > parts.balance {
-                        let balance = parts.balance;
-                        TransactionValidationOutcome::Invalid(
-                            parts.transaction.into_transaction(),
-                            InvalidPoolTransactionError::Overdraft { cost, balance },
-                        )
-                    } else {
-                        valid_outcome(parts)
+            Ok(None) => {
+                let bootstrap_candidate = bootstrap_transaction(
+                    parts.transaction.transaction(),
+                    signer,
+                    self.inner.chain_id(),
+                )
+                .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
+                if let Some(candidate) = bootstrap_candidate {
+                    match self.validate_bootstrap_state(candidate) {
+                        Ok(true) => {
+                            parts.balance = U256::MAX;
+                            return valid_outcome(parts);
+                        }
+                        Ok(false) => return normal_fee_outcome(parts),
+                        Err(err) => {
+                            return TransactionValidationOutcome::Invalid(
+                                parts.transaction.into_transaction(),
+                                InvalidPoolTransactionError::other(OutbeZeroFeePoolError(
+                                    err.to_string(),
+                                )),
+                            )
+                        }
                     }
                 }
-                Err(err) => TransactionValidationOutcome::Invalid(
-                    parts.transaction.into_transaction(),
-                    InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
-                ),
-            },
+
+                match self.try_eip7702_sponsorship(signer, &zero_fee_tx) {
+                    Ok(SponsorshipOutcome::Accepted) => {
+                        parts.balance = U256::MAX;
+                        valid_outcome(parts)
+                    }
+                    Ok(SponsorshipOutcome::NotSponsored) => normal_fee_outcome(parts),
+                    Err(err) => TransactionValidationOutcome::Invalid(
+                        parts.transaction.into_transaction(),
+                        InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
+                    ),
+                }
+            }
             Err(err) => TransactionValidationOutcome::Invalid(
                 parts.transaction.into_transaction(),
                 InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
@@ -643,7 +695,7 @@ where
     /// is present (the tx then falls back to the standard
     /// cost-vs-balance Overdraft gate). Returns `Err(_)` for an
     /// authenticated sponsorship attempt that fails any of the policy
-    /// rules — the pool rejects with the policy reason in the
+    /// rules - the pool rejects with the policy reason in the
     /// `InvalidPoolTransactionError::other` payload so the caller sees
     /// the same error code the executor would produce at block time.
     ///
@@ -666,9 +718,9 @@ where
         // Resolve the signer's account + (optional) delegation bytecode
         // from the latest committed state, then hand the already-fetched
         // values to the pure decision core. Splitting the I/O from the
-        // policy keeps the composition (delegation match → classify →
+        // policy keeps the composition (delegation match -> classify ->
         // precheck, with NO quota check) deterministically unit-testable
-        // without a provider mock — see `sponsorship_decision` tests.
+        // without a provider mock - see `sponsorship_decision` tests.
         let Some(account) = state
             .basic_account(&signer)
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
@@ -707,6 +759,34 @@ where
             .authorize_fee_waiver(storage, candidate)
             .map(|_| ())
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))
+    }
+
+    fn validate_bootstrap_state(
+        &self,
+        candidate: outbe_zerofee::BootstrapCandidate,
+    ) -> Result<bool, OutbeZeroFeePoolError> {
+        let state = self
+            .inner
+            .client()
+            .latest()
+            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+        let Some(account) = state
+            .basic_account(&candidate.signer)
+            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
+        else {
+            return Ok(false);
+        };
+
+        Ok(outbe_zerofee::authorize_bootstrap(
+            candidate,
+            outbe_zerofee::BootstrapAccountView {
+                balance: account.balance,
+                nonce: account.nonce,
+                code_empty: account
+                    .bytecode_hash
+                    .is_none_or(|code_hash| code_hash == KECCAK256_EMPTY),
+            },
+        ))
     }
 }
 
@@ -747,16 +827,16 @@ enum SponsorshipOutcome {
 /// committed state: the signer, its native `balance`, and the address
 /// its account code delegates to (`None` if it is not an EIP-7702
 /// delegation). The decision:
-///   - `delegated_to != Some(ZEROFEE_ADDRESS)` → `NotSponsored` (normal
+///   - `delegated_to != Some(ZEROFEE_ADDRESS)` -> `NotSponsored` (normal
 ///     fee path; never an error).
 ///   - delegated but the envelope does not match `classify_sponsorship`
-///     (most importantly `priority_fee > 0` — "I am paying") →
+///     (most importantly `priority_fee > 0` - "I am paying") ->
 ///     `NotSponsored`. The tx is a normal paid transaction that merely
 ///     originates from a delegated account; it must go through the
 ///     standard cost-vs-balance gating, NOT be rejected. This keeps
 ///     EIP-7702 delegation additive and lets a signer pay once their
 ///     daily free quota is exhausted.
-///   - delegated AND envelope matches → run `precheck_sponsorship`
+///   - delegated AND envelope matches -> run `precheck_sponsorship`
 ///     (self-sponsorship); its policy error is
 ///     returned so the pool rejects with the matching code.
 ///
@@ -773,7 +853,7 @@ fn sponsorship_decision(
     }
 
     // Envelope mismatch (e.g. priority_fee > 0) means the signer is not
-    // opting into sponsorship — fall through to the normal fee path
+    // opting into sponsorship - fall through to the normal fee path
     // rather than rejecting the tx.
     if outbe_zerofee::classify_sponsorship(zero_fee_tx).is_err() {
         return Ok(SponsorshipOutcome::NotSponsored);
@@ -830,9 +910,13 @@ impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
-    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
+    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxEip7702};
+    use alloy_eips::{
+        eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _, eip7702::Authorization,
+    };
     use alloy_primitives::{Bytes, Signature, TxKind, B256};
+    use alloy_signer::SignerSync as _;
+    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
     use reth_ethereum::TransactionSigned;
@@ -882,6 +966,121 @@ mod tests {
             .expect("test transaction signer should recover");
 
         EthPooledTransaction::new(recovered, encoded_length)
+    }
+
+    fn bootstrap_pooled_tx() -> (EthPooledTransaction, Address) {
+        let signer: PrivateKeySigner =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let signer_address = signer.address();
+        let authorization = Authorization {
+            chain_id: U256::from(CHAIN_ID),
+            address: outbe_zerofee::ZEROFEE_ADDRESS,
+            nonce: 1,
+        };
+        let signed_authorization = authorization.clone().into_signed(
+            signer
+                .sign_hash_sync(&authorization.signature_hash())
+                .unwrap(),
+        );
+        let input: Bytes = outbe_zerofee::precompile::IZeroFee::authorizeSponsorshipCall {
+            signer: signer_address,
+        }
+        .abi_encode()
+        .into();
+        let tx = TxEip7702 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+            max_priority_fee_per_gas: 0,
+            to: outbe_zerofee::ZEROFEE_ADDRESS,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list: vec![signed_authorization],
+            input,
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let tx: TransactionSigned = tx.into_signed(signature).into();
+        let encoded_length = tx.encode_2718_len();
+        let recovered = tx.try_into_recovered().unwrap();
+
+        (
+            EthPooledTransaction::new(recovered, encoded_length),
+            signer_address,
+        )
+    }
+
+    #[test]
+    fn pool_admits_true_type4_bootstrap_with_one_atomic_unit() {
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+
+        let (transaction, signer) = bootstrap_pooled_tx();
+        let chain_spec = reth_chainspec::ChainSpecBuilder::mainnet()
+            .prague_activated()
+            .build();
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new()
+            .with_chain_spec(chain_spec)
+            .with_genesis_block();
+        provider.add_account(signer, ExtendedAccount::new(0, U256::from(1)));
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .set_eip7702(true)
+        .disable_balance_check()
+        .build(InMemoryBlobStore::default());
+        let validator =
+            OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, transaction),
+        );
+        let TransactionValidationOutcome::Valid { balance, .. } = outcome else {
+            panic!("one-unit bootstrap must be admitted, got {outcome:?}");
+        };
+        assert_eq!(balance, U256::MAX, "bootstrap must receive the pool waiver");
+    }
+
+    #[test]
+    fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+
+        let (transaction, signer) = bootstrap_pooled_tx();
+        let chain_spec = reth_chainspec::ChainSpecBuilder::mainnet()
+            .prague_activated()
+            .build();
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new()
+            .with_chain_spec(chain_spec)
+            .with_genesis_block();
+        provider.add_account(signer, ExtendedAccount::new(0, U256::ZERO));
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .set_eip7702(true)
+        .disable_balance_check()
+        .build(InMemoryBlobStore::default());
+        let validator =
+            OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, transaction),
+        );
+        let TransactionValidationOutcome::Invalid(_, error) = outcome else {
+            panic!("zero-balance bootstrap must be rejected, got {outcome:?}");
+        };
+        assert!(matches!(
+            error,
+            InvalidPoolTransactionError::Overdraft { balance, .. } if balance.is_zero()
+        ));
     }
 
     fn oracle_submit_vote_input() -> Bytes {
@@ -1091,9 +1290,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // EIP-7702 sponsorship admission — pin the pool/executor contract:
+    // EIP-7702 sponsorship admission - pin the pool/executor contract:
     //   1. classify_sponsorship rejects shape violations (executor would
-    //      do the same — codes must match).
+    //      do the same - codes must match).
     //   2. precheck_sponsorship rejects self-sponsorship and zero-
     //      balance signers but DELIBERATELY does no quota check.
     // The pool's `try_eip7702_sponsorship` chains classify + precheck;
@@ -1175,7 +1374,7 @@ mod tests {
     #[test]
     fn pool_precheck_does_not_run_quota_check() {
         // The pool MUST admit even when storage state says the daily
-        // quota is exhausted — the executor produces the soft-failure
+        // quota is exhausted - the executor produces the soft-failure
         // receipt code 110 at block time. precheck has no StorageHandle
         // parameter to enforce this contract at compile time; this
         // smoke test pins the runtime behaviour.
@@ -1183,9 +1382,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // sponsorship_decision — the pure pool-admission decision core.
+    // sponsorship_decision - the pure pool-admission decision core.
     // These pin the EXACT composition try_eip7702_sponsorship performs
-    // (delegation match → classify → precheck, no quota) without needing
+    // (delegation match -> classify -> precheck, no quota) without needing
     // a provider mock. A regression in the wiring (reordered checks,
     // dropped classify, an accidental quota gate, or wrong delegation
     // target match) is caught here by `cargo test`, not only by the
@@ -1205,7 +1404,7 @@ mod tests {
 
     #[test]
     fn decision_not_sponsored_when_delegated_elsewhere() {
-        // Delegated to a non-paymaster address → normal fee path.
+        // Delegated to a non-paymaster address -> normal fee path.
         let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
             Some(ORACLE_ADDRESS),
@@ -1241,7 +1440,7 @@ mod tests {
     fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
         // Delegated + funded, but the envelope carries native value, so
         // it is NOT a sponsorship request. It must fall through to the
-        // normal fee path (NotSponsored), NOT be rejected — EIP-7702
+        // normal fee path (NotSponsored), NOT be rejected - EIP-7702
         // delegation is additive and must never block a normal tx.
         let mut tx = ok_sponsored_envelope();
         tx.value = U256::from(1);
@@ -1271,7 +1470,7 @@ mod tests {
     #[test]
     fn decision_non_whitelisted_target_delegated_tx_falls_through() {
         // Delegated, zero-tip, but target not in the sponsored whitelist
-        // → not a sponsorship request → normal path (the signer pays to
+        // -> not a sponsorship request -> normal path (the signer pays to
         // call whatever contract they like; delegation does not gate it).
         let mut tx = ok_sponsored_envelope();
         tx.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
@@ -1282,7 +1481,7 @@ mod tests {
 
     #[test]
     fn decision_does_not_quota_check() {
-        // sponsorship_decision has no storage access at all — it cannot
+        // sponsorship_decision has no storage access at all - it cannot
         // perform a quota check by construction. A delegated, funded,
         // well-formed tx is always Accepted regardless of how many slots
         // the signer has burned; the executor enforces the quota. This

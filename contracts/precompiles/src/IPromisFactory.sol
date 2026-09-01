@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title IPromisFactory — Promis mint/burn orchestration entry point (0x2337).
+/// @title IPromisFactory - Promis mint/burn orchestration entry point (0x2337).
 interface IPromisFactory {
     /// @notice Emitted when `sender` converts promis to native COEN.
     event CoenMined(address indexed sender, uint256 amount);

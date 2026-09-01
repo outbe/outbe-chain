@@ -111,7 +111,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ABurnDoesNotReopenAWinnersAllocation() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
         // Parking frees supply-cap room; the per-winner record is what keeps a later chunk from re-minting
-        // (a repeat of the same chunk index never gets this far — the chunk guard drops it first).
+        // (a repeat of the same chunk index never gets this far - the chunk guard drops it first).
         intex.parkIntex(alice, USD, 7);
         assertEq(_balance(USD, alice), 0, "parked");
 
@@ -214,7 +214,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ASeriesSplitInsideOneChunkMintsBothPieces() public {
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
         chunk[0] = _series(USD, alice, 7);
-        chunk[1] = _series(USD, bob, 3); // same terms, different winners — a legitimate split
+        chunk[1] = _series(USD, bob, 3); // same terms, different winners - a legitimate split
         _deliver(0, 1, chunk);
         assertEq(_balance(USD, alice), 7, "first piece minted");
         assertEq(_balance(USD, bob), 3, "second piece minted");

@@ -1,4 +1,4 @@
-//! sub-call → outbe precompile visibility test.
+//! sub-call -> outbe precompile visibility test.
 //!
 //! Verifies that after outbe-precompile propagation, a sub-call driven by
 //! `sub_call::run` can reach an outbe stateful precompile and returns its
@@ -296,7 +296,9 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3_u64))
+            // Consensus EVM compressed-entity schema v4. This is distinct from
+            // the node-local compressed-tree persistence schema.
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4_u64))
             .unwrap();
         storage
             .sstore(

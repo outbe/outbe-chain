@@ -19,8 +19,9 @@ Feature: Off-chain computation and Metadosis
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
     When the committee logical clock reaches the fresh capacity OFFERING window
     Then the same fresh capacity day advances through LOOKBACK to OFFERING
-    When an operator submits one encrypted tribute offer
+    When an operator submits one encrypted tribute offer with WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
+    And the WAA and SRA beneficiaries have no reward before their execution UTC day settles
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute
     When a fifth node syncs as a non-voting FullNode
@@ -28,6 +29,8 @@ Feature: Off-chain computation and Metadosis
     When the committee logical clock reaches the fresh capacity processing time
     Then the same fresh capacity day advances through WAITING and READY
     Then Metadosis creates one finalized JobIntent from that public Tribute
+    When an OCOMP successor is preloaded and activated while that V1 job remains pending
+    Then activation keeps every validator process alive and the pending job pinned to V1
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And Lysis and OCOMP use the WWD VWAP below the active S-curve
@@ -36,6 +39,8 @@ Feature: Off-chain computation and Metadosis
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
     And all four OCOMP domains use the production basedir contract
     And the fresh OCOMP domains retain their authenticated workers across the time changes
+    When a fresh post-activation Tribute completes through the V2 worker lane
+    Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
     When validator 0 SnapshotExporter restarts from a prepared-only crash state
@@ -50,6 +55,10 @@ Feature: Off-chain computation and Metadosis
     When the day's auction proceeds arrive from one chain
     Then every certified contributor is paid their share
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
+    When the offer execution UTC day reaches its next ProtocolCycle settlement
+    Then every validator observes the same nonzero WAA and SRA AgentReward
+    When both beneficiaries claim their complete AgentReward with paid transactions
+    Then the paid claims clear both claimables and debit the AgentReward escrow exactly
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches

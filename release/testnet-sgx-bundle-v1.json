@@ -1,6 +1,7 @@
 {
   "authorization_scope": "testnet",
   "bundle_version": 1,
+  "chain_id": 54322345,
   "gramine": {
     "builder_image": "gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7",
     "source_commit": "0d1a4b7607592dab4c8a720c962acee3de6b4ca8",
@@ -13,7 +14,7 @@
     "release/dcap-native-qvl-v1.json",
     "release/project-toolchain-v1.json",
     "release/testnet-sgx-bundle-v1.json",
-    "scripts/release/build-testnet-sgx-bundle-in-container.sh",
+    "scripts/release/build-sgx-bundle-in-container.sh",
     "scripts/release/verify_dcap_native_qvl.py",
     "scripts/release/verify_project_toolchain.py",
     "xtask/Cargo.toml",
@@ -23,6 +24,8 @@
     "xtask/src/release/sgx.rs"
   ],
   "install_root": "/opt/outbe/sgx",
+  "network": "testnet",
+  "network_name": "outbe-testnet-1",
   "platform": "linux/amd64",
   "project_toolchain": "release/project-toolchain-v1.json",
   "sealed_state_schema": 1,

@@ -118,7 +118,7 @@ fn process_one(
     })
 }
 
-/// Build a `Rejected` result. Nothing is known beyond the reason — every field
+/// Build a `Rejected` result. Nothing is known beyond the reason - every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
 fn rejected(reason: String) -> TributeOfferResult {
@@ -184,7 +184,7 @@ mod tests {
         }
     }
 
-    /// The encrypted payload carries only the confidential fields — the day and
+    /// The encrypted payload carries only the confidential fields - the day and
     /// the issuance currency are cleartext ABI arguments.
     const GOOD_JSON: &str = r#"{
         "creator": "alice",

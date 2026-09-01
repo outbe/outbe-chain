@@ -220,7 +220,7 @@ OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 MIN_STAKE = 100_000 * 10**6
 DEFAULT_UNBONDING_PERIOD = 21 * 24 * 3600
 DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
-# ~1 hour at a ~3s block (40 min at 2s … 2.7 h at 8s). The epoch is the cadence
+# ~1 hour at a ~3s block (40 min at 2s ... 2.7 h at 8s). The epoch is the cadence
 # for DKG reshare, active-set rotation, and the per-epoch slash-counter reset, so
 # it bounds the felony window: a felony threshold (default 150) must stay below it.
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
@@ -535,7 +535,7 @@ class StorageBuilder:
         Set a two-word `Mapping<K, AddressPair>` entry.
 
         An oracle pair is 40 bytes and a storage word is 32, so the value spans
-        the key's mapping slot and the one after it — base then quote, the same
+        the key's mapping slot and the one after it - base then quote, the same
         layout Solidity gives `mapping(K => struct { address; address; })`.
         Callers pass the pair already canonical; nothing here sorts it.
         """
@@ -723,7 +723,7 @@ def address_pair(base: str, quote: str) -> bytes:
 # --- Seeders ---
 
 # Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
-# genesis-seeded — `add_gem` parks Issued gems in a bin-tree index this seeder
+# genesis-seeded - `add_gem` parks Issued gems in a bin-tree index this seeder
 # does not reproduce, and `mineGemPromis` requires state == Settled.
 GEM_STATE_SETTLED = 3
 # Default gem type when unspecified (GemTypes::Wallet). Not validated by
@@ -736,7 +736,7 @@ def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
 
     Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
     block number); `index` disambiguates multiple genesis gems for one owner.
-    The demo scripts never need to predict this — they discover the id via
+    The demo scripts never need to predict this - they discover the id via
     `IGem.tokenOfOwnerByIndex(owner, 0)`.
     """
     buf = b"gem" + address_bytes(owner) + to_be32(gem_load) + u64_bytes(index)
@@ -744,7 +744,7 @@ def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
 
 
 def gem_owner_index_key(owner: str, index: int) -> bytes:
-    """keccak256(owner_20B ++ index_be4) — matches GemContract::owner_index_key."""
+    """keccak256(owner_20B ++ index_be4) - matches GemContract::owner_index_key."""
     return keccak256(address_bytes(owner) + u32_bytes(index))
 
 
@@ -801,8 +801,9 @@ def seed_gems(storage: StorageBuilder, gems: list):
         storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
         # call_notice_period: add_gem snapshots CALL_NOTICE_PERIOD (7 days, in seconds).
         storage.set_mapping(13, gem_id, parse_int(gem.get("call_notice_period", 7 * 24 * 3600)))
-        # call_rate: add_gem snapshots GEM_CALL_MARKUP_PERCENT (228).
-        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 228)))
+        # call_rate: the markup above 100%, so call_price = entry x (100 + rate)/100.
+        # `add_gem` snapshots CALL_RATE (128), which is the 2.28x the docs quote.
+        storage.set_mapping(14, gem_id, parse_int(gem.get("call_rate", 128)))
         # call_window: add_gem snapshots CALL_WINDOW (28 days, in seconds).
         storage.set_mapping(15, gem_id, parse_int(gem.get("call_window", 28 * 24 * 3600)))
         # call_threshold: add_gem snapshots CALL_THRESHOLD (21 days, in seconds).
@@ -955,13 +956,13 @@ def seed_nod_materialization_fifo(storage: StorageBuilder):
 
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
-    Metadosis storage layout — MUST track `crates/core/metadosis/src/schema.rs`
+    Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
     (`#[storage_schema] MetadosisContract`). Attributes occupy slots in declared
     order; a `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per record
     field, a `Value` one slot, and a `Set` two (length + positions base):
 
       slot 0:      bootstrap_end_time (Value<u64>)
-      slots 1-10:  worldwide_days (Map<u32, WorldwideDay>) — one mapping per field:
+      slots 1-10:  worldwide_days (Map<u32, WorldwideDay>) - one mapping per field:
                      1 status(u8)            2 day_type(u8)
                      3 forming_start(u64)     4 forming_end(u64)
                      5 lookback_end(u64)      6 offering_end(u64)
@@ -969,7 +970,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
                      8 metadosis_limit_amount(U256)
                      9 previous_vwap(U256)   10 current_vwap(U256)
       slot 11:     active_wwd_count (Value<u16>)
-      slots 12-13: active_wwd (Set<WorldwideDayKey>) — OZ enumerable set:
+      slots 12-13: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
                      12 = length + value array at keccak256(be32(12))+i
                      13 = positions base; position(wwd) = index + 1 (0 = absent)
       slot 14+:    closed_wwd (Deque<WorldwideDayKey>)
@@ -998,7 +999,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
 
         # slot 8 = metadosis_limit_amount (per-day mint cap), 9 = previous_vwap,
-        # 10 = current_vwap — schema field order.
+        # 10 = current_vwap - schema field order.
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:
             storage.set_mapping(8, wwd_key, day_limit)
@@ -1066,8 +1067,8 @@ def seed_vault_router(storage: StorageBuilder, owner_address: str):
     """
     VaultRouter storage layout (see crates/core/vaultrouter/src/schema.rs):
       slot 0:      owner (admin)
-      slots 1-2:   assets (Set) — written at runtime by addVault
-      slot 3:      asset_vaults (Map) — written at runtime by addVault
+      slots 1-2:   assets (Set) - written at runtime by addVault
+      slot 3:      asset_vaults (Map) - written at runtime by addVault
       slots 4-5:   liquidity_sources (Set<Address>)
       slot 6:      liquidity_source_types (Map<Address, u8>)
       slots 7-8:   liquidity_targets (Set<Address>)
@@ -1223,11 +1224,11 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
     in the seed config.
 
     Writes two places:
-      1. `TeeRegistry` (0xEE0A) slot 2 = `policy_hash` — the consensus-critical,
+      1. `TeeRegistry` (0xEE0A) slot 2 = `policy_hash` - the consensus-critical,
          deterministic gate the Phase 3b `TeeBootstrap` handler reads from EVM
          state. The account also gets marker bytecode so the slot survives
          EIP-161 cleanup until block 1.
-      2. `config.teePolicy` — read by the node at startup to build the host
+      2. `config.teePolicy` - read by the node at startup to build the host
          structural key/measurement consistency checks at development connect.
 
     No-op when `tee_policy` is absent: genesis is unchanged and the handler skips
@@ -1262,7 +1263,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
 def seed_zerofee(storage: StorageBuilder):
     """
     ZeroFee paymaster storage layout:
-      slot 0: schema version (uint32) — pinned at 1 for the initial
+      slot 0: schema version (uint32) - pinned at 1 for the initial
               `Map<Address, u64> counter` layout. The macro's
               `counter` Map keys are `keccak256(addr || base_slot)` so
               they never collide with slot 0 even though `counter`
@@ -1279,7 +1280,7 @@ def seed_zerofee(storage: StorageBuilder):
 def seed_accounting_progress(storage: StorageBuilder):
     """
     Accounting progress storage layout (V2):
-      slot 0: last_accounted_block_number (u64) — pre-V2 genesis is `0`
+      slot 0: last_accounted_block_number (u64) - pre-V2 genesis is `0`
               meaning Phase 1 has not yet processed any block. The first
               certified-parent accounting begin-zone system transaction
               advances this slot for block N >= 2.
@@ -1313,13 +1314,13 @@ def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | 
       slot 5:  canon_version          (u64)
       slot 6:  canon_hash             (B256)
       slot 7:  canon_revisions        Map<u64, B256>
-      slot 8:  next_oip_id            (u64, default 0 — not seeded)
-      slot 9:  next_gip_id            (u64, default 0 — not seeded)
+      slot 8:  next_oip_id            (u64, default 0 - not seeded)
+      slot 9:  next_gip_id            (u64, default 0 - not seeded)
       slot 10: authorities            Map<Address, bool>  (PoC write-gate)
       slot 11: oips                   Map<U256, Oip>   (not seeded; empty)
       slot 17: gips                   Map<U256, Gip>   (not seeded; empty)
 
-    Authorities are seeded with every genesis validator address — with an empty
+    Authorities are seeded with every genesis validator address - with an empty
     authorities set nobody could ever write the canon, so this is mandatory. The
     canon / meta-canon texts are seeded from `canon_dir/{metacanon.md,canon.md}`
     at version 1 when present; when absent the texts stay empty and any authority
@@ -1650,7 +1651,7 @@ def override_worldwide_day(seed: dict, day: int) -> None:
     `WorldwideDay::from_timestamp(block.timestamp)`, so a seeded day that differs
     from the genesis wall-clock day leaves two active worldwide days fighting
     (the seeded one + the runtime-created "today") and consensus wedges. Other
-    day fields (status, offering window, limits) are left as authored — only the
+    day fields (status, offering window, limits) are left as authored - only the
     calendar key is retargeted, and the OFFERING window the seed declares (forming
     in the past, offering_end far future) keeps the day OFFERING at the new date.
     """
@@ -1798,7 +1799,7 @@ def apply_seed(
         print(f"  Rewards: {len(rewards_storage.entries)} storage entries")
 
     # Governance: seed the authorities write-gate (validator addresses) and the
-    # canon / meta-canon texts. Authorities are mandatory — an empty set means no
+    # canon / meta-canon texts. Authorities are mandatory - an empty set means no
     # address can ever write the canon. Canon texts default to <script-dir>/canon.
     canon_dir = canon_dir or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "canon"
@@ -1818,8 +1819,8 @@ def apply_seed(
         f"{len(governance_storage.entries)} storage entries"
     )
 
-    # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded — independent
-    # of validator count — because the executor needs the marker bytecode +
+    # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded - independent
+    # of validator count - because the executor needs the marker bytecode +
     # an explicit slot 0 = 0 word to record `last_accounted_block_number`
     # under EIP-161-safe storage.
     accounting_storage = StorageBuilder()
@@ -1873,7 +1874,7 @@ def apply_seed(
 
     # Gratis and Promis are TEE-encrypted at rest: per-account balances are
     # ciphertext keyed off enclave state keys, so they can NOT be plaintext-seeded
-    # at genesis. (The old flat writes were dead — worse, they set total_supply to
+    # at genesis. (The old flat writes were dead - worse, they set total_supply to
     # a non-zero value with no backing encrypted balances.) A demo account instead
     # gets a Settled gem (see below) and mines Gem -> Promis -> Gratis through the
     # enclave. Fail loudly if a stale seed still carries these keys.
@@ -2017,8 +2018,8 @@ def main():
             validators = json.load(f)
 
     # Build the declarative config this profile describes and hand it to
-    # create_genesis, so this CLI — the one the e2e harness and the localnet
-    # scripts call — creates its genesis through the same path a yaml-driven
+    # create_genesis, so this CLI - the one the e2e harness and the localnet
+    # scripts call - creates its genesis through the same path a yaml-driven
     # deployment does. create_genesis calls apply_seed below to render it.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import create_genesis

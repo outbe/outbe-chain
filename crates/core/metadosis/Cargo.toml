@@ -12,6 +12,7 @@ outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
 outbe-ocomp-protocol.workspace = true
+outbe-ocompregistry.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
@@ -41,6 +42,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []
+bench-utils = []
 test-utils = ["dep:k256", "outbe-validatorset/test-utils"]
 
 [lints]

@@ -15,27 +15,27 @@ enum SyntheticSource {
     TokenFactory
 }
 
-/// @dev Everything a route needs to be deployed, except the token's creation code — that one cannot be data, since
+/// @dev Everything a route needs to be deployed, except the token's creation code - that one cannot be data, since
 ///      `type(T).creationCode` is a compile-time construct. Each route file in `script/routes/` supplies both.
 struct RouteSpec {
-    /// @dev Salt label of the token, and — suffixed with `Bridge` — of its bridge. Part of both CREATE3 addresses:
+    /// @dev Salt label of the token, and - suffixed with `Bridge` - of its bridge. Part of both CREATE3 addresses:
     ///      changing it moves every deployment of this route.
     string tokenLabel;
-    /// @dev Which chain holds the canonical token — Outbe (WCOEN) or the external chain (USDT).
+    /// @dev Which chain holds the canonical token - Outbe (WCOEN) or the external chain (USDT).
     bool canonicalOnOutbe;
-    /// @dev Env var naming an already-deployed canonical token to adopt instead of deploying one — the issuer's USDT
+    /// @dev Env var naming an already-deployed canonical token to adopt instead of deploying one - the issuer's USDT
     ///      on a real network. Read only on the chain where this route is canonical.
     string canonicalTokenEnv;
-    /// @dev Env var naming an already-deployed synthetic token to adopt — a factory-issued stablecoin, which CREATE3
+    /// @dev Env var naming an already-deployed synthetic token to adopt - a factory-issued stablecoin, which CREATE3
     ///      cannot place. Read only on the chain where this route is synthetic.
     string factoryTokenEnv;
     SyntheticSource syntheticSource;
 }
 
 /// @dev Route-agnostic half of the deployment: guards, salts, address prediction, and the deploy sequence itself.
-///      It knows how to deploy *a* route, never which routes exist — see the sibling files in this directory.
+///      It knows how to deploy *a* route, never which routes exist - see the sibling files in this directory.
 ///
-///      Addresses come from CREATE3, so they depend only on (factory, salt, deployer) — never on the owner, the
+///      Addresses come from CREATE3, so they depend only on (factory, salt, deployer) - never on the owner, the
 ///      ERC-7786 hub, the bridge mode or the token metadata. That is what lets one address hold the canonical token
 ///      on one chain and the ERC-7802 synthetic on another.
 ///
@@ -122,7 +122,7 @@ abstract contract BaseRoute is Script {
     }
 
     /// @dev Nothing may be deployed onto a chain the operator did not declare as one end of a route. A wrong
-    ///      `--rpc-url` is a mistake, not a deployment — and without this check the connected chain would silently
+    ///      `--rpc-url` is a mistake, not a deployment - and without this check the connected chain would silently
     ///      count as "not Outbe", i.e. as the external end, and a full set of contracts would land on it.
     function _requireDeclaredChain() internal view {
         if (!_isGuardedChain()) revert UndeclaredChain(block.chainid);
@@ -208,11 +208,11 @@ abstract contract BaseRoute is Script {
         bytes32 bridgeSalt = _saltHash(string.concat(spec.tokenLabel, "Bridge"), salt, _deployer());
 
         // Both addresses are known before either contract exists, so the bridge's immutable `token_` and the token's
-        // `setTokenBridge` no longer impose a deploy order — only a code-existence one.
+        // `setTokenBridge` no longer impose a deploy order - only a code-existence one.
         token = CreateX(createX).computeCreate3Address(tokenSalt);
         tokenBridge = CreateX(createX).computeCreate3Address(bridgeSalt);
 
-        // Either side may already exist and not be ours to place — the issuer's USDT on a real network, or a
+        // Either side may already exist and not be ours to place - the issuer's USDT on a real network, or a
         // factory-issued stablecoin on Outbe. Its address is then whatever it is, but the bridge address stays
         // deterministic: the token only enters the bridge's constructor args, and CREATE3 ignores those.
         address existing = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.factoryTokenEnv, address(0));

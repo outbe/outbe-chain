@@ -138,7 +138,7 @@ contract DestinationSettlerTest is BaseTest {
         auction.reveal(orderId, outputAmount, SALT, originData);
     }
 
-    /// @dev Single-solver full auction: commit → warp → reveal → warp → ended
+    /// @dev Single-solver full auction: commit -> warp -> reveal -> warp -> ended
     function _doFullAuction(address solver, bytes32 orderId, uint256 outputAmount, bytes memory originData) internal {
         _commit(solver, orderId, outputAmount);
         vm.warp(block.timestamp + auction.commitPeriod());
@@ -146,7 +146,7 @@ contract DestinationSettlerTest is BaseTest {
         vm.warp(block.timestamp + auction.revealPeriod());
     }
 
-    /// @dev Two-solver full auction: both commit → warp → both reveal → warp → ended
+    /// @dev Two-solver full auction: both commit -> warp -> both reveal -> warp -> ended
     function _doFullAuctionTwo(
         address solver1,
         uint256 amount1,
@@ -229,7 +229,7 @@ contract DestinationSettlerTest is BaseTest {
     // ========== mixed origin domain ==========
 
     /// @dev The whole batch dispatches to order [0]'s domain, so a batch mixing origins would
-    ///      silently mis-route the divergent orders — it must revert. settle/refund share the same
+    ///      silently mis-route the divergent orders - it must revert. settle/refund share the same
     ///      _requireSameOriginDomain check, so the settle path covers both.
     function test_settleOrders_RevertWhen_MixedOriginDomain() public {
         uint32 otherDomain = origin + 1;

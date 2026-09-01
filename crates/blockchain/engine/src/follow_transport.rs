@@ -4,18 +4,18 @@
 //! [`LocalBlockSource`], [`TipSource`]). This module provides the concrete
 //! implementations the engine layer can build, because they need the reth node
 //! handle (local block reads) and an RPC client (upstream finalized blocks +
-//! tip discovery) — neither of which `outbe-consensus` depends on. Both halves
+//! tip discovery) - neither of which `outbe-consensus` depends on. Both halves
 //! are wired: a follower fetches finalized blocks from a validator's
 //! `outbe_getFinalization` and verifies them against the epoch committee.
 //!
-//! * [`RethLocalBlockSource`] — REAL: reads already-imported blocks from the
+//! * [`RethLocalBlockSource`] - REAL: reads already-imported blocks from the
 //!   reth execution DB by hash. Used to serve the marshal's `Request::Block`.
-//! * [`UpstreamRpcClient`] — the upstream finalized-block + tip transport: a
+//! * [`UpstreamRpcClient`] - the upstream finalized-block + tip transport: a
 //!   jsonrpsee HTTP client. Tip discovery calls `outbe_consensusStatus`;
 //!   finalized-block fetch calls `outbe_getFinalization(height)` and decodes the
 //!   returned `(finalizationHex, blockHex)` into a [`CertifiedFinalizedBlock`].
 //!   The certificate is decoded with the UNBOUNDED committee codec config (a
-//!   permissive length upper bound — the same the marshal's archive uses), so
+//!   permissive length upper bound - the same the marshal's archive uses), so
 //!   the client does not need the epoch committee size to decode; the marshal
 //!   re-verifies the certificate against the actual committee afterwards.
 
@@ -85,7 +85,7 @@ impl LocalBlockSource for RethLocalBlockSource {
     }
 }
 
-/// Minimal view of the upstream's `outbe_consensusStatus` response — we only
+/// Minimal view of the upstream's `outbe_consensusStatus` response - we only
 /// need the finalized tip for sync progress. Deserializing a subset keeps this
 /// independent of the full `ConsensusStatusInfo` shape.
 #[derive(serde::Deserialize)]
@@ -106,8 +106,8 @@ struct UpstreamFinalizationProof {
 /// The upstream finalized-block + tip transport: a jsonrpsee HTTP client against
 /// an upstream node's `outbe_*` RPC.
 ///
-/// * Tip discovery → `outbe_consensusStatus.lastFinalizedBlock`.
-/// * Finalized-block fetch → `outbe_getFinalization(height)`, decoded into a
+/// * Tip discovery -> `outbe_consensusStatus.lastFinalizedBlock`.
+/// * Finalized-block fetch -> `outbe_getFinalization(height)`, decoded into a
 ///   [`CertifiedFinalizedBlock`]. The certificate is decoded with the UNBOUNDED
 ///   committee codec config (a permissive length bound, the same the marshal's
 ///   archive uses), so the client needs no committee-size knowledge; the marshal
@@ -174,7 +174,7 @@ fn decode_tribute_offer_public_key(bytes: &[u8]) -> eyre::Result<B256> {
 /// Decode an `outbe_getFinalization` proof into a `CertifiedFinalizedBlock`.
 ///
 /// The certificate is decoded with the unbounded committee config (a permissive
-/// upper bound on length). Trust is NOT established here — the marshal verifies
+/// upper bound on length). Trust is NOT established here - the marshal verifies
 /// the cert against the epoch committee. `None` on any malformed field.
 fn decode_finalization_proof(proof: &UpstreamFinalizationProof) -> Option<CertifiedFinalizedBlock> {
     let fin_bytes = alloy_primitives::hex::decode(proof.finalization_hex.trim_start_matches("0x"))

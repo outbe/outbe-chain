@@ -4,7 +4,7 @@
 //! state-transition path. Deterministic (Myers line diff via `similar`).
 //!
 //! For a **GIP** the base text is the current canon/meta-canon and the proposal
-//! text is a proposed new version — the diff is exactly "what this GIP changes".
+//! text is a proposed new version - the diff is exactly "what this GIP changes".
 //! For an **OIP** the text is not derived from the canon, so the diff is only a
 //! display aid; conformance checking is the membrane's job (a later phase).
 

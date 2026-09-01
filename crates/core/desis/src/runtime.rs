@@ -15,11 +15,10 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_STRIKE_ISO, PROMIS_LOAD_STRIKE_USD,
-    PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
+    MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO,
+    PROMIS_LOAD_STRIKE_USD, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -97,7 +96,7 @@ const _: () = assert!(
     "the strike must be a power of ten; the ladder only steps by decades"
 );
 
-/// Digits `load_minor × rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
+/// Digits `load_minor x rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
 /// the strike's own, plus the six each of the load and the rate.
 const PROMIS_LOAD_STRIKE_DIGITS: u32 =
     PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * NATIVE_TOKEN_DECIMALS as u32;
@@ -202,8 +201,8 @@ fn step_promis_load(
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most
-/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths — which
-/// collect prices in different orders — resolve a day to the same table.
+/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths - which
+/// collect prices in different orders - resolve a day to the same table.
 fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -339,7 +338,7 @@ fn send_stage_start(
 // ---------------------------------------------------------------------------
 
 /// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
-/// runs in its own checkpoint — an Err rolls that day back (retried next slot).
+/// runs in its own checkpoint - an Err rolls that day back (retried next slot).
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
@@ -455,7 +454,7 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    // A day nobody could price cannot hold an auction, and ends as a red day does — but
+    // A day nobody could price cannot hold an auction, and ends as a red day does - but
     // unlike a red day it was briefed with supply, which has to go back.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
@@ -622,10 +621,15 @@ pub fn process_bids_batch(
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
-    if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
+    if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
         return Err(PrecompileError::Revert(
             "processBidsBatch: invalid batch index/total".into(),
         ));
+    }
+    // Same reason as the currency check below: an over-wide batch is admissible
+    // here but not at clearing, where the refund fan-out would reject the day.
+    if bids.len() > MAX_BIDS_PER_BATCH {
+        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
     }
     // Checked here because clearing cannot recover from it: an unspellable code would
     // otherwise surface as a day whose clearing reverts every block.
@@ -776,7 +780,7 @@ pub fn process_bids_done(
 }
 
 /// Mark the chain done once its BIDS_DONE marker and every batch have arrived with matching totals.
-/// Invoked from both arrival paths — either side may land last over the unordered bridge. An
+/// Invoked from both arrival paths - either side may land last over the unordered bridge. An
 /// integrity mismatch (batch totals vs marker claims) keeps the chain not-done, so the deadline
 /// skip excludes it.
 fn try_finalize_chain(
@@ -833,9 +837,9 @@ pub fn force_clear(
     clear_inner(storage, worldwide_day, &snapshot, &included, &skipped).map(Some)
 }
 
-/// Begin-block tick: attempt to clear every day awaiting the fan-in gate. Each
-/// day runs in its own checkpoint — an Err rolls that day back (retried next
-/// block) and never escapes into the block hook chain.
+/// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
+/// fan-in gate. Each day runs in its own checkpoint - an Err rolls that day
+/// back (retried next slot) and never escapes into the trigger chain.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let count = {
@@ -1061,7 +1065,7 @@ fn clear_inner(
 // ---------------------------------------------------------------------------
 
 /// Sort chain-tagged bids: descending rate, ascending timestamp on tie. The sort is
-/// stable, so remaining ties keep the snapshot's chain order — deterministic.
+/// stable, so remaining ties keep the snapshot's chain order - deterministic.
 fn sort_bids(bids: &mut [(u32, BidData)]) {
     bids.sort_by(|(_, a), (_, b)| {
         b.intex_bid_rate

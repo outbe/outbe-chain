@@ -470,7 +470,7 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
         .build()
         .map_header(OutbeHeader::new)
         .into();
-    outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
+    outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID).unwrap();
     let signer =
         Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"));
     let proposer = signer.address();

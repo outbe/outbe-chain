@@ -3,8 +3,8 @@
 //! `dkg_manager` (the consumer) declares the [`AncestryReader`] interface it
 //! needs to walk a certified ancestry chain when resolving the DKG boundary;
 //! this module supplies the production adapter that satisfies it. Keeping the
-//! adapter here — beside the propose/verify call sites that own the marshal
-//! mailbox, block cache, readiness gate, and runtime clock — instead of inline
+//! adapter here - beside the propose/verify call sites that own the marshal
+//! mailbox, block cache, readiness gate, and runtime clock - instead of inline
 //! in `handler.rs` keeps the 2000-line handler free of block-walk/timeout
 //! policy and gives the adapter its own test surface.
 //!
@@ -27,7 +27,7 @@ use crate::marshal_types::MarshalMailbox;
 /// Production [`AncestryReader`]: block cache first, marshal on miss, bounded by
 /// the runtime clock.
 ///
-/// `marshal` is an `Option` purely as a testability affordance — mirroring
+/// `marshal` is an `Option` purely as a testability affordance - mirroring
 /// `finalization::actor`'s `Option<MarshalMailbox>`. Production always wires it
 /// `Some(..)` via [`marshal_ancestry_reader`]; the `None` arm lets cache-hit /
 /// `is_ready` unit tests construct the adapter without standing up a marshal
@@ -58,7 +58,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
             return Box::pin(async move { None });
         };
         // `Clock::sleep` returns an owned `'static` future, so we build it from the
-        // borrowed clock here and move it into the lookup future — no clone of the
+        // borrowed clock here and move it into the lookup future - no clone of the
         // (non-`Clone`) runtime context needed.
         let sleep = self.clock.sleep(self.timeout);
         Box::pin(async move {
@@ -115,7 +115,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
 
 /// Build the production [`AncestryReader`] adapter backed by the marshal mailbox.
 ///
-/// The returned reader is short-lived — one propose/verify boundary resolution.
+/// The returned reader is short-lived - one propose/verify boundary resolution.
 /// The concrete type is hidden behind `impl AncestryReader`, so callers (and
 /// `resolve_boundary`) learn one function instead of a six-field constructor.
 pub(crate) fn marshal_ancestry_reader<C: commonware_runtime::Clock>(

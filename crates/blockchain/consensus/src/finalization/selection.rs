@@ -1,7 +1,7 @@
 //! Direct-parent proof selection for the proposer path.
 //!
 //! Replaces the V1 `FinalizationSelector::await_parent_cert` polling waiter
-//! with an event-driven exact-parent lookup: finalization slot →
+//! with an event-driven exact-parent lookup: finalization slot ->
 //! certified-notarization slot. A certified-notarization record whose block
 //! number is still `0` is a local exact-key witness. The live proposer path
 //! waits briefly for the finalization slot to arrive and, only after that
@@ -30,7 +30,7 @@ pub fn clamped_phase1_finalization_wait(requested: Duration, leader_timeout: Dur
     std::cmp::min(std::cmp::max(requested, PHASE1_FINALIZATION_WAIT_MIN), max)
 }
 
-/// Direct-parent proof selector. Cheap to clone — internally just an `Arc`
+/// Direct-parent proof selector. Cheap to clone - internally just an `Arc`
 /// handle on the underlying [`FinalizedParentCertStore`].
 #[derive(Clone)]
 pub struct ParentProofSelector {
@@ -45,9 +45,9 @@ impl ParentProofSelector {
     /// Look up the best available direct-parent proof for the proposer.
     ///
     /// Preference order:
-    /// 1. [`CertifiedParentProofStore::get_finalization`] — strong proof,
+    /// 1. [`CertifiedParentProofStore::get_finalization`] - strong proof,
     ///    Simplex `Activity::Finalization`.
-    /// 2. [`CertifiedParentProofStore::get_certified_notarization`] —
+    /// 2. [`CertifiedParentProofStore::get_certified_notarization`] -
     ///    fallback proof, Simplex `Activity::Certification`.
     ///
     /// Returns `None` if `parent_block_number == 0` (genesis parent), neither
@@ -79,7 +79,7 @@ impl ParentProofSelector {
         key: CertifiedParentProofKey,
         parent_block_number: u64,
     ) -> Option<CertifiedParentProofRecord> {
-        // Genesis parent has no proof — block 1 uses the
+        // Genesis parent has no proof - block 1 uses the
         // `ConsensusHeaderArtifact::BoundaryOutcome` bootstrap path, not a
         // certified-parent proof. See handler.rs::build_block.
         if parent_block_number == 0 {
@@ -188,7 +188,7 @@ impl ParentProofSelector {
         parent_block_number: u64,
         record: CertifiedParentProofRecord,
     ) -> Option<CertifiedParentProofRecord> {
-        // A `CertifiedNotarization` witness carries no block number — it is
+        // A `CertifiedNotarization` witness carries no block number - it is
         // resolved to `parent_block_number` at metadata time, so it is always
         // consistent here. A `Finalization` record must match the proposer's
         // parent height.
@@ -220,7 +220,7 @@ impl ParentProofSelector {
         Some(record)
     }
 
-    /// Access to the underlying store — needed by callers that want to wire a
+    /// Access to the underlying store - needed by callers that want to wire a
     /// bounded remote-fetch resolver against the same
     /// proof slots the selector reads.
     pub fn parent_cert_store(&self) -> &FinalizedParentCertStore {
@@ -296,7 +296,7 @@ mod tests {
             ))
             .unwrap();
         // The store-level fallback returns the CN record when no finalization
-        // is present for the exact key — it is the proposer's fallback slot.
+        // is present for the exact key - it is the proposer's fallback slot.
         let key = CertifiedParentProofKey::new(0, 0, hash);
         let best = store.get_best_parent_proof(key).unwrap();
         assert_eq!(

@@ -38,14 +38,6 @@ impl IntexFactoryContract<'_> {
         self.authorized_settler.write(&key, settler)
     }
 
-    // --- settleCount ---
-
-    pub(crate) fn bump_settle_count(&mut self, series_id: SeriesId) -> Result<()> {
-        let current = self.settle_count.read(&series_id)?;
-        self.settle_count
-            .write(&series_id, current.saturating_add(U256::from(1)))
-    }
-
     // --- mineSeq ---
 
     pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {
@@ -201,6 +193,105 @@ impl IntexFactoryContract<'_> {
             worldwide_day,
             members: self.qualified_group_members(reference_currency, worldwide_day)?,
         })
+    }
+
+    // --- called groups awaiting their deadline ---
+
+    /// Park a called group with the members and deadline the expiry sweep needs:
+    /// the bin index has just dropped it and nothing else maps (iso, day) -> series.
+    pub(crate) fn push_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> Result<()> {
+        if members.is_empty() {
+            return Ok(());
+        }
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        // A second push would orphan the first slot and credit the members twice.
+        if self.called_group_count.read(&key)? != 0 {
+            return Err(IntexFactoryError::GroupAlreadyIndexed {
+                iso: reference_currency,
+                worldwide_day,
+            }
+            .into());
+        }
+        for (index, series_id) in members.iter().enumerate() {
+            self.called_group_members.write(
+                &Self::group_member_key(reference_currency, worldwide_day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        self.called_group_count.write(&key, members.len() as u32)?;
+        self.called_group_deadline.write(&key, deadline)?;
+
+        let tail = self.called_tail.read()?;
+        self.called_queue_at.write(&tail, key)?;
+        self.called_tail.write(tail.saturating_add(1))
+    }
+
+    /// The queue slot's group, or `None` for a slot whose group already expired.
+    pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<(u16, WorldwideDay)>> {
+        // `scoped` keeps a non-zero ISO code in the high half, so zero cannot collide.
+        let key = self.called_queue_at.read(&index)?;
+        Ok((key != 0).then(|| Self::unscoped(key)))
+    }
+
+    pub(crate) fn called_group(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Group> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let count = self.called_group_count.read(&key)?;
+        let mut members = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            members.push(SeriesId::from_word(self.called_group_members.read(
+                &Self::group_member_key(reference_currency, worldwide_day, index),
+            )?));
+        }
+        Ok(Group {
+            iso_code: reference_currency,
+            worldwide_day,
+            members,
+        })
+    }
+
+    /// Drop an expired group and free its queue slot.
+    pub(crate) fn remove_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        queue_index: u32,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let count = self.called_group_count.read(&key)?;
+        for index in 0..count {
+            self.called_group_members.clear(&Self::group_member_key(
+                reference_currency,
+                worldwide_day,
+                index,
+            ))?;
+        }
+        self.called_group_count.clear(&key)?;
+        self.called_group_deadline.clear(&key)?;
+        self.called_queue_at.clear(&queue_index)
+    }
+
+    /// Move the head past emptied slots, resetting once the queue drains.
+    pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
+        let tail = self.called_tail.read()?;
+        let mut head = self.called_head.read()?;
+        while head < tail && self.called_queue_at.read(&head)? == 0 {
+            head = head.saturating_add(1);
+        }
+        if head >= tail {
+            self.called_head.write(0)?;
+            return self.called_tail.write(0);
+        }
+        self.called_head.write(head)
     }
 }
 

@@ -249,7 +249,7 @@ fn zk_verify_truncated_payload_errors() {
 
 /// An offset word of `u64::MAX` used to wrap `offset + 32` to `31` in a
 /// release build, defeat the `input.len() < offset + 32` guard, and panic on
-/// the out-of-range slice index — a permissionless halt of every validator
+/// the out-of-range slice index - a permissionless halt of every validator
 /// executing the `0xEE08` call.
 #[test]
 fn zk_verify_max_offset_is_rejected_not_panicking() {

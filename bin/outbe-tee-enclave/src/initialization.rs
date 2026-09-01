@@ -462,7 +462,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
     }
 }
 
-/// Health-counter bucket for `request` — the telemetry-facing name of the
+/// Health-counter bucket for `request` - the telemetry-facing name of the
 /// private capability matrix above. Authorization stays with
 /// [`InitializationState::authorize_command`]; this only labels counters.
 pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry::RequestClassLabel {

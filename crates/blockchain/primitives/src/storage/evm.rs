@@ -115,7 +115,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // hash for any `number` within stored history and `B256::ZERO`
         // for blocks outside the window (or ahead of the current head).
         // We map ZERO back to `None` so callers see a clean "unknown"
-        // signal — genuine canonical hashes are statistically never zero.
+        // signal - genuine canonical hashes are statistically never zero.
         let hash =
             self.internals.db_mut().block_hash(number).map_err(|e| {
                 PrecompileError::Storage(format!("block_hash({number}) failed: {e}"))

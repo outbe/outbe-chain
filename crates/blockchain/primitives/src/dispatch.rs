@@ -154,7 +154,7 @@ pub fn mutate_void<T: SolCall>(
 /// value: the route table binds the list to the address's value policy, so such
 /// a selector would consume value the boundary never authorized for this
 /// address. A zero-value call still dispatches, matching
-/// [`reject_value_unless_payable`] — an undeclared selector is refused its
+/// [`reject_value_unless_payable`] - an undeclared selector is refused its
 /// value, not disabled outright.
 #[inline]
 pub fn mutate_void_payable<T: SolCall>(
@@ -302,7 +302,7 @@ mod payable_witness_tests {
 
     /// The module-wide default-deny: on a payable address every selector the
     /// module has not published refuses value, so a new value-consuming arm
-    /// takes nothing until it is declared — no per-arm check to forget.
+    /// takes nothing until it is declared - no per-arm check to forget.
     #[test]
     fn unpublished_selector_refuses_value_on_a_payable_module() {
         use super::reject_value_unless_payable;

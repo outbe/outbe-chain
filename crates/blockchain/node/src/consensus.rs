@@ -15,7 +15,7 @@
 //! V2 system-transaction layout validator on every block:
 //!
 //! - reject legacy V1 selectors (`OSF1` / `OSC1` / `OSB1` / `OSO1`) at any
-//!   height — V1 `FinalizationAndSlashing` is not silently dropped, it
+//!   height - V1 `FinalizationAndSlashing` is not silently dropped, it
 //!   surfaces a typed error;
 //! - reject malformed V2 envelopes: wrong `SYSTEM_TX_INPUT_VERSION` byte,
 //!   unknown selector, missing body index 0 (`CertifiedParentAccounting`)
@@ -189,8 +189,8 @@ where
 
 /// Enforce the genesis-fixed Outbe gas schedule by height.
 ///
-/// Ethereum's parent-relative ramp cannot represent the intentional 30M → 500M
-/// block-1 bootstrap expansion or the 500M → 30M block-2 contraction. Exact
+/// Ethereum's parent-relative ramp cannot represent the intentional 30M -> 500M
+/// block-1 bootstrap expansion or the 500M -> 30M block-2 contraction. Exact
 /// height selection is stronger here: a proposer cannot choose any intermediate
 /// or oversized value, and every node derives the same limit without parent or
 /// host input.
@@ -411,7 +411,7 @@ pub fn validate_system_tx_consensus_boundary_for_activation(
     }
 
     // bind the header's `late_finalize_credits` artifact (tag
-    // 0x06 — hash-committed and BLS-verified pre-exec) to the body's
+    // 0x06 - hash-committed and BLS-verified pre-exec) to the body's
     // `LateFinalizeCredits` system-tx calldata, so the artifact that is verified
     // is exactly the one that settles fees. Mirrors the BoundaryOutcome parity
     // above. The header `Option` maps to the calldata artifact via the proposer
@@ -460,7 +460,7 @@ fn validate_against_parent_timestamp_millis(
 
     // Upper bound on forward drift. Stock Ethereum only checks monotonicity,
     // which lets a single byzantine proposer ratchet chain time arbitrarily far
-    // forward in one block — maturing every unbonding entry and the slashed
+    // forward in one block - maturing every unbonding entry and the slashed
     // withdrawal delay (unbonding-lock + slashing-window bypass) and skipping
     // the day-indexed emission schedule. The bound is deterministic and
     // chain-state-only (header + parent, no wall clock), so proposer and every
@@ -483,7 +483,7 @@ fn validate_against_parent_timestamp_millis(
     // Deterministic and chain-state-only; the proposer clamps its assigned
     // timestamp up to `parent + this` (see the consensus handler build path) so an
     // honest block is never rejected. The genesis child (parent number 0) is
-    // exempt — its `finalization_view` is unseeded, so block 1 is monotonic-only,
+    // exempt - its `finalization_view` is unseeded, so block 1 is monotonic-only,
     // matching the proposer's genesis exception.
     if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
         return Err(consensus_other(format!(
@@ -806,22 +806,29 @@ mod tests {
             2,
             outbe_evm::system_tx::SystemTxInputV2::CycleTick,
         );
+        let rewards = signed_system_tx(
+            &signer,
+            outbe_evm::system_tx::SystemTxKind::RewardsGemDelivery,
+            3,
+            2,
+            outbe_evm::system_tx::SystemTxInputV2::RewardsGemDelivery,
+        );
         let oracle = signed_system_tx(
             &signer,
             outbe_evm::system_tx::SystemTxKind::OracleSlashWindow,
-            3,
+            4,
             2,
             outbe_evm::system_tx::SystemTxInputV2::OracleSlashWindow,
         );
         let hook_events = signed_system_tx(
             &signer,
             outbe_evm::system_tx::SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             outbe_evm::system_tx::SystemTxInputV2::HookEvents,
         );
         let body = OutbeBlockBody {
-            transactions: vec![phase1, late, cycle, oracle, hook_events],
+            transactions: vec![phase1, late, cycle, rewards, oracle, hook_events],
             ommers: Vec::new(),
             withdrawals: None,
         };
@@ -985,8 +992,8 @@ mod tests {
         // A min-block-time-paced block is emitted ~2s after build, but its header
         // timestamp is fixed at build time (= max(now, parent + 1ms)). The validator
         // timestamp rule is a parent-relative increase with NO wall-clock/arrival
-        // bound — only a deterministic max-drift band (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`,
-        // 1h) far above any paced interval — so a paced (delayed-emission) block
+        // bound - only a deterministic max-drift band (`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`,
+        // 1h) far above any paced interval - so a paced (delayed-emission) block
         // always validates and proposer pacing stays invisible to header validation.
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let parent = header(1, 100, 0, B256::ZERO);

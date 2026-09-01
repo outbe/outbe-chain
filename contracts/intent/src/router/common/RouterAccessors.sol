@@ -8,7 +8,7 @@ import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
 /**
  * @title RouterAccessors
  * @notice Shared virtual accessors for Origin and Destination settlers
- * @dev Prevents diamond inheritance conflicts — BaseRouter provides single override for all.
+ * @dev Prevents diamond inheritance conflicts - BaseRouter provides single override for all.
  */
 abstract contract RouterAccessors {
     function _compact() internal view virtual returns (ITheCompact);

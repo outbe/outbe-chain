@@ -3,7 +3,7 @@
 # localnet projection sink.
 #
 # run-testnet.sh requires OUTBE_PROJECTION_MONGODB_URI to point at a
-# TRANSACTION-CAPABLE deployment (replica set or sharded cluster) — a standalone
+# TRANSACTION-CAPABLE deployment (replica set or sharded cluster) - a standalone
 # mongod cannot run the multi-document transactions the projection sink uses. A
 # one-member `rs0` replica set is the smallest such deployment, so that is what
 # we start here.
@@ -53,7 +53,7 @@ start() {
     docker_cmd volume create "$MONGO_VOLUME" >/dev/null
     # Publish to the host loopback rather than `--network host`: on Docker Desktop
     # for Mac, host networking joins the Linux VM's netns, so a macOS host process
-    # (the node) cannot reach 127.0.0.1:PORT — it gets connection-refused. A
+    # (the node) cannot reach 127.0.0.1:PORT - it gets connection-refused. A
     # published port works on both macOS and Linux. `directConnection=true` in the
     # URI makes the driver ignore the replica-set member's advertised address, so
     # talking to the forwarded port is fine. --bind_ip_all lets Docker's port
@@ -80,7 +80,7 @@ start() {
 
   wait_for "primary" 'if (!db.hello().isWritablePrimary) quit(1)'
 
-  # Prove multi-document transactions actually work before handing the URI back —
+  # Prove multi-document transactions actually work before handing the URI back -
   # a mis-provisioned standalone would pass the primary check but fail here.
   mongosh_eval '
     const s = db.getMongo().startSession();

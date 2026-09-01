@@ -18,6 +18,7 @@
         "required": ["release"]
       },
       "then": {
+        "required": ["network"],
         "properties": {
           "build": {
             "properties": {
@@ -28,6 +29,105 @@
                   }
                 },
                 "required": ["mode"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "artifacts": {
+            "contains": {
+              "properties": {
+                "tee": {
+                  "properties": {
+                    "stage": { "const": "signed" }
+                  },
+                  "required": ["stage"]
+                }
+              },
+              "required": ["tee"]
+            }
+          }
+        },
+        "required": ["artifacts"]
+      },
+      "then": {
+        "required": ["network"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "network": {
+            "properties": { "chain_id": { "const": 676 } },
+            "required": ["chain_id"]
+          }
+        },
+        "required": ["network"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "properties": {
+                "tee": {
+                  "properties": {
+                    "authorization_scope": { "const": "mainnet" }
+                  }
+                }
+              }
+            }
+          },
+          "build": {
+            "properties": {
+              "provenance": {
+                "properties": {
+                  "certificate_identity": {
+                    "const": "https://github.com/outbe/outbe-chain/.github/workflows/mainnet-release.yml@refs/heads/main"
+                  },
+                  "workflow": { "const": ".github/workflows/mainnet-release.yml" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "network": {
+            "properties": { "chain_id": { "const": 54322345 } },
+            "required": ["chain_id"]
+          }
+        },
+        "required": ["network"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "properties": {
+                "tee": {
+                  "properties": {
+                    "authorization_scope": { "const": "testnet" }
+                  }
+                }
+              }
+            }
+          },
+          "build": {
+            "properties": {
+              "provenance": {
+                "properties": {
+                  "certificate_identity": {
+                    "const": "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
+                  },
+                  "workflow": { "const": ".github/workflows/testnet-release.yml" }
+                }
               }
             }
           }
@@ -59,6 +159,9 @@
       "minItems": 1,
       "type": "array"
     },
+    "network": {
+      "$ref": "#/$defs/network"
+    },
     "release": {
       "$ref": "#/$defs/release"
     },
@@ -85,6 +188,63 @@
   "title": "Outbe ReleaseManifest v1",
   "type": "object",
   "$defs": {
+    "network": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "chain_id": { "const": 676 },
+            "chain_name": { "const": "outbe-mainnet-1" },
+            "genesis_file": {
+              "properties": {
+                "path": { "const": "mainnet-genesis.json" }
+              },
+              "required": ["path"]
+            }
+          },
+          "required": ["chain_id", "chain_name", "genesis_file"]
+        },
+        {
+          "properties": {
+            "chain_id": { "const": 54322345 },
+            "chain_name": { "const": "outbe-testnet-1" },
+            "genesis_file": {
+              "properties": {
+                "path": { "const": "testnet-genesis.json" }
+              },
+              "required": ["path"]
+            }
+          },
+          "required": ["chain_id", "chain_name", "genesis_file"]
+        }
+      ],
+      "properties": {
+        "chain_id": {
+          "enum": [676, 54322345]
+        },
+        "chain_name": {
+          "enum": ["outbe-mainnet-1", "outbe-testnet-1"]
+        },
+        "genesis_hash": {
+          "pattern": "^0x[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "genesis_file": {
+          "additionalProperties": false,
+          "properties": {
+            "digest": { "$ref": "#/$defs/digest" },
+            "path": {
+              "enum": ["mainnet-genesis.json", "testnet-genesis.json"]
+            },
+            "size": { "minimum": 1, "type": "integer" }
+          },
+          "required": ["path", "digest", "size"],
+          "type": "object"
+        }
+      },
+      "required": ["chain_id", "chain_name", "genesis_hash", "genesis_file"],
+      "type": "object"
+    },
     "artifact": {
       "additionalProperties": false,
       "allOf": [
@@ -451,6 +611,28 @@
             "required": ["mode"]
           },
           "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "certificate_identity": {
+                    "const": "https://github.com/outbe/outbe-chain/.github/workflows/mainnet-release.yml@refs/heads/main"
+                  },
+                  "workflow": {
+                    "const": ".github/workflows/mainnet-release.yml"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "certificate_identity": {
+                    "const": "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
+                  },
+                  "workflow": {
+                    "const": ".github/workflows/testnet-release.yml"
+                  }
+                }
+              }
+            ],
             "required": [
               "certificate_identity",
               "certificate_oidc_issuer",
@@ -465,7 +647,10 @@
           "const": "scripts/release/reproducible-build.sh"
         },
         "certificate_identity": {
-          "const": "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
+          "enum": [
+            "https://github.com/outbe/outbe-chain/.github/workflows/mainnet-release.yml@refs/heads/main",
+            "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
+          ]
         },
         "certificate_oidc_issuer": {
           "const": "https://token.actions.githubusercontent.com"
@@ -478,7 +663,10 @@
           "enum": ["local-container", "github-actions"]
         },
         "workflow": {
-          "const": ".github/workflows/testnet-release.yml"
+          "enum": [
+            ".github/workflows/mainnet-release.yml",
+            ".github/workflows/testnet-release.yml"
+          ]
         }
       },
       "required": ["mode", "entrypoint"],
@@ -555,7 +743,7 @@
       ],
       "properties": {
         "authorization_scope": {
-          "enum": ["testnet"]
+          "enum": ["mainnet", "testnet"]
         },
         "isv_prod_id": {
           "maximum": 65535,

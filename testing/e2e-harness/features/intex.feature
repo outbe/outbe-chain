@@ -2,7 +2,7 @@
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
-  # it exists — qualifying, being settled by its holder, and burning into Promis.
+  # it exists - qualifying, being settled by its holder, and burning into Promis.
 
   # Applying the day's OCOMP result hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
@@ -16,26 +16,35 @@ Feature: Intex from auction to Promis
   # open an auction.
   #
   # The venue is deployed before the day settles because the dispatch is a plain
-  # contract call — with no code at the address the node was built against, the
+  # contract call - with no code at the address the node was built against, the
   # start is lost rather than retried into existence.
+  #
+  # The feeder publishes a live quote first: the auction's entry price is the last
+  # closed day's VWAP, and the fixture's seeded pair is small enough that Lysis
+  # would floor the monetary cost to zero without one.
   @intex-auction
   Scenario: A settled green day runs its auction through to a minted Intex
     Given a fresh four-validator OCOMP public capacity localnet
+    When a local target chain is started
+    And the intex venue is deployed on the target chain
+    And the intex venue is wired
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
+    When a relay carries messages between the two chains
     When 33 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 33 public Tributes for the capacity day
     When the committee logical clock reaches the public capacity processing time
     And the committee clock settles after the jump
     Then Metadosis creates one finalized JobIntent from that public Tribute
-    And the auction for that day opens on the target chain
-    When two bidders commit their bids
+    And the auction for that day opens on every chain it named
+    When two bidders commit their bids on every chain
     And the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
-    When those bidders reveal their bids once the venue is revealing
+    When those bidders reveal their bids once the venues are revealing
     Then the auction clears and the venue moves past its reveal window
-    And the cleared day mints the Intex on the target chain
-    And the escrow settles the day and returns what the bids did not buy
+    And the cleared day mints the Intex on every chain it issued to
+    And each escrow settles the day and returns what the bids did not buy
 
   # Two series rather than one: the sweeps decide per (reference currency,
   # worldwide day), so a single series makes every group a group of one and
@@ -44,7 +53,7 @@ Feature: Intex from auction to Promis
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
-  # OCOMP never formed is a fatal MissedOffering — forming one costs the whole
+  # OCOMP never formed is a fatal MissedOffering - forming one costs the whole
   # tribute path this scenario exists to avoid. So the days the Called sweep
   # reads are filled in and issuance is stamped behind them, exactly as this
   # module's own unit tests do. The sweep still walks its index, checks the

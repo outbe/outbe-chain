@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 /**
- * @title IAllocator — Allocator Interface
+ * @title IAllocator - Allocator Interface
  * @notice Interface for allocators in The Compact protocol.
  * @dev Compatible with Uniswap The Compact. Full source:
  *      https://github.com/Uniswap/the-compact/blob/main/src/interfaces/IAllocator.sol

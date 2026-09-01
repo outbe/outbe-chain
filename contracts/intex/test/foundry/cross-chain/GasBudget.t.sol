@@ -99,7 +99,7 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
-        // No series exist, so every mark reverts and parks — the heavier of the two paths.
+        // No series exist, so every mark reverts and parks - the heavier of the two paths.
         bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
 
         uint256 spent = _measure(batch);

@@ -170,32 +170,114 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tee.mode"):
             CG.validate_config(config)
 
-    def test_dev_enclave_is_confined_to_the_devnet_chain(self):
+    def test_networks_expose_the_canonical_attestation_matrix(self):
+        for network, chain_id in (
+            ("devnet", 424242),
+            ("testnet", 54322345),
+        ):
+            for tee_mode in ("dcap-required", "gramine-direct-dev"):
+                config = minimal_config("./keys") | {
+                    "network": network,
+                    "chain_id": chain_id,
+                    "tee": {"mode": tee_mode},
+                }
+                if tee_mode == "dcap-required":
+                    config["enclave_image"] = (
+                        "outbe-tee-enclave@sha256:" + "ab" * 32
+                    )
+                CG.validate_config(config)
+
+        mainnet = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prices.outbe.net",
+            "price_feed_websocket": "prices.outbe.net",
+        }
+        CG.validate_config(mainnet)
+
+        mainnet["tee"] = {"mode": "gramine-direct-dev"}
+        with self.assertRaisesRegex(ValueError, "Mainnet requires"):
+            CG.validate_config(mainnet)
+
+    def test_testnet_direct_dev_needs_no_secondary_opt_in(self):
         config = minimal_config("./keys") | {"chain_id": 54322345}
-        with self.assertRaisesRegex(ValueError, "unattested"):
+        CG.validate_config(config)
+
+    def test_mainnet_rejects_direct_dev(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+        }
+        with self.assertRaisesRegex(ValueError, "Mainnet requires"):
             CG.validate_config(config)
 
-    def test_unattested_on_a_non_devnet_chain_needs_an_explicit_opt_in(self):
-        config = minimal_config("./keys") | {"chain_id": 54322345}
-        with self.assertRaisesRegex(ValueError, "allow_unattested_chain_id"):
-            CG.validate_config(config)
-        CG.validate_config(config | {"allow_unattested_chain_id": True})
-
-    def test_dcap_requires_the_testnet_chain_and_a_pinned_digest(self):
+    def test_dcap_requires_a_pinned_digest_on_every_approved_network(self):
         config = minimal_config("./keys") | {
             "chain_id": 424242,
             "tee": {"mode": "dcap-required"},
         }
-        with self.assertRaisesRegex(ValueError, "testnet chain id"):
-            CG.validate_config(config)
-
-        config["chain_id"] = 54322345
-        config["enclave_image"] = "outbe-tee-enclave:latest"
         with self.assertRaisesRegex(ValueError, "immutable digest"):
             CG.validate_config(config)
 
         config["enclave_image"] = "outbe-tee-enclave@sha256:" + "ab" * 32
         CG.validate_config(config)
+
+    def test_mainnet_profile_uses_the_canonical_identity_and_production_inputs(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prices.outbe.net",
+            "price_feed_websocket": "prices.outbe.net",
+        }
+
+        CG.validate_config(config)
+        self.assertEqual(
+            CG.network_identity(config),
+            ("mainnet", 676, "outbe-mainnet-1"),
+        )
+
+    def test_mainnet_profile_rejects_identity_and_test_shortcut_drift(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 54322345,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prc.testnet.outbe.net",
+            "price_feed_websocket": "prc.testnet.outbe.net",
+        }
+        with self.assertRaisesRegex(ValueError, "mainnet.*676"):
+            CG.validate_config(config)
+
+        config["chain_id"] = 676
+        with self.assertRaisesRegex(ValueError, "testnet price endpoint"):
+            CG.validate_config(config)
+
+        config["price_feed_rest"] = "https://prices.outbe.net"
+        config["price_feed_websocket"] = "prices.outbe.net"
+        config["protocol_constants"] = {"schemaVersion": 1}
+        with self.assertRaisesRegex(ValueError, "protocol_constants"):
+            CG.validate_config(config)
+
+    def test_unknown_chain_identity_is_rejected(self):
+        config = minimal_config("./keys") | {"chain_id": 999999}
+        with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
+            CG.validate_config(config)
+
+    def test_mainnet_requires_preexisting_ocomp_registrations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = pathlib.Path(tmp)
+            for index in range(4):
+                (keys / f"validator-{index}").mkdir()
+            with self.assertRaisesRegex(ValueError, "Mainnet.*OCOMP registration"):
+                CG.validate_ocomp_registration_inventory(
+                    keys_dir=keys,
+                    validator_count=4,
+                    allow_generation=False,
+                )
 
     def test_port_collisions_are_rejected(self):
         config = minimal_config("./keys") | {"rpc_port": 9101}  # same as metrics
@@ -417,6 +499,26 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_mainnet_profile_seeds_chain_676_with_canonical_production_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {
+                "network": "mainnet",
+                "chain_id": 676,
+                "tee": {"mode": "dcap-required"},
+                "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+                "price_feed_rest": "https://prices.outbe.net",
+                "price_feed_websocket": "prices.outbe.net",
+            }
+            CG.validate_config(config)
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            self.assertEqual(seeded["config"]["chainId"], 676)
+            self.assertNotIn("protocolConstants", seeded["config"])
+            baseline = CG.load_yaml(CG.BASE_PROFILE_PATH)
+            rewards_storage = seeded["alloc"][SEED_GENESIS.REWARDS_ADDRESS]["storage"]
+            self.assertTrue(rewards_storage)
+            self.assertEqual(CG.build_seed(config)["rewards"], baseline["rewards"])
+
     def test_seeded_genesis_is_reproducible_for_a_pinned_timestamp(self):
         """The OCOMP registrations sign the seeded genesis hash, so the same
         yaml must always seed byte-identical state."""
@@ -574,6 +676,7 @@ class LaunchBundleTests(unittest.TestCase):
         }))
         marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
         marker.write_text(genesis_hash + "\n")
+        (output_dir / "protocol-bundle-v1.ocb1").write_bytes(b"canonical-ocomp-v1")
         config = minimal_config(str(keys_dir)) | (config_overrides or {})
         LB.render(
             config=config,
@@ -638,7 +741,6 @@ class LaunchBundleTests(unittest.TestCase):
                     "run-radicle.sh",
                     "run-node.sh",
                     "run-feeder.sh",
-                    "run-ocomp-supervisor.sh",
                     "run-ocomp-exporter.sh",
                     "run-ocomp-worker.sh",
                     "start-all.sh",
@@ -648,6 +750,14 @@ class LaunchBundleTests(unittest.TestCase):
                     self.assertTrue(script.is_file(), f"{name} missing")
                     self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
                     subprocess.run(["bash", "-n", str(script)], check=True)
+                self.assertEqual(
+                    {path.name for path in directory.glob("run-ocomp-*.sh")},
+                    {
+                        "run-ocomp-exporter.sh",
+                        "run-ocomp-worker.sh",
+                        "run-ocomp-successor-worker.sh",
+                    },
+                )
                 self.assertTrue((directory / "feeder.toml").is_file())
 
     def test_ocomp_identity_is_read_from_the_install_document(self):
@@ -655,7 +765,8 @@ class LaunchBundleTests(unittest.TestCase):
             _, _, output_dir = self.render(tmp)
             script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
             # The bundle hash sits after the genesis hash and the fork id.
-            self.assertIn("--protocol-bundle-hash 0x" + "cd" * 32, script)
+            self.assertIn("--protocol-bundle-hash \"$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH\"", script)
+            self.assertIn("ocomp-active.env", script)
             self.assertIn("--chain-id 424242", script)
             self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
             # Each host gets a distinct boot nonce, ordinal in the low bytes.
@@ -664,22 +775,56 @@ class LaunchBundleTests(unittest.TestCase):
     def test_every_ocomp_role_gets_the_shared_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
-            for role in ("supervisor", "exporter", "worker"):
+            for role in ("exporter", "worker", "successor-worker"):
                 script = (output_dir / "validator-0" / f"run-ocomp-{role}.sh").read_text()
                 for var in ("OUTBE_OCOMP_BASE_PATH", "OCOMP_VALIDATOR_INDEX",
                             "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
                             "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
                     self.assertIn(var, script, f"{role} script is missing {var}")
 
-    def test_start_all_waits_for_the_supervisor_before_the_worker(self):
+    def test_successor_bundle_catalog_and_dormant_worker_are_release_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            bundle_hash = "cd" * 32
+            catalog_bundle = output_dir / "protocol-bundles-v1" / f"{bundle_hash}.ocb1"
+            self.assertEqual(
+                catalog_bundle.read_bytes(),
+                (output_dir / "protocol-bundle-v1.ocb1").read_bytes(),
+            )
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("protocol-bundles-v1/${BUNDLE_HASH#0x}.ocb1", node)
+            self.assertIn("ocomp-bundles.env", node)
+            active = output_dir / "validator-0" / "ocomp-active.env"
+            self.assertEqual(
+                active.read_text(),
+                "OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH=0x" + bundle_hash + "\n",
+            )
+            exporter = (output_dir / "validator-0" / "run-ocomp-exporter.sh").read_text()
+            self.assertIn("ocomp-bundles.env", exporter)
+            successor = (
+                output_dir / "validator-0" / "run-ocomp-successor-worker.sh"
+            ).read_text()
+            self.assertIn("OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH", successor)
+            self.assertIn("--supervisor-address 127.0.0.1:30407", successor)
+            unit = output_dir / "systemd" / "outbe-ocomp-successor-worker@.service"
+            self.assertTrue(unit.is_file())
+            installer = (output_dir / "install-systemd.sh").read_text()
+            self.assertNotIn(
+                "for role in enclave radicle node ocomp-exporter ocomp-worker "
+                "ocomp-successor-worker feeder",
+                installer,
+            )
+
+    def test_start_all_waits_for_the_node_owned_endpoint_before_the_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             start = (output_dir / "validator-0" / "start-all.sh").read_text()
             self.assertLess(
-                start.index("run-ocomp-supervisor.sh"),
+                start.index("/dev/tcp/127.0.0.1/30401"),
                 start.index("run-ocomp-worker.sh"),
-                "the worker must not start before its supervisor",
+                "the worker must not start before the embedded Supervisor endpoint",
             )
+            self.assertIn("did not become ready", start)
             stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
             self.assertIn("ocomp-worker", stop)
 
@@ -767,18 +912,40 @@ class LaunchBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             unit_dir = output_dir / "systemd"
-            for role in ("enclave", "radicle", "node", "ocomp-supervisor",
-                         "ocomp-exporter", "ocomp-worker", "feeder"):
+            for role in (
+                "enclave",
+                "radicle",
+                "node",
+                "ocomp-exporter",
+                "ocomp-worker",
+                "ocomp-successor-worker",
+                "feeder",
+            ):
                 unit = unit_dir / f"outbe-{role}@.service"
                 self.assertTrue(unit.is_file(), f"{role} unit missing")
                 text = unit.read_text()
                 self.assertIn("Restart=on-failure", text)
                 self.assertIn(f"run-{role}.sh", text)
+            self.assertEqual(
+                {path.name for path in unit_dir.glob("*.service")},
+                {
+                    "outbe-enclave@.service",
+                    "outbe-radicle@.service",
+                    "outbe-node@.service",
+                    "outbe-ocomp-exporter@.service",
+                    "outbe-ocomp-worker@.service",
+                    "outbe-ocomp-successor-worker@.service",
+                    "outbe-feeder@.service",
+                },
+            )
             # The node must not start before the enclave and Radicle it needs.
             node = (unit_dir / "outbe-node@.service").read_text()
             self.assertIn("outbe-radicle@%i.service", node)
             radicle = (unit_dir / "outbe-radicle@.service").read_text()
             self.assertIn("outbe-enclave@%i.service", radicle)
+            for role in ("ocomp-exporter", "ocomp-worker", "ocomp-successor-worker"):
+                unit = (unit_dir / f"outbe-{role}@.service").read_text()
+                self.assertIn("Requires=outbe-node@%i.service", unit)
             # The enclave needs root for /dev/sgx_*.
             self.assertIn("User=root", (unit_dir / "outbe-enclave@.service").read_text())
             installer = output_dir / "install-systemd.sh"

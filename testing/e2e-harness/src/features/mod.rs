@@ -1,4 +1,4 @@
-//! Step definitions — the code behind the Gherkin fixtures in `features/`.
+//! Step definitions - the code behind the Gherkin fixtures in `features/`.
 //!
 //! Steps are registered with cucumber's `#[given]`/`#[when]`/`#[then]` macros
 //! (collected via `inventory`), so simply compiling these modules wires them
@@ -9,8 +9,11 @@
 //! - [`downtime`] / [`stale_join`] / [`lifecycle`] / [`restart`] / [`dkg`] /
 //!   [`follower`] back the S1-S7 + follower validator-lifecycle scenarios.
 
+#[cfg(feature = "ocomp-integration")]
+pub mod agent_reward;
 pub mod common;
 pub mod governance;
+#[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;
 pub mod update;
 
@@ -35,6 +38,7 @@ pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
 pub mod target_chain;
+pub mod tee_lease;
 pub mod tee_observability;
 pub mod tribute_projection;
 pub mod txpool_eviction;

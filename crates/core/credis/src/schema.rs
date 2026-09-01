@@ -65,7 +65,7 @@ pub struct Position {
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// The pledger EOA sealed under the enclave state key (`nonce ‖ ct`, produced by
+    /// The pledger EOA sealed under the enclave state key (`nonce || ct`, produced by
     /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
     /// EOA to `smart_account`; settlement and the void recover the plaintext EOA
     /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
@@ -73,15 +73,15 @@ pub struct Position {
     #[attribute(order = 4)]
     pub eoa_ct: Vec<u8>,
 
-    /// `P` — stablecoin minor units disbursed. Fixed.
+    /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]
     pub principal: U256,
 
-    /// `P_out` — outstanding principal. Reaching zero closes the position.
+    /// `P_out` - outstanding principal. Reaching zero closes the position.
     #[attribute(order = 6)]
     pub outstanding: U256,
 
-    /// `G` — pledged Gratis, valued 1:1 against principal at the entry price. Fixed.
+    /// `G` - pledged Gratis, valued 1:1 against principal at the entry price. Fixed.
     #[attribute(order = 7)]
     pub collateral: U256,
 
@@ -89,17 +89,17 @@ pub struct Position {
     #[attribute(order = 8)]
     pub collateral_locked: U256,
 
-    /// `r` — the currency's annual official policy rate (scale `1e6`) times the
+    /// `r` - the currency's annual official policy rate (scale `1e6`) times the
     /// policy-rate factor, pinned at opening for the position's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
-    /// `P₀` — COEN price in the position's currency (scale `1e6`), quoted
+    /// `P0` - COEN price in the position's currency (scale `1e6`), quoted
     /// at pledge time and carried in from the pledge ticket.
     #[attribute(order = 10)]
     pub entry_price: U256,
 
-    /// `P₀ + 64%`. The price whose sustained breach triggers the call.
+    /// `P0 + 64%`. The price whose sustained breach triggers the call.
     #[attribute(order = 11)]
     pub call_price: U256,
 
@@ -108,7 +108,7 @@ pub struct Position {
 
     /// Start of the current accrual period. Equals `originated_at` until the
     /// first settlement, then advances by the whole days each settlement
-    /// charges — not to the settlement timestamp, so a sub-day remainder
+    /// charges - not to the settlement timestamp, so a sub-day remainder
     /// carries forward instead of being discarded.
     #[attribute(order = 13)]
     pub last_settled_at: u64,
@@ -146,7 +146,7 @@ pub struct CredisContract {
     #[attribute(order = 1)]
     pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// Per-account index — keccak(addr ++ idx_be32) → position_id.
+    /// Per-account index - keccak(addr ++ idx_be32) -> position_id.
     #[attribute(order = 2)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -154,18 +154,18 @@ pub struct CredisContract {
     #[attribute(order = 3)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// Dense index — index → position_id.
+    /// Dense index - index -> position_id.
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path — those in `Open`
+    /// Dense index of the positions still on the price path - those in `Open`
     /// or `Called`. Membership invariant: a position is listed iff
     /// its state is non-terminal, so the daily scan visits only the positions
     /// that can still transition instead of the whole book.
     #[attribute(order = 5)]
     pub active_positions: outbe_primitives::storage::dsl::List<U256>,
 
-    /// position_id → its slot in [`Self::active_positions`], for O(1) swap-remove.
+    /// position_id -> its slot in [`Self::active_positions`], for O(1) swap-remove.
     #[attribute(order = 6)]
     pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 

@@ -309,7 +309,7 @@ async fn offer(
     };
     if !bootstrapped {
         return Err(eyre::eyre!(
-            "TeeRegistry is not bootstrapped yet — no offer key to encrypt to"
+            "TeeRegistry is not bootstrapped yet - no offer key to encrypt to"
         ));
     }
     let offer_pub_u256 = {
@@ -325,7 +325,7 @@ async fn offer(
     println!("offer key (DKG-derived): 0x{}", hex::encode(offer_pub));
 
     // 2. Build the plaintext payload. `tribute_draft_id` + `su_hashes` are fresh
-    //    random — su hashes must be unique per offer.
+    //    random - su hashes must be unique per offer.
     let wwd: u32 = worldwide_day.into();
     // worldwide_day + currency are cleartext ABI args (below) so the node can
     // admit and price the offer without decrypting; the ciphertext carries only

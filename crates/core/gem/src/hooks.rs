@@ -32,22 +32,35 @@ impl BlockLifecycle for GemLifecycle {
 }
 
 /// Qualifies every reference currency the oracle knows about, each against its
-/// own COEN rate. An uninitialized registry does no work. A currency whose COEN
-/// pair is unregistered or unpriced is skipped for this block rather than
-/// halting it — the registry lists currencies independently of whether a pair
-/// has been priced yet.
+/// own COEN rate, sharing one per-block budget. An uninitialized registry does
+/// no work. A currency whose COEN pair is unregistered or unpriced is skipped
+/// for this block rather than halting it. The scan resumes from a persisted
+/// currency cursor, so a spent budget defers the rest of the list to the next
+/// block instead of dropping it.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
+    let currencies = get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        return Ok(());
+    }
+    let gem = GemContract::new(ctx.storage.clone());
+    let start = gem.qualify_currency_cursor.read()? as usize % currencies.len();
+
     let mut budget = MAX_GEM_QUALIFICATIONS_PER_BLOCK;
-    for iso_code in get_all_reference_currencies(ctx)? {
+    let mut resume_at = start;
+    for offset in 0..currencies.len() {
+        let at = (start + offset) % currencies.len();
         if budget == 0 {
+            // Resume here, so a heavy currency cannot starve the ones behind it.
+            resume_at = at;
             break;
         }
-        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), currencies[at])? else {
             continue;
         };
-        let inspected = qualify_with_rate(ctx, iso_code, rate, budget)?;
+        let inspected = qualify_with_rate(ctx, currencies[at], rate, budget)?;
         budget = budget.saturating_sub(inspected);
     }
+    gem.qualify_currency_cursor.write(resume_at as u32)?;
     Ok(())
 }
 
@@ -137,7 +150,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke — skip loudly instead of
+    // a lagging watermark means the ordering broke - skip loudly instead of
     // misreading an unfinalized day as empty.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {

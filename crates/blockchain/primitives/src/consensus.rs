@@ -32,7 +32,7 @@ pub const OUTBE_MAX_EXTRA_DATA_SIZE: usize = 64 * 1_024;
 /// commonware caps at `MAX_P2P_MESSAGE_SIZE` (2 MiB) and **panics** on overflow.
 /// The execution-layer gas limit permits far larger blocks (~7.5 MB of
 /// zero-byte calldata at 30M gas), so without this cap an honest proposer could
-/// build a valid block that can never be disseminated — verifiers could never
+/// build a valid block that can never be disseminated - verifiers could never
 /// pull it and the view would stall. This bound keeps a margin below the 2 MiB
 /// transport cap for the message envelope and the attached certificate.
 ///
@@ -61,19 +61,19 @@ pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
 /// (`validate_against_parent_timestamp_millis`) and the proposer build path in
 /// `crates/blockchain/consensus/src/application/handler.rs`.
 ///
-/// 1 hour is >400× the certification timeout, so honest operation — including
-/// view-nullification bursts and DKG-reshare pauses — never trips it, while a
+/// 1 hour is >400x the certification timeout, so honest operation - including
+/// view-nullification bursts and DKG-reshare pauses - never trips it, while a
 /// genuinely long outage self-heals: the proposer caps at `parent + this` and
 /// chain time ratchets forward in bounded steps until it catches up to real
 /// time, so the band never turns a recoverable stall into a permanent halt. It
-/// is ~504× smaller than the 21-day default unbonding period, so the
+/// is ~504x smaller than the 21-day default unbonding period, so the
 /// single-block unbonding-lock bypass is eliminated and any residual time
 /// ratchet by a sustained byzantine leader is slow and on-chain visible.
 /// Hard-fork-governed protocol constant; both paths read it from here.
 pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 
 /// Minimum advance, in milliseconds, that a block's `timestamp_millis` must add
-/// over its parent's — the lower bound of the two-sided drift band.
+/// over its parent's - the lower bound of the two-sided drift band.
 ///
 /// Stock monotonicity only requires `+1 ms`, so a colluding leader majority can
 /// keep `timestamp = parent + 1 ms` while real time advances, freezing every
@@ -81,7 +81,7 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// emission schedule never crosses a UTC boundary and unbonding maturity
 /// (`complete_time`) is never reached, so stake never unlocks and emission
 /// stalls. This bound forces each block to advance chain time by at least
-/// `this`, so the freeze is neutralized — the only way to slow chain time below
+/// `this`, so the freeze is neutralized - the only way to slow chain time below
 /// `this`-per-block is to withhold blocks, which the view-timeout / leader
 /// rotation machinery already bounds.
 ///
@@ -97,8 +97,8 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// monotonicity.
 ///
 /// 1 s is half the 2 s default block-time floor
-/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing — which leaves real intervals
-/// `≥` the floor between consecutive block timestamps — never trips the clamp at
+/// (`DEFAULT_MIN_BLOCK_TIME_MS`), so honest pacing - which leaves real intervals
+/// `>=` the floor between consecutive block timestamps - never trips the clamp at
 /// the default cadence, while a sub-second freeze is impossible. Operators who
 /// configure a block-time floor below `this` accept proportionally more bounded
 /// forward inflation. Hard-fork-governed protocol constant; both paths read it
@@ -109,7 +109,7 @@ pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
 ///
 /// Block `N`'s fees are escrowed and split at `N+K` across everyone whose
 /// finalize signature for `N` was gathered within `K` blocks. Inclusion distance
-/// is `k = inclusion_block − N`, `k ∈ {0..=K}`; the window closes / settles at
+/// is `k = inclusion_block - N`, `k in {0..=K}`; the window closes / settles at
 /// `N+K` and per-block state is freed at `N+K+1`. Hard-fork-set protocol
 /// constant. Shared by the executor (settle timing) and
 /// the rewards module (decay weights).
@@ -236,7 +236,7 @@ pub struct DkgBoundaryArtifact {
     /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
     /// authorizing the incoming committee's TEE re-registrations. The begin-zone
     /// handler verifies it against the stored prior group public key before applying
-    /// `tee_reshare_registrations` — so a malicious supermajority of the NEW committee
+    /// `tee_reshare_registrations` - so a malicious supermajority of the NEW committee
     /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
     pub endorsement_signature: Bytes,
 }
@@ -317,7 +317,8 @@ impl RandomnessStatus {
         !matches!(self, Self::Unknown | Self::Expired)
     }
 
-    /// Whether usable threshold/VRF shares should be reported as available.
+    /// Whether this network-level VRF state permits use of a locally present
+    /// threshold share. This does not prove that the local process owns one.
     pub const fn has_threshold_shares(self) -> bool {
         matches!(
             self,
@@ -357,8 +358,11 @@ impl ConsensusStatus {
         self.randomness_status.is_consensus_active()
     }
 
-    /// Whether usable DKG/threshold shares are present. Derived from
-    /// `randomness_status`; see [`ConsensusStatus::is_active`].
+    /// Whether the network-level randomness state permits threshold-share use.
+    ///
+    /// This compatibility helper does not prove that the local process owns a
+    /// private share. RPC callers must use
+    /// [`ConsensusExecutionBridge::consensus_status_with_threshold_shares`].
     pub fn has_threshold_shares(&self) -> bool {
         self.randomness_status.has_threshold_shares()
     }
@@ -381,6 +385,9 @@ pub struct ConsensusExecutionBridge {
 struct BridgeState {
     genesis_validators: Option<GenesisValidators>,
     consensus_status: ConsensusStatus,
+    /// Process-local authority fact derived from the active in-memory DKG
+    /// material. It is deliberately not persisted or consensus-visible.
+    local_threshold_share_present: bool,
     execution_summary_cache: VecDeque<ExecutionSummaryCacheEntry>,
     /// One-time TEE bootstrap payload produced by the consensus-thread TEE DKG
     /// coordination, handed to the payload builder so every block-1 proposal
@@ -589,6 +596,32 @@ impl ConsensusExecutionBridge {
         state.consensus_status.clone()
     }
 
+    /// Publishes whether the active in-memory DKG material contains this
+    /// process's private threshold share.
+    pub fn set_local_threshold_share_present(&self, present: bool) {
+        self.lock_state().local_threshold_share_present = present;
+    }
+
+    /// Whether the local process currently has a usable active threshold share.
+    ///
+    /// Local share possession and network-level VRF safety are independent
+    /// facts: a shareless verifier can observe healthy public material, while a
+    /// signer can retain a private share that is unusable after expiry.
+    pub fn has_threshold_shares(&self) -> bool {
+        let state = self.lock_state();
+        local_threshold_share_is_usable(&state)
+    }
+
+    /// Returns the consensus snapshot and its derived local-share report under
+    /// one lock so RPC cannot combine values from different transitions.
+    pub fn consensus_status_with_threshold_shares(&self) -> (ConsensusStatus, bool) {
+        let state = self.lock_state();
+        (
+            state.consensus_status.clone(),
+            local_threshold_share_is_usable(&state),
+        )
+    }
+
     /// Installs the finalization fetcher channel. Called once at marshal-start
     /// (validator and follower paths both register one) with the sender; the
     /// consensus thread drains the matching [`FinalizationFetcherRx`] and answers
@@ -615,6 +648,14 @@ impl ConsensusExecutionBridge {
         sender.send((height, reply_tx)).ok()?;
         reply_rx.await.ok().flatten()
     }
+}
+
+fn local_threshold_share_is_usable(state: &BridgeState) -> bool {
+    state.local_threshold_share_present
+        && state
+            .consensus_status
+            .randomness_status
+            .has_threshold_shares()
 }
 
 impl Default for ConsensusExecutionBridge {
@@ -689,5 +730,46 @@ mod tests {
         // Handler updates the real block number after.
         bridge.set_last_finalized_block_number(99);
         assert_eq!(bridge.consensus_status().last_finalized_block, 99);
+    }
+
+    #[test]
+    fn bridge_reports_only_usable_active_local_threshold_share() {
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_consensus_status(ConsensusStatus {
+            randomness_status: RandomnessStatus::Healthy,
+            ..Default::default()
+        });
+        assert!(
+            !bridge.has_threshold_shares(),
+            "global Healthy status must not imply a local private share"
+        );
+
+        bridge.set_local_threshold_share_present(true);
+        assert!(bridge.has_threshold_shares());
+
+        for (status, expected) in [
+            (RandomnessStatus::Preparing, true),
+            (RandomnessStatus::PendingActivation, true),
+            (RandomnessStatus::Grace, true),
+            (RandomnessStatus::Degraded, false),
+            (RandomnessStatus::Expired, false),
+            (RandomnessStatus::Unknown, false),
+            (RandomnessStatus::Healthy, true),
+        ] {
+            bridge.set_consensus_status(ConsensusStatus {
+                randomness_status: status,
+                ..Default::default()
+            });
+            assert_eq!(bridge.has_threshold_shares(), expected, "{status:?}");
+            let (snapshot, snapshot_has_share) = bridge.consensus_status_with_threshold_shares();
+            assert_eq!(snapshot.randomness_status, status);
+            assert_eq!(
+                snapshot_has_share, expected,
+                "atomic snapshot for {status:?}"
+            );
+        }
+
+        bridge.set_local_threshold_share_present(false);
+        assert!(!bridge.has_threshold_shares());
     }
 }

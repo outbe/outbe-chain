@@ -432,7 +432,7 @@ contract EscrowAdapter is
     }
 
     /// @notice Self-call helper for `finalizeAuction`'s per-bidder try/catch. Reverts on any
-    ///         non-self call. Not part of the public surface — bundled here because Solidity
+    ///         non-self call. Not part of the public surface - bundled here because Solidity
     ///         `try/catch` only works on external/public function calls.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id threaded into the emitted events.
@@ -477,7 +477,7 @@ contract EscrowAdapter is
 
         if (state.finalized) {
             // Post-finalize: the bidder's instruction failed during finalization. Refund only the
-            // validated refund portion — never the full principal — so a stranded winner cannot
+            // validated refund portion - never the full principal - so a stranded winner cannot
             // over-draw the shared Compact pool against other series' funds. Without a recorded
             // split the amount is unknowable on-chain; the relayer must retryFinalize instead.
             uint32 claimableAt = state.finalizedAt + POST_FINALIZE_REFUND_DELAY;
@@ -499,7 +499,7 @@ contract EscrowAdapter is
             }
 
             // Refund the bidder's validated portion and burn the winning remainder (the series
-            // proceeds were already routed on Outbe) — terminal in one transaction.
+            // proceeds were already routed on Outbe) - terminal in one transaction.
             uint128 refundAmount = lock.failedRefund;
             uint128 burnAmount = lockedAmount - refundAmount;
 
@@ -515,7 +515,7 @@ contract EscrowAdapter is
             }
         } else {
             // Never-finalized: the relayer never settled the series, so a full-principal refund is
-            // correct — no clearing result exists on this chain.
+            // correct - no clearing result exists on this chain.
             uint32 claimableAt = lock.lockedAt + UNFINALIZED_REFUND_DELAY;
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
@@ -575,7 +575,7 @@ contract EscrowAdapter is
         }
     }
 
-    /// @notice Execute the lock operation — transfer from the bidder and deposit to The Compact.
+    /// @notice Execute the lock operation - transfer from the bidder and deposit to The Compact.
     /// @dev Bootstraps `lockId` and forced withdrawal on the first deposit, then records the
     ///      `BidLock` and bumps the per-series escrow stats.
     /// @param worldwideDay Worldwide day (yyyymmdd).

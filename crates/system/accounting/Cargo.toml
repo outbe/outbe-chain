@@ -23,7 +23,7 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Dev-only: assert against the executor's real precompile/marker address sets
-# instead of scanning source text. (evm → accounting is a normal dep; this
+# instead of scanning source text. (evm -> accounting is a normal dep; this
 # dev-dep back-edge is a cycle Cargo permits for dev-dependencies.)
 outbe-evm = { workspace = true }
 

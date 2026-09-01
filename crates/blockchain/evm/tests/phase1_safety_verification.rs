@@ -1,4 +1,4 @@
-//! Batch 8 — Safety verification for the Phase 1 cursor refactor.
+//! Batch 8 - Safety verification for the Phase 1 cursor refactor.
 //!
 //! This file ships the safety checklist mandated for consensus-carrying
 //! refactors:
@@ -24,7 +24,7 @@ use proptest::prelude::*;
 fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
     // Construct one of each variant; if a new variant is added without
     // updating this test, the compiler match below becomes non-exhaustive
-    // and the test will fail to compile — that is the intended contract.
+    // and the test will fail to compile - that is the intended contract.
     let variants = [
         SystemTxPhase::Phase1Preexecuted {
             body_index: 0,
@@ -42,7 +42,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         SystemTxPhase::UserTxs,
     ];
     for variant in &variants {
-        // Exhaustive match — adding a new variant without updating here is a
+        // Exhaustive match - adding a new variant without updating here is a
         // compile error.
         match variant {
             SystemTxPhase::Phase1Preexecuted { .. } => {}

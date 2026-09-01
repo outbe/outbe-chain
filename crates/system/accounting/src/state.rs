@@ -26,7 +26,7 @@ pub(crate) fn last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u
 ///
 /// The function takes a `BlockRuntimeContext` rather than a raw
 /// `StorageHandle` so the storage scope is bound to the same block whose
-/// Phase 1 is committing — preventing accidental cross-block writes.
+/// Phase 1 is committing - preventing accidental cross-block writes.
 pub(crate) fn set_last_accounted_block_number(
     ctx: &BlockRuntimeContext,
     block_number: u64,

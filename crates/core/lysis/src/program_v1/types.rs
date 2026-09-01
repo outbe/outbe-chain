@@ -187,6 +187,9 @@ pub enum ProgramErrorV1 {
     },
     ZeroCost {
         ordinal: usize,
+        /// The operands, so a floor-to-zero says which side was too small.
+        entry_price_minor: U256,
+        gratis_load_minor: U256,
     },
     GratisLoadExceedsRemaining {
         ordinal: usize,
@@ -252,9 +255,14 @@ impl fmt::Display for ProgramErrorV1 {
             Self::ZeroGratisLoad { ordinal } => {
                 write!(formatter, "Lysis V1 zero Gratis load at {ordinal}")
             }
-            Self::ZeroCost { ordinal } => {
-                write!(formatter, "Lysis V1 zero monetary cost at {ordinal}")
-            }
+            Self::ZeroCost {
+                ordinal,
+                entry_price_minor,
+                gratis_load_minor,
+            } => write!(
+                formatter,
+                "Lysis V1 zero monetary cost at {ordinal}: entry price {entry_price_minor}, Gratis load {gratis_load_minor}"
+            ),
             Self::GratisLoadExceedsRemaining { ordinal } => write!(
                 formatter,
                 "Lysis V1 Gratis load exceeds remaining at {ordinal}"

@@ -54,10 +54,10 @@ pub fn most_significant_bit(mut x: U256) -> u8 {
 ///
 /// Implementation: walks alloy's little-endian limb array (limb[0] = bits
 /// 0..63) and uses `u64::trailing_zeros`, which is deterministic across
-/// every Rust target (defined for 0 → 64, never CPU-intrinsic-dependent).
+/// every Rust target (defined for 0 -> 64, never CPU-intrinsic-dependent).
 pub fn least_significant_bit(word: U256) -> u32 {
     let limbs = word.as_limbs();
-    // SAFETY: i ∈ {0,1,2,3}, so (i as u32) * 64 ∈ {0,64,128,192}; no narrowing.
+    // SAFETY: i in {0,1,2,3}, so (i as u32) * 64 in {0,64,128,192}; no narrowing.
     for (i, &limb) in limbs.iter().enumerate() {
         if limb != 0 {
             return limb.trailing_zeros() + (i as u32) * 64;
@@ -67,7 +67,7 @@ pub fn least_significant_bit(word: U256) -> u32 {
 }
 
 /// Returns `word` with all bits below `from_bit` cleared.
-/// `from_bit == 0` → returns `word` unchanged.
+/// `from_bit == 0` -> returns `word` unchanged.
 pub fn mask_from(word: U256, from_bit: u8) -> U256 {
     if from_bit == 0 {
         word
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(mask_from(U256::MAX, 0), U256::MAX);
         // mask_from(MAX, 1) clears bit 0.
         assert_eq!(mask_from(U256::MAX, 1), U256::MAX - U256::ONE);
-        // mask_from(0xFF, 4) keeps bits 4..=7 → 0xF0.
+        // mask_from(0xFF, 4) keeps bits 4..=7 -> 0xF0.
         assert_eq!(mask_from(U256::from(0xFFu64), 4), U256::from(0xF0u64));
     }
 }

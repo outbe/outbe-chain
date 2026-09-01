@@ -1,4 +1,4 @@
-//! Executor actor — sends forkchoice updates and handles finalization.
+//! Executor actor - sends forkchoice updates and handles finalization.
 //!
 //! Tracks the canonical chain head and finalized block, sending FCU updates
 //! to Reth's beacon engine. Receives finalized blocks from marshal via the
@@ -25,6 +25,7 @@ use outbe_primitives::{
     projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
+use reth_ethereum::node::api::BeaconForkChoiceUpdateError;
 use reth_node_builder::ConsensusEngineHandle;
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +42,20 @@ pub struct FinalizedCeBlock {
     pub height: u64,
     pub block_hash: B256,
     pub parent_block_hash: B256,
+}
+
+/// Result of one startup-only replay of a recovered finalized forkchoice.
+///
+/// The caller owns timeout, retry, and durable provider readback. Keeping those
+/// concerns out of the actor preserves a single owner for Engine FCU types
+/// without turning startup recovery into a second actor lifecycle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecoveredForkchoiceAttempt {
+    Valid,
+    Syncing,
+    Invalid(String),
+    Retryable(String),
+    Fatal(String),
 }
 
 /// Finalization barrier installed by the node integration.
@@ -182,7 +197,7 @@ impl LastCanonicalized {
                 %height,
                 committed = %this.forkchoice.finalized_block_hash,
                 attempted = %digest.0,
-                "attempted finalized rewrite at same height — protocol invariant violation, ignored"
+                "attempted finalized rewrite at same height - protocol invariant violation, ignored"
             );
         } else if height < this.finalized_height {
             crate::metrics::record_executor_finalized_stale();
@@ -284,7 +299,7 @@ pub struct ExecutorActor<E> {
     mailbox_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     // Intentionally `tokio::sync::mpsc`: this height-signal channel is created and
     // consumed cross-crate by `outbe-engine` (`stack.rs`). It is a plain channel
-    // with no timer/spawn dependency — runtime-agnostic, so it does not pull the
+    // with no timer/spawn dependency - runtime-agnostic, so it does not pull the
     // tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     projection_readiness: ProjectionReadinessHandle,
@@ -376,6 +391,55 @@ where
         self
     }
 
+    /// Replay the exact recovered forkchoice once before this actor is started.
+    ///
+    /// This method neither mutates actor state nor starts mailbox or heartbeat
+    /// processing. A caller must confirm the durable provider identity before
+    /// allowing any downstream startup side effect.
+    pub fn replay_recovered_forkchoice_once(
+        &self,
+        expected: ProjectionCheckpoint,
+    ) -> BoxFuture<'static, RecoveredForkchoiceAttempt> {
+        let expected_height = Height::new(expected.block_number);
+        let forkchoice = self.state.forkchoice;
+        if self.state.head_height != expected_height
+            || self.state.finalized_height != expected_height
+            || forkchoice.head_block_hash != expected.block_hash
+            || forkchoice.safe_block_hash != expected.block_hash
+            || forkchoice.finalized_block_hash != expected.block_hash
+        {
+            return Box::pin(async move {
+                RecoveredForkchoiceAttempt::Fatal(format!(
+                    "executor recovered state does not match startup anchor {}:{}",
+                    expected.block_number, expected.block_hash
+                ))
+            });
+        }
+
+        let engine = self.engine.clone();
+        Box::pin(async move {
+            match engine.fork_choice_updated(forkchoice, None).await {
+                Ok(response) if response.is_valid() => RecoveredForkchoiceAttempt::Valid,
+                Ok(response) if response.is_syncing() => RecoveredForkchoiceAttempt::Syncing,
+                Ok(response) if response.is_invalid() => {
+                    RecoveredForkchoiceAttempt::Invalid(format!("{response:?}"))
+                }
+                Ok(response) => RecoveredForkchoiceAttempt::Fatal(format!(
+                    "unexpected recovered forkchoice response: {response:?}"
+                )),
+                Err(BeaconForkChoiceUpdateError::EngineUnavailable) => {
+                    RecoveredForkchoiceAttempt::Retryable(
+                        "beacon consensus engine task stopped before its FCU response".to_string(),
+                    )
+                }
+                Err(error @ BeaconForkChoiceUpdateError::ForkchoiceUpdateError(_))
+                | Err(error @ BeaconForkChoiceUpdateError::Internal(_)) => {
+                    RecoveredForkchoiceAttempt::Fatal(error.to_string())
+                }
+            }
+        })
+    }
+
     /// Start the executor under the Commonware runtime supervision tree.
     pub fn start(
         self,
@@ -390,7 +454,7 @@ where
     ///
     /// Returns `Err` only on an unrecoverable fault: a *finalized* block (already
     /// agreed by consensus) that this node cannot apply locally. That means our
-    /// state has diverged from the finalized chain, so the node must fail fast —
+    /// state has diverged from the finalized chain, so the node must fail fast -
     /// the supervisor treats this `Err` as fatal and shuts the node down with the
     /// structured cause, rather than the silent fall-through that previously
     /// surfaced only as an opaque marshal "did not acknowledge" panic.
@@ -425,7 +489,7 @@ where
                                 error!(
                                     %height, %digest, %error,
                                     "backfill: finalized block failed local execution; \
-                                     finalized state diverged — failing fast"
+                                     finalized state diverged - failing fast"
                                 );
                                 return Err(eyre::eyre!(
                                     "executor backfill cannot apply finalized block at \
@@ -436,18 +500,18 @@ where
                     }
                     None => {
                         // The backfill range is `(execution_height, last_consensus_finalized]`
-                        // — every height here is <= the finalized height marshal itself
+                        // - every height here is <= the finalized height marshal itself
                         // reported, so marshal must be able to produce it. A `None` means
                         // marshal's archive is inconsistent (claims finalized to N but cannot
                         // serve M <= N). Skipping would leave a non-contiguous execution gap
                         // (the next block's new_payload fails on the missing parent, or the
                         // node silently stalls below consensus height), so this is an
-                        // unrecoverable fault — fail fast like the execution-failure branch.
+                        // unrecoverable fault - fail fast like the execution-failure branch.
                         error!(
                             height = h,
                             consensus_height = last_consensus_finalized.get(),
                             "backfill: marshal is missing a finalized block at or below its \
-                             reported finalized height; archive is inconsistent — failing fast"
+                             reported finalized height; archive is inconsistent - failing fast"
                         );
                         return Err(eyre::eyre!(
                             "executor backfill: marshal missing finalized block at height {h} \
@@ -463,10 +527,10 @@ where
             warn!(
                 execution_height = execution_height.get(),
                 consensus_height = last_consensus_finalized.get(),
-                "execution ahead of consensus — skipping backfill"
+                "execution ahead of consensus - skipping backfill"
             );
         } else {
-            info!("execution and consensus at same height — no backfill needed");
+            info!("execution and consensus at same height - no backfill needed");
         }
 
         self.run_live_loop().await
@@ -666,7 +730,7 @@ where
             return;
         }
 
-        // Success — respond and commit.
+        // Success - respond and commit.
         match maybe_build {
             MaybeBuild::JustCanonicalize { response } => {
                 let _ = response.send(Ok(()));
@@ -745,7 +809,7 @@ where
                     Err(error) => {
                         // A finalized block (already agreed by consensus) that we
                         // cannot apply locally means our state has diverged from the
-                        // finalized chain — unrecoverable. Fail fast deterministically
+                        // finalized chain - unrecoverable. Fail fast deterministically
                         // with the structured cause. We deliberately do NOT
                         // acknowledge: the block was not processed, and acking would
                         // lie to the marshal's progress tracking (letting it prune a
@@ -753,20 +817,20 @@ where
                         //
                         // Note: the unacknowledged `ack` still cancels on drop, and
                         // upstream marshal `handle_ack` treats a canceled ack as fatal
-                        // (`panic!("application did not acknowledge…")`). With the
+                        // (`panic!("application did not acknowledge...")`). With the
                         // runtime's `catch_panics`, that panic is CAUGHT (it does not
-                        // abort the process) — so it is NOT the shutdown driver and does
+                        // abort the process) - so it is NOT the shutdown driver and does
                         // NOT pre-empt this path. The authoritative shutdown driver is
                         // the structured `Err` returned here: it propagates out of
                         // run_live_loop/run, the supervisor select treats the executor
                         // exit as fatal, and the node shuts down with the cause below.
                         // The marshal panic may still appear in logs (a caught,
-                        // less-informative secondary symptom) — this `error!` precedes
+                        // less-informative secondary symptom) - this `error!` precedes
                         // it with the real reason.
                         error!(
                             %height, %digest, %error,
                             "finalized block failed local execution; \
-                             finalized state diverged — failing fast"
+                             finalized state diverged - failing fast"
                         );
                         Err(eyre::eyre!(
                             "executor cannot apply finalized block at \
@@ -789,7 +853,7 @@ where
     ///
     /// Returns `Err` when the finalized block cannot be applied (execution layer
     /// rejected it, the engine call failed, or canonicalization failed/was
-    /// dropped). A `Syncing` payload status is not a failure — it proceeds to
+    /// dropped). A `Syncing` payload status is not a failure - it proceeds to
     /// canonicalization like the prior behavior.
     async fn handle_finalize_inner(
         &mut self,
@@ -1343,6 +1407,267 @@ mod tests {
     }
 
     #[test]
+    fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attributes() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(message) = engine_rx.recv().await else {
+                    panic!("recovered forkchoice attempt must send an FCU message");
+                };
+                match message {
+                    BeaconEngineMessage::ForkchoiceUpdated {
+                        state,
+                        payload_attrs,
+                        tx,
+                    } => {
+                        assert_eq!(state.head_block_hash, recovered.block_hash);
+                        assert_eq!(state.safe_block_hash, recovered.block_hash);
+                        assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                        assert!(payload_attrs.is_none());
+                        tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))))
+                        .expect("test engine response receiver must be alive");
+                    }
+                    other => panic!("unexpected engine message: {other:?}"),
+                }
+            });
+
+            let outcome = actor.replay_recovered_forkchoice_once(recovered).await;
+            assert_eq!(outcome, super::RecoveredForkchoiceAttempt::Valid);
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_rejects_anchor_mismatch_before_engine_io() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let expected = ProjectionCheckpoint {
+                block_number: 8,
+                block_hash: B256::repeat_byte(0x88),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context,
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let outcome = actor.replay_recovered_forkchoice_once(expected).await;
+
+            assert!(matches!(
+                outcome,
+                super::RecoveredForkchoiceAttempt::Fatal(message)
+                    if message.contains("does not match startup anchor")
+            ));
+            assert!(engine_rx.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                for syncing in [true, false] {
+                    let Some(BeaconEngineMessage::ForkchoiceUpdated {
+                        state,
+                        payload_attrs,
+                        tx,
+                    }) = engine_rx.recv().await
+                    else {
+                        panic!("expected recovered FCU attempt");
+                    };
+                    assert_eq!(state.head_block_hash, recovered.block_hash);
+                    assert_eq!(state.safe_block_hash, recovered.block_hash);
+                    assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                    assert!(payload_attrs.is_none());
+                    let response = if syncing {
+                        OnForkChoiceUpdated::syncing()
+                    } else {
+                        OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                            PayloadStatusEnum::Valid,
+                        ))
+                    };
+                    tx.send(Ok(response))
+                        .expect("test engine response receiver must be alive");
+                }
+            });
+
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Syncing,
+            );
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Valid,
+            );
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_distinguishes_payload_invalid_from_hard_error() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected payload-invalid recovered FCU attempt");
+                };
+                tx.send(Ok(OnForkChoiceUpdated::with_invalid(
+                    PayloadStatus::from_status(PayloadStatusEnum::Invalid {
+                        validation_error: "test invalid payload".to_string(),
+                    }),
+                )))
+                .expect("test engine response receiver must be alive");
+
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected invalid-state recovered FCU attempt");
+                };
+                tx.send(Ok(OnForkChoiceUpdated::invalid_state()))
+                    .expect("test engine response receiver must be alive");
+            });
+
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Invalid(message)
+                    if message.contains("test invalid payload")
+            ));
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Fatal(message)
+                    if message.contains("invalid forkchoice state")
+            ));
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
+    fn recovered_forkchoice_attempt_can_repeat_after_lost_response() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let recovered = ProjectionCheckpoint {
+                block_number: 7,
+                block_hash: B256::repeat_byte(0x77),
+            };
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) =
+                ready_projection(genesis, recovered);
+            let (actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                recovered.block_number,
+                recovered.block_hash,
+                projection_readiness,
+                None,
+            );
+
+            let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { state, tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected recovered FCU attempt with lost response");
+                };
+                assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                drop(tx);
+
+                let Some(BeaconEngineMessage::ForkchoiceUpdated { state, tx, .. }) =
+                    engine_rx.recv().await
+                else {
+                    panic!("expected repeated recovered FCU attempt");
+                };
+                assert_eq!(state.finalized_block_hash, recovered.block_hash);
+                tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                    PayloadStatusEnum::Valid,
+                ))))
+                .expect("test engine response receiver must be alive");
+            });
+
+            assert!(matches!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Retryable(_)
+            ));
+            assert_eq!(
+                actor.replay_recovered_forkchoice_once(recovered).await,
+                super::RecoveredForkchoiceAttempt::Valid,
+            );
+            engine_task.await.expect("engine task must complete");
+        });
+    }
+
+    #[test]
     fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
         commonware_runtime::deterministic::Runner::default().start(|context| async move {
             let genesis = B256::repeat_byte(0x01);
@@ -1679,7 +2004,7 @@ mod tests {
     }
 
     // bp-2 regression: a *finalized* block the execution layer rejects must fail
-    // fast — `handle_marshal_update` returns a structured `Err` (the supervisor
+    // fast - `handle_marshal_update` returns a structured `Err` (the supervisor
     // shuts the node down) and the marshal `Exact` ack is left UNACKNOWLEDGED
     // (cancels), never silently dropped after a `warn!`. Deleting the fail-fast
     // and going back to acking/ignoring makes this test fail.
@@ -2253,7 +2578,7 @@ mod tests {
     // `warn! + skip`, the backfill loop would fall through every height and then
     // enter the infinite `run_live_loop`, so `run().await` would NOT return an
     // `Err` (this test would hang on the wrapping timeout and then fail the
-    // "must return Err" assertion) — i.e. this test genuinely guards the fix.
+    // "must return Err" assertion) - i.e. this test genuinely guards the fix.
     #[test]
     fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
         // The `Runner::timed` wedge guard replaces the previous outer

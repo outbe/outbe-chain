@@ -2,8 +2,8 @@
 //!
 //! These are the deterministic "what makes a proposed block invalid?" checks,
 //! lifted out of `handler.rs`'s propose/verify event loop. They take an
-//! immutable block plus the scheme/committee providers and return a `Result` —
-//! no clock, no marshal, no runtime state — so they read and test as a
+//! immutable block plus the scheme/committee providers and return a `Result` -
+//! no clock, no marshal, no runtime state - so they read and test as a
 //! standalone validation layer. `handler` calls them; the tests below exercise
 //! them directly.
 

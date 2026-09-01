@@ -1,10 +1,10 @@
-//! Tribute computation — economics + `tribute_id`. Pure, deterministic, integer
+//! Tribute computation - economics + `tribute_id`. Pure, deterministic, integer
 //! (U256) only.
 //!
 //! Economics move the settlement->nominal computation **into the enclave**, faithfully replicating the host's current
 //! `outbe-tributefactory::runtime` math, with two intentional differences:
 //!
-//!   - checked arithmetic (no panics, per project safety rules — the host code
+//!   - checked arithmetic (no panics, per project safety rules - the host code
 //!     used unchecked ops); on overflow the offer is rejected, not aborted;
 //!   - the exact WorldwideDay VWAP legs and reference S-curve are public inputs,
 //!     read by the node from committed Oracle state and identical on every validator.
@@ -66,7 +66,7 @@ fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], String> {
 }
 
 /// Parse the `tribute_draft_id` (a 32-byte value as a hex string, optional `0x`
-/// prefix) into raw bytes — mirrors host `parse_su_hashes`.
+/// prefix) into raw bytes - mirrors host `parse_su_hashes`.
 fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     let hex_str = draft_id.strip_prefix("0x").unwrap_or(draft_id);
     let bytes =
@@ -82,13 +82,13 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// `tribute_id = Poseidon(owner, worldwide_day)` — BN254/circom, computed inside
+/// `tribute_id = Poseidon(owner, worldwide_day)` - BN254/circom, computed inside
 /// the enclave. The id is deterministic in `(owner, worldwide_day)` ALONE: this
 /// is what enforces the one-tribute-per-owner-per-day invariant. A second offer
 /// for the same owner and day recomputes the same id, so the host's
 /// `get_tribute(id).is_some()` check rejects it (`TributeAlreadyExists`). The
 /// `tribute_draft_id` is still validated (must be 32-byte hex) but intentionally
-/// NOT mixed into the id — mixing it in made the id per-offer-unique and silently
+/// NOT mixed into the id - mixing it in made the id per-offer-unique and silently
 /// allowed duplicate tributes per owner per day.
 ///
 /// Field-element encoding (each reduced mod the BN254 order by `poseidon_hash`):
@@ -306,7 +306,7 @@ mod tests {
         assert_ne!(base, compute_token_id(b, DAY, DRAFT_A).unwrap()); // owner
         assert_ne!(base, compute_token_id(a, NEXT_DAY, DRAFT_A).unwrap()); // day
 
-        // draft_id is deliberately NOT bound into the id — same owner+day yields
+        // draft_id is deliberately NOT bound into the id - same owner+day yields
         // the same id regardless of draft, which enforces one-per-owner-per-day.
         assert_eq!(base, compute_token_id(a, DAY, DRAFT_B).unwrap());
     }

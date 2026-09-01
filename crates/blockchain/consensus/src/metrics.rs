@@ -32,8 +32,8 @@ pub fn record_views_skipped(count: u64) {
 /// Record the highest Simplex view this node has observed activity for.
 ///
 /// Unlike `outbe_finalized_view` (which freezes during a stall), this gauge
-/// advances on every view-bearing activity — notarize/certify/finalize votes and
-/// nullification certificates — so it keeps moving while a view-timeout storm
+/// advances on every view-bearing activity - notarize/certify/finalize votes and
+/// nullification certificates - so it keeps moving while a view-timeout storm
 /// nullifies views without finalizing any. The gap
 /// `outbe_current_view - outbe_finalized_view` is the primary consensus-stall
 /// signal: a sustained non-zero gap means views are advancing but nothing is
@@ -63,7 +63,7 @@ pub fn record_finalization_dropped(reason: FinalizationDropReason) {
 /// A finalized block is fetchable from any honest peer, so the actor keeps
 /// retrying rather than downing a healthy validator on a transient all-peers
 /// P2P stall. A SUSTAINED non-zero rate is the operator alarm: the block is
-/// unavailable network-wide or local state has diverged — investigate, because
+/// unavailable network-wide or local state has diverged - investigate, because
 /// the actor (correctly) cannot advance finalization past an unresolved block.
 pub fn record_finalization_resolution_stalled() {
     counter!("outbe_finalization_resolution_stalled_total").increment(1);
@@ -113,7 +113,7 @@ pub fn record_epoch(epoch: u64) {
 ///
 /// This is the number of peers the peer-manager has registered/tracked for the
 /// current set (primary + secondary tiers), NOT the count of live TCP
-/// connections — the commonware network layer does not expose a live-connection
+/// connections - the commonware network layer does not expose a live-connection
 /// count at this seam. Operators must read it as membership, not connectivity:
 /// it does not drop when peers disconnect, so it is not a stall/partition
 /// signal on its own. Pair it with `outbe_current_view` vs `outbe_finalized_view`
@@ -192,10 +192,10 @@ pub fn record_reshare_completed() {
 /// in plaintext (the `feldman_desmedt` construction reveals a non-acking
 /// player's share so the ceremony can still complete), permanently committed
 /// on-chain in the `DealerLog` artifacts. A revealed share makes that
-/// validator's VRF threshold partial publicly forgeable. This is bounded — VRF
+/// validator's VRF threshold partial publicly forgeable. This is bounded - VRF
 /// drives leader election / fairness, not BFT safety (the BLS individual
 /// aggregate vote stays authoritative, and the group secret is safe up to `2f`
-/// reveals) — but a non-zero value is the operator's signal to rotate the
+/// reveals) - but a non-zero value is the operator's signal to rotate the
 /// affected validator's consensus key. The per-validator identities are logged
 /// at `WARN` on the `outbe::dkg` target.
 pub fn record_dkg_revealed_shares(count: usize) {
@@ -211,7 +211,7 @@ pub fn record_vrf_degraded_leader_selection() {
 /// The closed set of byzantine-equivocation kinds. Each carries its own telemetry
 /// label, so the `outbe_byzantine_evidence_total{type=...}` metric and the
 /// `outbe::slashing::equivocation` warn! field can only ever take one of these
-/// three values — closing the unbounded label-cardinality hole that a free `&str`
+/// three values - closing the unbounded label-cardinality hole that a free `&str`
 /// parameter left open on a slashing-path counter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EquivocationKind {
@@ -222,7 +222,7 @@ pub enum EquivocationKind {
 
 impl EquivocationKind {
     /// The stable telemetry label (metric `type` value and warn! field). These
-    /// strings are an external, operator-facing surface — do not change them.
+    /// strings are an external, operator-facing surface - do not change them.
     pub const fn label(self) -> &'static str {
         match self {
             Self::ConflictingNotarize => "conflicting_notarize",
@@ -248,7 +248,7 @@ pub enum FinalizationDropReason {
 }
 
 impl FinalizationDropReason {
-    /// Stable telemetry label — operator-facing surface, do not change.
+    /// Stable telemetry label - operator-facing surface, do not change.
     pub const fn label(self) -> &'static str {
         match self {
             Self::MailboxClosed => "mailbox_closed",
@@ -270,7 +270,7 @@ pub enum CertificationDropReason {
 }
 
 impl CertificationDropReason {
-    /// Stable telemetry label — operator-facing surface, do not change.
+    /// Stable telemetry label - operator-facing surface, do not change.
     pub const fn label(self) -> &'static str {
         match self {
             Self::VerifyFailed => "verify_failed",
@@ -291,7 +291,7 @@ pub enum DkgBoundaryDecision {
 }
 
 impl DkgBoundaryDecision {
-    /// Stable telemetry label — operator-facing surface, do not change.
+    /// Stable telemetry label - operator-facing surface, do not change.
     pub const fn label(self) -> &'static str {
         match self {
             Self::AlreadyCommitted => "already_committed",
@@ -311,7 +311,7 @@ pub enum DkgBoundaryUnavailableReason {
 }
 
 impl DkgBoundaryUnavailableReason {
-    /// Stable telemetry label — operator-facing surface, do not change.
+    /// Stable telemetry label - operator-facing surface, do not change.
     pub const fn label(self) -> &'static str {
         match self {
             Self::GenesisBoundaryNotReady => "genesis_boundary_not_ready",
@@ -332,7 +332,7 @@ pub fn record_invalid_vrf_partial() {
 }
 
 /// Record an invalid threshold-VRF seed partial whose rider identity signature
-/// did NOT verify, so it cannot be attributed to the claimed signer — a
+/// did NOT verify, so it cannot be attributed to the claimed signer - a
 /// probable in-transit relay forgery. Its complete attestation is dropped before
 /// quorum admission but never slashed.
 pub fn record_forged_seed_partial() {
@@ -400,8 +400,8 @@ pub fn record_certification_persisted() {
 
 /// `Activity::Certification` dropped by the reporter before persistence.
 /// Reasons:
-/// - `"verify_failed"` — Notarization signature did not verify.
-/// - `"store_error"` — durable proof-store write returned an error.
+/// - `"verify_failed"` - Notarization signature did not verify.
+/// - `"store_error"` - durable proof-store write returned an error.
 pub fn record_certification_dropped(reason: CertificationDropReason) {
     counter!("outbe_certification_dropped_total", "reason" => reason.label()).increment(1);
 }
@@ -524,7 +524,7 @@ mod tests {
         );
     }
 
-    /// Pins the drop/decision telemetry labels — external operator-facing surface
+    /// Pins the drop/decision telemetry labels - external operator-facing surface
     /// (`outbe_finalization_dropped_total`, `outbe_certification_dropped_total`,
     /// `outbe_dkg_boundary_requirement_total`, `outbe_dkg_boundary_unavailable_total`).
     /// A change must be deliberate, not an accidental rename.
