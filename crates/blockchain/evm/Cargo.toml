@@ -86,6 +86,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-chain-constants.workspace = true
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils"] }
