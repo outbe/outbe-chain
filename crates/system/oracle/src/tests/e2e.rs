@@ -4,7 +4,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::Units;
 
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -96,16 +95,8 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
 #[test]
 fn init_from_genesis_imports_every_custom_config_collection() {
     with_storage(|storage| {
-        register_validator(
-            storage.clone(),
-            Address::new([0x11; 20]),
-            U256::in_units(100u64),
-        );
-        register_validator(
-            storage.clone(),
-            Address::new([0x22; 20]),
-            U256::in_units(100u64),
-        );
+        register_validator(storage.clone(), Address::new([0x11; 20]), native_coen(100));
+        register_validator(storage.clone(), Address::new([0x22; 20]), native_coen(100));
         let config = crate::genesis::OracleGenesisConfig {
             vote_period: 5,
             reward_band: U256::from(10_000_000_000_000_000u128), // 0.01
@@ -796,7 +787,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
     let exported = {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
-            register_validator(storage.clone(), v1, U256::in_units(100u64));
+            register_validator(storage.clone(), v1, native_coen(100));
             let mut oracle = OracleContract::new(storage.clone());
             crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
             crate::genesis::export_genesis(&oracle, &[v1, v2]).unwrap()
@@ -831,7 +822,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
 
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(&mut oracle, &exported).unwrap();
 

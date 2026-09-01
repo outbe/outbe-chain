@@ -1095,7 +1095,10 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .storage
                 .balance(outbe_primitives::addresses::CCA_ADDRESS)
                 .unwrap(),
-            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Cca),
+            outbe_primitives::units::checked_protocol_to_native(amount_for(
+                outbe_emissionlimit::allocation::EmissionSinkId::Cca,
+            ))
+            .unwrap(),
             "retry must credit CCA exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());

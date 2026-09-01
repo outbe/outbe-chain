@@ -67,7 +67,7 @@ pub struct AuctionConfig {
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
-    /// Commit-entry bond in six-decimal WCOEN-units; 0 disables the bond.
+    /// Commit-entry bond in 18-decimal WCOEN units; 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,

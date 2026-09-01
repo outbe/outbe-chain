@@ -18,8 +18,9 @@ const ORIGINATED_AT: u64 = 1_700_000_000;
 // ---------------------------------------------------------------------------
 // The product paper's section 5 worked example, in exact on-chain units.
 //
-// Maria pledges Gratis worth $1,000 at P0 = $0.50/COEN. Stablecoin minor units
-// are 6-decimal; COEN and the oracle rate are 18-decimal.
+// Maria pledges Gratis worth $1,000 at P0 = $0.50/COEN. Stablecoin minor units,
+// Gratis collateral and the oracle rate stay six-decimal; native COEN is not
+// part of this internal calculation.
 // ---------------------------------------------------------------------------
 
 /// P = 1,000 USDC.

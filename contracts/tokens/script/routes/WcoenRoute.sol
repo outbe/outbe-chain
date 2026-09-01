@@ -30,7 +30,7 @@ abstract contract WcoenRoute is BaseRoute {
         return canonical
             ? type(WCOEN).creationCode
             : abi.encodePacked(
-                type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(6), _owner())
+                type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(18), _owner())
             );
     }
 }

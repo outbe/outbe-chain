@@ -7,7 +7,7 @@ export interface ChainConfig {
   name: string;
   rpc: string;
   chainId: number;
-  /** Decimals of the chain's native token: COEN is six-decimal, EVM natives are 18.
+  /** Decimals of the chain's native token; COEN and standard EVM natives are 18.
    *  Not discoverable over RPC, so it has to be configured per chain. */
   nativeDecimals: number;
 }
@@ -43,21 +43,20 @@ export const chains: Record<string, ChainConfig> = {
     name: 'Outbe Privnet',
     rpc: process.env.OUTBE_PRIV_RPC || 'https://eth.p.outbe.net',
     chainId: parseInt(process.env.OUTBE_PRIV_CHAIN_ID || '512512'),
-    nativeDecimals: 6,
+    nativeDecimals: 18,
   },
 
   outbe_dev: {
     name: 'Outbe Devnet',
     rpc: process.env.OUTBE_DEV_RPC || 'https://eth.d.outbe.net',
     chainId: parseInt(process.env.OUTBE_DEV_CHAIN_ID || '424242'),
-    nativeDecimals: 6,
+    nativeDecimals: 18,
   },
 
   outbe_testnet_old: {
     name: 'Outbe Testnet (old)',
     rpc: process.env.OUTBE_TESTNET_OLD_RPC || 'https://eth.testnet.outbe.net',
     chainId: parseInt(process.env.OUTBE_TESTNET_OLD_CHAIN_ID || '512215'),
-    // Predates the six-decimal cutover; confirm before pointing orders at it.
     nativeDecimals: 18,
   },
 
@@ -65,7 +64,7 @@ export const chains: Record<string, ChainConfig> = {
     name: 'Outbe Testnet',
     rpc: process.env.OUTBE_TESTNET_RPC || 'https://rpc.testnet.outbe.net',
     chainId: parseInt(process.env.OUTBE_TESTNET_CHAIN_ID || '54322345'),
-    nativeDecimals: 6,
+    nativeDecimals: 18,
   },
 };
 
@@ -79,4 +78,3 @@ export const privateKey = process.env.PRIVATE_KEY;
 if (!privateKey) {
   throw new Error('PRIVATE_KEY not set in .env file');
 }
-

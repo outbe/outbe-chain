@@ -55,15 +55,6 @@ const REGISTRY_SOURCES: &[&str] = &[
     SEMANTIC_DESCRIPTOR_PATH,
     "crates/system/ocomp-protocol/registry/generated-shape-manifest.json",
 ];
-const NORMATIVE_SOURCES: &[&str] = &[
-    "docs/adr/system/ADR-S-OCM-001-ocomp-kernel-and-typed-program-boundary.md",
-    "docs/adr/system/ADR-S-OCM-002-finalized-input-export-and-content-addressed-artifacts.md",
-    "docs/adr/system/ADR-S-OCM-003-deterministic-execution-and-quorum-evidence.md",
-    "docs/adr/system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md",
-    "docs/flows/002-off-chain-poc-protocol-flow.md",
-    "off-chain-poc.md",
-    "off-chain-computation.md",
-];
 const GENERATOR_SOURCES: &[&str] = &["xtask/src/ocomp/capacity.rs", "xtask/src/ocomp/finalize.rs"];
 
 const CAPACITY_FILE: &str = "capacity-profile-v1.ocb1";
@@ -560,17 +551,15 @@ fn semantic_artifacts(
 ) -> Result<(BTreeMap<&'static str, B256>, SemanticArtifactsV1)> {
     let mut sources = BTreeMap::new();
     let registry = hash_source_set(repository_root, REGISTRY_SOURCES)?;
-    let normative = hash_source_set(repository_root, NORMATIVE_SOURCES)?;
     let generator = hash_source_set(repository_root, GENERATOR_SOURCES)?;
     sources.insert("generator", generator);
-    sources.insert("normative", normative);
     sources.insert("registry", registry);
     let descriptors = semantic_descriptors(repository_root)?;
     let digest = |field: &'static str| -> Result<B256> {
         let descriptor = descriptors
             .get(field)
             .ok_or_else(|| eyre::eyre!("missing semantic descriptor {field}"))?;
-        Ok(semantic_digest(field, descriptor, &[normative, registry]))
+        Ok(semantic_digest(field, descriptor, &[registry]))
     };
     let artifacts = SemanticArtifactsV1 {
         intent_codec_id: digest("intent_codec_id")?,
@@ -1260,6 +1249,14 @@ mod tests {
         assert_eq!(network["classification"], "final");
         assert_eq!(network["activation_height"], 32);
         assert_ne!(network["protocol_bundle_hash"], serde_json::Value::Null);
+
+        let semantic: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join(SEMANTICS_MANIFEST_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(semantic["source_sets"].as_object().unwrap().len(), 2);
+        assert!(semantic["source_sets"].get("generator").is_some());
+        assert!(semantic["source_sets"].get("registry").is_some());
+        assert!(semantic["source_sets"].get("normative").is_none());
 
         fs::write(output.join(BUNDLE_FILE), b"changed").unwrap();
         assert!(

@@ -10,6 +10,7 @@ use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
@@ -531,14 +532,15 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         );
         let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
         let minted = IGratisFactory::mineCoenCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(minted, amount);
+        let native_amount = checked_protocol_to_native(amount).unwrap();
+        assert_eq!(minted, native_amount);
 
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_gratis::api::total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
-        assert_eq!(storage.balance(alice()).unwrap(), amount);
+        assert_eq!(storage.balance(alice()).unwrap(), native_amount);
 
         // Fully sold -> efficiency 0 -> league drops to the floor.
         let league_after = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();

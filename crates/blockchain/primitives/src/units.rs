@@ -25,47 +25,42 @@ pub const SCALE_1E6_U64: u64 = 1_000_000;
 pub const SCALE_1E6_U128: u128 = 1_000_000;
 pub const SCALE_1E6_U256: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
-/// One whole coen, expressed in the on-chain `U256` representation.
-pub const ONE_COEN: U256 = SCALE_1E6_U256;
+/// Decimal places used by protocol amounts such as PROMIS, GRATIS, emission,
+/// Gem loads, and stablecoin-backed COEN/ISO prices.
+pub const PROTOCOL_AMOUNT_DECIMALS: u8 = 6;
+
+/// Native atomic units represented by one minimal six-decimal protocol unit.
+pub const NATIVE_UNITS_PER_PROTOCOL_UNIT: U256 = U256::from_limbs([1_000_000_000_000, 0, 0, 0]);
+
+/// One whole native COEN, expressed in the EVM account-balance representation.
+pub const ONE_COEN: U256 = SCALE_1E18;
 
 /// The smallest representable on-chain amount (1 unit).
 pub const ONE_UNIT: U256 = U256::ONE;
 
 /// Number of decimal places.
-pub const NATIVE_TOKEN_DECIMALS: u8 = 6;
+pub const NATIVE_TOKEN_DECIMALS: u8 = 18;
 
-/// Conversion from a whole-COEN count into native on-chain `unit`.
+/// Converts a six-decimal protocol amount into native COEN atomic units.
 ///
-/// Implementations multiply the supplied whole-COEN value by
-/// [`SCALE_1E6_U256`]. The trait is generic over the input type so callers can
-/// pass any of the natural integer types without an explicit cast.
-pub trait Units<T>: Sized {
-    /// Returns `value * 1_000_000` as a `U256`.
-    fn in_units(value: T) -> U256;
+/// Returns `None` rather than wrapping when the native representation would
+/// exceed `U256`.
+pub fn checked_protocol_to_native(amount: U256) -> Option<U256> {
+    amount.checked_mul(NATIVE_UNITS_PER_PROTOCOL_UNIT)
 }
 
-impl Units<U256> for U256 {
-    fn in_units(value: U256) -> U256 {
-        value * SCALE_1E6_U256
-    }
+/// Converts a whole-COEN count into native COEN atomic units.
+///
+/// The explicit name prevents this helper from being mistaken for a PROMIS,
+/// GRATIS, price, rate, or emission conversion.
+pub fn checked_whole_coen_to_native(whole_coen: U256) -> Option<U256> {
+    whole_coen.checked_mul(ONE_COEN)
 }
 
-impl Units<u128> for U256 {
-    fn in_units(value: u128) -> U256 {
-        U256::from(value) * SCALE_1E6_U256
-    }
-}
-
-impl Units<i32> for U256 {
-    fn in_units(value: i32) -> U256 {
-        U256::from(value) * SCALE_1E6_U256
-    }
-}
-
-impl Units<u64> for U256 {
-    fn in_units(value: u64) -> U256 {
-        U256::from(value) * SCALE_1E6_U256
-    }
+/// Reduces a native COEN amount to the protocol's six-decimal precision.
+/// Any sub-protocol-unit native remainder is deliberately discarded.
+pub fn native_to_protocol_floor(amount: U256) -> U256 {
+    amount / NATIVE_UNITS_PER_PROTOCOL_UNIT
 }
 
 #[cfg(test)]
@@ -73,21 +68,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_coen_uses_six_decimal_units() {
-        let one_coen = U256::from(1_000_000u64);
+    fn native_coen_uses_eighteen_decimal_units_while_protocol_stays_six_decimal() {
+        let one_coen = U256::from(1_000_000_000_000_000_000u128);
 
         assert_eq!(ONE_UNIT, U256::ONE);
         assert_eq!(ONE_COEN, one_coen);
         assert_eq!(SCALE_1E6_U64, 1_000_000);
         assert_eq!(SCALE_1E6_U128, 1_000_000);
-        assert_eq!(SCALE_1E6_U256, one_coen);
-        assert_eq!(NATIVE_TOKEN_DECIMALS, 6);
+        assert_eq!(SCALE_1E6_U256, U256::from(1_000_000u64));
+        assert_eq!(NATIVE_TOKEN_DECIMALS, 18);
+    }
+
+    #[test]
+    fn protocol_amount_converts_to_native_coen_without_changing_protocol_precision() {
         assert_eq!(
-            U256::in_units(U256::from(2u64)),
-            one_coen * U256::from(2u64)
+            checked_protocol_to_native(U256::ONE),
+            Some(U256::from(1_000_000_000_000u64))
         );
-        assert_eq!(U256::in_units(2u128), one_coen * U256::from(2u64));
-        assert_eq!(U256::in_units(2i32), one_coen * U256::from(2u64));
-        assert_eq!(U256::in_units(2u64), one_coen * U256::from(2u64));
+        assert_eq!(checked_protocol_to_native(SCALE_1E6_U256), Some(ONE_COEN));
+    }
+
+    #[test]
+    fn native_remainder_is_dropped_only_when_returning_to_protocol_precision() {
+        assert_eq!(
+            native_to_protocol_floor(NATIVE_UNITS_PER_PROTOCOL_UNIT - U256::ONE),
+            U256::ZERO
+        );
+        assert_eq!(
+            native_to_protocol_floor(NATIVE_UNITS_PER_PROTOCOL_UNIT + U256::from(7u64)),
+            U256::ONE
+        );
+    }
+
+    #[test]
+    fn whole_coen_conversion_is_explicitly_native() {
+        assert_eq!(
+            checked_whole_coen_to_native(U256::from(2u64)),
+            Some(ONE_COEN * U256::from(2u64))
+        );
+    }
+
+    #[test]
+    fn protocol_to_native_conversion_rejects_overflow() {
+        assert_eq!(checked_protocol_to_native(U256::MAX), None);
     }
 }

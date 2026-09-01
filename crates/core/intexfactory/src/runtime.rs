@@ -8,7 +8,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::NATIVE_TOKEN_DECIMALS;
+use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::IntexState;
@@ -273,9 +273,9 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Decimals a price x PROMIS load product carries: both factors sit on the
-/// native six-decimal scale.
-const PRODUCT_DECIMALS: u32 = 2 * NATIVE_TOKEN_DECIMALS as u32;
+/// Decimals a price x PROMIS load product carries: both protocol factors stay
+/// on the six-decimal scale independently of native COEN denomination.
+const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 /// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into payment-token
 /// minor units, rounded up in favor of the reserve receiving the settlement.

@@ -3588,7 +3588,7 @@ fn fund_capacity_tribute_accounts(
     private_keys: &[String],
 ) -> Result<bool> {
     const CAPACITY_OWNER_BALANCE_COEN: u64 = 1_000;
-    const COEN_BASE_UNITS: u64 = 1_000_000;
+    const COEN_BASE_UNITS: u64 = 1_000_000_000_000_000_000;
 
     let alloc = genesis
         .get_mut("alloc")
