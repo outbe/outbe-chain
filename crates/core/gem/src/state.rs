@@ -163,10 +163,7 @@ impl GemContract<'_> {
             self.remove_unqualified(gem_id, item.floor_price_minor, item.reference_currency)?;
         }
 
-        // Maintain the callable-gem list (membership == Qualified/Called) and
-        // stamp the transition timestamp.
         match new_state {
-            // Issued -> Qualified enters the list.
             GemState::Qualified => {
                 self.insert_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
                 item.qualified_at = self.storage.timestamp()?.to::<u64>();

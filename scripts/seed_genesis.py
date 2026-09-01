@@ -769,9 +769,9 @@ def seed_gems(storage: StorageBuilder, gems: list):
       slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
       slot 22:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+) nor
-    the callable-gem index, so those slots are intentionally left empty (add_gem
-    only indexes Issued gems; the callable index only holds Qualified/Called).
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+), the
+    qualified one, or the called queue, so those slots are intentionally left empty
+    (add_gem indexes Issued gems by floor price and Qualified ones by call price).
     """
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):
