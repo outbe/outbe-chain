@@ -189,6 +189,19 @@ fn radicle_node_id_slots_59_and_60_are_append_only() {
 }
 
 #[test]
+fn ocomp_recovery_slots_61_and_62_are_append_only() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let vs = ValidatorSet::new(storage);
+        assert_eq!(vs.val_ocomp_miss_count.base_slot(), U256::from(61u64));
+        assert_eq!(
+            vs.val_ocomp_recovery_deadline.base_slot(),
+            U256::from(62u64)
+        );
+    });
+}
+
+#[test]
 fn committee_snapshot_persists_separate_strict_ocomp_extension() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {

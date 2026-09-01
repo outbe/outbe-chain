@@ -1045,7 +1045,21 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
 /// OracleSlashWindow system tx: run Oracle slash-window penalties after any
 /// same-block boundary activation but before user transactions observe state.
 pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::lifecycle::run_slash_window(ctx)
+    // Oracle and OCOMP share this receipt-visible phase, but they are separate
+    // failure domains. Roll back a failed Oracle pass locally so it cannot
+    // suppress the mandatory OCOMP deadline check for this block.
+    let oracle_result = ctx.with_checkpoint(|| outbe_oracle::lifecycle::run_slash_window(ctx));
+    outbe_staking::contract::Staking::new(ctx.storage.clone())
+        .close_due_ocomp_recovery_windows()?;
+    if let Err(error) = oracle_result {
+        tracing::error!(
+            target: "outbe::oracle",
+            event = "oracle_slash_window_failed",
+            %error,
+            "Oracle slash-window pass rolled back; OCOMP recovery sweep still committed",
+        );
+    }
+    Ok(())
 }
 
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
@@ -1218,6 +1232,126 @@ mod tests {
                 active_set_hash: active_set_hash(&[VALIDATOR]),
             },
         }
+    }
+
+    #[test]
+    fn oracle_slash_window_also_closes_due_ocomp_recovery_when_lifecycle_is_disabled() {
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators.config_owner.write(OWNER).unwrap();
+            validators.set_config_max_validators(1).unwrap();
+            validators
+                .register_validator(OWNER, VALIDATOR, &[0x41; 48])
+                .unwrap();
+            validators
+                .test_activate_validator_canonically(
+                    VALIDATOR,
+                    outbe_validatorset::StakeProjection::new(U256::from(1_000), None),
+                    U256::from(1_000),
+                )
+                .unwrap();
+
+            let mut staking = outbe_staking::contract::Staking::new(storage.clone());
+            staking.config_min_stake.write(U256::from(1_000)).unwrap();
+            staking
+                .stake_amount
+                .write(&VALIDATOR, U256::from(1_000))
+                .unwrap();
+            staking.total_staked.write(U256::from(1_000)).unwrap();
+            storage
+                .set_balance(
+                    outbe_primitives::addresses::STAKING_ADDRESS,
+                    U256::from(1_000),
+                )
+                .unwrap();
+            staking.record_ocomp_miss(VALIDATOR).unwrap();
+        });
+
+        provider.set_block_number(43_206);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(43_206, 1_000, CHAIN_ID),
+                storage.clone(),
+            );
+            run_oracle_slash_window(&ctx).unwrap();
+            assert!(matches!(
+                outbe_validatorset::contract::ValidatorSet::new(storage)
+                    .validator_lifecycle(VALIDATOR)
+                    .unwrap(),
+                outbe_validatorset::ValidatorLifecycle::JailRetained(_)
+            ));
+        });
+    }
+
+    #[test]
+    fn oracle_failure_cannot_suppress_the_due_ocomp_recovery_check() {
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators.config_owner.write(OWNER).unwrap();
+            validators.set_config_max_validators(129).unwrap();
+            validators
+                .register_validator(OWNER, VALIDATOR, &[0x41; 48])
+                .unwrap();
+            for index in 1..=128u8 {
+                let mut candidate_bytes = [0xEE; 20];
+                candidate_bytes[19] = index;
+                let candidate = Address::from(candidate_bytes);
+                let mut consensus_pubkey = [0xEF; 48];
+                consensus_pubkey[47] = index;
+                validators
+                    .register_validator(OWNER, candidate, &consensus_pubkey)
+                    .unwrap();
+            }
+            validators
+                .test_activate_validator_canonically(
+                    VALIDATOR,
+                    outbe_validatorset::StakeProjection::new(U256::from(1_000), None),
+                    U256::from(1_000),
+                )
+                .unwrap();
+
+            let mut staking = outbe_staking::contract::Staking::new(storage.clone());
+            staking.config_min_stake.write(U256::from(1_000)).unwrap();
+            staking
+                .stake_amount
+                .write(&VALIDATOR, U256::from(1_000))
+                .unwrap();
+            staking.total_staked.write(U256::from(1_000)).unwrap();
+            storage
+                .set_balance(
+                    outbe_primitives::addresses::STAKING_ADDRESS,
+                    U256::from(1_000),
+                )
+                .unwrap();
+            staking.record_ocomp_miss(VALIDATOR).unwrap();
+
+            let oracle = outbe_oracle::schema::OracleContract::new(storage);
+            oracle.config_is_initialized.write(true).unwrap();
+            oracle.config_slash_window.write(1).unwrap();
+        });
+
+        provider.set_block_number(43_201);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(43_201, 1_000, CHAIN_ID),
+                storage.clone(),
+            );
+            run_oracle_slash_window(&ctx).unwrap();
+
+            let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+            assert!(matches!(
+                validators.validator_lifecycle(VALIDATOR).unwrap(),
+                outbe_validatorset::ValidatorLifecycle::JailRetained(_)
+            ));
+            assert!(validators
+                .ocomp_recovery_window(VALIDATOR)
+                .unwrap()
+                .is_none());
+        });
     }
 
     fn configured_storage(block_number: u64, timestamp: u64) -> HashMapStorageProvider {

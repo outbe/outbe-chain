@@ -78,3 +78,35 @@ pub fn record_tee_expiry_exclusions(active_demoted: usize, pending_cleared: usiz
     gauge!("outbe_last_tee_expired_active_demoted").set(active_demoted as f64);
     gauge!("outbe_last_tee_expired_pending_cleared").set(pending_cleared as f64);
 }
+
+/// One missing OCOMP result vote. The first miss opens the fixed recovery
+/// window; repeats remain visible without implying another slash.
+pub fn record_ocomp_miss(addr: Address, first_in_window: bool, recovery_deadline: u64) {
+    counter!(
+        "outbe_ocomp_vote_missed_total",
+        "addr" => addr_label(addr),
+        "kind" => if first_in_window { "first" } else { "repeat" },
+    )
+    .increment(1);
+    gauge!("outbe_ocomp_recovery_deadline", "addr" => addr_label(addr))
+        .set(recovery_deadline as f64);
+}
+
+/// One durable recovery-window resolution. The per-validator deadline is
+/// cleared together with the outcome counter so dashboards never retain a
+/// stale open deadline after restore, jail or lifecycle departure.
+pub fn record_ocomp_recovery_resolution(addr: Address, outcome: &'static str) {
+    clear_ocomp_recovery_deadline(addr);
+    counter!("outbe_ocomp_recovery_resolved_total", "outcome" => outcome).increment(1);
+}
+
+/// Clears the deadline gauge when lifecycle cleanup removes an open window
+/// outside the deadline-resolution path.
+pub fn clear_ocomp_recovery_deadline(addr: Address) {
+    gauge!("outbe_ocomp_recovery_deadline", "addr" => addr_label(addr)).set(0.0);
+}
+
+/// Aggregate result of the bounded per-block OCOMP recovery sweep.
+pub fn record_ocomp_recovery_sweep(remaining_open: u32) {
+    gauge!("outbe_ocomp_recovery_open_windows").set(f64::from(remaining_open));
+}

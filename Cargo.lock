@@ -8916,6 +8916,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-staking",
  "outbe-tribute",
  "outbe-validatorset",
  "proptest",
