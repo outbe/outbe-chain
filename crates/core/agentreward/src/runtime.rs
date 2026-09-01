@@ -1,4 +1,3 @@
-use crate::constants::AGENT_GEM_CURRENCY;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
@@ -6,6 +5,10 @@ use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
+
+/// ISO 4217 code both currency axes of an agent reward Gem carry. Agent rewards
+/// are denominated in USD by protocol policy, the same as validator Gems.
+const AGENT_GEM_CURRENCY: u16 = 840;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
