@@ -28,7 +28,7 @@ struct RouteSpec {
     string canonicalTokenEnv;
     /// @dev Env var naming an already-deployed synthetic token to adopt - a factory-issued stablecoin, which CREATE3
     ///      cannot place. Read only on the chain where this route is synthetic.
-    string factoryTokenEnv;
+    string syntheticTokenEnv;
     SyntheticSource syntheticSource;
 }
 
@@ -50,7 +50,7 @@ abstract contract BaseRoute is Script {
     error OwnerMustBeMultisigContract(address owner, uint256 chainId);
     error DomainTooLarge(uint256 chainId);
     error UndeclaredChain(uint256 chainId);
-    error FactoryTokenNotSet(string env);
+    error SyntheticTokenNotSet(string env);
 
     // ================================================ Env accessors ================================================
 
@@ -215,10 +215,10 @@ abstract contract BaseRoute is Script {
         // Either side may already exist and not be ours to place - the issuer's USDT on a real network, or a
         // factory-issued stablecoin on Outbe. Its address is then whatever it is, but the bridge address stays
         // deterministic: the token only enters the bridge's constructor args, and CREATE3 ignores those.
-        address existing = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.factoryTokenEnv, address(0));
+        address existing = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
         // A TokenFactory synthetic is issued by governance, never by this script, so it must be named or nothing.
         if (existing == address(0) && !canonical && spec.syntheticSource == SyntheticSource.TokenFactory) {
-            revert FactoryTokenNotSet(spec.factoryTokenEnv);
+            revert SyntheticTokenNotSet(spec.syntheticTokenEnv);
         }
 
         if (existing != address(0)) {

@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {CreateX} from "../../script/0_DeployCreateX.s.sol";
 import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
+import {Route} from "../../script/routes/Routes.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
@@ -162,12 +163,15 @@ contract DeployGuardsTest is Test {
     ///      `--rpc-url` actually arrives.
     function test_DeployRoute_RevertsOnUndeclaredChain() public {
         vm.chainId(UNDECLARED_CHAIN);
+        // Resolved before `expectRevert`: as a call argument it would run first and consume the expectation.
+        Route memory usdt = deploy.routeByLabel("USDT");
+        Route memory wcoen = deploy.routeByLabel("WCOEN");
 
         vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
-        deploy.deployUsdt(address(createX), SALT);
+        deploy.deployRoute(address(createX), SALT, usdt);
 
         vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
-        deploy.deployWcoen(address(createX), SALT);
+        deploy.deployRoute(address(createX), SALT, wcoen);
     }
 
     // === Deterministic addresses ===
@@ -179,16 +183,20 @@ contract DeployGuardsTest is Test {
         uint256 snapshot = vm.snapshotState();
 
         vm.chainId(EXTERNAL_CHAIN);
-        (address extUsdt, address extUsdtBridge) = deploy.deployUsdt(address(createX), SALT);
-        (address extWcoen, address extWcoenBridge) = deploy.deployWcoen(address(createX), SALT);
+        (address extUsdt, address extUsdtBridge) =
+            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address extWcoen, address extWcoenBridge) =
+            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
         bytes memory extUsdtCode = extUsdt.code;
         assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
 
         vm.revertToState(snapshot);
 
         vm.chainId(OUTBE_CHAIN);
-        (address outUsdt, address outUsdtBridge) = deploy.deployUsdt(address(createX), SALT);
-        (address outWcoen, address outWcoenBridge) = deploy.deployWcoen(address(createX), SALT);
+        (address outUsdt, address outUsdtBridge) =
+            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address outWcoen, address outWcoenBridge) =
+            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
         assertEq(uint8(ERC7786TokenBridge(outUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.BurnMint));
 
         assertEq(extUsdt, outUsdt, "USDT token address differs between chains");
@@ -201,8 +209,8 @@ contract DeployGuardsTest is Test {
 
     function test_Routes_AreDistinct() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
-        (address wcoen, address wcoenBridge) = deploy.deployWcoen(address(createX), SALT);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address wcoen, address wcoenBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
 
         assertTrue(usdt != usdtBridge && usdt != wcoen && usdt != wcoenBridge, "USDT address collides");
         assertTrue(usdtBridge != wcoen && usdtBridge != wcoenBridge, "USDT bridge address collides");
@@ -212,8 +220,8 @@ contract DeployGuardsTest is Test {
     function test_Salt_ChangesAddresses() public {
         vm.chainId(EXTERNAL_CHAIN);
 
-        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", deploy.usdtSpec());
-        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", deploy.usdtSpec());
+        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", deploy.routeByLabel("USDT").spec);
+        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", deploy.routeByLabel("USDT").spec);
 
         assertTrue(a != b, "salt does not change the address");
     }
@@ -225,7 +233,7 @@ contract DeployGuardsTest is Test {
     function test_CanonicalToken_AdoptsConfiguredAddress() public {
         vm.chainId(EXTERNAL_CHAIN);
 
-        RouteSpec memory spec = deploy.usdtSpec();
+        RouteSpec memory spec = deploy.routeByLabel("USDT").spec;
         address predictedBridge = deploy.exposedBridgeAddress(address(createX), SALT, spec);
         spec.canonicalTokenEnv = "ADOPTED_USDT_TOKEN";
 
@@ -238,7 +246,7 @@ contract DeployGuardsTest is Test {
 
     function test_Synthetic_IsWiredToBridge() public {
         vm.chainId(OUTBE_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
 
         assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
@@ -246,8 +254,9 @@ contract DeployGuardsTest is Test {
     /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
     function test_Rerun_IsNoop() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
-        (address usdtAgain, address usdtBridgeAgain) = deploy.deployUsdt(address(createX), SALT);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address usdtAgain, address usdtBridgeAgain) =
+            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
 
         assertEq(usdt, usdtAgain);
         assertEq(usdtBridge, usdtBridgeAgain);
