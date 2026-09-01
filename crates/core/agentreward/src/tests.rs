@@ -338,7 +338,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
 
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.gem_type, GemTypes::Wallet as u8);
-        assert_eq!(gem.gem_load_minor, load);
+        assert_eq!(gem.promis_load_minor, load);
         assert_eq!(gem.entry_price_minor, ONE_COEN);
 
         // The balance is gone and so is the native COEN that backed it.
@@ -372,12 +372,10 @@ fn the_sra_pool_mints_an_sra_gem_at_the_discounted_cost() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO)
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
+        // The SRA share of the cost is derived, not stored; gemfactory pins the 64%
+        // coefficient. What this pool owes is the Sra type and the whole load.
         assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
-        // SRA_RATE = 64: the Sra Gem costs 0.64 of the full agent cost.
-        assert_eq!(
-            sra_gem.cost_amount_minor,
-            load * U256::from(64u64) / U256::from(100u64)
-        );
+        assert_eq!(sra_gem.promis_load_minor, load);
     });
 }
 
@@ -478,7 +476,7 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
         contract
             .claim_reward(RewardPool::Waa, alice, taken)
             .unwrap();
-        assert_eq!(gem_of(&storage, alice).gem_load_minor, U256::from(200u64));
+        assert_eq!(gem_of(&storage, alice).promis_load_minor, U256::from(200u64));
         // The rest stays a balance, which cannot be Called and cannot be forfeited.
         assert_eq!(
             contract.get_claimable_reward(alice).unwrap(),
@@ -537,7 +535,7 @@ fn a_sub_unit_remainder_stays_claimable() {
             .unwrap();
         // The Gem carries the convertible part; what is below one protocol unit
         // keeps accumulating and its backing is not burned.
-        assert_eq!(gem_of(&storage, alice).gem_load_minor, U256::from(500u64));
+        assert_eq!(gem_of(&storage, alice).promis_load_minor, U256::from(500u64));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), remainder);
         assert_eq!(
             storage
