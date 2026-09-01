@@ -12,7 +12,7 @@ use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::EMIT_ADDRESS;
 
-/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.4.1` circuit:
+/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.5.0` circuit:
 /// the protocol-canonical depth in `outbe_circuit_core::merkle_tree`).
 pub const EMIT_TREE_DEPTH: usize = 32;
 

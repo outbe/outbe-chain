@@ -8,7 +8,7 @@
 //! so a depositor cannot fund a note in a cheap token and spend it as an
 //! expensive one.
 //!
-//! A **spend** consumes the frozen `outbe.paynote@1.0.0` UltraHonkKeccak proof:
+//! A **spend** consumes the frozen `outbe.paynote@1.1.0` UltraHonkKeccak proof:
 //! it proves membership under an accepted root, publishes a nullifier, and — for
 //! a partial spend — the deterministic change commitment. Notes are bearer
 //! instruments: spend authority is knowledge of the note spend key, not an

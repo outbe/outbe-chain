@@ -5,12 +5,13 @@
 //! out of production builds entirely: nothing here is reachable from
 //! [`crate::runtime`].
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
+use outbe_zk_canonical::u256;
 
 use ark_ff::{BigInteger as _, PrimeField};
 
@@ -85,14 +86,14 @@ pub struct Note {
     pub commitment: Field,
     pub nullifier: Field,
     pub asset: Address,
-    pub amount: u128,
+    pub amount: U256,
 }
 
-pub fn note(chain_id: u64, key: u64, asset: Address, amount: u128) -> Note {
+pub fn note(chain_id: u64, key: u64, asset: Address, amount: U256) -> Note {
     note_under_key(chain_id, Field::from(key), asset, amount)
 }
 
-fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: u128) -> Note {
+fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: U256) -> Note {
     let serial = note_sn(key).unwrap();
     let commitment = note_commitment(chain_id, serial, asset.into(), amount).unwrap();
     let nullifier = note_nullifier(commitment, key).unwrap();
@@ -114,9 +115,9 @@ fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: u128) -> No
 /// The change key is derived from the spent note's key and nullifier, so the
 /// spender can rebuild the change note from what they already hold — nothing
 /// about it is published beyond the commitment.
-pub fn change_note(chain_id: u64, note: &Note, spend_amount: u128) -> Option<Note> {
+pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Note> {
     let remaining = note.amount.checked_sub(spend_amount)?;
-    if remaining == 0 {
+    if remaining.is_zero() {
         return None;
     }
     let key = change_key(note.key, note.nullifier).unwrap();
@@ -135,7 +136,7 @@ pub fn spend_proof(
     leaf_index: u32,
     note: &Note,
     spender: Address,
-    spend_amount: u128,
+    spend_amount: U256,
 ) -> Vec<u8> {
     let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, spender, spend_amount);
     combined_from(&public, &proof)
@@ -147,7 +148,7 @@ fn prove_spend(
     leaf_index: u32,
     n: &Note,
     spender: Address,
-    spend_amount: u128,
+    spend_amount: U256,
 ) -> (PublicInputs, Vec<Vec<u8>>) {
     let public = PublicInputs {
         chain_id,
@@ -155,12 +156,12 @@ fn prove_spend(
         nullifier: n.nullifier,
         asset: address_field(n.asset.into()),
         spender: address_field(spender.into()),
-        spend_amount,
+        spend_amount: u256::to_limbs(spend_amount),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
     };
     let witness = Witness {
-        note_amount: n.amount,
+        note_amount: u256::to_limbs(n.amount),
         note_spend_key: n.key,
         leaf_index,
         auth_path: tree.path_at(leaf_index),
@@ -229,8 +230,8 @@ pub fn note_and_spend_proof(
     chain_id: u64,
     asset: Address,
     spender: Address,
-    note_amount: u128,
-    spend_amount: u128,
+    note_amount: U256,
+    spend_amount: U256,
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = ReferenceTree::new(chain_id);

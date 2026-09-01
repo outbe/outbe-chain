@@ -7,9 +7,18 @@
 
 use std::sync::OnceLock;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
+use outbe_protocol::codec::u256_from_limbs_be;
+use outbe_protocol::protocol::zkproof::{
+    decode_emit_mint_public_inputs as decode_canonical_emit_mint_public_inputs,
+    decode_full_proof_public_inputs as decode_canonical_full_proof_public_inputs,
+};
+pub use outbe_protocol::protocol::zkproof::{
+    EmitMintPublicInputs, FullProofPublicInputs, EMIT_MINT_COMBINED_LEN, EMIT_MINT_PROOF_WORDS,
+    FULL_PROOF_COMBINED_LEN,
+};
 use outbe_zk_canonical::noir::CIRCUIT_REGISTRY;
 use outbe_zk_canonical::noir::{
     emit_mint::EmitMint, full_proof::FullProof, paynote::Paynote as PayNote,
@@ -29,56 +38,20 @@ const SRS_POINTS: u32 = (1 << 20) + 1;
 /// The only payload offset a well-formed `abi.encode(bytes32, bytes)` carries:
 /// one static word for `circuit_hash` plus the offset word itself.
 const CANONICAL_ABI_OFFSET: u64 = 64;
-const FULL_PROOF_PUBLIC_INPUT_COUNT: usize = 4;
-const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
-pub const FULL_PROOF_COMBINED_LEN: usize =
-    4 + (FULL_PROOF_PUBLIC_INPUT_COUNT + FULL_PROOF_PROOF_FIELD_COUNT) * 32;
-
-/// Public-input count fixed by the `outbe.emit.mint@1.4.1` ABI: `chain_id`,
-/// `root`, `nullifier`, the owner as one 160-bit-bounded field word,
-/// `mint_units`, `change_commitment`.
-const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 6;
+/// Public-input count fixed by the `outbe.paynote@1.1.0` ABI: `chain_id`,
+/// `root`, `nullifier`, `asset`, `spender`, three canonical `spend_amount`
+/// limbs, and `change_commitment`.
+const PAYNOTE_PUBLIC_INPUT_COUNT: usize = 9;
 /// Byte length of the combined-proof public section: 4-byte count header plus
-/// 6 canonical 32-byte words.
-const EMIT_MINT_PUBLIC_PREFIX_LEN: usize = 4 + EMIT_MINT_PUBLIC_INPUT_COUNT * 32;
-/// Proof words in a canonical `outbe.emit.mint@1.4.1` combined proof. The
-/// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
-/// is part of the pinned circuit identity (same VK, same transcript shape).
-pub const EMIT_MINT_PROOF_WORDS: usize = 250;
-/// Exact total length of a canonical `outbe.emit.mint@1.4.1` combined proof:
-/// 4-byte count header, 6 public words, 250 proof words.
-pub const EMIT_MINT_COMBINED_LEN: usize = EMIT_MINT_PUBLIC_PREFIX_LEN + 32 * EMIT_MINT_PROOF_WORDS;
-
-/// Public claim carried by the canonical `outbe.full_proof@1.1.0`
-/// combined-proof format.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FullProofPublicInputs {
-    pub derived_owner: [u8; 32],
-    pub nft_hash: [u8; 32],
-    pub binding_hash: [u8; 32],
-    pub merkle_root: [u8; 32],
-}
-
-/// Public-input count fixed by the `outbe.paynote@1.0.0` ABI: `chain_id`,
-/// `root`, `nullifier`, `asset`, `spender`, `spend_amount`,
-/// `change_commitment`. The `EthAddress` newtype collapses to a single field
-/// leaf, so `asset` and `spender` are one word each.
-const PAYNOTE_PUBLIC_INPUT_COUNT: usize = 7;
-/// Byte length of the combined-proof public section: 4-byte count header plus
-/// 7 canonical 32-byte words.
+/// 9 canonical 32-byte words.
 const PAYNOTE_PUBLIC_PREFIX_LEN: usize = 4 + PAYNOTE_PUBLIC_INPUT_COUNT * 32;
-/// Proof words in a canonical `outbe.paynote@1.0.0` combined proof. The
-/// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
-/// is part of the pinned circuit identity (same VK, same transcript shape).
-/// PayNote is a 2^14 circuit — one tier above emit_mint's 2^13, hence a longer
-/// transcript than that circuit's 238. Asserted against a real proof by
-/// `outbe-paynote`'s round-trip test.
+/// Proof words measured from a real canonical `outbe.paynote@1.1.0` proof.
 pub const PAYNOTE_PROOF_WORDS: usize = 250;
-/// Exact total length of a canonical `outbe.paynote@1.0.0` combined proof:
-/// 4-byte count header, 7 public words, [`PAYNOTE_PROOF_WORDS`] proof words.
+/// Exact total length of a canonical `outbe.paynote@1.1.0` combined proof:
+/// 4-byte count header, 9 public words, [`PAYNOTE_PROOF_WORDS`] proof words.
 pub const PAYNOTE_COMBINED_LEN: usize = PAYNOTE_PUBLIC_PREFIX_LEN + 32 * PAYNOTE_PROOF_WORDS;
 
-/// Public claim carried by the canonical `outbe.paynote@1.0.0` combined-proof
+/// Public claim carried by the canonical `outbe.paynote@1.1.0` combined-proof
 /// format, in circuit order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNotePublicInputs {
@@ -87,20 +60,7 @@ pub struct PayNotePublicInputs {
     pub nullifier: [u8; 32],
     pub asset: Address,
     pub spender: Address,
-    pub spend_amount: u128,
-    pub change_commitment: [u8; 32],
-}
-
-/// Public claim carried by the canonical `outbe.emit.mint@1.4.1`
-/// combined-proof format, in circuit order: `chain_id`, `root`, `nullifier`,
-/// owner as one 160-bit-bounded field, `mint_units`, `change_commitment`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmitMintPublicInputs {
-    pub chain_id: u64,
-    pub root: [u8; 32],
-    pub nullifier: [u8; 32],
-    pub note_owner: Address,
-    pub mint_units: u128,
+    pub spend_amount: U256,
     pub change_commitment: [u8; 32],
 }
 
@@ -168,52 +128,15 @@ pub fn zk_verify(input: &[u8]) -> Result<[u8; 32], ZkProofError> {
     Ok(bool_to_32b(ok))
 }
 
-/// Decode and validate the four public inputs embedded in a canonical full
-/// proof. The proof bytes remain self-contained and are passed unchanged to
-/// Barretenberg after callers compare this claim with their expected values.
+/// Decode and validate the four public inputs embedded in the canonical
+/// external `outbe.full_proof@1.0.0` wire.
 pub fn decode_full_proof_public_inputs(
     combined_proof: &[u8],
 ) -> Result<FullProofPublicInputs, ZkProofError> {
-    let header = combined_proof
-        .get(..4)
-        .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
-    let count = u32::from_be_bytes(header.try_into().expect("four-byte slice")) as usize;
-    if count != FULL_PROOF_PUBLIC_INPUT_COUNT {
-        return Err(ZkProofError::WrongPublicInputCount {
-            expected: FULL_PROOF_PUBLIC_INPUT_COUNT,
-            actual: count,
-        });
-    }
-    let public_end = 4 + count * 32;
-    if combined_proof.len() < public_end {
-        return Err(ZkProofError::TruncatedPublicInputs {
-            expected: public_end,
-            actual: combined_proof.len(),
-        });
-    }
-    if combined_proof.len() != FULL_PROOF_COMBINED_LEN {
-        return Err(ZkProofError::WrongCombinedProofLength {
-            expected: FULL_PROOF_COMBINED_LEN,
-            actual: combined_proof.len(),
-        });
-    }
-    let mut words = [[0u8; 32]; FULL_PROOF_PUBLIC_INPUT_COUNT];
-    for (index, word) in combined_proof[4..public_end].chunks_exact(32).enumerate() {
-        words[index].copy_from_slice(word);
-        if !is_canonical_field_word(&words[index]) {
-            return Err(ZkProofError::NonCanonicalPublicInput(index));
-        }
-    }
-
-    Ok(FullProofPublicInputs {
-        derived_owner: words[0],
-        nft_hash: words[1],
-        binding_hash: words[2],
-        merkle_root: words[3],
-    })
+    decode_canonical_full_proof_public_inputs(combined_proof).map_err(Into::into)
 }
 
-/// Verify the pinned canonical `outbe.full_proof@1.1.0` circuit.
+/// Verify the pinned canonical external `outbe.full_proof@1.0.0` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not verify
 /// return `Ok(false)`.
@@ -222,18 +145,11 @@ pub fn verify_full_proof(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     verify_inner(FullProof::VK_BYTES, combined_proof)
 }
 
-/// Decode and validate the 7 public inputs embedded in a canonical
-/// `outbe.paynote@1.0.0` combined proof.
+/// Decode and validate the 9 public inputs embedded in a canonical
+/// `outbe.paynote@1.1.0` combined proof.
 ///
-/// Accepts only the exact wire the frozen circuit fixes: a 7-count header, a
-/// right-aligned `u64` chain-ID word at index `0`, canonical BN254 field words
-/// at `1`, `2` and `6`, address words at `3` and `4` bounded to the 160-bit
-/// range (top twelve bytes zero), a right-aligned `u128` spend-amount word at
-/// `5`, and the fixed-length proof tail — the whole blob is exactly
-/// [`PAYNOTE_COMBINED_LEN`] bytes.
-///
-/// The proof bytes remain self-contained and are passed unchanged to
-/// Barretenberg; this claim is what the caller books against its own state.
+/// The U256 spend amount occupies three little-endian radix-2^120 limbs at
+/// indices `5..=7`; the first two are `< 2^120` and the top limb is `< 2^16`.
 pub fn decode_paynote_public_inputs(
     combined_proof: &[u8],
 ) -> Result<PayNotePublicInputs, ZkProofError> {
@@ -247,8 +163,6 @@ pub fn decode_paynote_public_inputs(
             actual: count,
         });
     }
-    // The frozen circuit's transcript is fixed-length: any other total length
-    // is not this circuit's wire format, whether short or long.
     if combined_proof.len() != PAYNOTE_COMBINED_LEN {
         return Err(ZkProofError::WrongCombinedProofLength {
             expected: PAYNOTE_COMBINED_LEN,
@@ -263,9 +177,7 @@ pub fn decode_paynote_public_inputs(
     {
         words[index].copy_from_slice(word);
     }
-
-    // Field-typed inputs must be canonical before they are compared or hashed.
-    for index in [1usize, 2, 6] {
+    for index in [1usize, 2, 8] {
         if !is_canonical_field_word(&words[index]) {
             return Err(ZkProofError::NonCanonicalPublicInput(index));
         }
@@ -276,8 +188,18 @@ pub fn decode_paynote_public_inputs(
         read_address_be_padded(&words[3]).ok_or(ZkProofError::NonCanonicalPublicInput(3))?;
     let spender =
         read_address_be_padded(&words[4]).ok_or(ZkProofError::NonCanonicalPublicInput(4))?;
+    let mut limbs = [0u128; 3];
+    for (index, limb) in limbs.iter_mut().enumerate() {
+        let word_index = 5 + index;
+        *limb = read_u128_be_padded(&words[word_index])
+            .ok_or(ZkProofError::NonCanonicalPublicInput(word_index))?;
+        let limit = if index < 2 { 1u128 << 120 } else { 1u128 << 16 };
+        if *limb >= limit {
+            return Err(ZkProofError::NonCanonicalPublicInput(word_index));
+        }
+    }
     let spend_amount =
-        read_u128_be_padded(&words[5]).ok_or(ZkProofError::NonCanonicalPublicInput(5))?;
+        U256::from_be_bytes(u256_from_limbs_be(limbs).expect("validated canonical U256 limbs"));
 
     Ok(PayNotePublicInputs {
         chain_id,
@@ -286,11 +208,11 @@ pub fn decode_paynote_public_inputs(
         asset,
         spender,
         spend_amount,
-        change_commitment: words[6],
+        change_commitment: words[8],
     })
 }
 
-/// Verify the pinned canonical `outbe.paynote@1.0.0` circuit.
+/// Verify the pinned canonical `outbe.paynote@1.1.0` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not verify
 /// return `Ok(false)`.
@@ -299,71 +221,15 @@ pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     verify_inner(PayNote::VK_BYTES, combined_proof)
 }
 
-/// Decode and validate the 6 public inputs embedded in a canonical
-/// `outbe.emit.mint@1.4.1` combined proof.
-///
-/// Accepts only the exact wire the frozen circuit fixes: a 6-count header,
-/// one right-aligned `u64` chain-ID word at index `0`, canonical BN254 field
-/// words at indices `1`, `2`, `3`, and `5`, the owner as one field word at
-/// `3` bounded to the 160-bit address range (top twelve bytes zero), one
-/// right-aligned `u128` mint-units word at `4`, and the fixed-length proof
-/// tail — the whole blob is exactly [`EMIT_MINT_COMBINED_LEN`] bytes. The
-/// proof bytes remain self-contained and are passed unchanged to
-/// Barretenberg after callers compare this claim with their expected values.
+/// Decode and validate the canonical `outbe.emit.mint@1.5.0` public claim
+/// using the sibling protocol's single owning wire implementation.
 pub fn decode_emit_mint_public_inputs(
     combined_proof: &[u8],
 ) -> Result<EmitMintPublicInputs, ZkProofError> {
-    let header = combined_proof
-        .get(..4)
-        .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
-    let count = u32::from_be_bytes(header.try_into().expect("four-byte slice")) as usize;
-    if count != EMIT_MINT_PUBLIC_INPUT_COUNT {
-        return Err(ZkProofError::WrongPublicInputCount {
-            expected: EMIT_MINT_PUBLIC_INPUT_COUNT,
-            actual: count,
-        });
-    }
-    // The frozen circuit's transcript is fixed-length: any other total
-    // length is not this circuit's wire format, whether short or long.
-    if combined_proof.len() != EMIT_MINT_COMBINED_LEN {
-        return Err(ZkProofError::WrongCombinedProofLength {
-            expected: EMIT_MINT_COMBINED_LEN,
-            actual: combined_proof.len(),
-        });
-    }
-
-    let mut words = [[0u8; 32]; EMIT_MINT_PUBLIC_INPUT_COUNT];
-    for (index, word) in combined_proof[4..EMIT_MINT_PUBLIC_PREFIX_LEN]
-        .chunks_exact(32)
-        .enumerate()
-    {
-        words[index].copy_from_slice(word);
-    }
-    let chain_id = read_u64_be_padded(&words[0]).ok_or(ZkProofError::InvalidEmitChainId)?;
-    for index in [1, 2, 3, 5] {
-        if !is_canonical_field_word(&words[index]) {
-            return Err(ZkProofError::NonCanonicalPublicInput(index));
-        }
-    }
-    // The circuit's `EthAddress` type bounds the owner field to the 160-bit
-    // address range, so the top twelve big-endian bytes must be zero.
-    if words[3][..12].iter().any(|&byte| byte != 0) {
-        return Err(ZkProofError::InvalidEmitOwnerField);
-    }
-    let mint_units = read_u128_be_padded(&words[4]).ok_or(ZkProofError::InvalidEmitMintUnits)?;
-    let note_owner = Address::from_slice(&words[3][12..]);
-
-    Ok(EmitMintPublicInputs {
-        chain_id,
-        root: words[1],
-        nullifier: words[2],
-        note_owner,
-        mint_units,
-        change_commitment: words[5],
-    })
+    decode_canonical_emit_mint_public_inputs(combined_proof).map_err(Into::into)
 }
 
-/// Verify the pinned canonical `outbe.emit.mint@1.4.1` circuit.
+/// Verify the pinned canonical `outbe.emit.mint@1.5.0` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not
 /// verify return `Ok(false)`.

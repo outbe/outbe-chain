@@ -369,7 +369,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     // One deposit funds both Nods, and ALICE2 pays for it. The pool derives the
     // leaf itself from the asset and amount it moved, so the note ALICE1 proves
     // against is only valid because it matches what ALICE2's deposit did.
-    let funding = note(CHAIN_ID, NOTE_KEY, ASSET, 2 * COST);
+    let funding = note(CHAIN_ID, NOTE_KEY, ASSET, U256::from(2 * COST));
     deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
@@ -377,7 +377,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     let leaf = tree.append(funding.commitment);
 
     // First Nod: spend half the note.
-    let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, COST);
+    let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
     let minted = assert_mined(
         &mine_gratis(&mut ctx, &scope, &readers, nods[0], &first_proof),
         "mine the first Nod with the deposited note",
@@ -390,7 +390,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
 
     // The unspent half came back as a change leaf, derivable by the spender
     // alone from the key and nullifier they already hold.
-    let change = change_note(CHAIN_ID, &funding, COST).expect("a half-spent note leaves change");
+    let change =
+        change_note(CHAIN_ID, &funding, U256::from(COST)).expect("a half-spent note leaves change");
     assert_eq!(
         leaf_count(&mut ctx, &scope),
         2,
@@ -424,7 +425,14 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     );
 
     // Second Nod: paid entirely by the change note.
-    let change_proof = spend_proof(CHAIN_ID, &tree, change_leaf, &change, ALICE1, COST);
+    let change_proof = spend_proof(
+        CHAIN_ID,
+        &tree,
+        change_leaf,
+        &change,
+        ALICE1,
+        U256::from(COST),
+    );
     let minted = assert_mined(
         &mine_gratis(&mut ctx, &scope, &readers, nods[1], &change_proof),
         "mine the second Nod with the change note",

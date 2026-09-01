@@ -12,6 +12,7 @@
 
 pub mod constants;
 pub mod errors;
+mod full_proof;
 pub mod poseidon;
 pub mod precompile;
 pub mod verify;
@@ -20,6 +21,7 @@ pub mod verify;
 mod tests;
 
 pub use errors::ZkProofError;
+pub use full_proof::derive_single_leaf_full_proof_witness;
 pub use precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
 pub use verify::{
     decode_emit_mint_public_inputs, decode_full_proof_public_inputs, decode_paynote_public_inputs,

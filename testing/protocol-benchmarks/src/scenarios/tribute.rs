@@ -50,12 +50,11 @@ use outbe_primitives::{
     time::date_key_to_utc_timestamp,
 };
 use outbe_protocol::primitive::signature::SignatureScheme;
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
-use outbe_tee::OFFER_HKDF_SALT;
+use outbe_tee::{zk_claim::tribute_binding, OFFER_HKDF_SALT};
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
@@ -63,9 +62,8 @@ use outbe_tee_enclave::{
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zkproof::derive_single_leaf_full_proof_witness;
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -249,15 +247,12 @@ fn build_fixture() -> Fixture {
         atto: 0,
         su_ids: vec![SU_HASH],
     };
-    let binding = OutbeV1::binding(&CALLER.into_array(), &draft_id.0, CHAIN_ID).unwrap();
+    let binding = tribute_binding(&CALLER.into_array(), &draft_id.0, CHAIN_ID).unwrap();
     let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
-    let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
-    let path = tree.empty_inclusion_path(0);
 
     let proof_started = Instant::now();
-    let (witness, public) = draft
-        .derive_full_witness(&mut proof_rng, &signer, binding, &path)
-        .unwrap();
+    let (witness, public) =
+        derive_single_leaf_full_proof_witness(&draft, &mut proof_rng, &signer, binding).unwrap();
     let generated_proof =
         ProofGenerator::<OutbeV1, FullProof>::generate(&Barretenberg::default(), &witness, &public)
             .unwrap();

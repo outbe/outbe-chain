@@ -43,8 +43,8 @@
       },
       {
         "name": "mintUnits",
-        "type": "uint128",
-        "internalType": "uint128"
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "changeCommitment",
@@ -84,9 +84,9 @@
       },
       {
         "name": "noteAmount",
-        "type": "uint128",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint128"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -115,9 +115,9 @@
       },
       {
         "name": "mintAmount",
-        "type": "uint128",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint128"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

@@ -31,7 +31,7 @@ use crate::sol_ext::IERC20;
 pub struct PayNoteClaim {
     pub asset: Address,
     pub spender: Address,
-    pub spend_amount: u128,
+    pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
     /// paid it without learning anything that links back to the depositor.
@@ -88,11 +88,11 @@ pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
-    amount: u128,
+    amount: U256,
     note_sn: B256,
 ) -> Result<()> {
     // Guards, before any mutation.
-    if amount == 0 {
+    if amount.is_zero() {
         return Err(PayNoteError::InvalidInput("deposit amount must be non-zero".into()).into());
     }
     // `asset != 0` is enforced here such as we do not accept native currency here.
@@ -131,7 +131,7 @@ pub(crate) fn deposit(
     // initialization and the first append are atomic, so an active tree never
     // observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
-        let units = U256::from(amount);
+        let units = amount;
         // Pull into the pool, then let the router pull from the pool: the
         // router's `deposit` is a `transferFrom(caller, SELF)`, so the pool
         // must both hold the tokens and approve the router.
@@ -185,7 +185,7 @@ fn root_after_word(root: Field) -> B256 {
     B256::new(field_to_be_bytes(root))
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.0.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.1.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
@@ -221,7 +221,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.spender.is_zero() {
         return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
     }
-    if claim.spend_amount == 0 {
+    if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
     }
 
@@ -307,7 +307,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                     rootAfter: root_after_word(root_after),
                     asset: claim.asset,
                     // Sentinel: a change note's remaining value is private.
-                    noteAmount: 0,
+                    noteAmount: U256::ZERO,
                 }),
             )?;
         }
