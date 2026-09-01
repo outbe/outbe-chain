@@ -12,7 +12,7 @@ use outbe_primitives::math::{
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 
-use crate::constants::{BIN_STEP_BP, MAX_SERIES_ACTIONS_PER_SWEEP};
+use crate::constants::{BIN_STEP_BP, MAX_SERIES_ACTIONS_PER_BLOCK};
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -284,7 +284,7 @@ impl IntexFactoryContract<'_> {
     pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
         let tail = self.called_tail.read()?;
         let mut head = self.called_head.read()?;
-        let limit = tail.min(head.saturating_add(MAX_SERIES_ACTIONS_PER_SWEEP));
+        let limit = tail.min(head.saturating_add(MAX_SERIES_ACTIONS_PER_BLOCK));
         while head < limit && self.called_queue_at.read(&head)? == 0 {
             head = head.saturating_add(1);
         }

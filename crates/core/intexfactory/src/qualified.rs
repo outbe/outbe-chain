@@ -19,7 +19,7 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, MAX_SERIES_PER_MARK,
+    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
     NOTIFY_CHUNK_LIMIT, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
@@ -178,12 +178,12 @@ pub(crate) struct ScanBudget {
 
 impl ScanBudget {
     pub(crate) fn for_qualify() -> Self {
-        Self::new(MAX_SERIES_ACTIONS_PER_SWEEP)
+        Self::new(MAX_SERIES_ACTIONS_PER_BLOCK)
     }
 
     fn new(actions: u32) -> Self {
         Self {
-            decisions: MAX_GROUP_DECISIONS_PER_SWEEP,
+            decisions: MAX_GROUP_DECISIONS_PER_BLOCK,
             actions,
             actions_full: actions,
         }

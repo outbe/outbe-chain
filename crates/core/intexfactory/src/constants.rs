@@ -54,8 +54,8 @@ pub const BIN_STEP_BP: u16 = 25;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
 /// series with its index move and notice. Budgeted apart because they differ in cost.
-pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
-pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
+pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
+pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
 /// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
 /// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
