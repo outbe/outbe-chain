@@ -21,7 +21,7 @@ impl AddressPair {
         Self::from(bytes)
     }
 
-    /// [`Self::from_addresses`] over the asset encoding rather than raw addresses.
+    /// Creates a new `AddressPair` from asset types.
     pub fn from_assets(asset1: AssetType, asset2: AssetType) -> Self {
         Self::from_addresses(asset1.into(), asset2.into())
     }
