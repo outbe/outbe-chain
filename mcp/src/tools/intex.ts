@@ -797,8 +797,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_reveal",
     "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
-      "and submits revealBid; the escrow then locks quantity * strike * rate / 1e6 in WCOEN, where strike is " +
-      "the auction's promis_load. The reference currency must be one the day prices, the issuance currency any " +
+    "and submits revealBid; the escrow calculates quantity * protocol-6 PROMIS load * rate / 1e6, then converts " +
+      "that result by 1e12 into native-18 WCOEN for the lock. The reference currency must be one the day prices, the issuance currency any " +
       "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
     {
       worldwideDay: worldwideDayArg,
