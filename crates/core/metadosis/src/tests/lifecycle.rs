@@ -3373,9 +3373,11 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
         // A cold oracle prices nothing, and the empty table is load-bearing: it
         // is how Desis is told the day is unpriced, so it cancels the auction and
         // refunds the supply instead of opening one at a zero entry price.
-        assert!(crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
-            .unwrap()
-            .is_empty());
+        assert!(
+            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
+                .unwrap()
+                .is_empty()
+        );
 
         // The COEN/USD pair is not registered here, so the rule the settlement
         // path used to carry of its own — which resolved every row through

@@ -74,7 +74,10 @@ fn validator_receives_reward_gem(world: &mut World) {
         gem.gemType
     );
     assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
-    assert!(!gem.promisLoad.is_zero(), "reward Gem load must be non-zero");
+    assert!(
+        !gem.promisLoad.is_zero(),
+        "reward Gem load must be non-zero"
+    );
     assert!(
         !gem.entryPrice.is_zero(),
         "reward Gem entry price must be non-zero"

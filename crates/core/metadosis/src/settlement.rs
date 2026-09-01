@@ -207,13 +207,7 @@ fn process_local_terminal_outcome(
             day_type,
             day_limit,
         } => {
-            let to_promis = dispatch_brief(
-                ctx,
-                metadosis,
-                day_type,
-                wwd,
-                day_limit,
-            )?;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, day_limit)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             TributeContract::new(metadosis.storage.clone())
                 .retire_completed_partition(scope, wwd)?;
@@ -233,13 +227,7 @@ fn process_local_terminal_outcome(
             calculation,
         } => {
             let remainder = calculation.metadosis_limit_remainder;
-            let to_promis = dispatch_brief(
-                ctx,
-                metadosis,
-                day_type,
-                wwd,
-                remainder,
-            )?;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, remainder)?;
             promis_limit.add_to_total_unallocated(to_promis)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -308,8 +296,10 @@ pub(crate) fn day_entry_prices(
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
 ) -> Result<Vec<ReferenceCurrencyPrice>> {
-    let projection =
-        outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone(), ctx.block.timestamp)?;
+    let projection = outbe_oracle::api::ocomp_pre_admission_projection(
+        ctx.storage.clone(),
+        ctx.block.timestamp,
+    )?;
     // An empty table is how Desis is told the day is unpriced: it cancels and
     // refunds rather than opening an auction nobody can bid in.
     let priced: Vec<_> = projection

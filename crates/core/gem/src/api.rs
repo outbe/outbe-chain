@@ -11,8 +11,11 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     }
 
     let mut gem = GemContract::new(storage.clone());
-    let gem_id =
-        GemContract::generate_gem_id(params.owner, params.promis_load_minor, storage.block_number()?);
+    let gem_id = GemContract::generate_gem_id(
+        params.owner,
+        params.promis_load_minor,
+        storage.block_number()?,
+    );
 
     // A gem born past Issued reached those states at issuance, so backfill the
     // lifecycle timestamps from `issued_at` (the scan stamps them otherwise).

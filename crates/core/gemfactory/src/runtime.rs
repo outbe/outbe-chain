@@ -575,7 +575,11 @@ fn read_reference_oracle_rate(
     Ok(rate)
 }
 
-fn compute_params(gem_type: GemTypes, promis_load: U256, coen_rate: U256) -> Result<(U256, GemState)> {
+fn compute_params(
+    gem_type: GemTypes,
+    promis_load: U256,
+    coen_rate: U256,
+) -> Result<(U256, GemState)> {
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
     let (floor_price, initial_state) = match gem_type {

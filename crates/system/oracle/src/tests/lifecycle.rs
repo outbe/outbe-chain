@@ -73,8 +73,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         // The next day's last closed UTC day carries no price, so the day-type row is
         // omitted rather than substituted: an unpriced day announces itself as empty.
         let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
-        let unpriced =
-            crate::api::ocomp_pre_admission_projection(storage, next_timestamp).unwrap();
+        let unpriced = crate::api::ocomp_pre_admission_projection(storage, next_timestamp).unwrap();
         assert!(unpriced.profile_ready);
         assert!(unpriced.auction_entry_prices.is_empty());
         assert_eq!(unpriced.oracle_state_version, 5);

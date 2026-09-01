@@ -405,8 +405,8 @@ mod tests {
             );
             assert!(
                 outbe_oracle::api::ocomp_pre_admission_projection(storage, 0)
-                .unwrap()
-                .profile_ready
+                    .unwrap()
+                    .profile_ready
             );
         });
     }

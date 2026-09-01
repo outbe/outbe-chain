@@ -5,10 +5,10 @@
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
+use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::units::SCALE_1E6_U64;
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
@@ -236,7 +236,8 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         )
         .unwrap();
         let later = CREATED_AT + ONE_YEAR_SECS;
-        let league_before = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        let league_before =
+            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_before, MIN_LEAGUE);
 
         // Both ledgers are enclave-confidential and independently keyed, so the call

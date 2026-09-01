@@ -1,5 +1,5 @@
 //! Per-block qualification: drains floor-bins crossed by the live COEN rate and
-//! qualifies Issued series past their qualification period. Runs in `begin_block`.
+//! qualifies the Issued series they hold. Runs in `begin_block`.
 //! A floor compares only to its own currency's rate, so each currency walks its own
 //! trie with its own cursor; they share one per-block budget.
 

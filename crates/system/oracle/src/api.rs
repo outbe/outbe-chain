@@ -318,10 +318,17 @@ pub fn ocomp_pre_admission_projection(
     let profile_ready = oracle.ocomp_profile_ready.read()?;
     let current_utc_day = timestamp_to_date_key(block_timestamp);
     let last_closed_day = previous_date_key(current_utc_day);
-    let last_closed_vwap = profile_ready
-        .then(|| oracle.ocomp_day_type_vwap_by_utc_day.read(&last_closed_day))
-        .transpose()?
-        .filter(|value| !value.is_zero());
+    // The day-type currency is priced from the same per-pair day VWAP as every
+    // other currency; the OCOMP mirror of it is a copy, written only once the
+    // profile is installed, and is not the price source.
+    let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
+    let last_closed_vwap = if day_type_index == 0 {
+        None
+    } else {
+        oracle
+            .get_utc_day_vwap_for_pair(last_closed_day, day_type_index)?
+            .filter(|value| !value.is_zero())
+    };
     let mut auction_entry_prices = Vec::new();
     if let Some(vwap) = last_closed_vwap {
         auction_entry_prices.push(OcompReferenceEntryPrice {
