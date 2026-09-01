@@ -26,8 +26,6 @@ pub enum IntexError {
     ContributorLeavesAlreadyPaid(u32),
     #[error("certified payout round already open for series {0}")]
     CertifiedRoundExists(u32),
-    #[error("cost amount overflow")]
-    CostAmountOverflow,
     #[error("invalid series id components")]
     InvalidSeriesId,
     #[error("realized units exceed the issued count for series")]

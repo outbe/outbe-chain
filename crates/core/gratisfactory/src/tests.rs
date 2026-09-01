@@ -124,13 +124,11 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     .unwrap();
 }
 
-/// Run `f` in a fresh storage scope with BOTH the Gratis and Promis in-process
-/// enclaves installed (mineFromPromis burns confidential promis then mints
-/// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
-/// the COEN/840 pair seeded (pledges are priced from it).
+/// Run `f` in a fresh storage scope with the Gratis in-process enclave installed,
+/// the block time set (so Fidelity reads a non-zero `now`), and the COEN/840 pair
+/// seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
-    outbe_promis::enclave_client::test_enclave::install();
     fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
@@ -142,48 +140,8 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
         f(s.clone())
     });
     fidelity_enclave::uninstall();
-    outbe_promis::enclave_client::test_enclave::uninstall();
     test_enclave::uninstall();
     out
-}
-
-/// The Promis modify authorization for `owner` at `op_nonce` (the confidential
-/// promis ledger is keyed independently from gratis).
-fn promis_auth(
-    op: outbe_tee::protocol::PromisOp,
-    owner: Address,
-    amount: U256,
-    op_nonce: u64,
-) -> ModifyAuth {
-    let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = outbe_tee_enclave::promis::derive_modify_key(&sk, owner).unwrap();
-    ModifyAuth {
-        mac: outbe_tee_enclave::promis::modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
-        op_nonce,
-    }
-}
-
-/// Decrypt `owner`'s confidential promis balance with its view key.
-fn promis_view_balance(s: &StorageHandle<'_>, owner: Address) -> U256 {
-    let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let vk = outbe_tee_enclave::promis::derive_view_key(&sk, owner).unwrap();
-    let blob = outbe_promis::api::balance_ct(s.clone(), owner).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    outbe_tee_enclave::promis::decrypt_balance(&vk, owner, &blob).unwrap()
-}
-
-/// Mint confidential promis to `owner` (op-nonce 0) so mineFromPromis has a balance
-/// to burn.
-fn seed_promis(storage: StorageHandle<'_>, owner: Address, amount: U256) {
-    outbe_promis::api::mint(
-        storage,
-        owner,
-        amount,
-        promis_auth(outbe_tee::protocol::PromisOp::Mint, owner, amount, 0),
-    )
-    .unwrap();
 }
 
 /// `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` calldata. `max_gratis`
@@ -577,109 +535,6 @@ fn mine_coen_rejects_insufficient_balance() {
         // Atomic revert: no COEN minted, gratis untouched.
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
         assert_eq!(view_balance(&storage, alice()), U256::from(100u64));
-    });
-}
-
-#[test]
-fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    with_env(|storage| {
-        let amount = U256::from(1_000u64);
-
-        // Seed only (confidential) promis to convert - no Fidelity cohort yet.
-        // Promis is fidelity-neutral, so the aged RCFI a year out is zero up front;
-        // the post-conversion `> 0` check then proves the conversion recorded a
-        // fresh gratis cohort (rather than it having pre-existed).
-        seed_promis(storage.clone(), alice(), amount);
-        let later = CREATED_AT + ONE_YEAR_SECS;
-        let league_before =
-            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
-        assert_eq!(league_before, MIN_LEAGUE);
-
-        // mineFromPromis on the gratisfactory precompile. Both the promis burn and
-        // the gratis mint are enclave-confidential, so the call carries two modify
-        // authorizations at each ledger's current op-nonce: gratis is fresh (0),
-        // promis already advanced to 1 by the seed mint.
-        let ga = auth(GratisOp::Mint, alice(), amount, 0);
-        let pa = promis_auth(outbe_tee::protocol::PromisOp::Burn, alice(), amount, 1);
-        let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::mineFromPromis(
-                IGratisFactory::mineFromPromisCall {
-                    amount,
-                    mac: FixedBytes(ga.mac),
-                    opNonce: ga.op_nonce,
-                    promisMac: FixedBytes(pa.mac),
-                    promisOpNonce: pa.op_nonce,
-                },
-            )
-            .abi_encode(),
-        );
-        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        let minted = IGratisFactory::mineFromPromisCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(minted, amount);
-
-        // Promis fully burned; gratis minted 1:1 to the account (decrypt both
-        // confidential balances to check; promis total supply is public).
-        assert_eq!(promis_view_balance(&storage, alice()), U256::ZERO);
-        assert_eq!(
-            outbe_promis::api::total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(view_balance(&storage, alice()), amount);
-        assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            amount
-        );
-
-        // A fresh gratis acquisition cohort was recorded at conversion time
-        // (CREATED_AT): sole holder, no sales -> top league a year later. If
-        // `mine_from_promis` stopped recording the cohort, this would stay at the
-        // floor.
-        let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
-        assert_eq!(league_after, MAX_LEAGUE);
-    });
-}
-
-/// mine_from_promis with insufficient balance must fail with no partial state:
-/// no promis burned, no gratis minted (atomic revert).
-#[test]
-fn mine_from_promis_rejects_insufficient_balance() {
-    with_env(|storage| {
-        // Alice holds 100 (confidential) promis but tries to convert 200.
-        seed_promis(storage.clone(), alice(), U256::from(100u64));
-
-        // The promis burn fails before the gratis mint is reached; the gratis auth
-        // is never checked (zero placeholder), but the promis burn auth must be
-        // valid to reach the balance check (op-nonce 1 after the seed mint).
-        let pa = promis_auth(
-            outbe_tee::protocol::PromisOp::Burn,
-            alice(),
-            U256::from(200u64),
-            1,
-        );
-        let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::mineFromPromis(
-                IGratisFactory::mineFromPromisCall {
-                    amount: U256::from(200u64),
-                    mac: FixedBytes([0u8; 32]),
-                    opNonce: 0,
-                    promisMac: FixedBytes(pa.mac),
-                    promisOpNonce: pa.op_nonce,
-                },
-            )
-            .abi_encode(),
-        );
-        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("insufficient balance"),
-            "got: {err}"
-        );
-
-        // No gratis minted (no ciphertext ever written), promis untouched.
-        assert_eq!(promis_view_balance(&storage, alice()), U256::from(100u64));
-        assert!(outbe_gratis::api::balance_ct(storage.clone(), alice())
-            .unwrap()
-            .is_empty());
     });
 }
 

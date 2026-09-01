@@ -91,7 +91,6 @@ fn to_abi_data(r: &SeriesRecord, settled: u32, parked: u32) -> Result<IIntex::Se
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
         worldwideDay: r.worldwide_day.into(),
-        costAmountMinor: r.cost_amount_minor()?,
         settledUnits: settled,
         parkedUnits: parked,
     })

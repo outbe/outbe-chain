@@ -1073,8 +1073,8 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         };
         let validator_amount =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Validator);
-        let expected_gem_load = validator_amount / U256::from(voters.len());
-        let distributed = expected_gem_load * U256::from(voters.len());
+        let expected_promis_load = validator_amount / U256::from(voters.len());
+        let distributed = expected_promis_load * U256::from(voters.len());
         let validator_residue = validator_amount.checked_sub(distributed).unwrap();
         let expected_terminal =
             amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
@@ -1114,7 +1114,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
                 .reward_gem_planned_load_amount
                 .read(&20_240_101)
                 .unwrap(),
-            expected_gem_load * U256::from(voters.len())
+            expected_promis_load * U256::from(voters.len())
         );
         let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();
         assert_eq!(
@@ -1165,7 +1165,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
         let load_before = outbe_gem::api::get_gem(&ctx.storage, gem_id)
             .unwrap()
             .unwrap()
-            .gem_load_minor;
+            .promis_load_minor;
 
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         run_emission_limit_daily(&ctx).unwrap();
@@ -1175,7 +1175,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
             outbe_gem::api::get_gem(&ctx.storage, gem_id)
                 .unwrap()
                 .unwrap()
-                .gem_load_minor,
+                .promis_load_minor,
             load_before,
             "the prior Gem must remain unchanged"
         );

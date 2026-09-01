@@ -211,15 +211,15 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         tracing::error!(target: "outbe::cycle", step = "prepare_daily_validator_gem_batch", error = ?e, "emission_limit_daily step failed");
         e
     })?;
-    let planned_gem_load_amount = match preparation {
+    let planned_promis_load_amount = match preparation {
         outbe_rewards::api::RewardGemPreparationOutcome::Prepared(batch)
         | outbe_rewards::api::RewardGemPreparationOutcome::AlreadyPrepared(batch)
         | outbe_rewards::api::RewardGemPreparationOutcome::NoPayableShares(batch) => {
-            batch.planned_gem_load_amount
+            batch.planned_promis_load_amount
         }
     };
     let validator_excess = validator_amount
-        .checked_sub(planned_gem_load_amount)
+        .checked_sub(planned_promis_load_amount)
         .ok_or_else(|| {
             PrecompileError::Revert("validator reward Gem plan exceeds allocation".into())
         })?;

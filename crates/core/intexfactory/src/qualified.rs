@@ -1,5 +1,5 @@
 //! Per-block qualification: drains floor-bins crossed by the live COEN rate and
-//! qualifies Issued series past their qualification period. Runs in `begin_block`.
+//! qualifies the Issued series they hold. Runs in `begin_block`.
 //! A floor compares only to its own currency's rate, so each currency walks its own
 //! trie with its own cursor; they share one per-block budget.
 
@@ -89,7 +89,6 @@ fn qualify_currency(
     rate: U256,
     budget: &mut ScanBudget,
 ) -> Result<u32> {
-    let now = ctx.block.timestamp;
     // Deterministic out-of-range rate: skip this currency instead of halting the block.
     let r_bin = match IntexFactoryContract::price_to_bin(rate) {
         Ok(b) => b,
@@ -99,7 +98,6 @@ fn qualify_currency(
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-    let qualification_period = crate::config::read(&factory)?.qualification_period;
 
     let mut promoted: u32 = 0;
     // Cap per-block work and resume next block from a persisted bin cursor: the scan
@@ -135,16 +133,9 @@ fn qualify_currency(
             budget.spend_decision();
             // Per-group isolation: a deterministic Err rolls back and is logged, so one bad
             // group cannot halt the block; the structural reads above keep `?`.
-            let res = ctx.storage.with_checkpoint(|| {
-                try_qualify_group(
-                    &ctx.storage,
-                    &mut factory,
-                    &group,
-                    qualification_period,
-                    now,
-                    rate,
-                )
-            });
+            let res = ctx
+                .storage
+                .with_checkpoint(|| try_qualify_group(&ctx.storage, &mut factory, &group, rate));
             match res {
                 Ok(applied) => {
                     budget.spend_actions(applied);
@@ -215,8 +206,6 @@ pub(crate) fn try_qualify_group(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
     group: &Group,
-    qualification_period: u32,
-    now: u64,
     rate: U256,
 ) -> Result<u32> {
     let Some(&first) = group.members.first() else {
@@ -224,10 +213,6 @@ pub(crate) fn try_qualify_group(
     };
     let series = outbe_intex::api::read_series(storage, first)?;
     if series.lifecycle_state()? != IntexState::Issued {
-        return Ok(0);
-    }
-    let qualifies_at = u64::from(series.issued_at).saturating_add(u64::from(qualification_period));
-    if now <= qualifies_at {
         return Ok(0);
     }
     if rate <= series.floor_price_minor {

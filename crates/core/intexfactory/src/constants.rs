@@ -46,9 +46,6 @@ pub const DIST_CHUNK_LIMIT: u32 = 200;
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Time a series must age past `issued_at` before it can become Qualified.
-pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
-
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 

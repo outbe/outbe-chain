@@ -9,7 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 pub use outbe_gratis::api::ModifyAuth;
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
-/// key), record the Fidelity acquisition cohort, and emit `GratisMined`.
+/// key) and record the Fidelity acquisition cohort.
 /// See [`crate::runtime::mint`].
 pub fn mint(
     storage: StorageHandle<'_>,

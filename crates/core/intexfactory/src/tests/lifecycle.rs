@@ -49,43 +49,16 @@ fn insert_remove_unqualified_roundtrip() {
 }
 
 #[test]
-fn try_qualify_gates_qualification_floor_and_latches() {
+fn try_qualify_gates_the_floor_and_latches() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(EXPECTED_FLOOR);
-        let immature = ISSUED_AT as u64 + 10;
-        let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
-        // Immature -> false.
-        assert_eq!(
-            qualify_day(
-                &s,
-                &mut f,
-                7,
-                QUALIFICATION_PERIOD,
-                immature,
-                floor + U256::from(1)
-            ),
-            0
-        );
-        // Mature but rate == floor (strict >) -> false.
-        assert_eq!(
-            qualify_day(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor),
-            0
-        );
-        // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert_eq!(
-            qualify_day(
-                &s,
-                &mut f,
-                7,
-                QUALIFICATION_PERIOD,
-                mature,
-                floor + U256::from(1)
-            ),
-            1
-        );
+        // Rate == floor (strict >) -> false.
+        assert_eq!(qualify_day(&s, &mut f, 7, floor), 0);
+        // Rate > floor -> qualifies, latched, removed from bin.
+        assert_eq!(qualify_day(&s, &mut f, 7, floor + U256::from(1)), 1);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -101,17 +74,7 @@ fn try_qualify_gates_qualification_floor_and_latches() {
             0
         );
         // Already Qualified -> false.
-        assert_eq!(
-            qualify_day(
-                &s,
-                &mut f,
-                7,
-                QUALIFICATION_PERIOD,
-                mature,
-                floor + U256::from(1)
-            ),
-            0
-        );
+        assert_eq!(qualify_day(&s, &mut f, 7, floor + U256::from(1)), 0);
     });
 }
 
@@ -122,18 +85,8 @@ pub(super) fn qualify_series<'a>(
 ) -> IntexFactoryContract<'a> {
     runtime::issue(s, params).unwrap();
     let mut f = IntexFactoryContract::new(s.clone());
-    let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(
-        qualify_day(
-            s,
-            &mut f,
-            id,
-            QUALIFICATION_PERIOD,
-            mature,
-            floor + U256::from(1)
-        ) == 1
-    );
+    assert!(qualify_day(s, &mut f, id, floor + U256::from(1)) == 1);
     f
 }
 

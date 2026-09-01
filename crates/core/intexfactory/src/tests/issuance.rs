@@ -357,7 +357,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         );
         publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
 
-        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -375,7 +375,7 @@ fn issuance_currency_settlement_rounds_a_non_divisible_fx_result_up_once() {
         );
         publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
 
-        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_334u64));
     });
 }
@@ -392,7 +392,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
             0,
         );
         // No euro pair at all.
-        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("not registered"), "{err}");
     });
 }
@@ -416,7 +416,7 @@ fn a_stale_rate_cannot_be_settled_in() {
             outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
         );
 
-        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("stale"), "{err}");
     });
 }
@@ -428,7 +428,7 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
         publish_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE, 0);
         publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX, 0);
 
-        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
     });
 }
@@ -437,7 +437,7 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
 fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
-        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
     });
 }

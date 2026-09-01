@@ -215,13 +215,9 @@ impl PreAdmissionEnvelopeV1 {
         hash_framed(HashDomain::PreAdmission, &self.encode_canonical(limits)?)
     }
 
-    /// Non-empty and strictly ascending by currency: the rows are hashed in order, so
+    /// Strictly ascending by currency: the rows are hashed in order, so
     /// two orderings of the same prices would otherwise be two different days.
     pub fn validate_price_table(&self) -> Result<(), ProtocolError> {
-        require(
-            !self.auction_entry_prices.is_empty(),
-            "day prices at least one reference currency",
-        )?;
         for pair in self.auction_entry_prices.windows(2) {
             require(
                 pair[0].reference_currency < pair[1].reference_currency,
