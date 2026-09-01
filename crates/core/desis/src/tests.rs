@@ -138,6 +138,11 @@ fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
 }
 
 #[test]
+fn native_escrow_conversion_saturates_instead_of_wrapping() {
+    assert_eq!(runtime::rate_lock(u64::MAX, u128::MAX, u32::MAX), u128::MAX);
+}
+
+#[test]
 fn a_corrupt_stored_exponent_cannot_index_past_the_table() {
     assert_eq!(ladder(Some(u32::MAX), 1_000), LAUNCH_EXPONENT);
 }

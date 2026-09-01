@@ -24,6 +24,7 @@ import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
+import { wcoenLockAmount } from "./tools/intex.js";
 import { view as readHumanizedView } from "./tools/util.js";
 
 async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promise<T>): Promise<T> {
@@ -83,6 +84,10 @@ test("network-native parsing and formatting follows chain metadata", () => {
   assert.equal(formatNativeAmount(outbe, 1_500_000_000_000_000_000n), "1.5");
   assert.equal(parseNativeAmount(bsc, "1.5"), 1_500_000_000_000_000_000n);
   assert.equal(formatNativeAmount(bsc, 1_500_000_000_000_000_000n), "1.5");
+});
+
+test("MCP Intex converts protocol-6 PROMIS lock math to native-18 WCOEN", () => {
+  assert.equal(wcoenLockAmount(2n, 1_500_000n, 500_000n), 1_500_000_000_000_000_000n);
 });
 
 test("MCP formats native monetary fields at scale18 and leaves dimensionless FP18 alone", () => {

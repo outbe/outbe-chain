@@ -7,6 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent as _};
 use cucumber::{given, then, when};
 use outbe_primitives::storage::types::StorageKey as _;
+use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
 use crate::env::environment;
@@ -453,7 +454,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let native_after = eth::balance(&url, owner).expect("native balance after Promis burn");
     assert_eq!(promis_balance(&url, owner, &keys.view), promis_before);
     assert_eq!(
-        native_after, gem.gemLoad,
+        native_after,
+        checked_protocol_to_native(gem.gemLoad).expect("Gem load fits native COEN"),
         "three sponsored calls must charge no native fee to the validator"
     );
     let counter_after = eth::read_call(
@@ -626,7 +628,12 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         crate::world::rpc::Rpc::receipt_gas_cost(&mine_coen.receipt).expect("Gratis burn gas cost");
     let native_after = eth::balance(&url, owner).expect("native balance after Gratis burn");
     assert_eq!(gratis_balance(&url, owner, &keys.view), gratis_before);
-    assert_eq!(native_after + fee, native_before + body.gratisLoadMinor);
+    assert_eq!(
+        native_after + fee,
+        native_before
+            + checked_protocol_to_native(body.gratisLoadMinor)
+                .expect("Gratis load fits native COEN")
+    );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} payer={payer_address:#x} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
         hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,

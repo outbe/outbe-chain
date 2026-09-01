@@ -18,6 +18,12 @@ export const DEFAULT_FIDELITY_ADDRESS = "0x0000000000000000000000000000000000001
 // Native COEN uses the standard 18-decimal EVM boundary. Protocol-side Gratis
 // accounting remains six-decimal; mineCoen performs that conversion on-chain.
 export const COEN_DECIMALS = 18;
+export const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
+
+/** Six-decimal protocol amount -> native COEN atomic units. */
+export function protocolAmountToNativeCoen(value: bigint): bigint {
+  return value * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+}
 
 /** Whole COEN -> base units. `coen("1.5")` === 1_500_000_000_000_000_000n. */
 export function coen(whole: string): bigint {

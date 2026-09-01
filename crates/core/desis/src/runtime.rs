@@ -1079,12 +1079,12 @@ fn sort_bids(bids: &mut [(u32, BidData)]) {
 /// Native/WCOEN escrow amount for `qty` Intexes at `rate` (1e6 fixed-point)
 /// against the six-decimal per-Intex escrow basis. The protocol result crosses
 /// into 18-decimal payment units exactly once, saturating to u128.
-fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
-    let amount = U256::from(qty)
+pub(crate) fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
+    let amount = (U256::from(qty)
         .saturating_mul(U256::from(basis))
         .saturating_mul(U256::from(rate))
-        / U256::from(SCALE_1E6_U64)
-        * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        / U256::from(SCALE_1E6_U64))
+    .saturating_mul(NATIVE_UNITS_PER_PROTOCOL_UNIT);
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
