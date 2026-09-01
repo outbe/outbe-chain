@@ -37,11 +37,12 @@ contract IntexAuctionBondTest is Test {
 
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
     uint64 internal constant ENTRY_PRICE = 1e6;
-    uint128 internal constant BOND = 100e6;
-    // qty=1 at rate=1: lock = 100_000 WCOEN-unit, or 0.1 WCOEN, well below BOND.
+    uint128 internal constant BOND = 100e18;
+    // Protocol-scale basis/rate cross into 18-decimal WCOEN, well below BOND.
     uint16 internal constant QTY = 1;
     uint32 internal constant RATE = 1;
-    uint128 internal constant LOCK_AMOUNT = uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / 1_000_000);
+    uint128 internal constant LOCK_AMOUNT =
+        uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / 1_000_000 * 1e12);
 
     uint32 constant COMMIT_OFFSET = 100;
     uint32 constant REVEAL_OFFSET = 200;
@@ -65,7 +66,7 @@ contract IntexAuctionBondTest is Test {
         vm.stopPrank();
         compact.setResetPeriodSeconds(0);
 
-        paymentToken.mint(iba1, 1000e6);
+        paymentToken.mint(iba1, 1000e18);
         vm.prank(iba1);
         paymentToken.approve(address(escrow), type(uint256).max);
 
@@ -130,7 +131,7 @@ contract IntexAuctionBondTest is Test {
     function test_CommitBid_TakesBond() public {
         _commit();
 
-        assertEq(paymentToken.balanceOf(iba1), 1000e6 - BOND, "bidder debited the bond");
+        assertEq(paymentToken.balanceOf(iba1), 1000e18 - BOND, "bidder debited the bond");
         assertEq(_liveCompactBalance(), BOND, "bond custodied in The Compact");
         IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(worldwideDay, iba1);
         assertEq(bond.amount, BOND, "bond recorded");
@@ -166,7 +167,7 @@ contract IntexAuctionBondTest is Test {
         vm.prank(iba1);
         auction.cancelCommit(worldwideDay);
 
-        assertEq(paymentToken.balanceOf(iba1), 1000e6, "bond returned in full");
+        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned in full");
         assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
 
         // The freed slot re-locks a fresh bond on re-commit.
@@ -182,7 +183,7 @@ contract IntexAuctionBondTest is Test {
         auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
         // Bond came back, the bid escrow went out - net position is just the bid lock.
-        assertEq(paymentToken.balanceOf(iba1), 1000e6 - LOCK_AMOUNT, "net = bid lock only");
+        assertEq(paymentToken.balanceOf(iba1), 1000e18 - LOCK_AMOUNT, "net = bid lock only");
         assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
         assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
         assertEq(_liveCompactBalance(), LOCK_AMOUNT, "Compact holds only the bid lock");
@@ -193,7 +194,7 @@ contract IntexAuctionBondTest is Test {
     function test_RevealBid_BondFundsTheBid() public {
         // Burn everything beyond the bond, then commit (bond consumes the full balance).
         vm.prank(iba1);
-        paymentToken.transfer(outsider, 1000e6 - BOND);
+        paymentToken.transfer(outsider, 1000e18 - BOND);
         _commit();
         assertEq(paymentToken.balanceOf(iba1), 0, "everything is in the bond");
 
@@ -240,7 +241,7 @@ contract IntexAuctionBondTest is Test {
         vm.prank(outsider);
         auction.claimCommitBond(worldwideDay, iba1);
 
-        assertEq(paymentToken.balanceOf(iba1), 1000e6, "bond returned after the penalty window");
+        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned after the penalty window");
         assertEq(paymentToken.balanceOf(outsider), 0, "caller gets nothing");
     }
 

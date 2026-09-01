@@ -7,7 +7,9 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::{NATIVE_TOKEN_DECIMALS, SCALE_1E6_U64};
+use outbe_primitives::units::{
+    NATIVE_UNITS_PER_PROTOCOL_UNIT, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64,
+};
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
@@ -99,7 +101,7 @@ const _: () = assert!(
 /// Digits `load_minor x rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
 /// the strike's own, plus the six each of the load and the rate.
 const PROMIS_LOAD_STRIKE_DIGITS: u32 =
-    PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * NATIVE_TOKEN_DECIMALS as u32;
+    PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_STRIKE_DIGITS - 1;
 
@@ -1074,14 +1076,15 @@ fn sort_bids(bids: &mut [(u32, BidData)]) {
     });
 }
 
-/// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
-/// per-Intex escrow basis: `qty * basis * rate / 1_000_000`, saturating to u128
-/// (large six-decimal WCOEN amounts can exceed u64).
+/// Native/WCOEN escrow amount for `qty` Intexes at `rate` (1e6 fixed-point)
+/// against the six-decimal per-Intex escrow basis. The protocol result crosses
+/// into 18-decimal payment units exactly once, saturating to u128.
 fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
         .saturating_mul(U256::from(basis))
         .saturating_mul(U256::from(rate))
-        / U256::from(SCALE_1E6_U64);
+        / U256::from(SCALE_1E6_U64)
+        * NATIVE_UNITS_PER_PROTOCOL_UNIT;
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 

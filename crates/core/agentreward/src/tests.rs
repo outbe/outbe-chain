@@ -2,6 +2,7 @@ use alloy_primitives::{address, Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_protocol_to_native;
 
 use crate::distribution::{calculate_distribution_with_cap, distribute_daily, PoolKind};
 use crate::schema::AgentRewardContract;
@@ -80,8 +81,8 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
             "GAS-06: equal dense WAA/SRA distributions should have no cap excess"
         );
         assert_eq!(
-            claimable_total + excess,
-            waa_pool + sra_pool,
+            claimable_total,
+            checked_protocol_to_native(waa_pool + sra_pool).unwrap(),
             "GAS-06: dense distribution must conserve pool amount across claimable + excess"
         );
         assert_eq!(
@@ -350,6 +351,10 @@ mod distribute_daily_tests {
     const TEST_CHAIN_ID: u64 = 1;
     const DAY: WorldwideDay = WorldwideDay::new(20240115);
 
+    fn native(protocol_amount: u64) -> U256 {
+        checked_protocol_to_native(U256::from(protocol_amount)).unwrap()
+    }
+
     fn block_ctx() -> BlockContext {
         BlockContext::new(
             1,
@@ -388,15 +393,15 @@ mod distribute_daily_tests {
 
             assert_eq!(excess, U256::from(360u64));
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(alice).unwrap(), U256::from(320u64));
-            assert_eq!(c2.get_claimable_reward(bob).unwrap(), U256::from(320u64));
+            assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
+            assert_eq!(c2.get_claimable_reward(bob).unwrap(), native(320));
             // Mint/burn parity: AGENT_REWARD now holds exactly the
             // total claimable.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                U256::from(640u64)
+                native(640)
             );
             // WAA index cleared after distribution.
             assert!(c2.get_all_waa_counts(DAY).unwrap().is_empty());
@@ -417,12 +422,12 @@ mod distribute_daily_tests {
             // residue = 680.
             assert_eq!(excess, U256::from(680u64));
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(signer).unwrap(), U256::from(320u64));
+            assert_eq!(c2.get_claimable_reward(signer).unwrap(), native(320));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                U256::from(320u64)
+                native(320)
             );
         });
     }
@@ -468,7 +473,7 @@ mod distribute_daily_tests {
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                U256::from(400u64)
+                native(400)
             );
             assert_eq!(
                 ctx.storage
@@ -488,7 +493,7 @@ mod distribute_daily_tests {
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                U256::from(150u64)
+                native(150)
             );
         });
     }
@@ -514,12 +519,12 @@ mod distribute_daily_tests {
 
             assert_eq!(excess, U256::from(1180u64)); // 680 + 500
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(alice).unwrap(), U256::from(320u64));
+            assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                U256::from(100u64)
+                native(100)
             );
             // burn parity: AGENT_REWARD holds exactly alice's
             // 320 claimable; the SRA no-tribute 500 was burned.
@@ -527,7 +532,7 @@ mod distribute_daily_tests {
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                U256::from(320u64)
+                native(320)
             );
         });
     }

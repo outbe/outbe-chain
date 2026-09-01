@@ -190,7 +190,7 @@ interface IIntexAuction {
     error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice `quantity * escrowBasis * bidRate / 1e6` exceeds the uint128 lock-amount range.
+    /// @notice The 18-decimal WCOEN lock derived from protocol-scale inputs exceeds uint128.
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedIntexCount * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedIntexCount, uint128 promisLoadMinor);
