@@ -399,6 +399,7 @@ pub(crate) fn run_tee_bootstrap_v1(
                 ))
             })?;
         registry.register_enclave_v1(
+            Address::from(participant.validator_binding.validator),
             &evidence,
             &participant.node_signature,
             &participant.enclave_signature,
@@ -584,6 +585,7 @@ fn run_cycle_tick_at_activation(
     _metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
+    enforce_tee_lease_deadlines(ctx)?;
 
     #[cfg(test)]
     {
@@ -621,6 +623,7 @@ fn run_cycle_tick_with_readers_at_activation(
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
+    enforce_tee_lease_deadlines(ctx)?;
     // This body mutation must consume system-transaction gas and appear in its
     // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
     // buckets are not qualified until the following block.
@@ -630,6 +633,38 @@ fn run_cycle_tick_with_readers_at_activation(
         outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
             .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
     <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
+}
+
+/// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
+/// validator set. The sweep is part of receipt-visible `CycleTick`, before any
+/// user transaction in the block. Block 1 is excluded because its later
+/// `TeeBootstrap` system transaction creates the founder bindings atomically.
+fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<usize> {
+    if ctx.block.block_number
+        <= crate::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
+    {
+        return Ok(0);
+    }
+
+    let active = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
+        .get_active_validators()?;
+    let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+    let mut overdue = Vec::new();
+    for validator in active {
+        let binding = registry.validator_enclave_binding_v1(validator.validator_address)?;
+        if binding.is_none_or(|binding| binding.valid_until <= ctx.block.timestamp) {
+            overdue.push(validator.validator_address);
+        }
+    }
+
+    let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+    let mut jailed = 0usize;
+    for validator in overdue {
+        if validator_set.jail_validator_for_tee_expiry(validator)? {
+            jailed += 1;
+        }
+    }
+    Ok(jailed)
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -673,7 +708,7 @@ pub(crate) fn run_boundary_outcome(
         }
     }
     // Record the TEE recipient X25519 pubkeys announced through this boundary
-    // (the `BoundaryOutcome` key-delivery channel — README "Consensus Artifact
+    // (the `BoundaryOutcome` key-delivery channel - README "Consensus Artifact
     // Transport"). These ride in `header.extra_data` and are part of the
     // hash-committed `OutbeBlockArtifacts`, so every validator records the same
     // ordered set deterministically. Empty for boundaries that announce none.
@@ -820,7 +855,7 @@ pub(crate) fn authenticate_late_credit(
 /// LateFinalizeCredits system tx: record the verified
 /// late-finalize voters of each in-window batch at their inclusion distance
 /// `k`, then close the window that just matured (`settle_matured` for block
-/// `N − K`). The escrow residue is burned for mint/burn parity inside
+/// `N - K`). The escrow residue is burned for mint/burn parity inside
 /// `settle_window`; here we additionally route that same residue to terminal
 /// Metadosis emission headroom (`emission_sink::apply`), recycling unpaid fees
 /// instead of permanently destroying them.
@@ -829,7 +864,7 @@ pub(crate) fn authenticate_late_credit(
 /// executor's pre-exec preflight (`verify_late_finalize_credits_in_preexec`),
 /// proposer and validator alike. This body re-resolves the committee snapshot
 /// only to map the verified signer indices to addresses; the re-`verify`
-/// is the single source of truth for the bitmap→index decoding and yields the
+/// is the single source of truth for the bitmap->index decoding and yields the
 /// same indices on every node. Empty artifacts (no gathered credits) reduce to
 /// the window-close `settle_matured`, which is a no-op until block `K+1`.
 pub(crate) fn run_late_finalize_credits(
@@ -842,9 +877,9 @@ pub(crate) fn run_late_finalize_credits(
     let block_number = ctx.block.block_number;
 
     for credit in &artifact.batches {
-        // Inclusion distance k = block_number − fb_number, range-checked
-        // `1 ≤ k ≤ K` on the *executed body* artifact (the pre-exec preflight
-        // range-checks the header; the stateless validator binds header↔body —
+        // Inclusion distance k = block_number - fb_number, range-checked
+        // `1 <= k <= K` on the *executed body* artifact (the pre-exec preflight
+        // range-checks the header; the stateless validator binds header<->body -
         // but this path must stand on its own: a credit outside the window must
         // never be recorded). Checked FIRST, before the expensive snapshot read
         // + BLS verify, so an out-of-window credit is rejected cheaply.
@@ -870,13 +905,13 @@ pub(crate) fn run_late_finalize_credits(
         // bind the proposer-supplied
         // fb_number/epoch/committee_set_hash to the escrowed canonical binding for
         // this finalized block before recording. The BLS proof binds only fb_hash,
-        // so without this a proposer could spoof fb_number (shrink k → inflate
+        // so without this a proposer could spoof fb_number (shrink k -> inflate
         // weight) or reference a wrong committee.
         authenticate_late_credit(&ctx.storage, credit)?;
 
         // Re-resolve the epoch committee the proof was produced for, to map
-        // verified signer indices → addresses, and re-verify the BLS aggregate
-        // (FATAL on failure — never a soft receipt). The snapshot must exist (the
+        // verified signer indices -> addresses, and re-verify the BLS aggregate
+        // (FATAL on failure - never a soft receipt). The snapshot must exist (the
         // pre-exec preflight already read and verified against it).
         let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
         let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or_else(
@@ -915,7 +950,7 @@ pub(crate) fn run_late_finalize_credits(
     // `late_voter_*` credited set.
     record_window_close_absentees(ctx, block_number)?;
 
-    // Window close: settle block N − K (the window that just matured). No-op
+    // Window close: settle block N - K (the window that just matured). No-op
     // before block K+1 or when nothing was escrowed at that number. The residue
     // burn + terminal-Metadosis recycle and the per-window state cleanup happen
     // inside `settle_window`; nothing further is needed here.
@@ -925,8 +960,8 @@ pub(crate) fn run_late_finalize_credits(
 }
 
 /// Window-close miss & slashing pass. For the
-/// window maturing at this block (`fb_number = block_number − K`), every committee
-/// member that never voted within `K` — `committee(fb_number) \ credited` — has its
+/// window maturing at this block (`fb_number = block_number - K`), every committee
+/// member that never voted within `K` - `committee(fb_number) \ credited` - has its
 /// finalized-participation miss recorded and `slash_voter` applied (force-exit +
 /// stake slash once the felony threshold is crossed).
 ///
@@ -1275,6 +1310,33 @@ mod tests {
         )
     }
 
+    fn install_validator_lease(provider: &mut HashMapStorageProvider, valid_until: u64) {
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            let node_hash = B256::repeat_byte(0x61);
+            registry
+                .validator_v1_node_hash
+                .write(&VALIDATOR, node_hash)
+                .unwrap();
+            registry
+                .v1_node_enclave_id
+                .write(&node_hash, B256::repeat_byte(0x62))
+                .unwrap();
+            registry
+                .v1_node_binding_id
+                .write(&node_hash, B256::repeat_byte(0x63))
+                .unwrap();
+            registry
+                .v1_node_intent_hash
+                .write(&node_hash, B256::repeat_byte(0x64))
+                .unwrap();
+            registry
+                .v1_node_valid_until
+                .write(&node_hash, valid_until)
+                .unwrap();
+        });
+    }
+
     fn read_progress(provider: &mut HashMapStorageProvider) -> u64 {
         provider.enter(|storage| {
             let ctx = runtime_ctx(storage);
@@ -1394,6 +1456,82 @@ mod tests {
             let record = vs.get_validator(VALIDATOR).unwrap().unwrap();
             assert_eq!(record.blocks_proposed, 1);
         });
+    }
+
+    #[test]
+    fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
+        let deadline = 1_700_000_100;
+        let mut bootstrap = configured_storage(1, deadline);
+        bootstrap.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            assert_eq!(
+                vs.get_validator(VALIDATOR).unwrap().unwrap().status,
+                outbe_validatorset::runtime::status::ACTIVE
+            );
+        });
+
+        let mut before = configured_storage(2, deadline - 1);
+        install_validator_lease(&mut before, deadline);
+        before.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            assert_eq!(
+                vs.get_validator(VALIDATOR).unwrap().unwrap().status,
+                outbe_validatorset::runtime::status::ACTIVE
+            );
+        });
+
+        let mut at_deadline = configured_storage(2, deadline);
+        install_validator_lease(&mut at_deadline, deadline);
+        at_deadline.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
+            assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
+            assert_eq!(jailed.slash_count, 0);
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
+        });
+    }
+
+    #[test]
+    fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
+        let mut provider = configured_storage(2, 1_700_000_200);
+        provider.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
+            assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
+            assert_eq!(jailed.slash_count, 0);
+        });
+    }
+
+    #[test]
+    fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
+        let deadline = 1_700_000_100;
+        let jumped_timestamp = deadline + 10 * 1_209_600;
+        let mut base = configured_storage(12, jumped_timestamp);
+        install_validator_lease(&mut base, deadline);
+        let parent = base.storage.clone();
+
+        let run = || {
+            let mut provider = provider_from_storage(12, jumped_timestamp, parent.clone());
+            let jailed = provider.enter(|storage| {
+                let ctx = runtime_ctx(storage);
+                enforce_tee_lease_deadlines(&ctx).unwrap()
+            });
+            (jailed, provider.storage)
+        };
+
+        let first = run();
+        let replay = run();
+        assert_eq!(first.0, 1);
+        assert_eq!(first, replay);
     }
 
     #[test]
@@ -2019,7 +2157,7 @@ mod tests {
     }
 
     /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
-    /// matured window — pays the escrowed voters, marks `fee_settled`, and routes
+    /// matured window - pays the escrowed voters, marks `fee_settled`, and routes
     /// the unpaid residue through the active-profile carry-over sink.
     /// Uses an empty credit artifact so the assertion isolates the
     /// `settle_matured` + residue-recycle wiring (the BLS batch path is covered
@@ -2073,7 +2211,7 @@ mod tests {
                 U256::ZERO,
                 "absent voter earns nothing"
             );
-            // distributed (3·each) left REWARDS; residue (each) burned for parity.
+            // distributed (3*each) left REWARDS; residue (each) burned for parity.
             assert_eq!(
                 ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
                 U256::ZERO,
@@ -2203,7 +2341,7 @@ mod tests {
 
     /// Determinism: the window-close absentee pass is computed purely from committed
     /// chain state (committee snapshot + `late_voter_*`) in committee order, with no
-    /// proposer-chosen input — so two independent executions of the same closed
+    /// proposer-chosen input - so two independent executions of the same closed
     /// window reach byte-identical slashing state (the proposer/validator guarantee).
     /// Multiple absentees exercise ordering.
     #[test]
@@ -2292,7 +2430,7 @@ mod tests {
             first, second,
             "window-close absentee pass must be deterministic across executions"
         );
-        // C0, C2 credited → no miss; C1, C3 absent → miss in both counters.
+        // C0, C2 credited -> no miss; C1, C3 absent -> miss in both counters.
         assert_eq!(
             first,
             vec![(0, 0), (1, 1), (0, 0), (1, 1)],
@@ -2374,14 +2512,14 @@ mod tests {
             }
 
             // Real begin-zone order for a block that actually carries the
-            // certified boundary: boundary-conditioned pre-block reset first…
+            // certified boundary: boundary-conditioned pre-block reset first...
             crate::executor::prepare_boundary_epoch_counters(
                 ctx.storage.clone(),
                 &boundary_noop(),
                 ctx.block.block_number,
             )
             .unwrap();
-            // …then the begin-zone window-close increments.
+            // ...then the begin-zone window-close increments.
             run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
 
             let si = outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone());
@@ -2431,7 +2569,7 @@ mod tests {
     }
 
     /// bad/unverifiable proof: an in-window, escrow-authenticated credit whose
-    /// committee snapshot does not exist is FATAL (the block aborts — never a soft
+    /// committee snapshot does not exist is FATAL (the block aborts - never a soft
     /// receipt). distance = 13 - 11 = 2 (in window); the escrow binding matches so
     /// authentication passes and the snapshot lookup is reached and fails.
     #[test]
@@ -2487,7 +2625,7 @@ mod tests {
     }
 
     /// Seed an escrow binding `(11 -> fb_hash 0xCD, epoch 7, csh 0xEF)` and run a
-    /// credit that mismatches one field — each must be FATAL.
+    /// credit that mismatches one field - each must be FATAL.
     fn assert_auth_mismatch_fatal(
         mut mutate: impl FnMut(&mut outbe_primitives::reshare_artifact::PerBlockCredit),
         needle: &str,
@@ -2559,7 +2697,7 @@ mod tests {
     }
 
     /// Review #1b (full binding): a credit with correct fb_number/fb_hash/epoch/
-    /// committee_set_hash but a non-canonical `view` is rejected at body auth —
+    /// committee_set_hash but a non-canonical `view` is rejected at body auth -
     /// closing the cross-view equivocation credit the pre-exec BLS verify (which
     /// only ties the credit's view to its signatures) would otherwise let through.
     #[test]

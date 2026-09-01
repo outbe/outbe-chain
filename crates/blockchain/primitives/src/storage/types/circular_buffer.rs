@@ -12,7 +12,7 @@ use super::Storable;
 /// overwrites (and returns) the oldest one. `push` is O(1).
 ///
 /// Storage layout:
-/// - Base slot:      `total` — monotonic count of all pushes ever (`U256`)
+/// - Base slot:      `total` - monotonic count of all pushes ever (`U256`)
 /// - Base slot + 1:  `capacity` (`u32`)
 /// - Data:           `keccak256(base_slot) + index * T::SLOTS`, `index` in `0..capacity`
 ///

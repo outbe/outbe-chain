@@ -2,10 +2,10 @@
 //! handler.
 //!
 //! Owns the whole epoch-boundary concern lifted out of `handler.rs`:
-//! - [`ApplicationEpochFence`] — the activation-boundary state machine (active
+//! - [`ApplicationEpochFence`] - the activation-boundary state machine (active
 //!   epoch + an optional armed boundary) consulted on every propose/verify so a
 //!   stale Simplex epoch cannot submit Engine work past a DKG activation.
-//! - [`resolve_epoch_boundary_parent`] — the anchor-based parent resolver for
+//! - [`resolve_epoch_boundary_parent`] - the anchor-based parent resolver for
 //!   the first proposal of `epoch > 0`. It takes the finalization-view and
 //!   marshal seams as explicit parameters instead of `&self`, so the resolution
 //!   logic reads and tests independently of the handler.

@@ -1,8 +1,8 @@
 //! Consensus-thread TEE bootstrap: run the one-time committee coordination at
 //! startup (exactly like the consensus DKG), assemble the canonical OST3 payload,
 //! and hand it to the payload builder via the bridge so the **block-1** proposer
-//! injects it (slice 5.1). `committee_snapshot_block` is the fixed block 1 — the
-//! known injection target, mirroring how `BoundaryOutcome` lands at block 1 — so
+//! injects it (slice 5.1). `committee_snapshot_block` is the fixed block 1 - the
+//! known injection target, mirroring how `BoundaryOutcome` lands at block 1 - so
 //! there is no run-time block-number ambiguity.
 //!
 //! The secret operations stay in the enclave; this glue only adapts the
@@ -928,7 +928,7 @@ const DKG_ENV_IDENTITY: u8 = 0x01;
 ///
 /// Two message kinds share the channel, distinguished by a 1-byte envelope tag:
 /// ceremony messages ([`DkgWireMessage`]) and identity announcements
-/// (`tee_bls || dkg_enc`). The ceremony addresses dealer→player bundles by the
+/// (`tee_bls || dkg_enc`). The ceremony addresses dealer->player bundles by the
 /// recipient's *enclave* BLS key, but P2P routes by the *consensus* BLS key, so a
 /// `tee_bls -> consensus_pubkey` routing map is built during identity exchange
 /// (from the authenticated sender of each identity message) and used to address
@@ -1020,7 +1020,7 @@ where
         // makes the exchange robust to that registration race on every round.
         // The poll cadence is measured on the consensus runtime `Clock` (the same
         // time source the deterministic test runtime can mock and advance), not
-        // tokio's wall-clock — keeping the identity-exchange re-announce loop
+        // tokio's wall-clock - keeping the identity-exchange re-announce loop
         // reproducible and free of a direct async-runtime timer dependency. `select!`
         // is biased top-to-bottom, so a ready message is preferred over the tick;
         // on the tick arm the in-flight `recv` future is dropped (cancel-safe on
@@ -1200,7 +1200,7 @@ fn parse_identity(body: &[u8]) -> Option<(Vec<u8>, [u8; 32], Vec<u8>)> {
 }
 
 /// Deterministic ceremony id, identical on every node given the same chain and
-/// sorted participant set: `keccak256(chain_id || round || tee_bls_0 || …)`.
+/// sorted participant set: `keccak256(chain_id || round || tee_bls_0 || ...)`.
 fn compute_ceremony_id(
     chain_id: B256,
     round: u64,

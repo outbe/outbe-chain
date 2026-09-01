@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run outbe-tee-enclave under gramine-direct in Docker (Gramine LibOS, NO SGX
-# hardware — validates the Gramine integration, not confidentiality).
+# hardware - validates the Gramine integration, not confidentiality).
 #   ./run.sh <host-binary> <host-socket-dir> [--dkg-seed <hex32>]
 # NOTE: Gramine pathname UDS are process-internal, so the socket is NOT visible
 # on the host mount; reaching the enclave from a non-Gramine process needs TCP.

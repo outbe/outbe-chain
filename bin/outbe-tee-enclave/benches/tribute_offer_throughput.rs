@@ -1,7 +1,7 @@
 //! Throughput benchmark for the in-enclave tribute-offer processing path.
 //!
 //! Measures the **pure CPU cost** the enclave pays per offer during block
-//! execution — the ceiling on how many tribute offers the network can settle:
+//! execution - the ceiling on how many tribute offers the network can settle:
 //!   X25519 ECDHE -> HKDF-SHA256 -> ChaCha20Poly1305 decrypt -> JSON parse ->
 //!   U256 economics -> Poseidon-BN254 `token_id`.
 //!
@@ -28,7 +28,7 @@ use outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt;
 use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
 
 /// Enclave-resident offer secret (the DKG-derived key in production; a fixed test
-/// scalar here — derivation cost is one-time at bootstrap, not per offer).
+/// scalar here - derivation cost is one-time at bootstrap, not per offer).
 const OFFER_SK: [u8; 32] = [7u8; 32];
 const NONCE: [u8; 12] = [1u8; 12];
 const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

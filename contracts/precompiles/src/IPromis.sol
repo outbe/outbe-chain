@@ -16,7 +16,7 @@ interface IPromis {
     // Decrypt off-chain with the account's Promis view key (outbe_deriveKeys).
     function balanceOf(address account) external view returns (bytes memory);
 
-    // Current modify-auth replay counter for `account` — the value a write's
+    // Current modify-auth replay counter for `account` - the value a write's
     // authorization (`mac`) must bind and that must be passed as `opNonce`.
     // Public: it is a per-account write counter, not a balance.
     function opNonceOf(address account) external view returns (uint64);

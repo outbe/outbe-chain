@@ -524,7 +524,7 @@ where
             ))
         })?;
         // Fast reject: recover the signer here so an unauthorized request is dropped
-        // before the enclave round-trip. This is defense-in-depth only — the enclave
+        // before the enclave round-trip. This is defense-in-depth only - the enclave
         // re-verifies the same signature, because a compromised host could bypass this
         // check and reach the enclave transport directly (see DeriveAccountKeys arm).
         let prehash = outbe_tee::protocol::eip191_hash(
@@ -577,7 +577,7 @@ where
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        // Deprecated alias — the Gratis ledger of the unified `deriveKeys`.
+        // Deprecated alias - the Gratis ledger of the unified `deriveKeys`.
         self.derive_keys(
             outbe_tee::protocol::Ledger::Gratis,
             account,
@@ -759,10 +759,10 @@ where
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
         let is_validator = self.is_validator;
-        let status = self
+        let (status, has_threshold_shares) = self
             .bridge
             .as_ref()
-            .map(|b| b.consensus_status())
+            .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
             .unwrap_or_default();
         let projection = projection_status_info(
             self.projection_readiness.current(),
@@ -777,7 +777,7 @@ where
             current_view: status.current_view,
             connected_peers: status.connected_peers,
             is_active: status.is_active(),
-            has_threshold_shares: status.has_threshold_shares(),
+            has_threshold_shares,
             last_finalized_block: status.last_finalized_block,
             last_vrf_seed: status.last_vrf_seed,
             randomness_status: status.randomness_status,
@@ -805,7 +805,7 @@ where
     async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
         // read the committed VRF seed from the target block header's
         // `mixHash` (prev_randao) via the provider, honoring `block_number`.
-        // This is the authoritative, per-node-consistent committed value — not
+        // This is the authoritative, per-node-consistent committed value - not
         // the process-local in-memory consensus seed (which a full node never
         // has and which can diverge between nodes). `None` resolves to the
         // latest canonical block, which under Outbe's fast finality is the
@@ -907,7 +907,7 @@ where
 
     async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
         // Only nodes running consensus (or a follower that has itself synced the
-        // height) can serve this — both install a finalization fetcher on the
+        // height) can serve this - both install a finalization fetcher on the
         // bridge at marshal-start. A node without a bridge (pure EL full node)
         // has no marshal and cannot answer.
         let bridge = self.bridge.as_ref().ok_or_else(|| {

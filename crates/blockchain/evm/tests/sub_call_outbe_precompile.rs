@@ -1,4 +1,4 @@
-//! sub-call → outbe precompile visibility test.
+//! sub-call -> outbe precompile visibility test.
 //!
 //! Verifies that after outbe-precompile propagation, a sub-call driven by
 //! `sub_call::run` can reach an outbe stateful precompile and returns its

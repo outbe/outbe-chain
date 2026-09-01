@@ -354,7 +354,7 @@ pub fn open_certified_payout_round(
 
 /// Rejects a batch whose leaves were already paid.
 ///
-/// This is the cheapest possible gate — one word read — so a racing duplicate
+/// This is the cheapest possible gate - one word read - so a racing duplicate
 /// costs a single SLOAD instead of a full proof verification.
 pub fn require_certified_leaves_unpaid(
     storage: &StorageHandle<'_>,
@@ -462,7 +462,7 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 
 /// Record the (pre-deduplicated) legacy contributor list for a series. Called
 /// once per series by legacy Lysis, before the tributes are burned. Each entry
-/// is `(tribute owner, Σ nominal_amount_minor)`. A certified generation closes
+/// is `(tribute owner, sum nominal_amount_minor)`. A certified generation closes
 /// this path for that exact series identity.
 pub fn record_contributors(
     storage: &StorageHandle<'_>,
@@ -486,7 +486,7 @@ pub fn contributor_count(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     IntexContract::new(storage.clone()).read_contributor_count(worldwide_day)
 }
 
-/// Σ of all contributor nominals for a series (the proportionality denominator).
+/// sum of all contributor nominals for a series (the proportionality denominator).
 pub fn contributor_total(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
     IntexContract::new(storage.clone()).read_contributor_total(worldwide_day)
 }
@@ -684,7 +684,7 @@ pub fn proceeds_finalize_on_done(
 
 /// Finalize proceeds aggregation for a series: clear the pot/deadline/counters,
 /// drop it from the awaiting set, and clear the (now spent) contributor map.
-/// The per-(series, chain) flags are left as harmless dead entries — a series id
+/// The per-(series, chain) flags are left as harmless dead entries - a series id
 /// (the worldwide day) never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());

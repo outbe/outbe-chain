@@ -50,8 +50,8 @@ impl Reporter for MarshalUpdateReporter {
     /// [`commonware_actor::Feedback`]. This reporter fans the marshal update out
     /// to its tip/block consumers and the executor, all of which now enqueue
     /// onto their own unbounded mailboxes synchronously (no `.await`). We report
-    /// [`Feedback::Closed`] only when the executor mailbox — the
-    /// recovery-critical sink — is gone; downstream consumer mailboxes are
+    /// [`Feedback::Closed`] only when the executor mailbox - the
+    /// recovery-critical sink - is gone; downstream consumer mailboxes are
     /// best-effort wakeups and their closure must not stall the voter task.
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
         if let commonware_consensus::marshal::Update::Tip(round, height, digest) = &activity {
@@ -83,8 +83,8 @@ mod tests {
     //! `report` clones the marshal `Update` for every block consumer (each clone
     //! of [`Exact`] increments the acknowledgement's `remaining` count) and moves
     //! the original into the executor. The marshal's `Exact` waiter therefore
-    //! resolves to `Ok` only when *every* copy — executor plus each block
-    //! consumer — is acknowledged. If any copy is dropped unacknowledged,
+    //! resolves to `Ok` only when *every* copy - executor plus each block
+    //! consumer - is acknowledged. If any copy is dropped unacknowledged,
     //! `Exact::drop` cancels the aggregate and the waiter resolves to
     //! `Err(Canceled)`, which upstream marshal treats as fatal. These tests pin
     //! both halves of that contract.
@@ -166,7 +166,7 @@ mod tests {
     ///
     /// Guard sanity: if either copy were left unacknowledged here, its
     /// `Exact::drop` would `cancel()` the shared state and the waiter would
-    /// instead resolve to `Err(Canceled)` — so this passing proves the
+    /// instead resolve to `Err(Canceled)` - so this passing proves the
     /// per-clone `remaining` increment is satisfied only when all copies ack.
     #[test]
     fn all_acks_resolve_waiter_ok() {
@@ -206,7 +206,7 @@ mod tests {
     }
 
     /// SEC-2: if a single fan-out copy is dropped without being acknowledged,
-    /// the marshal `Exact` waiter resolves to `Err(Canceled)` — the upstream
+    /// the marshal `Exact` waiter resolves to `Err(Canceled)` - the upstream
     /// fatal-panic hazard for a stalled/non-acking consumer.
     ///
     /// Guard sanity: if `Exact::drop` did NOT cancel on an unacknowledged drop,

@@ -90,7 +90,7 @@ contract SolverAllocatorTest is Test {
 
         uint256[2][] memory idsAndAmounts = new uint256[2][](0);
 
-        // claimArbiter == sponsor (self-withdrawal) — now blocked
+        // claimArbiter == sponsor (self-withdrawal) - now blocked
         vm.expectRevert(SolverAllocator.UnauthorizedArbiter.selector);
         allocator.authorizeClaim(bytes32(0), solver, solver, 0, type(uint256).max, idsAndAmounts, "");
     }

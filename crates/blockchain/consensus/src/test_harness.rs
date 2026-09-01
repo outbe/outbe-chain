@@ -4,17 +4,17 @@
 //! What it models, faithfully:
 //!
 //! - `simulated::Network<deterministic::Context, bls12381::PublicKey>`
-//!   peer fabric — same shape as production's authenticated::lookup
+//!   peer fabric - same shape as production's authenticated::lookup
 //!   network from outside the engine.
 //! - Per-node `Muxer::new(...)` over each of three physical channels
-//!   (vote=0, cert=1, res=2). **No `.with_backup()`** — matches
+//!   (vote=0, cert=1, res=2). **No `.with_backup()`** - matches
 //!   production's stack.rs:516-534.
 //! - `HybridScheme::<MinSig>::signer(...)` from outbe-consensus' own
-//!   `crate::hybrid` module — the actual signer construction.
+//!   `crate::hybrid` module - the actual signer construction.
 //! - `simplex::Engine::new(...)` driven by `RoundRobin` elector with
 //!   leader = `(epoch + view) % n`.
 //! - The harness invokes `crate::epoch_subchannels::register_epoch_subchannels`
-//!   and `crate::epoch_subchannels::take_or_register_current` — the
+//!   and `crate::epoch_subchannels::take_or_register_current` - the
 //!   exact functions production calls in stack.rs at DKG completion
 //!   and the top of `'epoch_loop` respectively. Toggling
 //!   `CycleOptions::use_pre_registration` switches between the
@@ -24,11 +24,11 @@
 //! which is feature-gated and would propagate via cargo feature
 //! unification):
 //!
-//! - `MockAutomaton` (Automaton + CertifiableAutomaton) — deterministic
+//! - `MockAutomaton` (Automaton + CertifiableAutomaton) - deterministic
 //!   propose/verify/certify, no payload latency.
-//! - `MockRelay` (Relay) — shared digest -> bytes broadcast store; the
+//! - `MockRelay` (Relay) - shared digest -> bytes broadcast store; the
 //!   digest remains self-describing for the mock automaton.
-//! - `MockReporter` (Reporter) — records `Finalization` activities by
+//! - `MockReporter` (Reporter) - records `Finalization` activities by
 //!   view and exposes `view_finalized(View) -> bool` so tests can
 //!   ask the precise question "did view N finalize on this node?",
 //!   insulated from later-view recovery.
@@ -329,7 +329,7 @@ impl Harness {
         assert!(n >= 2, "harness needs at least 2 nodes");
 
         // 1. Generate n BLS private keys, then sort by encoded public key
-        // bytes — matches `ordered::Set` ordering, which is the
+        // bytes - matches `ordered::Set` ordering, which is the
         // ordering simplex/HybridScheme indexes by.
         let mut keys: Vec<bls12381::PrivateKey> = (0u64..n as u64)
             .map(|seed| bls12381::PrivateKey::from_seed(seed.wrapping_add(1)))
@@ -347,7 +347,7 @@ impl Harness {
 
         // 2. Bootstrap DKG. `bootstrap_dkg(n)` produces shares whose
         // `share.index` matches the participant position by
-        // construction — the keys are already sorted, so shares[i]
+        // construction - the keys are already sorted, so shares[i]
         // corresponds to participants.index(keys[i].public_key()).
         let dkg = bootstrap_dkg(n as u32).expect("bootstrap_dkg");
         let polynomial = dkg.polynomial.clone();
@@ -663,7 +663,7 @@ impl Harness {
         }
 
         // Backfill any missing snapshots with the live reporter (per-task
-        // didn't deliver in time — pull the reporter directly).
+        // didn't deliver in time - pull the reporter directly).
         let mut finalized_view_per_node = Vec::with_capacity(n);
         let mut view_finalized_per_node = Vec::with_capacity(n);
         let mut view_one_signers_per_node = Vec::with_capacity(n);

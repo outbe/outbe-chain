@@ -2,7 +2,7 @@
 //!
 //! Lifted out of `hybrid.rs`: `HybridRandom` (elector config), the
 //! `HybridRandomElector` it builds, and the epoch-scoped
-//! `HybridElectorConfigProvider`. The dependency is one-way — election consumes
+//! `HybridElectorConfigProvider`. The dependency is one-way - election consumes
 //! `HybridScheme` / `HybridCertificate` / `VrfMaterialProvider` from the parent
 //! module; the scheme/materials never reference election.
 
@@ -129,7 +129,7 @@ impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
                         //
                         // LIVE consensus path: commonware always supplies the cert
                         // of the immediately preceding view, so dv == 1 matches and
-                        // this is a single verify — byte-identical leader to the
+                        // this is a single verify - byte-identical leader to the
                         // previous single-guess code. Larger dv occurs ONLY in the
                         // missed-proposer attribution recompute
                         // (`missed_proposers::elected_leaders_for_gap`), which feeds
@@ -157,7 +157,7 @@ impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
                             .map(|dv| {
                                 let mut seed = proof.threshold_signature.encode().to_vec();
                                 // When the anchor certificate is older than view - 1
-                                // (dv > 1 — the recompute case), one certificate
+                                // (dv > 1 - the recompute case), one certificate
                                 // serves multiple gap views; bind the seed to the
                                 // ELECTED round so each view gets a distinct leader
                                 // instead of collapsing to one. The live path
@@ -438,7 +438,7 @@ mod tests {
     }
 
     /// Reference leader: `modulo(raw_seed [++ encode(elected)], n)`. `mix` mirrors
-    /// the production rule — the elected round is appended only for the recompute
+    /// the production rule - the elected round is appended only for the recompute
     /// (dv > 1) case, never the live (dv == 1) case.
     fn expected_leader(raw: &[u8], mix: Option<Round>, n: usize) -> Participant {
         let mut seed = raw.to_vec();
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn elect_live_path_dv1_is_unchanged_raw_seed() {
-        // dv == 1: certificate of view V-1, electing V — the live consensus path.
+        // dv == 1: certificate of view V-1, electing V - the live consensus path.
         // Must use the RAW threshold-signature seed (no round mix): byte-identical
         // leader to the pre-fix single-guess code.
         let epoch = Epoch::new(1);

@@ -5,7 +5,7 @@
 //!
 //! The Solidity API passes `level0` (bytes32, by value) plus two
 //! `mapping(bytes32 => bytes32) storage` references for `level1` / `level2`.
-//! The Rust analog is the [`BinTreeStorage`] trait — callers implement six
+//! The Rust analog is the [`BinTreeStorage`] trait - callers implement six
 //! `read_*` / `write_*` methods over their own storage backing, and the
 //! traversal helpers work in terms of the trait only.
 //!
@@ -13,7 +13,7 @@
 //! set bits in ascending order via [`find_first_left_inclusive`], processes
 //! the bins at or below some threshold, then clears the bits via [`remove`].
 //! Worst case per traversal step: 3 SLOAD (one per level), no loops at any
-//! level — same big-O as Solidity LB.
+//! level - same big-O as Solidity LB.
 
 use alloy_primitives::U256;
 
@@ -58,9 +58,9 @@ fn assemble(top: u8, mid: u8, lo: u8) -> u32 {
 
 /// Abstraction over the three storage slots of a PancakeSwap-style bin tree.
 /// Implementations expose:
-/// - `root` — one `U256` word (mirrors Solidity `bytes32 level0`).
-/// - `mid` — one `U256` word per top byte (mirrors `mapping level1`).
-/// - `leaf` — one `U256` word per `(top, mid)` pair (mirrors `mapping level2`).
+/// - `root` - one `U256` word (mirrors Solidity `bytes32 level0`).
+/// - `mid` - one `U256` word per top byte (mirrors `mapping level1`).
+/// - `leaf` - one `U256` word per `(top, mid)` pair (mirrors `mapping level2`).
 ///
 /// All methods take `&self`: callers typically back this with storage primitives
 /// that route writes through interior-mutable handles (e.g.
@@ -86,7 +86,7 @@ pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 
 /// Mirrors `TreeMath.add(level0, level1, level2, id)` (TreeMath.sol L18-39).
 /// Sets the bit; cascades to mid and root if the lower-level word transitions
-/// from zero. Returns `true` iff the bit transitioned 0 → 1 (i.e., this was
+/// from zero. Returns `true` iff the bit transitioned 0 -> 1 (i.e., this was
 /// a real insertion, not a re-insertion).
 pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     let (top, mid, lo) = split(id);
@@ -100,14 +100,14 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     s.write_leaf(leaf_k, new_leaves)?;
 
     if leaves.is_zero() {
-        // Leaf transitioned ∅ → non-∅ — propagate to mid.
+        // Leaf transitioned {} -> non-{} - propagate to mid.
         let mid_k = mid_key(top);
         let mid_word = s.read_mid(mid_k)?;
         let new_mid = mid_word | (U256::ONE << (mid as usize));
         s.write_mid(mid_k, new_mid)?;
 
         if mid_word.is_zero() {
-            // Mid transitioned ∅ → non-∅ — propagate to root.
+            // Mid transitioned {} -> non-{} - propagate to root.
             let root = s.read_root()?;
             let new_root = root | (U256::ONE << (top as usize));
             s.write_root(new_root)?;
@@ -119,7 +119,7 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// Mirrors `TreeMath.remove(level0, level1, level2, id)`
 /// (TreeMath.sol L45-65). Clears the bit; cascades to mid and root if the
 /// lower-level word transitions to zero. Returns `true` iff the bit
-/// transitioned 1 → 0.
+/// transitioned 1 -> 0.
 pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     let (top, mid, lo) = split(id);
     let leaf_k = leaf_key(top, mid);
@@ -134,7 +134,7 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     if !new_leaves.is_zero() {
         return Ok(true);
     }
-    // Leaf went to zero — clear our bit in mid.
+    // Leaf went to zero - clear our bit in mid.
     let mid_k = mid_key(top);
     let mid_word = s.read_mid(mid_k)?;
     let new_mid = mid_word & !(U256::ONE << (mid as usize));
@@ -143,7 +143,7 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     if !new_mid.is_zero() {
         return Ok(true);
     }
-    // Mid went to zero — clear our bit in root.
+    // Mid went to zero - clear our bit in root.
     let root = s.read_root()?;
     let new_root = root & !(U256::ONE << (top as usize));
     s.write_root(new_root)?;
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn remove_cascades_to_root_when_only_bit() {
         with_store(|s| {
-            // id = 0x010203 → top=1, mid=2, lo=3.
+            // id = 0x010203 -> top=1, mid=2, lo=3.
             add(s, 0x010203).unwrap();
             assert_eq!(s.read_root().unwrap(), U256::ONE << 1);
             remove(s, 0x010203).unwrap();
@@ -332,7 +332,7 @@ mod tests {
             add(s, 50).unwrap();
             assert_eq!(find_first_left_inclusive(s, 50).unwrap(), Some(50));
             assert_eq!(find_first_left_inclusive(s, 49).unwrap(), Some(50));
-            // Past the only set bit → None.
+            // Past the only set bit -> None.
             assert_eq!(find_first_left_inclusive(s, 51).unwrap(), None);
         });
     }
@@ -351,8 +351,8 @@ mod tests {
     #[test]
     fn find_first_crosses_mid_boundary() {
         with_store(|s| {
-            // 300 = 0x12C → top=0, mid=1, lo=44.
-            // 1000 = 0x3E8 → top=0, mid=3, lo=232.
+            // 300 = 0x12C -> top=0, mid=1, lo=44.
+            // 1000 = 0x3E8 -> top=0, mid=3, lo=232.
             add(s, 300).unwrap();
             add(s, 1000).unwrap();
             assert_eq!(find_first_left_inclusive(s, 301).unwrap(), Some(1000));
@@ -362,8 +362,8 @@ mod tests {
     #[test]
     fn find_first_crosses_root_boundary() {
         with_store(|s| {
-            // 0x000050 → top=0, mid=0, lo=80.
-            // 0x010001 → top=1, mid=0, lo=1.
+            // 0x000050 -> top=0, mid=0, lo=80.
+            // 0x010001 -> top=1, mid=0, lo=1.
             add(s, 0x000050).unwrap();
             add(s, 0x010001).unwrap();
             assert_eq!(

@@ -6,8 +6,8 @@
 //! holding are the ones registered in the `RadicleRegistry` precompile.
 //!
 //! `rad init` rewrites the network-facing part of that config from chain state
-//! — validator set, Radicle NodeId bindings and P2P hosts are all read over
-//! RPC, never hard-coded — and leaves the identity keys untouched.
+//! - validator set, Radicle NodeId bindings and P2P hosts are all read over
+//! RPC, never hard-coded - and leaves the identity keys untouched.
 
 use std::{
     fs,
@@ -163,7 +163,7 @@ async fn init(
 ) -> Result<()> {
     if !home.join("keys").join("radicle.pub").is_file() {
         bail!(
-            "no Radicle identity in {}: run `rad auth` first — it creates the keys, \
+            "no Radicle identity in {}: run `rad auth` first - it creates the keys, \
              this command only rewrites the network settings",
             home.display()
         );
@@ -381,7 +381,7 @@ fn start(home: &Path, listen: &str, binary: &str) -> Result<()> {
     if socket.as_os_str().len() > 100 {
         bail!(
             "Radicle home is too deep: the control socket path {} would exceed the \
-             Unix socket limit — use a shorter --home",
+             Unix socket limit - use a shorter --home",
             socket.display()
         );
     }
@@ -403,11 +403,11 @@ fn start(home: &Path, listen: &str, binary: &str) -> Result<()> {
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors))
         // Own process group: without it the node stays in this shell's group and
-        // dies with it — a Ctrl-C, a closed SSH session or a timeout signalling
+        // dies with it - a Ctrl-C, a closed SSH session or a timeout signalling
         // the group would take the node down with the command that started it.
         .process_group(0)
         .spawn()
-        .wrap_err_with(|| format!("failed to start `{binary}` — is it on PATH?"))?;
+        .wrap_err_with(|| format!("failed to start `{binary}` - is it on PATH?"))?;
 
     fs::write(pid_path(home), child.id().to_string())
         .wrap_err_with(|| format!("failed to write {}", pid_path(home).display()))?;
@@ -472,7 +472,7 @@ async fn status(client: &(impl Rpc + Sync), home: &Path) -> Result<()> {
 
     let path = config_path(home);
     if !path.is_file() {
-        println!("Config:  absent — run `outbe-cli rad init`");
+        println!("Config:  absent - run `outbe-cli rad init`");
         return Ok(());
     }
     let config = read_config(&path)?;

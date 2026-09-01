@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const privateKey = process.env.OUTBE_PRIVATE_KEY;
 
   const ctx = await createCtx(rpcUrl, privateKey);
-  // stderr only — stdout is the MCP stdio channel.
+  // stderr only - stdout is the MCP stdio channel.
   console.error(
     `[outbe-mcp] rpc=${rpcUrl} chainId=${ctx.chain.id} signer=${ctx.account?.address ?? "(read-only)"}`,
   );

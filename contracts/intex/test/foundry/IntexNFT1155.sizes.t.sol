@@ -9,7 +9,7 @@ import {IntexNFT1155V2Reinit} from "./upgrade/UpgradeStubs.sol";
 ///
 /// IntexNFT1155 sits within a thin margin of the 24,576-byte EIP-170 runtime limit (its
 /// metadata/SVG rendering is already split into the linked IntexMetadata library to claw back
-/// space). Critically, `forge test` does NOT enforce EIP-170 on deploy — an over-limit contract
+/// space). Critically, `forge test` does NOT enforce EIP-170 on deploy - an over-limit contract
 /// still deploys and runs in the test EVM, so a size regression passes the whole suite and only
 /// surfaces in `forge build --sizes`. This test promotes the limit to a first-class assertion:
 /// it deploys the contract and measures the real runtime bytecode length, failing in `forge test`

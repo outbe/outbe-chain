@@ -761,7 +761,7 @@ fn structured_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
 fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
     let (number, nanos_per_unit) = [
         ("ms", 1_000_000_u128),
-        ("µs", 1_000_u128),
+        ("us", 1_000_u128),
         ("us", 1_000_u128),
         ("ns", 1_u128),
         ("s", 1_000_000_000_u128),

@@ -21,7 +21,7 @@ pub enum ActivationError {
     /// `vrf_material_version` reached `u64::MAX` and cannot be incremented.
     ///
     /// The activation must reject deterministically
-    /// instead of saturating — both proposer and validator paths see the same
+    /// instead of saturating - both proposer and validator paths see the same
     /// failure rather than diverging on a silently capped value.
     #[error("vrf material version overflow at reshare activation")]
     VrfVersionOverflow,

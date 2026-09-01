@@ -26,19 +26,19 @@ interface IGratis {
     // Decrypt off-chain with the account's view key.
     function balanceOf(address account) external view returns (bytes memory);
 
-    // ERC-20 transfer surface — gratis is non-transferable.
+    // ERC-20 transfer surface - gratis is non-transferable.
     // `allowance` returns 0; the others revert.
     function allowance(address owner, address spender) external view returns (uint256);
     function approve(address spender, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 
-    // gratis-specific — confidential pledged amount, returned as the same fixed
+    // gratis-specific - confidential pledged amount, returned as the same fixed
     // 56-byte `version || AEAD-ct` blob as balanceOf (empty for a never-pledged
     // account). Decrypt off-chain with the account's view key.
     function pledgedOf(address account) external view returns (bytes memory);
 
-    // Current modify-auth replay counter for `account` — the value a write's
+    // Current modify-auth replay counter for `account` - the value a write's
     // authorization (`mac`) must bind and that must be passed as `opNonce`.
     // Public: it is a per-account write counter, not a balance.
     function opNonceOf(address account) external view returns (uint64);

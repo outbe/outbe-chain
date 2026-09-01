@@ -3,8 +3,8 @@
 //! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal:
 //! try the local block cache first, then subscribe to the marshal by digest
 //! (falling back to fetch-by-round) under a bounded timeout. Lifted out of
-//! `handler.rs` so the strategy — and its cache/marshal/timeout/telemetry
-//! shape — reads and tests independently of the verify event loop; it takes the
+//! `handler.rs` so the strategy - and its cache/marshal/timeout/telemetry
+//! shape - reads and tests independently of the verify event loop; it takes the
 //! block-cache and marshal seams as explicit parameters instead of `&self`.
 
 use std::time::Instant;

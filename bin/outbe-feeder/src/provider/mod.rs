@@ -23,7 +23,7 @@ use crate::config::{FeederConfig, ProviderEndpointConfig};
 /// This is the off-chain ingestion boundary. Values are converted to
 /// `U256` at 1e18 scale in the aggregator before building the on-chain
 /// vote payload. The on-chain oracle (`crates/system/oracle/`) uses
-/// only `U256` — no `f64` crosses the precompile boundary.
+/// only `U256` - no `f64` crosses the precompile boundary.
 #[derive(Debug, Clone)]
 pub struct TickerPrice {
     /// Last trade price (off-chain f64 from provider API).
@@ -65,7 +65,7 @@ pub trait Provider: Send + Sync {
 
     /// Fetches recent candle data for the given pairs.
     /// Keys are `"BASE/QUOTE"` strings; values are chronologically ordered candles.
-    /// Default returns empty — providers that don't support candles need not override.
+    /// Default returns empty - providers that don't support candles need not override.
     async fn get_candle_prices(
         &self,
         pairs: &[(String, String)],

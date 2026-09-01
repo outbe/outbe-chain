@@ -10,7 +10,7 @@ import {Scope} from "the-compact/src/types/Scope.sol";
 /// @title SolverAllocator
 /// @notice Allocator for The Compact that manages solver collateral resource locks.
 /// @dev Roles:
-///      - Standard ERC6909 transfers (attest): blocked — solvers must use escrow.withdraw().
+///      - Standard ERC6909 transfers (attest): blocked - solvers must use escrow.withdraw().
 ///      - Allocated transfers / claims (authorizeClaim): only arbiter (escrow) is authorized.
 ///
 /// Deploy order:
@@ -31,7 +31,7 @@ contract SolverAllocator is IAllocator {
     /// @notice Allocator ID assigned by The Compact on registration
     uint96 public immutable ALLOCATOR_ID;
 
-    /// @notice Deployer address — can call setArbiter() once
+    /// @notice Deployer address - can call setArbiter() once
     address public immutable OWNER;
 
     // ============ State ============
@@ -91,7 +91,7 @@ contract SolverAllocator is IAllocator {
 
     /// @inheritdoc IAllocator
     /// @dev Allows ERC6909 transfers only when the operator is the arbiter (escrow).
-    ///      All other direct transfers are blocked — solvers must use escrow.withdraw().
+    ///      All other direct transfers are blocked - solvers must use escrow.withdraw().
     function attest(
         address operator,
         address, /* from */
@@ -136,7 +136,7 @@ contract SolverAllocator is IAllocator {
         uint256[2][] calldata, /* idsAndAmounts */
         bytes calldata /* allocatorData */
     ) public view override returns (bool) {
-        // Only the arbiter (escrow) can claim — solvers must go through escrow — and not past expiry.
+        // Only the arbiter (escrow) can claim - solvers must go through escrow - and not past expiry.
         return claimArbiter == arbiter && block.timestamp <= expires;
     }
 }

@@ -1,9 +1,9 @@
 //! Module-structure standard layout:
-//! - `schema.rs` — storage schema for the `SlashIndicator` facade.
-//! - `runtime.rs` — slashing use-cases.
-//! - `evidence.rs` — byzantine evidence handling.
-//! - `hooks.rs` — per-finalized-block guard wrappers.
-//! - `precompile.rs` — ABI dispatch.
+//! - `schema.rs` - storage schema for the `SlashIndicator` facade.
+//! - `runtime.rs` - slashing use-cases.
+//! - `evidence.rs` - byzantine evidence handling.
+//! - `hooks.rs` - per-finalized-block guard wrappers.
+//! - `precompile.rs` - ABI dispatch.
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers; migrate them opportunistically.

@@ -33,7 +33,7 @@ pub enum ZeroFeeCmd {
     /// ZeroFee paymaster precompile so it can submit up to
     /// `FREE_TX_DAILY_LIMIT` free transactions per UTC day.
     ///
-    /// The output JSON is the inner `SignedAuthorization` body — embed
+    /// The output JSON is the inner `SignedAuthorization` body - embed
     /// it in the `authorizationList` of a type-0x04 (Pectra) transaction.
     Eip7702Authorize {
         /// Target address the EOA delegates to. Defaults to the
@@ -53,7 +53,7 @@ pub enum ZeroFeeCmd {
         chain_id: Option<u64>,
 
         /// EOA nonce to bind the authorization to. The signer's
-        /// current nonce on the configured RPC is the safe default —
+        /// current nonce on the configured RPC is the safe default -
         /// override only if you know what you are doing.
         #[arg(long)]
         nonce: Option<u64>,
@@ -137,7 +137,7 @@ fn build_bootstrap_raw_transaction(
 /// Wire-format payload that drops verbatim into the `authorizationList`
 /// field of a Pectra transaction. Field names match the EIP-7702 JSON
 /// schema accepted by viem and `cast wallet sign-auth`. The recovered
-/// signer address is intentionally absent — see
+/// signer address is intentionally absent - see
 /// [`sign_and_print_authorization`] for the rationale.
 #[derive(Serialize)]
 struct SignedAuthorizationOutput {
@@ -168,7 +168,7 @@ fn sign_and_print_authorization(
         s: signed.s(),
     };
 
-    // stdout carries the wire payload only — operators pipe it straight
+    // stdout carries the wire payload only - operators pipe it straight
     // into an `authorizationList` entry. The recovered signer address
     // goes to stderr so it cannot accidentally land in the JSON body
     // (viem 2.x silently ignores unknown fields, which would mask a

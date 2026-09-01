@@ -25,7 +25,7 @@ RETH_BOOTNODES="${RETH_BOOTNODES:-}"
 RETH_BOOTNODES_FILE="${RETH_BOOTNODES_FILE:-$OUTPUT_DIR/reth-bootnodes.txt}"
 # Uniform port shift so multiple localnets can run in parallel. Applied to every
 # base port below (and the TEE socket). Must match the PORT_OFFSET the network was
-# bootstrapped with — bootstrap-testnet.sh bakes the same shift into the consensus
+# bootstrapped with - bootstrap-testnet.sh bakes the same shift into the consensus
 # p2p addresses (validators.json/genesis) and reth bootnodes.
 PORT_OFFSET="${PORT_OFFSET:-0}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR="${OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR:-}"
@@ -180,7 +180,7 @@ do_start() {
         # OUTBE_TEE_ENCLAVE_MOCK=1 selects the dev mock binary
         # (`outbe-tee-enclave-mock`, built `--features mock`): unattested quote +
         # stable sealing key, for localnet/CI without SGX. Node args are identical
-        # — only which binary the container runs differs.
+        # - only which binary the container runs differs.
         local tee_bin_name="outbe-tee-enclave"
         local tee_build_hint="cargo build --release --bin outbe-tee-enclave"
         if [ -n "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
@@ -213,7 +213,7 @@ do_start() {
             exit 1
         fi
         if ! docker image inspect "$tee_gramine_image" >/dev/null 2>&1; then
-            echo "Test-only Gramine enclave image '$tee_gramine_image' missing — building it..."
+            echo "Test-only Gramine enclave image '$tee_gramine_image' missing - building it..."
             if ! docker build \
                 -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
                 -t "$tee_gramine_image" \
@@ -281,14 +281,14 @@ do_start() {
         local -a tee_args=()
         if [ -n "$tee_enclave_bin" ]; then
             # Distinct DKG identity per validator (else the n enclaves would be
-            # the same DKG participant — a degenerate ceremony). Deterministic
+            # the same DKG participant - a degenerate ceremony). Deterministic
             # from the validator index; a validator-count/order change requires a
             # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
             # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
-            # *:7000 by default on Apple Silicon — the very platform `localnet`
-            # targets — so the node would connect to AirPlay and fail-fast on a quote
+            # *:7000 by default on Apple Silicon - the very platform `localnet`
+            # targets - so the node would connect to AirPlay and fail-fast on a quote
             # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
             # binds 127.0.0.1 only; `localhost` could resolve to ::1).
             local tee_port=$((17000 + PORT_OFFSET + i))
@@ -356,7 +356,7 @@ do_start() {
             # not just a one-shot boot snapshot).
             docker logs -f "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 &
             echo $! > "$PID_DIR/validator-$i.enclave-log.pid"
-            # WS-M2 M6: fail loudly instead of silently proceeding — otherwise the node
+            # WS-M2 M6: fail loudly instead of silently proceeding - otherwise the node
             # would later fail-fast on the missing socket with a less obvious cause.
             if [ -z "$tee_up" ]; then
                 echo "Error: validator-$i TEE enclave did not open its socket 127.0.0.1:$tee_port within ~20s." >&2
@@ -464,7 +464,7 @@ do_start() {
         fi
         # Debug builds need a larger thread stack: on block 1 the proposer signs
         # the begin-zone system txs, which lazily initializes k256's secp256k1
-        # generator lookup table — a huge *unoptimized* stack frame that
+        # generator lookup table - a huge *unoptimized* stack frame that
         # overflows reth's ~2 MiB tokio blocking-pool thread (`thread '<unknown>'
         # has overflowed its stack`). Release builds optimize the frame away and
         # are unaffected. 16 MiB is ample headroom; operators may override.
@@ -530,7 +530,7 @@ do_start() {
 
 do_stop() {
     if [ ! -d "$PID_DIR" ]; then
-        echo "No PID directory found at $PID_DIR — nothing to stop."
+        echo "No PID directory found at $PID_DIR - nothing to stop."
         exit 0
     fi
 
@@ -549,7 +549,7 @@ do_stop() {
             kill -TERM "$pid" 2>/dev/null
             stopping_pids+=("$pid")
             stopping_names+=("$name")
-            echo "  Stopping $name (PID $pid) — waiting for clean shutdown..."
+            echo "  Stopping $name (PID $pid) - waiting for clean shutdown..."
         else
             echo "  $name (PID $pid) already dead"
         fi
@@ -565,7 +565,7 @@ do_stop() {
             waited=$((waited + 1))
         done
         if kill -0 "$pid" 2>/dev/null; then
-            echo "  $name did not exit in 60s — SIGKILL (restart may need resync)"
+            echo "  $name did not exit in 60s - SIGKILL (restart may need resync)"
             # $pid is the run-supervised.sh wrapper; SIGKILL cannot be forwarded
             # to its node child, which would orphan a still-running reth process
             # holding the MDBX/static_files locks and fail the next restart with
@@ -594,7 +594,7 @@ do_stop() {
         rm -f "$pid_file"
     done
 
-    # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) — AFTER the
+    # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) - AFTER the
     # nodes have exited, so a node is never mid-request to an enclave being removed.
     # Kill the enclave-log followers FIRST so no follower blocks on a removed
     # container's log stream.
@@ -626,7 +626,7 @@ do_stop() {
 
 do_status() {
     if [ ! -d "$PID_DIR" ]; then
-        echo "No PID directory found — testnet not started."
+        echo "No PID directory found - testnet not started."
         exit 0
     fi
 

@@ -4,7 +4,7 @@
 //!
 //! This is the typed replacement for the `cast`-based RPC readers and the
 //! scenario polling helpers used by the lifecycle and update flows.
-//! Reads return `Option` — `None` is the analogue of the shell
+//! Reads return `Option` - `None` is the analogue of the shell
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
@@ -1001,7 +1001,7 @@ impl Rpc {
         })
     }
 
-    /// OIP record (`IGovernance.getOip`) — `(status, author, text)`.
+    /// OIP record (`IGovernance.getOip`) - `(status, author, text)`.
     pub fn get_oip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,
@@ -1011,7 +1011,7 @@ impl Rpc {
         Some((r.status, r.author, r.text))
     }
 
-    /// GIP record (`IGovernance.getGip`) — `(status, author, text)`.
+    /// GIP record (`IGovernance.getGip`) - `(status, author, text)`.
     pub fn get_gip(&self, id: u64) -> Option<(u8, Address, String)> {
         let r = eth::read_call(
             &self.cfg.rpc0,
@@ -1390,6 +1390,36 @@ impl Rpc {
             &self.url(port),
             addresses::VS_ADDR,
             &IValidatorSet::validatorByAddressCall { addr: v },
+        )?;
+        Some(ValidatorRecord {
+            address: record.validatorAddress,
+            consensus_pubkey: record.consensusPubkey,
+            stake: record.stake,
+            status: record.status,
+            slash_count: record.slashCount,
+            missed_blocks: record.missedBlocks,
+            missed_votes: record.missedVotes,
+            blocks_proposed: record.blocksProposed,
+            joined_at_height: record.joinedAtHeight,
+            deactivated_at_height: record.deactivatedAtHeight,
+            unbonding_end: record.unbondingEnd,
+            has_bls_share: record.hasBLSShare,
+        })
+    }
+
+    /// The full `validatorByAddress` record at one exact canonical block.
+    pub fn validator_record_at(
+        &self,
+        port: u16,
+        addr: &str,
+        block_number: u64,
+    ) -> Option<ValidatorRecord> {
+        let v: Address = addr.parse().ok()?;
+        let record = eth::read_call_at(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorByAddressCall { addr: v },
+            block_number,
         )?;
         Some(ValidatorRecord {
             address: record.validatorAddress,

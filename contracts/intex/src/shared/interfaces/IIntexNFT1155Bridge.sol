@@ -177,7 +177,7 @@ interface IIntexNFT1155Bridge {
 
     /// @notice Sweep residual pre-funded native tokens back to an admin recipient.
     /// @param to Recipient address (must be non-zero).
-    /// @param amount Amount in wei to sweep; must be ≤ contract balance.
+    /// @param amount Amount in wei to sweep; must be <= contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
     // --- Single-recipient batch ---

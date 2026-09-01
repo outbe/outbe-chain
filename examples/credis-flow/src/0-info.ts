@@ -100,7 +100,7 @@ async function main() {
       console.warn(`\n(!) Could not fetch Gratis view key (${(e as Error).message}); balances shown as ciphertext.`);
     }
   } else {
-    console.warn("\n(!) USER_PRIVATE_KEY not set — Gratis balances shown as ciphertext (the account key is needed to fetch its view key).");
+    console.warn("\n(!) USER_PRIVATE_KEY not set - Gratis balances shown as ciphertext (the account key is needed to fetch its view key).");
   }
 
   const smartAccountAddr = await saFactory.getAccountAddress(
@@ -138,13 +138,13 @@ async function printUserInfo(
 
   const showGratis = keys
     ? formatTokenMeta(decryptBalance(keys.viewKey, userAddress, gratisBlob), gratisMeta)
-    : `${gratisBlob} (ciphertext — need view key)`;
+    : `${gratisBlob} (ciphertext - need view key)`;
   const showPledged = keys
     ? formatTokenMeta(decryptPledged(keys.viewKey, userAddress, pledgedBlob), gratisMeta)
-    : `${pledgedBlob} (ciphertext — need view key)`;
+    : `${pledgedBlob} (ciphertext - need view key)`;
 
   // Pending pledges live in enclave-encrypted PledgeLockTickets (not readable with the
-  // view key) and are NOT yet in `pledgedOf` — that ledger fills only at requestCredis.
+  // view key) and are NOT yet in `pledgedOf` - that ledger fills only at requestCredis.
   // The local ticket JSON is the only client-visible source, so sum this chain's tickets
   // that haven't been consumed into a credis position yet (no positionId).
   const { chainId } = await provider.getNetwork();
@@ -178,7 +178,7 @@ function leagueFromRcfi(rcfi: bigint, maxRcfi: bigint, minLeague: bigint, maxLea
  * is TEE-encrypted, so the index read needs an owner-signed, expiring
  * authorization (the same account key); without USER_PRIVATE_KEY only the
  * plaintext league bounds/max are available. League is derived client-side from
- * the index vs the plaintext synthetic maximum — no separate on-chain read.
+ * the index vs the plaintext synthetic maximum - no separate on-chain read.
  */
 async function fetchFidelity(
   provider: ethers.JsonRpcProvider,

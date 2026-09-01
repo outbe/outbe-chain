@@ -148,7 +148,7 @@ function isUint(type: string, bits?: number): boolean {
  * `enclosingTupleType` is the enclosing tuple's `internalType` (e.g. `struct
  * IGovernance.Proposal`) when there is one. A bare `status` byte means the
  * WorldwideDay lifecycle everywhere except inside a governance proposal, which
- * uses its own enum — so the enclosing struct disambiguates them.
+ * uses its own enum - so the enclosing struct disambiguates them.
  */
 interface ScalarFormatContext {
   functionName?: string;

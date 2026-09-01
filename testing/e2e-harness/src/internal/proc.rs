@@ -3,7 +3,7 @@
 //!
 //! Every process the harness launches is **owned**: nodes are held as
 //! [`ChildGuard`]s (killed + reaped on drop, no `nohup`/pid-files) and enclave
-//! containers as [`EnclaveGuard`]s — the `docker run` runs in the **foreground**
+//! containers as [`EnclaveGuard`]s - the `docker run` runs in the **foreground**
 //! (no `-d`) as an owned child, with a `docker rm -f` backstop on drop. Because a
 //! fresh `World` is built per scenario, dropping it tears everything down; the
 //! `Localnet`/`Nodes` handles that hold these guards are non-`Clone`.
@@ -95,8 +95,8 @@ impl DockerImageId {
 /// Build a `Vec<String>` of process arguments from `Display` tokens.
 ///
 /// Every argument is stringified once (`to_string`), so callers write clean
-/// literals, ports, and paths — pass a path's `.display()` — without sprinkling
-/// `.into()` / `.to_string()` / `.display().to_string()`. `.extend(args![…])` a
+/// literals, ports, and paths - pass a path's `.display()` - without sprinkling
+/// `.into()` / `.to_string()` / `.display().to_string()`. `.extend(args![...])` a
 /// base list with conditional or role-specific tails.
 macro_rules! args {
     ($($x:expr),* $(,)?) => {
@@ -140,12 +140,23 @@ impl ChildGuard {
     /// arrive. Stopping the way an operator would is what makes a restart
     /// reproducible.
     pub(crate) fn stop(&mut self) {
+        self.stop_with_signal("TERM");
+    }
+
+    /// Stop through the operator Ctrl-C path. Reth and the outer node launcher
+    /// both observe SIGINT, allowing the launcher to drain its consensus thread
+    /// before ExEx resources disappear.
+    pub(crate) fn interrupt(&mut self) {
+        self.stop_with_signal("INT");
+    }
+
+    fn stop_with_signal(&mut self, signal: &str) {
         if self.exited() {
             let _ = self.child.wait();
             return;
         }
         let _ = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
+            .args([format!("-{signal}"), self.child.id().to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -192,7 +203,7 @@ impl Drop for DockerGuard {
 
 /// An owned enclave: the foreground child (killed on drop) plus, for the
 /// containerized profile, a `docker rm -f` backstop for the container itself.
-/// Field order matters — the `docker run` client is dropped first, then the
+/// Field order matters - the `docker run` client is dropped first, then the
 /// container is force-removed. A native host enclave has no container, so the
 /// child guard alone owns its whole lifetime.
 #[derive(Debug)]
@@ -228,7 +239,7 @@ impl TestRemoteAttestation {
     }
 }
 
-/// How one enclave is executed. Two distinct, explicitly named profiles — never
+/// How one enclave is executed. Two distinct, explicitly named profiles - never
 /// a fallback from one to the other.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EnclaveLaunch {
@@ -603,7 +614,7 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
             // instead of killing a process this run does not own.
             if wait_tcp(spec.tee_port, 1) {
                 bail!(
-                    "127.0.0.1:{} is already bound — an enclave from an earlier run is still \
+                    "127.0.0.1:{} is already bound - an enclave from an earlier run is still \
                      listening. Run `outbe-e2e localnet stop` (or kill it) before starting.",
                     spec.tee_port
                 );
@@ -681,7 +692,7 @@ pub(crate) fn docker_rm(name: &str, sudo: bool) {
 }
 
 /// Redirect a spawned node's stdout+stderr to `<node_dir>/node.log` (append),
-/// with no stdin — the owned-process analogue of the shell `>> node.log 2>&1`.
+/// with no stdin - the owned-process analogue of the shell `>> node.log 2>&1`.
 pub(crate) fn attach_log(cmd: &mut Command, node_dir: &Path) -> Result<()> {
     let log = OpenOptions::new()
         .create(true)
@@ -758,7 +769,7 @@ pub(crate) fn wait_tcp(port: u16, tries: u32) -> bool {
     false
 }
 
-/// Run `program args…`, returning stdout on success or an error carrying stderr.
+/// Run `program args...`, returning stdout on success or an error carrying stderr.
 pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new(program)
         .args(args)
@@ -778,6 +789,18 @@ pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_guard_interrupts_and_reaps_the_operator_ctrl_c_path() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "trap 'exit 0' INT; while true; do sleep 0.05; done"]);
+        let mut child = ChildGuard::spawn("interrupt fixture", command).expect("spawn fixture");
+        sleep(Duration::from_millis(50));
+
+        child.interrupt();
+
+        assert!(child.exited());
+    }
 
     #[test]
     fn sigstruct_parser_requires_exact_measurements_and_versions() {
@@ -888,7 +911,7 @@ mod tests {
     }
 
     /// The native profile executes the enclave binary itself. No docker, no
-    /// bind mounts, no image id — and the seal directory is the real host path
+    /// bind mounts, no image id - and the seal directory is the real host path
     /// rather than the container's `/tee`.
     #[test]
     fn native_enclave_command_runs_the_host_binary_without_docker() {

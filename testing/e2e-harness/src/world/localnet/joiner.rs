@@ -9,6 +9,8 @@ use std::process::Command;
 use alloy_primitives::{hex, Address, Bytes, B256};
 use eyre::{eyre, Result};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::TransportError;
+use serde::Deserialize;
 
 use crate::internal::{
     addresses,
@@ -22,6 +24,29 @@ use crate::internal::{
 use crate::world::validators::RegistrationIdentity;
 
 use super::Localnet;
+
+const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+
+fn retry_node_offer_read(real_sgx: bool, attempt: usize, error: &TransportError) -> bool {
+    real_sgx
+        && attempt.saturating_add(1) < REAL_SGX_OFFER_READ_ATTEMPTS
+        && matches!(error, TransportError::IoTimeout { .. })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ManualRenewalObservationV1 {
+    pub renewal_nonce: u64,
+    pub valid_until: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualRenewalStatusObservationV1 {
+    pub finalized_height: u64,
+    pub finalized_timestamp: u64,
+    pub valid_until: u64,
+    pub journal_state: Option<String>,
+}
 
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
     let active_keys = run_dir.join("validator-0/data/keys");
@@ -50,6 +75,12 @@ fn full_node_joiner_role_args(
 }
 
 impl Localnet {
+    /// Canonical ownership key for the role-neutral FullNode process. Launch,
+    /// stop, and exit probes must all use this exact identity.
+    pub fn joiner_full_node_name(index: usize) -> String {
+        format!("joiner-full-node-{index}")
+    }
+
     /// Launch a node in non-voting full-execution mode while preserving its
     /// durable Reth datadir and role-neutral NodeHost identity.
     /// The FullNode owns an enclave and NodeHost identity in its own slot. The
@@ -77,7 +108,7 @@ impl Localnet {
         process_args.extend_from_slice(ocomp_args);
         self.extend_real_sgx_startup_timeout(&mut process_args);
 
-        let name = format!("joiner-full-node-{index}");
+        let name = Self::joiner_full_node_name(index);
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .env("RUST_MIN_STACK", "16777216")
@@ -91,15 +122,20 @@ impl Localnet {
 
     /// Stop the non-voting phase without deleting its synchronized Reth data.
     pub fn stop_joiner_full_node(&mut self, index: usize) {
-        self.followers.remove(&format!("joiner-full-node-{index}"));
+        self.followers.remove(&Self::joiner_full_node_name(index));
+    }
+
+    /// Exit state for an owned role-neutral FullNode. `None` means the process
+    /// was never registered under the canonical key and is not exit evidence.
+    pub fn joiner_full_node_exit_status(&mut self, index: usize) -> Option<bool> {
+        self.followers
+            .get_mut(&Self::joiner_full_node_name(index))
+            .map(crate::internal::proc::ChildGuard::exited)
     }
 
     /// Whether the owned non-voting FullNode process has exited.
     pub fn joiner_full_node_exited(&mut self, index: usize) -> bool {
-        match self.followers.get_mut(&format!("joiner-full-node-{index}")) {
-            Some(guard) => guard.exited(),
-            None => true,
-        }
+        self.joiner_full_node_exit_status(index).unwrap_or(true)
     }
 
     /// Generate a reusable EOA + individual MinPk BLS identity and its exact
@@ -465,17 +501,26 @@ impl Localnet {
 
     /// Start a node's role-neutral enclave and complete its one on-chain TEE join.
     pub fn join_node_enclave(&mut self, index: usize) -> Result<()> {
+        let now = eth::latest_block_timestamp(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?;
+        let valid_until = now
+            .checked_add(outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1)
+            .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?;
+        self.join_node_enclave_until(index, valid_until)
+    }
+
+    /// Join or recover one role-neutral enclave at an exact finalized-time
+    /// deadline. Expiry fail-stops the node process, not its enclave sidecar,
+    /// so recovery deliberately reuses an already-running sidecar.
+    pub(crate) fn join_node_enclave_until(&mut self, index: usize, valid_until: u64) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let key = read_evm_key(&vd)?;
-        self.start_node_enclave(index)?;
+        if !self.enclaves.contains_key(&index) {
+            self.start_node_enclave(index)?;
+        }
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
         let binding_id = random_hex_32()?;
-        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
-            .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?
-            .checked_add(7_200)
-            .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?
-            .to_string();
         let mut join = args![
             "tee",
             "join",
@@ -483,12 +528,10 @@ impl Localnet {
             sock,
             "--reth-p2p-secret-key",
             vd.join("reth-p2p-secret.hex").display(),
-            "--node-evm-key",
-            vd.join("evm-key.hex").display(),
             "--binding-id",
             binding_id,
             "--valid-until",
-            valid_until,
+            valid_until.to_string(),
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
@@ -508,6 +551,89 @@ impl Localnet {
         }
         Sh::new(&self.cfg).cli_required(join)?;
         Ok(())
+    }
+
+    /// Read one node's lease through the public CLI and its exact
+    /// consensus-finalized Registry view.
+    pub(crate) fn node_renewal_status(
+        &self,
+        index: usize,
+    ) -> Result<ManualRenewalStatusObservationV1> {
+        let vd = self.cfg.validator_dir(index);
+        let output = Sh::new(&self.cfg).cli_required(args![
+            "tee",
+            "status",
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+        ])?;
+        serde_json::from_str(&output).map_err(Into::into)
+    }
+
+    /// Run manual renewal through canonical finality and return its typed evidence.
+    pub(crate) fn renew_node_enclave_until_finalized(
+        &self,
+        index: usize,
+    ) -> Result<ManualRenewalObservationV1> {
+        let vd = self.cfg.validator_dir(index);
+        Sh::new(&self.cfg).cli_required(args![
+            "tee",
+            "renew",
+            "--enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--reth-p2p-secret-key",
+            vd.join("reth-p2p-secret.hex").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            read_evm_key(&vd)?,
+        ])?;
+        let journal_path = vd.join("data/tee-renewal-v1/journal.json");
+        let journal: serde_json::Value = serde_json::from_slice(&fs::read(&journal_path)?)?;
+        if journal
+            .pointer("/lifecycle/state")
+            .and_then(|value| value.as_str())
+            != Some("finalized")
+        {
+            return Err(eyre!(
+                "manual renewal command returned without a finalized journal for node {index}"
+            ));
+        }
+        let renewal_nonce = journal
+            .pointer("/lifecycle/finalized_binding/renewalNonce")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| eyre!("finalized renewal journal has no renewal nonce"))?;
+        let valid_until = journal
+            .pointer("/lifecycle/finalized_binding/validUntil")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| eyre!("finalized renewal journal has no lease deadline"))?;
+        Ok(ManualRenewalObservationV1 {
+            renewal_nonce,
+            valid_until,
+        })
+    }
+
+    /// Prove that an expired enclave cannot be renewed and must use the normal
+    /// `tee join` recovery transition.
+    pub(crate) fn renew_node_enclave_expected_failure(&self, index: usize) -> Result<String> {
+        let vd = self.cfg.validator_dir(index);
+        Sh::new(&self.cfg).cli_expected_failure(args![
+            "tee",
+            "renew",
+            "--enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--reth-p2p-secret-key",
+            vd.join("reth-p2p-secret.hex").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            read_evm_key(&vd)?,
+        ])
     }
 
     /// Restart a joiner's enclave from its existing writable TEE directory.
@@ -553,29 +679,56 @@ impl Localnet {
                 .map_err(|_| eyre!("node manifest chain id has invalid width"))?,
         );
         let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
-        let unexpected_reinitialize =
-            |_| Err("committed node unexpectedly required reinitialization".to_owned());
-        let mut client = outbe_tee::connect_or_initialize_node_host_enclave(
-            &endpoint,
-            &node_data_dir,
-            outbe_tee::NodeHostIdentityV1 {
-                chain_id,
-                genesis_hash: manifest.genesis_hash,
-                reth_p2p_public: manifest.node_id.reth_p2p_public,
-            },
-            unexpected_reinitialize,
-        )
-        .map_err(|error| eyre!("authenticated node enclave reopen failed: {error}"))?;
-        match client.request(&EnclaveRequest::GetPublicKeys)? {
-            EnclaveResponse::PublicKeys {
-                offer_key_ready: true,
-                recipient_x25519_pub,
-                ..
-            } => Ok(recipient_x25519_pub),
-            other => Err(eyre!(
-                "authenticated node enclave has no permanent offer key: {other:?}"
-            )),
+        let real_sgx = self.cfg.tee_mode.passes_sgx_devices();
+        let attempts = if real_sgx {
+            REAL_SGX_OFFER_READ_ATTEMPTS
+        } else {
+            1
+        };
+        for attempt in 0..attempts {
+            let unexpected_reinitialize =
+                |_| Err("committed node unexpectedly required reinitialization".to_owned());
+            let mut client = match outbe_tee::connect_or_initialize_node_host_enclave(
+                &endpoint,
+                &node_data_dir,
+                outbe_tee::NodeHostIdentityV1 {
+                    chain_id,
+                    genesis_hash: manifest.genesis_hash,
+                    reth_p2p_public: manifest.node_id.reth_p2p_public,
+                },
+                unexpected_reinitialize,
+            ) {
+                Ok(client) => client,
+                Err(error) if retry_node_offer_read(real_sgx, attempt, &error) => {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(eyre!("authenticated node enclave reopen failed: {error}"));
+                }
+            };
+            let response = match client.request(&EnclaveRequest::GetPublicKeys) {
+                Ok(response) => response,
+                Err(error) if retry_node_offer_read(real_sgx, attempt, &error) => {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            match response {
+                EnclaveResponse::PublicKeys {
+                    offer_key_ready: true,
+                    recipient_x25519_pub,
+                    ..
+                } => return Ok(recipient_x25519_pub),
+                other => {
+                    return Err(eyre!(
+                        "authenticated node enclave has no permanent offer key: {other:?}"
+                    ));
+                }
+            }
         }
+        unreachable!("the bounded authenticated offer-key read loop always returns")
     }
 
     pub(super) fn start_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -649,12 +802,6 @@ impl Localnet {
             vd.join("signing-key.hex").display(),
             "--validator.evm-key",
             vd.join("evm-key.hex").display(),
-            "--tee-renewal.relay-key",
-            vd.join("evm-key.hex").display(),
-            "--tee-renewal.rpc-url",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(index)),
-            "--tee-renewal.poll-secs",
-            "2",
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
             "--consensus.peers",
@@ -682,14 +829,14 @@ impl Localnet {
         Ok(())
     }
 
-    /// Stop the joiner node (drop its owned handle → kill + reap). Port of
+    /// Stop the joiner node (drop its owned handle -> kill + reap). Port of
     /// `e2e_stop_joiner`.
     pub fn stop_joiner(&mut self, index: usize) -> Result<()> {
         self.validators.remove(&index);
         Ok(())
     }
 
-    /// `--consensus.peers` (`<public_key>@<p2p_address>,…`) from `validators.json`.
+    /// `--consensus.peers` (`<public_key>@<p2p_address>,...`) from `validators.json`.
     fn consensus_peers(&self) -> Result<String> {
         let raw = fs::read_to_string(self.cfg.dir.join("validators.json"))?;
         let v: serde_json::Value = serde_json::from_str(&raw)?;
@@ -734,6 +881,49 @@ impl Localnet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_sgx_offer_read_retries_only_bounded_io_timeouts() {
+        assert!(retry_node_offer_read(
+            true,
+            0,
+            &TransportError::IoTimeout {
+                operation: "Noise handshake response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(retry_node_offer_read(
+            true,
+            1,
+            &TransportError::IoTimeout {
+                operation: "request response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            true,
+            2,
+            &TransportError::IoTimeout {
+                operation: "request response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            false,
+            0,
+            &TransportError::IoTimeout {
+                operation: "Noise handshake response read",
+                timeout_secs: 30,
+            }
+        ));
+        assert!(!retry_node_offer_read(
+            true,
+            0,
+            &TransportError::Handshake(
+                "wrapper mentioned enclave io timeout but this is policy".to_owned()
+            )
+        ));
+    }
 
     #[test]
     fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {

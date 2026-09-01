@@ -77,7 +77,7 @@ pub struct TargetChain {
 }
 
 impl TargetChain {
-    /// Idle handle — scenarios that never ask for a target chain pay nothing.
+    /// Idle handle - scenarios that never ask for a target chain pay nothing.
     pub(crate) fn new(cfg: Config) -> Self {
         Self {
             cfg,
@@ -265,7 +265,7 @@ impl TargetChain {
         Ok(())
     }
 
-    /// The deploy scripts stop at standing contracts on purpose — wiring is a
+    /// The deploy scripts stop at standing contracts on purpose - wiring is a
     /// separate step in production too. Without it the router holds no references
     /// and may not mint, so an inbound message would arrive and do nothing.
     pub fn wire(&self, contracts: &TargetContracts) -> Result<()> {

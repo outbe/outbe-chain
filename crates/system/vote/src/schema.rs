@@ -9,7 +9,7 @@ use outbe_primitives::storage::{Storable, StorableType};
 /// Storage values match the Solidity `ProposalStatus` enum (0-based).
 ///
 /// Flow:
-/// 1. `Pending` — created, voting open until `voting_deadline_height`.
+/// 1. `Pending` - created, voting open until `voting_deadline_height`.
 /// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
 /// 3. For `Approved`, vote dispatches to the target-module handler; further
 ///    state (e.g. scheduled update, activation) lives in that module, not here.

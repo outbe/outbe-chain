@@ -777,7 +777,7 @@ mod tests {
     ///
     /// The managed directories are created just before the script execs the
     /// sidecar, so their presence is the last observable step of setup. It
-    /// used to wait on `config.json`, but the launcher no longer writes one —
+    /// used to wait on `config.json`, but the launcher no longer writes one -
     /// the sidecar builds its runtime config from its command line and never
     /// reads that file.
     fn wait_for_launcher(child: &mut Child, home: &Path) {

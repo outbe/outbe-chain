@@ -8,7 +8,7 @@ import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 /// @title IntexMetadata
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
 /// @dev External linked library: deployed once and delegatecalled, keeping the renderer's
-///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure — the caller
+///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure - the caller
 ///      passes a SeriesData snapshot plus the current timestamp (drives the derived Expired
 ///      display; expiry is not an on-chain state).
 library IntexMetadata {
@@ -28,7 +28,7 @@ library IntexMetadata {
     }
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
-    /// @param data Series record for the token id, with its effective state — the
+    /// @param data Series record for the token id, with its effective state - the
     ///        caller derives `Expired`, so this library never re-derives it.
     /// @return Token URI; the collection document when the record does not exist (`issuedAt == 0`).
     function tokenURI(IIntexNFT1155.SeriesData memory data) external pure returns (string memory) {
@@ -66,7 +66,7 @@ library IntexMetadata {
         );
     }
 
-    /// @dev The series id verbatim — it is already the readable `20260212-TRY-U`.
+    /// @dev The series id verbatim - it is already the readable `20260212-TRY-U`.
     function _displayId(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
         return string(abi.encodePacked(data.seriesId));
     }
@@ -218,13 +218,13 @@ library IntexMetadata {
         return "Called";
     }
 
-    /// @dev Fixed-point amount without thousand separators — safe as a JSON number.
+    /// @dev Fixed-point amount without thousand separators - safe as a JSON number.
     function _amountPlain(uint256 amount, uint8 decimals, uint8 shown) private pure returns (string memory) {
         uint256 divisor = 10 ** decimals;
         return string.concat(Strings.toString(amount / divisor), _fraction(amount % divisor, decimals, shown));
     }
 
-    /// @dev Fixed-point amount with thousand separators — SVG display only.
+    /// @dev Fixed-point amount with thousand separators - SVG display only.
     function _formatAmount(uint256 amount, uint8 decimals, uint8 shown) private pure returns (string memory) {
         uint256 divisor = 10 ** decimals;
         return string.concat(_formatInteger(amount / divisor), _fraction(amount % divisor, decimals, shown));
@@ -279,7 +279,7 @@ library IntexMetadata {
         return string(result);
     }
 
-    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC" via Howard Hinnant's civil_from_days —
+    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC" via Howard Hinnant's civil_from_days -
     ///      divide-then-multiply is exact integer date math, not precision loss.
     // slither-disable-start divide-before-multiply
     function _formatTimestamp(uint256 timestamp) private pure returns (string memory) {

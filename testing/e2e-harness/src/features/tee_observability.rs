@@ -1,4 +1,4 @@
-//! Steps for `features/tee_observability.feature` — enclave canary health,
+//! Steps for `features/tee_observability.feature` - enclave canary health,
 //! per-request telemetry, and the session reconnect/revocation contract.
 
 use std::thread::sleep;
@@ -18,7 +18,7 @@ fn enclave_status(world: &World, index: usize) -> Option<Value> {
 
 /// Poll until validator `index`'s canary state is one of `want`; returns the
 /// last observed state either way. The harness runs the canary at a 5s
-/// cadence, so `tries` × 2s bounds the wait.
+/// cadence, so `tries` x 2s bounds the wait.
 fn wait_enclave_state(world: &World, index: usize, want: &[&str], tries: usize) -> String {
     let mut last = String::from("<no enclave status>");
     for _ in 0..tries {
@@ -107,7 +107,7 @@ fn enclave_restarts_fresh_identity(world: &mut World) {
 #[then("validator-1 reports a refused enclave session while the rest stay ready")]
 fn revoked_session_reported(world: &mut World) {
     // The pinned session must refuse the impostor: the canary can only report
-    // unavailable (session revoked / probe refused) or degraded — never ready.
+    // unavailable (session revoked / probe refused) or degraded - never ready.
     let state = wait_enclave_state(world, 1, &["unavailable", "degraded"], 45);
     assert!(
         state == "unavailable" || state == "degraded",

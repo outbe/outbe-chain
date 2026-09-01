@@ -150,7 +150,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
 
     // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke — skip loudly instead of
+    // a lagging watermark means the ordering broke - skip loudly instead of
     // misreading an unfinalized day as empty.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {

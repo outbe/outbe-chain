@@ -1,4 +1,4 @@
-# Cocogitto (cog) — conventional-commit history check + auto-versioning.
+# Cocogitto (cog) - conventional-commit history check + auto-versioning.
 #
 # CI validates only commits introduced by a PR (and the new main commit after
 # merge), so historical pre-adoption squash titles do not poison every run.
@@ -11,7 +11,7 @@ generate_mono_repository_global_tag = false
 
 # Rewrite the workspace version before cog assembles its
 # `chore(version): vX.Y.Z` commit. The `0,/RE/` sed range matches only the
-# FIRST `^version = "..."` line in the file — by Cargo.toml convention the
+# FIRST `^version = "..."` line in the file - by Cargo.toml convention the
 # `[workspace.package]` one. Every member inherits it via `version.workspace
 # = true`, so a single bump rolls the node, CLIs, and crates forward together.
 pre_bump_hooks = [

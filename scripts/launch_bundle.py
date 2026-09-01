@@ -1,8 +1,8 @@
 """Render the per-machine launch bundle that goes with a generated genesis.
 
 `create_genesis.py` calls this once the genesis is written. For each founding
-validator it emits one directory of runnable scripts — MongoDB, TEE enclave,
-Radicle sidecar, the node itself, and the price feeder — plus the reth bootnode
+validator it emits one directory of runnable scripts - MongoDB, TEE enclave,
+Radicle sidecar, the node itself, and the price feeder - plus the reth bootnode
 list and a DEPLOY.md that walks an operator through bringing the network up.
 
 Nothing here invents protocol values: ports, hosts and addresses come from the
@@ -234,7 +234,7 @@ exec {quote(enclave_runner)} \\
 """
     # The dev lane still runs the real enclave: on a host with SGX it goes
     # through gramine-sgx with remote attestation switched off, which is the
-    # `GramineDirectDev` profile — real hardware, no Intel collateral. The
+    # `GramineDirectDev` profile - real hardware, no Intel collateral. The
     # container image is the fallback for a host without SGX.
     manifest = f"{enclave_dir}/outbe-tee-enclave.manifest.sgx"
     return f"""
@@ -340,7 +340,7 @@ def node_script(
     # Which TEE transport the node must speak. `dcap-required` always uses the
     # authenticated sealed session. `gramine-direct-dev` is ambiguous on its
     # own: the genesis says "no Intel collateral", but the enclave may still be
-    # a real gramine-sgx one — that is the SGX-without-DCAP profile — and a
+    # a real gramine-sgx one - that is the SGX-without-DCAP profile - and a
     # real enclave speaks the production session, not the mock transport. The
     # policy default would pick the mock one and the node would fail with
     # "development enclave connection failed", so state it explicitly.
@@ -355,7 +355,7 @@ def node_script(
     radicle_home = f"{validator_keys}/radicle"
     return f"""
 # Validator node: execution, consensus and the embedded OCOMP runtime in one
-# process. OCOMP needs no separate daemon — it runs inside this binary and
+# process. OCOMP needs no separate daemon - it runs inside this binary and
 # reads its keys from <datadir>/../ocomp/domain-v1.
 KEYS={quote(validator_keys)}
 DATA={quote(validator_dir + "/data")}
@@ -573,7 +573,7 @@ def ocomp_identity(genesis_path: Path, keys_dir: Path) -> dict[str, Any]:
     chain id, genesis hash and install hash are plain fields of the genesis.
     The protocol bundle hash is not: it sits inside the canonical install
     bytes, right after the genesis hash and the fork id, both of which are
-    known here — so it is located by anchoring on the genesis hash rather than
+    known here - so it is located by anchoring on the genesis hash rather than
     by a bare offset. Every role validates the value against the bundle file it
     loads and exits with `HashMismatch` if it disagrees, so a wrong read fails
     immediately and loudly instead of producing a subtly wrong network.
@@ -732,7 +732,7 @@ exec {quote(binary)} worker \
 #
 # The enclave is signed ONCE, where the signing key lives, and the signed
 # artifacts travel in the bundle. Signing per machine instead gives every host
-# its own mr_signer — four different enclave identities on one network, which
+# its own mr_signer - four different enclave identities on one network, which
 # a `dcap-required` genesis (it pins a single mrsigner) would reject outright.
 # The private key never enters the bundle.
 
@@ -749,7 +749,7 @@ def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[st
 
     `signed_enclave_dir` points at the directory holding the artifacts produced
     by `gramine-sgx-sign` on the build host. Without it the bundle carries no
-    enclave and each machine has to sign its own — allowed, but it is the very
+    enclave and each machine has to sign its own - allowed, but it is the very
     thing that produces mismatched identities, so say so out loud.
     """
     source = config.get("signed_enclave_dir")
@@ -977,7 +977,7 @@ fi
 # State from an earlier genesis makes the node exit with
 # 'projection identity does not match configured chain'.
 for stale in validator-{index}/data validator-{index}/consensus tee; do
-  [ -e "$stale" ] && {{ note "leftover state" "$stale — remove before a new genesis"; fail=1; }}
+  [ -e "$stale" ] && {{ note "leftover state" "$stale - remove before a new genesis"; fail=1; }}
 done
 if command -v docker >/dev/null; then
   dbs=$(docker exec outbe-mongo-{index} mongosh --quiet --eval \\
@@ -1170,7 +1170,7 @@ metrics `{port_of(config, "metrics_port")}`, Radicle status
 
 ## 3. Prerequisites on every machine
 
-- Docker — MongoDB and the TEE enclave run as containers
+- Docker - MongoDB and the TEE enclave run as containers
 - `outbe-cli` on the machine you verify from (step 5)
 - the `outbe-chain`, `outbe-ocomp`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to
@@ -1189,17 +1189,17 @@ sudo {base_dir}/install-systemd.sh N
 `install-systemd.sh` installs one templated unit per role and starts them in
 dependency order, so the processes outlive the shell that launched them and
 come back on failure. `preflight.sh` is read-only: run it first and compare the
-genesis and enclave digests it prints across all four machines — they must be
+genesis and enclave digests it prints across all four machines - they must be
 identical.
 
-`start-all.sh` starts the components in dependency order — MongoDB, enclave,
-Radicle sidecar, node, feeder — and writes pids and logs into
+`start-all.sh` starts the components in dependency order - MongoDB, enclave,
+Radicle sidecar, node, feeder - and writes pids and logs into
 `{base_dir}/validator-N/`. To run one component in the foreground instead, call
 its script directly: `run-mongodb.sh`, `run-enclave.sh`, `run-radicle.sh`,
 `run-node.sh`, `run-feeder.sh`. `stop-all.sh` reverses it.
 
 **Start all four machines within a few minutes of each other.** Block 1 carries
-the founding DKG ceremony and needs every genesis validator online — unlike a
+the founding DKG ceremony and needs every genesis validator online - unlike a
 later reshare it does not complete on a threshold. If it fails, stop all four,
 delete `{base_dir}/validator-N/data` on each machine, and start again; the
 genesis itself stays valid.

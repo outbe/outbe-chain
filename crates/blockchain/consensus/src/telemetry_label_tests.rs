@@ -3,8 +3,8 @@
 //! commonware 2026.5.0's `validate_label` panics if a span/metric label is not
 //! `[a-zA-Z][a-zA-Z0-9_]*` (the BUG-B class that crashed DKG rotation ~block 90).
 //! This feeds the labels the consensus crate passes to `Context::child(...)`
-//! through the REAL commonware validator — the same function the runtime invokes
-//! when building a child-context label — so an invalid label fails here instead
+//! through the REAL commonware validator - the same function the runtime invokes
+//! when building a child-context label - so an invalid label fails here instead
 //! of panicking in production. It asserts actual label values via the real
 //! validator; it does NOT scan source text.
 

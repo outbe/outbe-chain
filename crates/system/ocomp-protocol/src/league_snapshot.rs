@@ -7,7 +7,7 @@
 //! slots against the finalized state root instead of reconstructing the raw
 //! Fidelity cohort ledger. Both the node opening builder/verifier and the
 //! off-chain worker need a pure, storage-handle-free way to derive the same
-//! slots and re-check the same commitment, so the derivation lives here — the
+//! slots and re-check the same commitment, so the derivation lives here - the
 //! one crate node, worker and Metadosis all depend on.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -49,7 +49,7 @@ pub fn league_snapshot_key(wwd: u32, owner: Address) -> B256 {
 }
 
 /// The exact EVM storage slot Metadosis writes owner's league to:
-/// `keccak(left_pad(key, 32) ++ base_slot)` — the standard mapping-slot rule
+/// `keccak(left_pad(key, 32) ++ base_slot)` - the standard mapping-slot rule
 /// applied to [`league_snapshot_key`] at [`METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`].
 ///
 /// The rule is inlined (rather than using `outbe_primitives`'s `StorageKey`)

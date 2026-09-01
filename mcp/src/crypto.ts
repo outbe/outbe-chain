@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { bytesToBigInt } from "viem";
 
 /**
- * Tribute offer encryption — byte-identical to the enclave decrypt path
+ * Tribute offer encryption - byte-identical to the enclave decrypt path
  * (outbe_tee_enclave::crypto::ecdhe_offer_decrypt) and the verified Python port
  * in scripts/tribute_offer.py:
  *
@@ -67,7 +67,7 @@ export function canonicalAmountBase(value: string): string {
 /**
  * Build the plaintext JSON payload (fresh draft id + su hash per offer).
  * `worldwide_day` and `currency` are cleartext `offerTribute` arguments, not
- * payload fields — the node needs them to admit and price the offer.
+ * payload fields - the node needs them to admit and price the offer.
  */
 export function buildPayload(p: OfferPayload): Uint8Array {
   const hex32 = () => `0x${Buffer.from(randomBytes(32)).toString("hex")}`;

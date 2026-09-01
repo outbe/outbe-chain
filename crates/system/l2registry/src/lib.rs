@@ -1,4 +1,4 @@
-//! `L2Registry` — storage-backed registry of L2 networks (`0x…EE0E`).
+//! `L2Registry` - storage-backed registry of L2 networks (`0x...EE0E`).
 //!
 //! Records registered L2 networks keyed by `chain_id`: the L1 operator address
 //! that submits on behalf of the network, its BLS MinSig committee group key

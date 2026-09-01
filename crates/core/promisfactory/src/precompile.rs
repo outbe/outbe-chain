@@ -1,4 +1,4 @@
-//! Promisfactory precompile at `0x2337`. ABI dispatch only — the promis
+//! Promisfactory precompile at `0x2337`. ABI dispatch only - the promis
 //! mint/burn orchestration + Fidelity bookkeeping lives in [`crate::runtime`].
 
 use alloy_primitives::{Address, Bytes, U256};

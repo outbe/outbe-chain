@@ -168,7 +168,7 @@ fn rejects_msg_value() {
 }
 
 /// Run `f` with the Promis, Gratis and Fidelity in-process enclaves installed and
-/// the block time set — the gratis mint records a Fidelity acquisition cohort at
+/// the block time set - the gratis mint records a Fidelity acquisition cohort at
 /// `now`, so a zero timestamp would not exercise it.
 fn with_gratis_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
@@ -224,7 +224,7 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
     with_gratis_env(|storage| {
         let amount = U256::from(1_000u64);
 
-        // Seed only (confidential) promis to convert — no Fidelity cohort yet.
+        // Seed only (confidential) promis to convert - no Fidelity cohort yet.
         // Promis is fidelity-neutral, so the aged RCFI a year out sits at the floor
         // up front; the post-conversion check then proves the conversion recorded a
         // fresh gratis cohort rather than it having pre-existed.
@@ -264,7 +264,7 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         );
 
         // A fresh gratis acquisition cohort was recorded at conversion time
-        // (CREATED_AT): sole holder, no sales → top league a year later. If the
+        // (CREATED_AT): sole holder, no sales -> top league a year later. If the
         // conversion stopped recording the cohort, this would stay at the floor.
         let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_after, MAX_LEAGUE);

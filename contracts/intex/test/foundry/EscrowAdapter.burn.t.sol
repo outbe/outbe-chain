@@ -11,7 +11,7 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Burn-instead-of-vault recovery paths: an undistributable winning portion (the series was
 ///      already routed on Outbe) is sent to the canonical dead address, terminally and in a
-///      single transaction — no parked state, no vault dependency.
+///      single transaction - no parked state, no vault dependency.
 contract EscrowAdapterBurnTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;

@@ -59,8 +59,8 @@ impl L2NetworkRecord {
 /// EVM storage layout for the L2 network registry.
 ///
 /// Storage slots:
-///   0: networks — mapping(chain_id => L2NetworkRecord) (5 slots)
-///   1: l1_to_chain — mapping(l1_address => chain_id), 0 = absent
+///   0: networks - mapping(chain_id => L2NetworkRecord) (5 slots)
+///   1: l1_to_chain - mapping(l1_address => chain_id), 0 = absent
 #[storage_schema]
 #[contract(addr = L2_REGISTRY_ADDRESS)]
 pub struct L2RegistryContract {

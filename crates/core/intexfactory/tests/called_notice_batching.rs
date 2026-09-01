@@ -176,7 +176,7 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // A qualified entry at 27 leaves the next Called run starting at 28, so it would reach
-        // 35 if nothing stopped it — four entries past this firing's limit of 32.
+        // 35 if nothing stopped it - four entries past this firing's limit of 32.
         for index in 0..27 {
             push_called(&handle, index, CALLED_AT);
         }

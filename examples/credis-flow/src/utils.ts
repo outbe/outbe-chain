@@ -18,7 +18,7 @@ export const DEFAULT_FIDELITY_ADDRESS = "0x0000000000000000000000000000000000001
 // Native COEN is SIX-decimal on this chain, not eighteen:
 // `crates/blockchain/primitives/src/units.rs` sets NATIVE_TOKEN_DECIMALS = 6 and
 // ONE_COEN = 1e6, and `mineCoen` mints native 1:1 from six-decimal Gratis. Using
-// ethers' parseEther/formatEther here is off by 1e12 — enough to exceed every
+// ethers' parseEther/formatEther here is off by 1e12 - enough to exceed every
 // funded account and revert. Always go through these two.
 export const COEN_DECIMALS = 6;
 
@@ -36,7 +36,7 @@ export function formatCoen(value: bigint): string {
 //   (verificationGasLimit + callGasLimit + preVerificationGas) * maxFeePerGas
 // to be on deposit before validation. The UserOps here use [2e6, 2e6] account gas
 // limits, 1e6 preVerificationGas and maxFeePerGas = 1, so that floor is 5e6 base
-// units = 5 COEN. Note this is a COEN amount, so it must be sized in base units —
+// units = 5 COEN. Note this is a COEN amount, so it must be sized in base units -
 // a "0.05 COEN" deposit would be 50_000 units and fail validation.
 export const ENTRYPOINT_MIN_DEPOSIT = 5_000_000n;
 export const ENTRYPOINT_TOPUP = 20_000_000n;
@@ -97,13 +97,13 @@ export function requireEnv(name: string, context?: string): string {
   return val;
 }
 
-// ── Kernel v4 permission-based UserOp helpers ─────────────────────────────
+// -- Kernel v4 permission-based UserOp helpers -----------------------------
 //
 // After the Kernel v4 migration every validation on the smart account is a
 // permission (the owner is `SudoPolicy + ECDSASigner`, each CCA is
 // `WithdrawalLimitPolicy + ECDSASigner`). UserOps therefore use the permission
 // nonce type (0x02) and the Kernel v4 `PermissionSignature` = `abi.encode(bytes[])`:
-// one slice per policy (empty here — our policies read from calldata, not the
+// one slice per policy (empty here - our policies read from calldata, not the
 // signature) followed by the signer's ECDSA signature.
 
 /** bytes4 owner permission id = `bytes4(keccak256("credis.owner"))`. */

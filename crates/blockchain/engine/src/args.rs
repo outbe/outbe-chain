@@ -196,7 +196,7 @@ pub struct ConsensusArgs {
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1; if it
     /// times out (or fails), node startup fails fast and the node halts rather than
-    /// proceeding into a permanently un-bootstrapped chain. Local only — not a
+    /// proceeding into a permanently un-bootstrapped chain. Local only - not a
     /// consensus rule.
     #[arg(
         long = "tee-bootstrap-timeout-secs",
@@ -205,34 +205,8 @@ pub struct ConsensusArgs {
     )]
     pub tee_bootstrap_timeout_secs: u64,
 
-    /// Funded EVM private key used only to relay automatic renewal
-    /// transactions. Required by DcapRequired nodes; FullNode identity keys
-    /// never implicitly become funded transaction signers.
-    #[arg(long = "tee-renewal.relay-key", value_name = "PATH")]
-    pub tee_renewal_relay_key: Option<PathBuf>,
-
-    /// Local HTTP JSON-RPC endpoint used by the renewal worker after Reth starts.
-    #[arg(
-        long = "tee-renewal.rpc-url",
-        default_value = "http://127.0.0.1:8545",
-        value_name = "URL"
-    )]
-    pub tee_renewal_rpc_url: String,
-
-    /// Interval between automatic renewal reconciliation attempts.
-    #[arg(long = "tee-renewal.poll-secs", default_value_t = 30)]
-    pub tee_renewal_poll_secs: u64,
-
-    /// Warning margin relative to the next finalized DKG freeze.
-    #[arg(long = "tee-renewal.warning-blocks", default_value_t = 600)]
-    pub tee_renewal_warning_blocks: u64,
-
-    /// Critical margin relative to the next finalized DKG freeze.
-    #[arg(long = "tee-renewal.critical-blocks", default_value_t = 120)]
-    pub tee_renewal_critical_blocks: u64,
-
     /// Interval between TEE-enclave canary probes (known-plaintext decrypt +
-    /// health telemetry). `0` disables the canary. Signal only — it never gates
+    /// health telemetry). `0` disables the canary. Signal only - it never gates
     /// consensus participation.
     #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
     pub tee_canary_interval_secs: u64,
@@ -320,12 +294,6 @@ impl fmt::Debug for ConsensusArgs {
             .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
             .field("tee_session_mode", &self.tee_session_mode)
             .field(
-                "tee_renewal_relay_configured",
-                &self.tee_renewal_relay_key.is_some(),
-            )
-            .field("tee_renewal_rpc_url", &self.tee_renewal_rpc_url)
-            .field("tee_renewal_poll_secs", &self.tee_renewal_poll_secs)
-            .field(
                 "radicle_control_socket_configured",
                 &self.radicle_control_socket.is_some(),
             )
@@ -350,20 +318,11 @@ impl fmt::Debug for ConsensusArgs {
 impl ConsensusArgs {
     /// Validate argument consistency.
     ///
-    /// - `--validator` without `--consensus.signing-key` → error
-    /// - `--consensus.signing-key` without `--validator` → warning (ignored key)
-    /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
+    /// - `--validator` without `--consensus.signing-key` -> error
+    /// - `--consensus.signing-key` without `--validator` -> warning (ignored key)
+    /// - `--bls-key-backend encrypted` without `--bls-passphrase` -> error
     pub fn validate(&self) -> eyre::Result<()> {
         self.offchain_data()?;
-        if self.tee_renewal_poll_secs == 0 {
-            eyre::bail!("--tee-renewal.poll-secs must be greater than zero");
-        }
-        if self.tee_renewal_critical_blocks > self.tee_renewal_warning_blocks {
-            eyre::bail!("--tee-renewal.critical-blocks cannot exceed --tee-renewal.warning-blocks");
-        }
-        if self.tee_renewal_rpc_url.trim().is_empty() {
-            eyre::bail!("--tee-renewal.rpc-url must not be empty");
-        }
         if self.txpool_pending_staleness_secs == 0 {
             eyre::bail!("--txpool.outbe.pending-staleness-secs must be greater than zero");
         }
@@ -411,7 +370,7 @@ impl ConsensusArgs {
         // Two valid manual-provisioning shapes:
         //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
         //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share
-        //     — a node joining a running chain that has no threshold share yet; it runs
+        //     - a node joining a running chain that has no threshold share yet; it runs
         //     the consensus engine in verifier (follow/verify) mode and acquires a share
         //     at the next DKG reshare. Any other partial combination is an error.
         let (share, poly, output) = (
@@ -551,11 +510,6 @@ mod tests {
             tee_enclave_socket: None,
             tee_session_mode: TeeSessionMode::PolicyDefault,
             tee_bootstrap_timeout_secs: 60,
-            tee_renewal_relay_key: None,
-            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-            tee_renewal_poll_secs: 30,
-            tee_renewal_warning_blocks: 600,
-            tee_renewal_critical_blocks: 120,
             tee_canary_interval_secs: 30,
             tee_canary_failure_threshold: 3,
             txpool_pending_staleness_secs: 600,
@@ -651,6 +605,23 @@ mod tests {
         let config = cli.consensus.offchain_data().unwrap();
         assert_eq!(config.start_block, 17);
         assert_eq!(config.mongodb_database, "outbe_projection");
+    }
+
+    #[test]
+    fn automatic_tee_renewal_options_are_rejected_after_worker_removal() {
+        for obsolete in [
+            ["--tee-renewal.relay-key", "/tmp/relay-key.hex"],
+            ["--tee-renewal.rpc-url", "http://127.0.0.1:8545"],
+            ["--tee-renewal.poll-secs", "30"],
+            ["--tee-renewal.warning-blocks", "600"],
+            ["--tee-renewal.critical-blocks", "120"],
+        ] {
+            assert!(
+                TestConsensusCli::try_parse_from(["test", obsolete[0], obsolete[1]]).is_err(),
+                "obsolete automatic-renewal option still parses: {}",
+                obsolete[0]
+            );
+        }
     }
 
     #[test]
@@ -898,7 +869,7 @@ mod tests {
 
     #[test]
     fn test_plaintext_backward_compatibility() {
-        // Default is plaintext — existing setups continue working.
+        // Default is plaintext - existing setups continue working.
         let args = default_args();
         assert_eq!(args.bls_key_backend, "plaintext");
         assert!(matches!(

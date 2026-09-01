@@ -432,7 +432,7 @@ fn test_storage_dsl_layout_slots() {
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
         assert_eq!(m.active_wwd_count.slot(), U256::from(11u64));
         // `active_wwd` is a Set (2 slots: 12 = length, 13 = positions), so the
-        // next schema field lands at 14 — this pins the Set's position too.
+        // next schema field lands at 14 - this pins the Set's position too.
         // `closed_wwd` is a Deque (2 slots: 14 = begin, 15 = end).
         assert_eq!(m.closed_wwd.base_slot(), U256::from(14u64));
         assert_eq!(

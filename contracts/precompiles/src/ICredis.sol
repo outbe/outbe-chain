@@ -50,17 +50,17 @@ interface ICredis {
         // Pledger EOA ciphertext (not an address). The enclave recovers
         // the plaintext EOA on-chain via a RevealOwner round-trip.
         bytes eoaCiphertext;
-        /// P — the stablecoin amount disbursed. Never changes.
+        /// P - the stablecoin amount disbursed. Never changes.
         uint256 principal;
-        /// P_out — decreases with each settlement; the position closes at zero.
+        /// P_out - decreases with each settlement; the position closes at zero.
         uint256 outstanding;
-        /// G — the pledged Gratis, valued 1:1 against principal at the entry price.
+        /// G - the pledged Gratis, valued 1:1 against principal at the entry price.
         uint256 collateral;
         /// The share of G still locked. Released principal-proportionally.
         uint256 collateralLocked;
-        /// r — the annual policy rate of the currency, scale 1e6, fixed at opening.
+        /// r - the annual policy rate of the currency, scale 1e6, fixed at opening.
         uint256 policyRate;
-        /// P_0 — the COEN price in the position's currency, quoted at pledge time.
+        /// P_0 - the COEN price in the position's currency, quoted at pledge time.
         uint256 entryPrice;
         /// P_0 + 64%. A sustained breach triggers the call.
         uint256 callPrice;

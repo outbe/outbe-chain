@@ -111,7 +111,7 @@ impl GemContract<'_> {
         if item.state == GemState::Issued as u8 {
             self.insert_unqualified(item.gem_id, item.floor_price_minor, item.reference_currency)?;
         } else if item.state == GemState::Qualified as u8 {
-            // Genesis gems are born Qualified — index them as callable gems.
+            // Genesis gems are born Qualified - index them as callable gems.
             self.insert_callable(item.gem_id)?;
         }
 
@@ -258,7 +258,7 @@ impl GemContract<'_> {
     /// Namespaces a bin-column key by the gem's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing — the ISO has to occupy real high
+    /// integer type alone namespaces nothing - the ISO has to occupy real high
     /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
     /// low 32 bits always hold `key` unambiguously.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
@@ -338,7 +338,7 @@ impl GemContract<'_> {
 // Adapter between one currency's slice of the contract's three bin-tree columns
 // and the `tree_math::BinTreeStorage` trait. Mirrors `nod::state::CurrencyBins`.
 //
-// The trait functions take `&self` — storage writes go through the DSL's
+// The trait functions take `&self` - storage writes go through the DSL's
 // interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
 // Construct the view inline at each `tree_math` call rather than binding it, so
 // it never conflicts with a `&mut GemContract` borrow.

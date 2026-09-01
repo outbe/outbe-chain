@@ -12,7 +12,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `IntexNFT1155Bridge`: a per-item
-///         `token.crosschainMint` revert no longer reverts the whole batch — the failure is recorded as
+///         `token.crosschainMint` revert no longer reverts the whole batch - the failure is recorded as
 ///         a `FailedCrosschainMint` snapshot, `CrosschainMintFailed` is emitted, and `retryCrosschainMint` re-attempts
 ///         the crosschainMint after the upstream issue is fixed. This is the Critical funds-lock fix
 ///         from the contract review (R-04).
@@ -46,7 +46,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         intex.markQualified(SERIES_GOOD);
-        // SERIES_BAD intentionally not created — `intex.crosschainMint` will revert on lookup.
+        // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridgeBnb));
     }
@@ -95,7 +95,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // SEND batch — per-item isolation
+    // SEND batch - per-item isolation
     // ---------------------------------------------------------------
 
     function test_BatchReceive_BadItemDoesNotRevertWholeBatch() public {
@@ -115,7 +115,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
-        // Item 0 did NOT fail — no entry for idx=0.
+        // Item 0 did NOT fail - no entry for idx=0.
         (,,,, bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
@@ -135,7 +135,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         intex.markQualified(SERIES_BAD);
 
-        // Anyone can retry — no auth gate.
+        // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
@@ -159,7 +159,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         intex.markQualified(SERIES_BAD);
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
-        // Second retry must revert — slot has been deleted.
+        // Second retry must revert - slot has been deleted.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
     }
@@ -184,7 +184,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         bytes memory reverse = bridge.lastPayload();
         assertEq(uint8(reverse[1]), IntexNFT1155BridgeCodec.SEND_MULTI, "reverse is SEND_MULTI");
 
-        // A second reclaim reverts — the entry is gone.
+        // A second reclaim reverts - the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
         nftBridgeBnb.reclaimToSource(receiveId, 1);
     }
@@ -196,7 +196,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // SEND_MULTI batch — per-item isolation across distinct recipients
+    // SEND_MULTI batch - per-item isolation across distinct recipients
     // ---------------------------------------------------------------
 
     function test_MultiReceive_BadItemDoesNotRevertWholeBatch() public {
@@ -230,7 +230,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Channel liveness — second inbound batch processes normally after a failure
+    // Channel liveness - second inbound batch processes normally after a failure
     // ---------------------------------------------------------------
 
     function test_BatchReceive_SecondBatchProcessesAfterFailure() public {
@@ -239,7 +239,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // First batch: one bad item parked.
         _deliverInbound(_batchPacket(recipient));
 
-        // Second batch: same recipient, distinct payload (single good item) → distinct receiveId.
+        // Second batch: same recipient, distinct payload (single good item) -> distinct receiveId.
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = TOKEN_GOOD;
         uint256[] memory amounts = new uint256[](1);

@@ -1,4 +1,4 @@
-//! `FinalizationActor` — single-task consumer of finalization events.
+//! `FinalizationActor` - single-task consumer of finalization events.
 //!
 //! Drains its unbounded mailbox in FIFO order and owns the production
 //! per-finalization side effects:
@@ -87,7 +87,7 @@ pub struct FinalizationActorDeps {
     /// the actor rekeys the reporter-buffered (view-keyed) votes to the now-known
     /// block number and prunes targets that have left the inclusion window. The
     /// reporter records into it; the application handler reads it to pack the
-    /// proposer artifact. Best-effort, process-local — never consensus state.
+    /// proposer artifact. Best-effort, process-local - never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
     /// Non-blocking node-local OCOMP finality notification. The production
     /// handle only enqueues the block; proof and journal work run in
@@ -97,7 +97,7 @@ pub struct FinalizationActorDeps {
 
 /// FinalizationActor itself. Owns the receiver end of an unbounded
 /// channel; the matching `Mailbox` is given to `OutbeReporter` so
-/// finalization events flow voter → reporter → actor without ever
+/// finalization events flow voter -> reporter -> actor without ever
 /// passing through the application handler's bounded mailbox.
 pub struct FinalizationActor {
     rx: mpsc::UnboundedReceiver<Message>,
@@ -141,7 +141,7 @@ impl FinalizationActor {
                 // Simplex voter task. The reporter built and verified the record
                 // (including the parity-critical committee_set_hash) inline; this
                 // actor performs only the synchronous MDBX commit. A write error
-                // is metered + logged but NOT fatal — the certified-notarization
+                // is metered + logged but NOT fatal - the certified-notarization
                 // is a best-effort fallback witness (the proposer prefers the
                 // finalization record and can recover from marshal), so dropping
                 // one must not crash the single durable writer.
@@ -260,7 +260,7 @@ impl FinalizationActor {
         };
 
         // a finalized block is fetchable from any honest peer, so a full
-        // retry cycle exhausting means an all-peers P2P stall — which is
+        // retry cycle exhausting means an all-peers P2P stall - which is
         // transient. Keep retrying with a metric/alarm rather than returning the
         // node-fatal error that downs an otherwise-healthy validator on a
         // ~1-minute correlated outage. The actor (correctly) cannot advance
@@ -508,7 +508,7 @@ impl FinalizationActor {
         {
             Some(scheme) => {
                 // Single canonical builder (shared with the resolver and reporter;
-                // the DKG proposer is distinct — it carries a real polynomial hash).
+                // the DKG proposer is distinct - it carries a real polynomial hash).
                 // Reconstructed from finalized metadata, so the snapshot's unused
                 // `vrf_public_polynomial_hash` is `B256::ZERO` inside the helper.
                 let prelude = build_committee_prelude(&scheme, &ordered_committee, finalized_epoch)
@@ -528,7 +528,7 @@ impl FinalizationActor {
                 warn!(
                     target: "outbe::finalization",
                     epoch = finalized_epoch,
-                    "no verifier scheme registered for finalized epoch — finalization \
+                    "no verifier scheme registered for finalized epoch - finalization \
                      record will carry default V2 canonical fields; Phase 1 snapshot lookup \
                      may miss"
                 );
@@ -706,7 +706,7 @@ mod tests {
     /// `FinalizationActor::process_finalization` rekeys the
     /// reporter-buffered (view-keyed) late finalize votes to the now-known block
     /// number. Drives the real actor method directly with an already-resolved
-    /// block (no marshal needed — the deps carry `marshal_mailbox: None`).
+    /// block (no marshal needed - the deps carry `marshal_mailbox: None`).
     #[test]
     fn rekey_via_finalization_actor() {
         use super::{FinalizationActor, FinalizationActorDeps};
@@ -728,7 +728,7 @@ mod tests {
 
         // Shared store + a buffered (view-keyed) vote, as the reporter would have
         // recorded it before the block number was known. The signature value is
-        // arbitrary here — the rekey path never verifies it.
+        // arbitrary here - the rekey path never verifies it.
         let block = make_block(fb_number, 7);
         let digest = digest_of(&block);
         let fb_hash = digest.0;

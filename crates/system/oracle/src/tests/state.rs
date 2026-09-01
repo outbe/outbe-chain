@@ -116,8 +116,8 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
             pair_key(COEN, USDT)
         );
 
-        // Reads whose value has no direction of its own — a VWAP, an S-curve
-        // peak — cannot answer a backwards quote, so they refuse it. Only the
+        // Reads whose value has no direction of its own - a VWAP, an S-curve
+        // peak - cannot answer a backwards quote, so they refuse it. Only the
         // spot rate has a reciprocal.
         let err = oracle.require_pair_from(USDT, COEN).unwrap_err();
         assert!(
@@ -367,7 +367,7 @@ fn get_exchange_rate_reverts_for_an_unregistered_pair() {
 
 /// The three rate columns key on the registry index, so a price read is
 /// `pair_to_index` and then slot 12. Pins the raw slots `scripts/seed_genesis.py`
-/// writes, and asserts nothing lands at the pair-derived slot they used to use —
+/// writes, and asserts nothing lands at the pair-derived slot they used to use -
 /// a schema key-type revert would otherwise pass every behavioural test above
 /// while silently orphaning every seeded rate.
 #[test]
@@ -414,7 +414,7 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
 }
 
 /// Deactivated pairs lose their rate, and an active neighbour registered after
-/// them keeps its own — the clear walks the registry by index, so an off-by-one
+/// them keeps its own - the clear walks the registry by index, so an off-by-one
 /// would wipe the wrong column.
 #[test]
 fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
@@ -684,7 +684,7 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
-        // Zero-volume entries → equal-weight averaging
+        // Zero-volume entries -> equal-weight averaging
         let entries1 = vec![(pair_key(COEN, USDT), fixed18(100), U256::ZERO)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
@@ -780,7 +780,7 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
 }
 
 /// The bulk calculators skip pairs that hold no samples, but a rejected argument
-/// is not "no data" — it has to reach the caller instead of being absorbed into
+/// is not "no data" - it has to reach the caller instead of being absorbed into
 /// the empty-result path.
 #[test]
 fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
@@ -900,7 +900,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // A submission that is both untargeted and duplicated reports the
-        // duplicate first — receipt-visible revert text, so the order is pinned.
+        // duplicate first - receipt-visible revert text, so the order is pinned.
         let err = oracle
             .submit_vote(validator, &[(ETH, USDT, rate, volume); 2])
             .unwrap_err();

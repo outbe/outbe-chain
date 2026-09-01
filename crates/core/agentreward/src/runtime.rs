@@ -13,7 +13,7 @@ impl AgentRewardContract<'_> {
         let key = AgentRewardContract::tribute_count_key(day, address);
         let count = self.waa_tribute_counts.read(&key)?;
         if count == 0 {
-            // First tribute for this address+day — add to address list
+            // First tribute for this address+day - add to address list
             let addr_count = self.waa_address_count.read(&day)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
             self.waa_addresses.write(&idx_key, address)?;
@@ -31,7 +31,7 @@ impl AgentRewardContract<'_> {
         let key = AgentRewardContract::tribute_count_key(day, address);
         let count = self.sra_tribute_counts.read(&key)?;
         if count == 0 {
-            // First tribute for this address+day — add to address list
+            // First tribute for this address+day - add to address list
             let addr_count = self.sra_address_count.read(&day)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
             self.sra_addresses.write(&idx_key, address)?;

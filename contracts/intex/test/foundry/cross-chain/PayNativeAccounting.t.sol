@@ -92,7 +92,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Entry path — msg.value handling (IntexNFT1155Bridge.send)
+    // Entry path - msg.value handling (IntexNFT1155Bridge.send)
     // ---------------------------------------------------------------
 
     function test_Entry_ExactFeeLeavesNoFloat() public {
@@ -177,7 +177,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Relay / float path — fired from inside receiveMessage (CLEARING)
+    // Relay / float path - fired from inside receiveMessage (CLEARING)
     // ---------------------------------------------------------------
 
     /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float. With
@@ -194,7 +194,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` draws the fee and
-    ///      sends cleanly — nothing is parked.
+    ///      sends cleanly - nothing is parked.
     function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
         vm.deal(address(bnbRouter), 1 ether);
         uint256 floatBefore = address(bnbRouter).balance;
@@ -251,7 +251,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 }
 
-/// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch — one bridge fee.
+/// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch - one bridge fee.
 contract StubAuction {
     function auctionStart(
         uint32,

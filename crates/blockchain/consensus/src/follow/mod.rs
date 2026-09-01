@@ -1,21 +1,21 @@
 //! Lightweight follower: cold-sync finalized blocks from an upstream node and
 //! verify them against the chain's committee, WITHOUT running consensus.
 //!
-//! **Trust model — committee-chaining.** outbe's finalize certificate is an
+//! **Trust model - committee-chaining.** outbe's finalize certificate is an
 //! atomic aggregate of individual MinPk votes and a mandatory MinSig threshold
 //! VRF proof over a *committee-bound* namespace. Both are verified with the
 //! epoch-scoped committee material, which changes on every reshare. A follower
 //! therefore:
 //!
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
-//!    set**, read from the follower's OWN genesis state — the trust root;
+//!    set**, read from the follower's OWN genesis state - the trust root;
 //!    nothing the operator must provide;
 //! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
 //!    previous epoch's last finalized block, verifies that block with the already
 //!    trusted previous committee, and only then installs the next verifier.
 //!
 //! All inputs are public on-chain data carried in the boundary block
-//! `extra_data` (the full DKG [`Output`] — players + polynomial); the follower
+//! `extra_data` (the full DKG [`Output`] - players + polynomial); the follower
 //! never holds any DKG secret. [`CommitteeChain`] implements this chaining; it
 //! is exercised by `phase0_spike_*` (the de-risk gate) and the tests below.
 
@@ -50,13 +50,13 @@ pub use upstream::{
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
 /// blocks, anchored on the trusted genesis committee. Verifiers are kept in a
-/// [`HybridSchemeProvider`] keyed by epoch — the same provider type the live
-/// stack uses — so cert verification is byte-identical to the validator path.
+/// [`HybridSchemeProvider`] keyed by epoch - the same provider type the live
+/// stack uses - so cert verification is byte-identical to the validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
 /// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
 /// round seed but is not the committee identity authenticator. So the anchor is the **genesis validator
-/// MinPk set**, read from the follower's OWN genesis state — not a VRF group
+/// MinPk set**, read from the follower's OWN genesis state - not a VRF group
 /// key, and nothing the operator has to provide. The start epoch's committee
 /// (`output.players()`) must equal this set; each later epoch's committee is
 /// trusted via the finalized-boundary chain.
@@ -107,7 +107,7 @@ impl CommitteeChain {
     /// `extra_data`).
     ///
     /// For the anchor epoch (`epoch == anchor.from_epoch`) the committee's group
-    /// key MUST equal the trusted anchor identity — this is the trust root. For
+    /// key MUST equal the trusted anchor identity - this is the trust root. For
     /// later epochs the caller is responsible for only registering committees
     /// from boundary blocks it has already verified as finalized by the prior
     /// (trusted) committee (the chaining link).
@@ -198,11 +198,11 @@ impl CommitteeChain {
     ///
     /// Two carriers register a committee:
     /// - [`CommitteePreAnnounce`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::CommitteePreAnnounce)
-    ///   — the Path A committee-chaining carrier: epoch `E`'s committee riding a
+    ///   - the Path A committee-chaining carrier: epoch `E`'s committee riding a
     ///   block finalized by the already-trusted `E-1` committee. This is the
-    ///   authenticated path — the trust chains from genesis through each E-1.
+    ///   authenticated path - the trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
-    ///   — the activating boundary at `E·L+1`, finalized by `E` ITSELF. We register
+    ///   - the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
     ///   from it ONLY for a not-yet-known epoch (the genesis anchor; and, until the
     ///   pre-announce producer is wired, epochs lacking a pre-announce). We must NOT
     ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce:
@@ -266,14 +266,17 @@ impl CommitteeChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{collections::BTreeMap, convert::Infallible, sync::Arc};
 
     use alloy_primitives::Bytes;
     use commonware_codec::Encode as _;
+    use commonware_consensus::marshal::store::{Blocks, Certificates};
     use commonware_consensus::simplex::types::{Finalization, Proposal, Subject};
     use commonware_consensus::types::{Epocher as _, Height, Round, View};
+    use commonware_consensus::Heightable as _;
     use commonware_cryptography::certificate::Scheme as _;
     use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
+    use commonware_storage::archive::Identifier;
     use commonware_utils::{
         ordered::{Quorum as _, Set as OrderedSet},
         N3f1, TryCollect as _,
@@ -377,11 +380,31 @@ mod tests {
             epoch: Epoch,
             digest: Digest,
         ) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let signer_indices: Vec<_> = (0..self.keys.len()).collect();
+            self.finalization_for_signers(epoch, digest, &signer_indices)
+        }
+
+        fn finalization_for_signers(
+            &self,
+            epoch: Epoch,
+            digest: Digest,
+            signer_indices: &[usize],
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
+            let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
+            self.finalization_for_proposal(epoch, proposal, signer_indices)
+        }
+
+        fn finalization_for_proposal(
+            &self,
+            verifier_epoch: Epoch,
+            proposal: Proposal<Digest>,
+            signer_indices: &[usize],
+        ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
             let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &ns,
                 self.participants.clone(),
-                VrfMaterialProvider::new(epoch.get(), self.dkg.polynomial.clone(), None),
+                VrfMaterialProvider::new(verifier_epoch.get(), self.dkg.polynomial.clone(), None),
             )
             .unwrap();
             let signers: Vec<HybridScheme<MinSig>> = self
@@ -394,7 +417,7 @@ mod tests {
                         self.participants.clone(),
                         key.clone(),
                         VrfMaterialProvider::new(
-                            epoch.get(),
+                            verifier_epoch.get(),
                             self.dkg.polynomial.clone(),
                             Some(self.dkg.shares[idx.get() as usize].clone()),
                         ),
@@ -402,13 +425,12 @@ mod tests {
                     .unwrap()
                 })
                 .collect();
-            let proposal = Proposal::new(Round::new(epoch, View::new(2)), View::new(1), digest);
             let subject = Subject::Finalize {
                 proposal: &proposal,
             };
-            let attestations: Vec<_> = signers
+            let attestations: Vec<_> = signer_indices
                 .iter()
-                .map(|s| s.sign::<Digest>(subject).unwrap())
+                .map(|index| signers[*index].sign::<Digest>(subject).unwrap())
                 .collect();
             let certificate = verifier
                 .assemble::<_, N3f1>(attestations, &Sequential)
@@ -434,6 +456,224 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MemoryCertificates {
+        by_height: BTreeMap<u64, crate::marshal_types::Finalization>,
+    }
+
+    impl Certificates for MemoryCertificates {
+        type BlockDigest = Digest;
+        type Commitment = Digest;
+        type Scheme = HybridScheme<MinSig>;
+        type Error = Infallible;
+
+        async fn put(
+            &mut self,
+            height: Height,
+            _digest: Self::BlockDigest,
+            finalization: crate::marshal_types::Finalization,
+        ) -> Result<(), Self::Error> {
+            self.by_height.entry(height.get()).or_insert(finalization);
+            Ok(())
+        }
+
+        async fn sync(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            id: Identifier<'_, Self::BlockDigest>,
+        ) -> Result<Option<crate::marshal_types::Finalization>, Self::Error> {
+            let value = match id {
+                Identifier::Index(height) => self.by_height.get(&height).cloned(),
+                Identifier::Key(digest) => self
+                    .by_height
+                    .values()
+                    .find(|finalization| finalization.proposal.payload == *digest)
+                    .cloned(),
+            };
+            Ok(value)
+        }
+
+        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
+            self.by_height.retain(|height, _| *height >= min.get());
+            Ok(())
+        }
+
+        fn last_index(&self) -> Option<Height> {
+            self.by_height
+                .last_key_value()
+                .map(|(height, _)| Height::new(*height))
+        }
+
+        fn ranges_from(&self, from: Height) -> impl Iterator<Item = (Height, Height)> {
+            self.by_height
+                .range(from.get()..)
+                .map(|(height, _)| (Height::new(*height), Height::new(*height)))
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryBlocks {
+        by_height: BTreeMap<u64, crate::block::ConsensusBlock>,
+    }
+
+    impl Blocks for MemoryBlocks {
+        type Block = crate::block::ConsensusBlock;
+        type Error = Infallible;
+
+        async fn put(&mut self, block: Self::Block) -> Result<(), Self::Error> {
+            self.by_height.entry(block.height().get()).or_insert(block);
+            Ok(())
+        }
+
+        async fn sync(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            id: Identifier<'_, Digest>,
+        ) -> Result<Option<Self::Block>, Self::Error> {
+            let value = match id {
+                Identifier::Index(height) => self.by_height.get(&height).cloned(),
+                Identifier::Key(digest) => self
+                    .by_height
+                    .values()
+                    .find(|block| block.digest() == *digest)
+                    .cloned(),
+            };
+            Ok(value)
+        }
+
+        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
+            self.by_height.retain(|height, _| *height >= min.get());
+            Ok(())
+        }
+
+        fn missing_items(&self, start: Height, max: usize) -> Vec<Height> {
+            let Some(last) = self.by_height.last_key_value().map(|(height, _)| *height) else {
+                return Vec::new();
+            };
+            (start.get()..=last)
+                .filter(|height| !self.by_height.contains_key(height))
+                .take(max)
+                .map(Height::new)
+                .collect()
+        }
+
+        fn next_gap(&self, value: Height) -> (Option<Height>, Option<Height>) {
+            let current = self.by_height.contains_key(&value.get()).then_some(value);
+            let next = self
+                .by_height
+                .range(value.get().saturating_add(1)..)
+                .next()
+                .map(|(height, _)| Height::new(*height));
+            (current, next)
+        }
+
+        fn last_index(&self) -> Option<Height> {
+            self.by_height
+                .last_key_value()
+                .map(|(height, _)| Height::new(*height))
+        }
+    }
+
+    #[derive(Default)]
+    struct DurableCrashBlocks {
+        durable: BTreeMap<u64, crate::block::ConsensusBlock>,
+        buffered: BTreeMap<u64, crate::block::ConsensusBlock>,
+        fail_next_sync: bool,
+    }
+
+    impl Blocks for DurableCrashBlocks {
+        type Block = crate::block::ConsensusBlock;
+        type Error = std::io::Error;
+
+        async fn put(&mut self, block: Self::Block) -> Result<(), Self::Error> {
+            let height = block.height().get();
+            if !self.durable.contains_key(&height) {
+                self.buffered.entry(height).or_insert(block);
+            }
+            Ok(())
+        }
+
+        async fn sync(&mut self) -> Result<(), Self::Error> {
+            if std::mem::take(&mut self.fail_next_sync) {
+                return Err(std::io::Error::other("injected block sync crash"));
+            }
+            self.durable.append(&mut self.buffered);
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            id: Identifier<'_, Digest>,
+        ) -> Result<Option<Self::Block>, Self::Error> {
+            let value = match id {
+                Identifier::Index(height) => self
+                    .buffered
+                    .get(&height)
+                    .or_else(|| self.durable.get(&height)),
+                Identifier::Key(digest) => self
+                    .buffered
+                    .values()
+                    .chain(self.durable.values())
+                    .find(|block| block.digest() == *digest),
+            };
+            Ok(value.cloned())
+        }
+
+        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
+            self.durable.retain(|height, _| *height >= min.get());
+            self.buffered.retain(|height, _| *height >= min.get());
+            Ok(())
+        }
+
+        fn missing_items(&self, start: Height, max: usize) -> Vec<Height> {
+            let last = self
+                .durable
+                .keys()
+                .chain(self.buffered.keys())
+                .max()
+                .copied();
+            let Some(last) = last else {
+                return Vec::new();
+            };
+            (start.get()..=last)
+                .filter(|height| {
+                    !self.durable.contains_key(height) && !self.buffered.contains_key(height)
+                })
+                .take(max)
+                .map(Height::new)
+                .collect()
+        }
+
+        fn next_gap(&self, value: Height) -> (Option<Height>, Option<Height>) {
+            let contains =
+                self.durable.contains_key(&value.get()) || self.buffered.contains_key(&value.get());
+            let next = self
+                .durable
+                .keys()
+                .chain(self.buffered.keys())
+                .filter(|height| **height > value.get())
+                .min()
+                .copied()
+                .map(Height::new);
+            (contains.then_some(value), next)
+        }
+
+        fn last_index(&self) -> Option<Height> {
+            self.durable
+                .keys()
+                .chain(self.buffered.keys())
+                .max()
+                .copied()
+                .map(Height::new)
+        }
+    }
+
     fn certified_block(
         signer: &Committee,
         epoch: Epoch,
@@ -453,6 +693,926 @@ mod tests {
             finalization,
             block,
         }
+    }
+
+    fn fill_plain_finalized_range(
+        records: &mut BTreeMap<u64, CertifiedFinalizedBlock>,
+        signer: &Committee,
+        epoch: Epoch,
+        heights: impl Iterator<Item = u64>,
+    ) {
+        for height in heights {
+            records
+                .entry(height)
+                .or_insert_with(|| certified_block(signer, epoch, height, Vec::new()));
+        }
+    }
+
+    #[test]
+    fn restart_authenticates_and_pairs_archive_suffix_across_epoch_boundary() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                10,
+                certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
+            ),
+            (
+                11,
+                certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
+            ),
+            (12, certified_block(&c1, e1, 12, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..10);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        for height in [10_u64, 11, 12] {
+            let record = records.get(&height).unwrap();
+            certificates
+                .by_height
+                .insert(height, record.finalization.clone());
+            blocks.by_height.insert(height, record.block.clone());
+        }
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(10),
+            Height::new(12),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("paired suffix must authenticate through the epoch boundary");
+
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e1));
+        assert_eq!(epocher.containing(Height::new(12)).unwrap().epoch(), e1);
+        assert_eq!(certificates.last_index(), Some(Height::new(12)));
+        assert_eq!(blocks.last_index(), Some(Height::new(12)));
+    }
+
+    #[test]
+    fn restart_recovers_preannounce_before_suffix_lower_bound() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                8,
+                certified_block(&c0, e0, 8, c1.preannounce_block_extra_data(e1)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..8);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        for height in [8_u64, 9] {
+            let record = records.get(&height).unwrap();
+            certificates
+                .by_height
+                .insert(height, record.finalization.clone());
+        }
+        blocks.by_height.insert(9, records[&9].block.clone());
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("restart must recover an earlier authenticated successor preannounce");
+
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e1));
+
+        let boundary = certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1));
+        engine::authenticate_live_finalized(&chain, &epocher, Height::new(11), &boundary)
+            .expect("the subsequent live boundary must verify with the recovered successor");
+        assert_eq!(epocher.containing(Height::new(11)).unwrap().epoch(), e1);
+    }
+
+    #[test]
+    fn restart_repairs_both_archive_halves_from_authenticated_suffix() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                10,
+                certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
+            ),
+            (
+                11,
+                certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
+            ),
+            (12, certified_block(&c1, e1, 12, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..10);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        certificates
+            .by_height
+            .insert(10, records[&10].finalization.clone());
+        certificates
+            .by_height
+            .insert(12, records[&12].finalization.clone());
+        blocks.by_height.insert(10, records[&10].block.clone());
+        blocks.by_height.insert(11, records[&11].block.clone());
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(10),
+            Height::new(12),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("authenticated suffix must repair either missing archive companion");
+
+        for height in 10_u64..=12 {
+            assert_eq!(
+                certificates.by_height[&height].encode(),
+                records[&height].finalization.encode()
+            );
+            assert_eq!(
+                blocks.by_height[&height].encode(),
+                records[&height].block.encode()
+            );
+        }
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e1));
+    }
+
+    #[test]
+    fn restart_authenticates_multiple_epochs_in_one_replay_suffix() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let c2 = committee(50);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let e2 = Epoch::new(2);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                10,
+                certified_block(&c0, e0, 10, c1.preannounce_block_extra_data(e1)),
+            ),
+            (
+                11,
+                certified_block(&c1, e1, 11, c1.boundary_block_extra_data(e1)),
+            ),
+            (
+                20,
+                certified_block(&c1, e1, 20, c2.preannounce_block_extra_data(e2)),
+            ),
+            (
+                21,
+                certified_block(&c2, e2, 21, c2.boundary_block_extra_data(e2)),
+            ),
+            (22, certified_block(&c2, e2, 22, Vec::new())),
+        ]);
+        for height in 12_u64..20 {
+            records.insert(height, certified_block(&c1, e1, height, Vec::new()));
+        }
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..10);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        for height in 10_u64..=22 {
+            let record = &records[&height];
+            certificates
+                .by_height
+                .insert(height, record.finalization.clone());
+            blocks.by_height.insert(height, record.block.clone());
+        }
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(10),
+            Height::new(22),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("one replay suffix may authenticate several epoch transitions");
+
+        assert_eq!(chain.lock().unwrap().highest_registered(), Some(e2));
+        assert_eq!(epocher.containing(Height::new(22)).unwrap().epoch(), e2);
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_missing_upstream_height() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        certificates
+            .by_height
+            .insert(9, records[&9].finalization.clone());
+        blocks.by_height.insert(9, records[&9].block.clone());
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(10),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("upstream did not return follower replay suffix height 10"));
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_local_block_conflict() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        certificates
+            .by_height
+            .insert(9, records[&9].finalization.clone());
+        blocks
+            .by_height
+            .insert(9, certified_block(&c0, e0, 9, vec![0xFF]).block);
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains(
+            "local follower replay block differs from authenticated upstream at height 9"
+        ));
+    }
+
+    #[test]
+    fn restart_replay_suffix_accepts_distinct_valid_quorum_for_same_proposal() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut height_nine = certified_block(&c0, e0, 9, Vec::new());
+        height_nine.finalization =
+            c0.finalization_for_signers(e0, height_nine.block.digest(), &[0, 1, 2]);
+        let local_finalization =
+            c0.finalization_for_signers(e0, height_nine.block.digest(), &[1, 2, 3]);
+        assert_eq!(
+            local_finalization.proposal,
+            height_nine.finalization.proposal
+        );
+        assert_ne!(
+            local_finalization.encode(),
+            height_nine.finalization.encode()
+        );
+
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, height_nine),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        certificates.by_height.insert(9, local_finalization.clone());
+        blocks.by_height.insert(9, records[&9].block.clone());
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("distinct valid quorum certificates for one proposal must reconcile");
+
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("restarting with the retained alternate certificate must be idempotent");
+
+        assert_eq!(
+            certificates.by_height[&9].encode(),
+            local_finalization.encode(),
+            "reconciliation must retain the already-valid local certificate"
+        );
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_invalid_local_certificate_for_same_proposal() {
+        let c0 = committee(10);
+        let attacker = committee(50);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        let forged = attacker.finalization_for(e0, records[&9].block.digest());
+        assert_eq!(forged.proposal, records[&9].finalization.proposal);
+        certificates.by_height.insert(9, forged);
+        blocks.by_height.insert(9, records[&9].block.clone());
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains(
+                "local follower replay finalization certificate failed verification at height 9"
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_local_finalization_conflict() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let digest = records[&9].block.digest();
+        let signer_indices: Vec<_> = (0..c0.keys.len()).collect();
+        let conflicts = [
+            (
+                "payload",
+                certified_block(&c0, e0, 8, Vec::new()).finalization,
+            ),
+            (
+                "parent view",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(Round::new(e0, View::new(2)), View::new(0), digest),
+                    &signer_indices,
+                ),
+            ),
+            (
+                "round view",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(Round::new(e0, View::new(3)), View::new(1), digest),
+                    &signer_indices,
+                ),
+            ),
+            (
+                "epoch",
+                c0.finalization_for_proposal(
+                    e0,
+                    Proposal::new(
+                        Round::new(Epoch::new(1), View::new(2)),
+                        View::new(1),
+                        digest,
+                    ),
+                    &signer_indices,
+                ),
+            ),
+        ];
+
+        for (name, conflict) in conflicts {
+            let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+                e0,
+                c0.participants.clone(),
+            )));
+            let epocher = FollowerEpocher::new(10, 0);
+            let mut certificates = MemoryCertificates::default();
+            let mut blocks = MemoryBlocks::default();
+            certificates.by_height.insert(9, conflict);
+            blocks.by_height.insert(9, records[&9].block.clone());
+
+            let error =
+                futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+                    &chain,
+                    &source,
+                    &epocher,
+                    e0,
+                    Height::new(9),
+                    Height::new(9),
+                    &mut certificates,
+                    &mut blocks,
+                ))
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                error.contains(
+                    "local follower replay finalization proposal differs from authenticated upstream at height 9"
+                ),
+                "{name}: unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_conflicting_preannounces() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let conflicting_c1 = committee(50);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                7,
+                certified_block(&c0, e0, 7, conflicting_c1.preannounce_block_extra_data(e1)),
+            ),
+            (
+                8,
+                certified_block(&c0, e0, 8, c1.preannounce_block_extra_data(e1)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..7);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+        for height in [7_u64, 8, 9] {
+            certificates
+                .by_height
+                .insert(height, records[&height].finalization.clone());
+            blocks
+                .by_height
+                .insert(height, records[&height].block.clone());
+        }
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("conflicting committee outcome replay for epoch 1"));
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_boundary_outcome_conflicting_with_preannounce() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let conflicting_c1 = committee(50);
+        let e0 = Epoch::new(0);
+        let e1 = Epoch::new(1);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (
+                8,
+                certified_block(&c0, e0, 8, c1.preannounce_block_extra_data(e1)),
+            ),
+            (
+                11,
+                certified_block(&c1, e1, 11, conflicting_c1.boundary_block_extra_data(e1)),
+            ),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..8);
+        fill_plain_finalized_range(&mut records, &c0, e0, 9..11);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(8),
+            Height::new(11),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("boundary outcome conflicts with authenticated epoch 1 outcome"));
+        assert!(epocher.activation_height(e1).is_none());
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_wrong_upstream_payload_before_archive_write() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let honest = certified_block(&c0, e0, 9, Vec::new());
+        let other = certified_block(&c0, e0, 8, Vec::new());
+        let malformed = CertifiedFinalizedBlock {
+            finalization: other.finalization,
+            block: honest.block,
+        };
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, malformed),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("finalization payload differs from block at height 9"));
+        assert!(!certificates.by_height.contains_key(&9));
+        assert!(!blocks.by_height.contains_key(&9));
+    }
+
+    #[test]
+    fn restart_replay_suffix_rejects_wrong_height_epoch_and_forged_certificate() {
+        let c0 = committee(10);
+        let c1 = committee(30);
+        let e0 = Epoch::new(0);
+        let wrong_height = certified_block(&c0, e0, 8, Vec::new());
+        let wrong_epoch = certified_block(&c0, Epoch::new(2), 9, Vec::new());
+        let honest = certified_block(&c0, e0, 9, Vec::new());
+        let forged = CertifiedFinalizedBlock {
+            finalization: c1.finalization_for(e0, honest.block.digest()),
+            block: honest.block,
+        };
+
+        for (name, candidate, expected_error) in [
+            (
+                "wrong height",
+                wrong_height,
+                "certified block reports height 8, expected 9",
+            ),
+            (
+                "wrong epoch",
+                wrong_epoch,
+                "recovered height 9 precedes activation window",
+            ),
+            (
+                "forged certificate",
+                forged,
+                "finalization certificate failed verification for epoch 0",
+            ),
+        ] {
+            let mut records = BTreeMap::from([
+                (
+                    1,
+                    certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+                ),
+                (9, candidate),
+            ]);
+            fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+            let source = ArchivedFinalizedSource {
+                by_height: Arc::new(records),
+            };
+            let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+                e0,
+                c0.participants.clone(),
+            )));
+            let epocher = FollowerEpocher::new(10, 0);
+            let mut certificates = MemoryCertificates::default();
+            let mut blocks = MemoryBlocks::default();
+
+            let error =
+                futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+                    &chain,
+                    &source,
+                    &epocher,
+                    e0,
+                    Height::new(9),
+                    Height::new(9),
+                    &mut certificates,
+                    &mut blocks,
+                ))
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains(expected_error), "{name}: {error}");
+            assert!(certificates.by_height.is_empty(), "{name}");
+            assert!(blocks.by_height.is_empty(), "{name}");
+        }
+    }
+
+    #[test]
+    fn restart_repairs_both_durable_archive_crash_cuts() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+
+        // Crash cut 1: the finalization sync committed, then block sync failed.
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = DurableCrashBlocks {
+            fail_next_sync: true,
+            ..Default::default()
+        };
+        let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("failed to sync repaired follower replay blocks"));
+        assert!(certificates.by_height.contains_key(&9));
+        assert!(!blocks.durable.contains_key(&9));
+
+        // Restart sees the durable finalization-only tail and repairs its block.
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut blocks = DurableCrashBlocks::default();
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("restart must repair a durable finalization-only crash cut");
+        assert!(blocks.durable.contains_key(&9));
+
+        // Crash cut 2: a block-only durable tail is repaired symmetrically.
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = DurableCrashBlocks {
+            durable: BTreeMap::from([(9, records[&9].block.clone())]),
+            ..Default::default()
+        };
+        futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+            &chain,
+            &source,
+            &epocher,
+            e0,
+            Height::new(9),
+            Height::new(9),
+            &mut certificates,
+            &mut blocks,
+        ))
+        .expect("restart must repair a durable block-only crash cut");
+        assert_eq!(
+            certificates.by_height[&9].encode(),
+            records[&9].finalization.encode()
+        );
+        assert_eq!(blocks.durable.len(), 1);
+    }
+
+    #[test]
+    fn restart_replay_suffix_reconciliation_is_idempotent() {
+        let c0 = committee(10);
+        let e0 = Epoch::new(0);
+        let epocher = FollowerEpocher::new(10, 0);
+        let mut records = BTreeMap::from([
+            (
+                1,
+                certified_block(&c0, e0, 1, c0.boundary_block_extra_data(e0)),
+            ),
+            (9, certified_block(&c0, e0, 9, Vec::new())),
+        ]);
+        fill_plain_finalized_range(&mut records, &c0, e0, 2..9);
+        let source = ArchivedFinalizedSource {
+            by_height: Arc::new(records.clone()),
+        };
+        let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
+            e0,
+            c0.participants.clone(),
+        )));
+        let mut certificates = MemoryCertificates::default();
+        let mut blocks = MemoryBlocks::default();
+
+        for _ in 0..2 {
+            futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
+                &chain,
+                &source,
+                &epocher,
+                e0,
+                Height::new(9),
+                Height::new(9),
+                &mut certificates,
+                &mut blocks,
+            ))
+            .expect("repeated authenticated repair must be idempotent");
+        }
+
+        assert_eq!(certificates.by_height.len(), 1);
+        assert_eq!(blocks.by_height.len(), 1);
+        assert_eq!(
+            certificates.by_height[&9].encode(),
+            records[&9].finalization.encode()
+        );
+        assert_eq!(blocks.by_height[&9].encode(), records[&9].block.encode());
     }
 
     #[test]
@@ -692,7 +1852,7 @@ mod tests {
     fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
         // The D1 fix, end to end at the follower: epoch 6's committee is registered
         // from its E-1 PRE-ANNOUNCE (carried in a block finalized by the trusted
-        // epoch-5 committee — the chained path). A later self-finalized epoch-6
+        // epoch-5 committee - the chained path). A later self-finalized epoch-6
         // boundary announcing a DIFFERENT (forged) committee must NOT override it.
         let (e5, e6) = (Epoch::new(5), Epoch::new(6));
         let c5 = committee(10);
@@ -711,7 +1871,7 @@ mod tests {
         );
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
 
-        // A forged, self-finalized epoch-6 boundary is a NO-OP — it cannot overwrite
+        // A forged, self-finalized epoch-6 boundary is a NO-OP - it cannot overwrite
         // the chained committee (that overwrite would be the D1 bug).
         let forged_boundary = forged6.boundary_block_extra_data(e6);
         assert_eq!(
@@ -744,7 +1904,7 @@ mod tests {
     fn committee_chain_advances_from_boundary_block_extra_data() {
         let e6 = Epoch::new(6);
         let c6 = committee(70);
-        // Anchor on epoch 6 — the boundary block we process announces it.
+        // Anchor on epoch 6 - the boundary block we process announces it.
         let mut chain = CommitteeChain::new(e6, c6.participants.clone());
         // Feeding the boundary block's extra_data registers epoch 6's committee.
         let extra = c6.boundary_block_extra_data(e6);
@@ -764,7 +1924,7 @@ mod tests {
     /// the epoch verifier's certificate codec config, then decoding the
     /// `ConsensusBlock` from the REMAINING buffer. This pins that two-step decode
     /// against the resolver's `finalization.encode() ++ block.encode()` wire
-    /// format — the load-bearing interop contract between the follower's
+    /// format - the load-bearing interop contract between the follower's
     /// resolver and the marshal (a divergence here would compile clean but fail
     /// every backfill at runtime).
     #[test]
@@ -787,7 +1947,7 @@ mod tests {
         let cert_cfg = verifier.certificate_codec_config();
 
         // An arbitrary valid block (its digest need not match the finalization
-        // payload for the codec contract — the marshal checks that separately).
+        // payload for the codec contract - the marshal checks that separately).
         let block = {
             use alloy_primitives::Bytes;
             use outbe_primitives::OutbeHeader;
@@ -828,16 +1988,16 @@ mod tests {
         );
     }
 
-    /// Full `outbe_getFinalization` server→client interop. The SERVER side
+    /// Full `outbe_getFinalization` server->client interop. The SERVER side
     /// (drainer) encodes the certificate and block separately and hexes them
-    /// (`FinalizedBlockBytes` → `FinalizationProof`); the CLIENT side hex-decodes
+    /// (`FinalizedBlockBytes` -> `FinalizationProof`); the CLIENT side hex-decodes
     /// and decodes the certificate with the UNBOUNDED committee config (the
-    /// engine `UpstreamRpcClient` path — it has no committee size yet), then the
+    /// engine `UpstreamRpcClient` path - it has no committee size yet), then the
     /// follower registers the epoch committee from the boundary block and the
     /// marshal-equivalent verification passes. This pins that:
     ///   (a) the unbounded cfg decodes a real committee-length certificate, and
     ///   (b) the decoded `(finalization, block)` is exactly what the resolver
-    ///       registers + the `CommitteeChain` verifies — i.e. a follower accepts
+    ///       registers + the `CommitteeChain` verifies - i.e. a follower accepts
     ///       what a validator serves, end to end.
     #[test]
     fn served_finalization_round_trips_to_verified_certified_block() {
@@ -849,7 +2009,7 @@ mod tests {
         let c = committee(40);
 
         // Anchor a chain on this committee and register epoch 4 from its boundary
-        // block — exactly what the follower does on the fetch path.
+        // block - exactly what the follower does on the fetch path.
         let mut chain = CommitteeChain::new(epoch, c.participants.clone());
         let boundary_extra = c.boundary_block_extra_data(epoch);
         assert_eq!(
@@ -895,7 +2055,7 @@ mod tests {
         assert!(block_reader.is_empty(), "no trailing bytes after block");
 
         // The decoded certificate verifies against the committee the follower
-        // registered from the boundary block — a follower accepts what the
+        // registered from the boundary block - a follower accepts what the
         // validator served.
         chain
             .verify_finalization(epoch, &decoded_fin)

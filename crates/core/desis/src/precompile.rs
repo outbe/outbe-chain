@@ -18,7 +18,7 @@ use crate::schema::BidData;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
+/// Interface ID probed by `OriginRouter.wire` - `type(IDesis).interfaceId` of the
 /// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
 /// (XOR of its 4 function selectors).
 pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xf7, 0x8d, 0x15, 0x19];
@@ -96,7 +96,7 @@ pub fn dispatch(
     })
 }
 
-/// Mirrors `BridgeMsgCodec.packBid`: one word per bid, low bits up —
+/// Mirrors `BridgeMsgCodec.packBid`: one word per bid, low bits up -
 /// reference(16) | issuance(16) | timestamp(32) | rate(32) | quantity(16).
 fn bids_from_sol_arrays(bidders: &[Address], packed: &[U256]) -> Result<Vec<BidData>> {
     if bidders.len() != packed.len() {

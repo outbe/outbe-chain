@@ -2,8 +2,8 @@
 //!
 //! The follower reuses the same marshal and executor as the validator path. The
 //! marshal actor (with its two immutable archives) and the executor mailbox are
-//! built by the caller — they need the reth node handle and the engine-crate
-//! storage config, which `outbe-consensus` does not have — and handed in here.
+//! built by the caller - they need the reth node handle and the engine-crate
+//! storage config, which `outbe-consensus` does not have - and handed in here.
 //! This function then:
 //!
 //! 1. bootstraps the [`CommitteeChain`] at the anchor epoch (fetching the anchor
@@ -22,9 +22,13 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use alloy_consensus::BlockHeader as _;
+use commonware_codec::Encode as _;
 use commonware_consensus::marshal::resolver::handler;
+use commonware_consensus::marshal::store::{Blocks, Certificates};
 use commonware_consensus::types::{Epoch, Epocher, Height};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
+use commonware_storage::archive::Identifier;
 use eyre::{ensure, eyre, Result};
 use rand::{CryptoRng, RngCore};
 use tracing::info;
@@ -35,6 +39,7 @@ use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
 use crate::follow::FollowerEpocher;
 use crate::follow::{stubs, CommitteeChain};
+use crate::hybrid::HybridScheme;
 use crate::marshal_types::{FollowMarshalActor, MarshalMailbox};
 
 /// Inputs to [`run_follow_engine`].
@@ -70,7 +75,7 @@ where
     pub local: L,
     /// Upstream tip discovery.
     pub tip: T,
-    /// Height→epoch strategy, shared with the marshal.
+    /// Height->epoch strategy, shared with the marshal.
     pub epocher: FollowerEpocher,
     /// The shared committee chain. Its `scheme_provider()` MUST be the same
     /// provider the `marshal_actor` was initialized with, so committee
@@ -121,11 +126,11 @@ where
         mailbox_size,
     } = config;
 
-    // ── 1. Rebuild the authenticated committee chain through the durable
-    //        marshal floor before any new certificate is admitted. ──────────
+    // -- 1. Rebuild the authenticated committee chain through the durable
+    //        marshal floor before any new certificate is admitted. ----------
     prepare_committee_chain(&chain, &upstream, &epocher, anchor_epoch, recovered_height).await?;
 
-    // ── 2. Build the marshal resolver handler pair + follow resolver ────────
+    // -- 2. Build the marshal resolver handler pair + follow resolver --------
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
         handler::init(context.child("follow_resolver_handler"), mailbox_size);
 
@@ -139,18 +144,18 @@ where
     );
     let _resolver_handle = resolver_actor.start();
 
-    // ── 3. Null broadcast (the follower never disseminates) ─────────────────
+    // -- 3. Null broadcast (the follower never disseminates) -----------------
     let broadcast = stubs::null_broadcast(context.child("follow_broadcast"), mailbox_size);
 
-    // ── 4. Start the marshal: executor as application reporter, follow
-    //        resolver for gap repair. ────────────────────────────────────────
+    // -- 4. Start the marshal: executor as application reporter, follow
+    //        resolver for gap repair. ----------------------------------------
     let marshal_handle = marshal_actor.start(
         executor_reporter,
         broadcast,
         (handler_receiver, follow_resolver),
     );
 
-    // ── 5. Start the driver: walk the marshal forward to the upstream tip ───
+    // -- 5. Start the driver: walk the marshal forward to the upstream tip ---
     let driver = Driver::new(
         context.child("follow_driver"),
         driver::Config {
@@ -238,6 +243,233 @@ where
         recovered_height.get()
     );
     Ok(target_epoch)
+}
+
+/// Authenticate and normalize every durable follower record that Marshal can
+/// consume after restart before its actor is initialized or started.
+///
+/// The range is inclusive. Existing local blocks and finalized proposals must
+/// match the authenticated upstream record. A local finalization certificate
+/// is verified independently because honest nodes may retain different quorum
+/// subsets for the same proposal. A missing certificate or block is repaired
+/// from the authenticated record. Committee and boundary state advances
+/// through the same transition used by live resolver delivery.
+#[allow(clippy::too_many_arguments)]
+pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    source: &F,
+    epocher: &FollowerEpocher,
+    anchor_epoch: Epoch,
+    lower: Height,
+    upper: Height,
+    certificates: &mut FC,
+    blocks: &mut FB,
+) -> Result<Epoch>
+where
+    F: FinalizedSource,
+    FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
+    FB: Blocks<Block = crate::block::ConsensusBlock>,
+{
+    ensure!(
+        lower <= upper,
+        "follower replay suffix lower height {} exceeds upper height {}",
+        lower.get(),
+        upper.get()
+    );
+
+    let lower_epoch = prepare_committee_chain(chain, source, epocher, anchor_epoch, lower).await?;
+    recover_pending_successor_before_lower(chain, source, epocher, lower_epoch, lower, blocks)
+        .await?;
+
+    let mut wrote_certificates = false;
+    let mut wrote_blocks = false;
+    for raw_height in lower.get()..=upper.get() {
+        if raw_height == 0 {
+            continue;
+        }
+        let height = Height::new(raw_height);
+        let certified = source.get_finalization(height).await.ok_or_else(|| {
+            eyre!(
+                "upstream did not return follower replay suffix height {}",
+                height.get()
+            )
+        })?;
+        authenticate_live_finalized(chain, epocher, height, &certified)?;
+
+        let digest = certified.block.digest();
+        match certificates
+            .get(Identifier::Index(height.get()))
+            .await
+            .map_err(|error| {
+                eyre!(
+                    "failed to read follower replay finalization at height {}: {error}",
+                    height.get()
+                )
+            })? {
+            Some(local) => {
+                ensure!(
+                    local.proposal == certified.finalization.proposal,
+                    "local follower replay finalization proposal differs from authenticated upstream at height {}",
+                    height.get()
+                );
+                let epoch = local.proposal.round.epoch();
+                chain
+                    .lock()
+                    .expect("committee chain mutex poisoned")
+                    .verify_finalization(epoch, &local)
+                    .map_err(|error| {
+                        eyre!(
+                            "local follower replay finalization certificate failed verification at height {}: {error}",
+                            height.get()
+                        )
+                    })?;
+            }
+            None => {
+                certificates
+                    .put(height, digest, certified.finalization.clone())
+                    .await
+                    .map_err(|error| {
+                        eyre!(
+                            "failed to repair follower replay finalization at height {}: {error}",
+                            height.get()
+                        )
+                    })?;
+                wrote_certificates = true;
+            }
+        }
+
+        match blocks
+            .get(Identifier::Index(height.get()))
+            .await
+            .map_err(|error| {
+                eyre!(
+                    "failed to read follower replay block at height {}: {error}",
+                    height.get()
+                )
+            })? {
+            Some(local) => ensure!(
+                local.encode() == certified.block.encode(),
+                "local follower replay block differs from authenticated upstream at height {}",
+                height.get()
+            ),
+            None => {
+                blocks.put(certified.block).await.map_err(|error| {
+                    eyre!(
+                        "failed to repair follower replay block at height {}: {error}",
+                        height.get()
+                    )
+                })?;
+                wrote_blocks = true;
+            }
+        }
+    }
+
+    if wrote_certificates {
+        certificates.sync().await.map_err(|error| {
+            eyre!("failed to sync repaired follower replay finalizations: {error}")
+        })?;
+    }
+    if wrote_blocks {
+        blocks
+            .sync()
+            .await
+            .map_err(|error| eyre!("failed to sync repaired follower replay blocks: {error}"))?;
+    }
+
+    Ok(chain
+        .lock()
+        .expect("committee chain mutex poisoned")
+        .highest_registered()
+        .unwrap_or(anchor_epoch))
+}
+
+async fn recover_pending_successor_before_lower<F, FB>(
+    chain: &Arc<Mutex<CommitteeChain>>,
+    source: &F,
+    epocher: &FollowerEpocher,
+    active_epoch: Epoch,
+    lower: Height,
+    blocks: &FB,
+) -> Result<()>
+where
+    F: FinalizedSource,
+    FB: Blocks<Block = crate::block::ConsensusBlock>,
+{
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
+
+    let Some(activation) = epocher.activation_height(active_epoch) else {
+        return Ok(());
+    };
+    if lower <= activation {
+        return Ok(());
+    }
+    let successor = active_epoch.get().saturating_add(1);
+    let mut found_successor = false;
+
+    for raw_height in (activation.get()..lower.get()).rev() {
+        let height = Height::new(raw_height);
+        let local_block = blocks
+            .get(Identifier::Index(raw_height))
+            .await
+            .map_err(|error| {
+                eyre!(
+                    "failed to inspect follower replay block at height {}: {error}",
+                    height.get()
+                )
+            })?;
+        if local_block.is_none() && found_successor {
+            continue;
+        }
+        let fetched = if local_block.is_none() {
+            Some(source.get_finalization(height).await.ok_or_else(|| {
+                eyre!(
+                    "upstream did not return retained follower history height {}",
+                    height.get()
+                )
+            })?)
+        } else {
+            None
+        };
+        let inspected_block = local_block
+            .as_ref()
+            .or_else(|| fetched.as_ref().map(|certified| &certified.block))
+            .expect("retained follower history block source must exist");
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            inspected_block.header().extra_data().as_ref(),
+        )
+        .map_err(|error| {
+            eyre!(
+                "failed to decode retained follower block {} artifacts: {error:?}",
+                height.get()
+            )
+        })?;
+        if !matches!(
+            artifacts.consensus_header_artifact,
+            Some(CHA::CommitteePreAnnounce { epoch, .. }) if epoch == successor
+        ) {
+            continue;
+        }
+
+        let certified = match fetched {
+            Some(certified) => certified,
+            None => source.get_finalization(height).await.ok_or_else(|| {
+                eyre!(
+                    "upstream did not return retained follower preannounce height {}",
+                    height.get()
+                )
+            })?,
+        };
+        if let Some(local_block) = local_block {
+            ensure!(
+                local_block.encode() == certified.block.encode(),
+                "local retained follower preannounce differs from authenticated upstream at height {}",
+                height.get()
+            );
+        }
+        authenticate_live_finalized(chain, epocher, height, &certified)?;
+        found_successor = true;
+    }
+    Ok(())
 }
 
 fn validate_certified_envelope(
@@ -337,6 +569,16 @@ pub(super) fn authenticate_live_finalized(
                 boundary.epoch,
                 certified_epoch.get()
             );
+            chain
+                .lock()
+                .expect("committee chain mutex poisoned")
+                .register_epoch_from_outcome(certified_epoch, &boundary.outcome)
+                .map_err(|error| {
+                    eyre!(
+                        "boundary outcome conflicts with authenticated epoch {} outcome: {error}",
+                        certified_epoch.get()
+                    )
+                })?;
             epocher.observe_boundary(certified_epoch, expected_height)?;
         }
         _ => {}

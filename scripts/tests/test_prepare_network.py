@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -12,6 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PREPARE_NETWORK = REPO_ROOT / "scripts" / "prepare_network.py"
 BOOTSTRAP_TESTNET = REPO_ROOT / "scripts" / "bootstrap-testnet.sh"
 SEED = REPO_ROOT / "scripts" / "seed-testnet-lowstake.json"
+
+PREPARE_NETWORK_SPEC = importlib.util.spec_from_file_location(
+    "outbe_prepare_network", PREPARE_NETWORK
+)
+assert PREPARE_NETWORK_SPEC is not None and PREPARE_NETWORK_SPEC.loader is not None
+PREPARE_NETWORK_MODULE = importlib.util.module_from_spec(PREPARE_NETWORK_SPEC)
+PREPARE_NETWORK_SPEC.loader.exec_module(PREPARE_NETWORK_MODULE)
 
 
 def project_binary(name: str) -> Path:
@@ -50,6 +58,36 @@ def add_radicle_founder_material(keygen: Path, material: Path, count: int = 4) -
 
 
 class PrepareNetworkTests(unittest.TestCase):
+    def test_network_profiles_expose_the_canonical_attestation_matrix(self) -> None:
+        for network, chain_id in (
+            ("devnet", 424242),
+            ("testnet", 54322345),
+        ):
+            for tee_mode in ("dcap-required", "gramine-direct-dev"):
+                self.assertEqual(
+                    PREPARE_NETWORK_MODULE.resolve_network_profile(
+                        network, chain_id, tee_mode
+                    )[:2],
+                    (network, chain_id),
+                )
+
+        self.assertEqual(
+            PREPARE_NETWORK_MODULE.resolve_network_profile(
+                "mainnet", 676, "dcap-required"
+            )[:2],
+            ("mainnet", 676),
+        )
+        with self.assertRaisesRegex(ValueError, "Mainnet requires"):
+            PREPARE_NETWORK_MODULE.resolve_network_profile(
+                "mainnet", 676, "gramine-direct-dev"
+            )
+
+        for tee_mode in ("dcap-required", "gramine-direct-dev"):
+            with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
+                PREPARE_NETWORK_MODULE.resolve_network_profile(
+                    None, 999999, tee_mode
+                )
+
     def test_prefund_cli_names_raw_coen_units_without_legacy_aliases(self) -> None:
         result = subprocess.run(
             ["python3", str(PREPARE_NETWORK), "--help"],
@@ -412,7 +450,14 @@ class PrepareNetworkTests(unittest.TestCase):
             self.assertIn("22" * 32, tee_manifest)
             self.assertFalse((output / "test-sgx-signing-key.pem").exists())
             for index in range(4):
+                node = (output / "commands" / f"validator-{index}.sh").read_text()
                 enclave = (output / "commands" / f"enclave-{index}.sh").read_text()
+                for removed in (
+                    "--node-evm-key",
+                    "--tee-renewal.",
+                    "--private-key",
+                ):
+                    self.assertNotIn(removed, node)
                 self.assertIn(image, enclave)
                 self.assertIn("--device /dev/sgx_enclave:/dev/sgx_enclave", enclave)
                 self.assertIn("--device /dev/sgx_provision:/dev/sgx_provision", enclave)
@@ -505,6 +550,9 @@ class PrepareNetworkTests(unittest.TestCase):
                 self.assertIn("--projection.mongodb-uri", node)
                 self.assertIn("--engine.persistence-threshold 0", node)
                 self.assertIn("--engine.memory-block-buffer-target 0", node)
+                self.assertNotIn("--node-evm-key", node)
+                self.assertNotIn("--tee-renewal.", node)
+                self.assertNotIn("--private-key", node)
                 self.assertIn('export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"', node)
                 self.assertIn(
                     f"--projection.mongodb-database 'outbe_devnet_{projection_scope}_validator_{index}'",

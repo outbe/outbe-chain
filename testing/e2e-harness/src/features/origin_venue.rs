@@ -398,8 +398,8 @@ fn committee_clock_settles(world: &mut World) {
     }
 }
 
-/// A loopback venue cannot relay its bids from inside the clearing delivery —
-/// that would be a nested send in the same transaction — so it parks the relay
+/// A loopback venue cannot relay its bids from inside the clearing delivery -
+/// that would be a nested send in the same transaction - so it parks the relay
 /// for a permissionless retry. Production has a keeper for this; the run does it
 /// itself.
 /// The loopback adapter isolates a failed delivery by parking it, and a real
@@ -440,7 +440,7 @@ fn flush_parked_bid_relays(world: &mut World) {
 }
 
 /// Each venue keeps its own deferred-relay queue, and the routers share an
-/// address across chains — so a flush has to be asked of the chain that parked it.
+/// address across chains - so a flush has to be asked of the chain that parked it.
 #[cfg(feature = "ocomp-integration")]
 fn flush_one_venue_bid_relays(venue: &VenueSide) {
     let url = venue.url.clone();

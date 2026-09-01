@@ -10,11 +10,11 @@
 //! - the once-per-WWD metadosis league snapshot batch-decrypts the day's
 //!   owners ([`snapshot_leagues`]);
 //! - owner-authorized `eth_call` queries evaluate RCFI in place
-//!   ([`query_index`], gated by a signed, expiring authorization — never a raw
+//!   ([`query_index`], gated by a signed, expiring authorization - never a raw
 //!   view key).
 //!
-//! The RCFI arithmetic is `outbe_fidelity_math` — the exact accumulator the
-//! chain historically ran over plaintext cohorts — so the two evaluation paths
+//! The RCFI arithmetic is `outbe_fidelity_math` - the exact accumulator the
+//! chain historically ran over plaintext cohorts - so the two evaluation paths
 //! cannot drift. Every function is a pure transform of its inputs + the
 //! resident state key (consensus determinism); business failures return
 //! structured errors, never panics.
@@ -37,11 +37,11 @@ use crate::errors::{Result, TeeError};
 /// independent keys.
 pub const FIELD_COHORTS: u8 = 0;
 
-/// Interior header: `qualified_start(8) ‖ active_count(4) ‖ sold_count(4)`.
+/// Interior header: `qualified_start(8) || active_count(4) || sold_count(4)`.
 const HEADER_LEN: usize = 16;
-/// `size(32) ‖ acquired_at(8)`.
+/// `size(32) || acquired_at(8)`.
 const ACTIVE_ENTRY_LEN: usize = 40;
-/// `size(32) ‖ acquired_at(8) ‖ sold_at(8)`.
+/// `size(32) || acquired_at(8) || sold_at(8)`.
 const SOLD_ENTRY_LEN: usize = 48;
 /// Smallest padding bucket (in combined cohort count).
 const MIN_BUCKET: usize = 8;
@@ -56,7 +56,7 @@ fn err(msg: impl Into<String>) -> TeeError {
     TeeError::Fidelity(msg.into())
 }
 
-/// Plaintext cohort ledger of one account — the decrypted blob interior.
+/// Plaintext cohort ledger of one account - the decrypted blob interior.
 ///
 /// `active` is a LIFO stack of acquisitions `(size, acquired_at)`; `sold` an
 /// append-only log `(size, acquired_at, sold_at)`. Semantics are a 1:1 port of
@@ -121,9 +121,9 @@ impl CohortState {
         })
     }
 
-    /// Encode, zero-padded to the next combined-count bucket (8, 16, 32, …) so
+    /// Encode, zero-padded to the next combined-count bucket (8, 16, 32, ...) so
     /// the ciphertext length leaks only a coarse cohort-count bucket. The
-    /// combined count never decreases (a full-consume moves active → sold), so
+    /// combined count never decreases (a full-consume moves active -> sold), so
     /// the blob length is monotone and changes only at bucket crossings.
     fn encode_padded(&self) -> Result<Vec<u8>> {
         let active_count =
@@ -168,7 +168,7 @@ impl CohortState {
     }
 
     /// SALE: consume active cohorts LIFO (youngest first). The boundary cohort
-    /// is split proportionally — the sold slice keeps the ORIGINAL
+    /// is split proportionally - the sold slice keeps the ORIGINAL
     /// `acquired_at`, the remainder stays active. Clamps when the stack runs
     /// out (mirrors the on-chain defensive clamp).
     fn cohort_out(&mut self, amount: U256, timestamp: u64) {
@@ -191,7 +191,7 @@ impl CohortState {
         }
     }
 
-    /// `(rcfi, efficiency, league)` at `timestamp` — the same
+    /// `(rcfi, efficiency, league)` at `timestamp` - the same
     /// `RcfiAccumulator` + `league_from_rcfi` pipeline the chain historically
     /// ran over plaintext cohort slots.
     fn rcfi_triple(&self, timestamp: u64) -> Result<(U256, U256, U256)> {
@@ -250,7 +250,7 @@ pub fn apply_cohort_section(
     }
 
     // If this very op qualified the account first on the whole chain, the host
-    // will set the global scalar to the section timestamp — evaluate the league
+    // will set the global scalar to the section timestamp - evaluate the league
     // against that same anchor.
     let effective_first = if section.first_qualified_start != 0 {
         section.first_qualified_start
@@ -260,7 +260,7 @@ pub fn apply_cohort_section(
     let (_, _, league) = state.evaluate(section.timestamp, effective_first)?;
 
     let new_blob = match section.op {
-        // Probe never rewrites the ledger — empty means "nothing to write".
+        // Probe never rewrites the ledger - empty means "nothing to write".
         FidelityCohortOp::Probe => Vec::new(),
         FidelityCohortOp::In | FidelityCohortOp::Out => FIDELITY.write_blob(
             &view_key,
@@ -279,7 +279,7 @@ pub fn apply_cohort_section(
 
 /// Apply a STANDALONE cohort op (its own round-trip). Thin wrapper over
 /// [`apply_cohort_section`] that sets the canonical inputs hash; the caller
-/// (dispatch) signs `attestation_tag`. Errors surface as an enclave error →
+/// (dispatch) signs `attestation_tag`. Errors surface as an enclave error ->
 /// host `Fatal`.
 pub fn apply_cohort_op(
     state_key: &[u8; 32],
@@ -294,7 +294,7 @@ pub fn apply_cohort_op(
 }
 
 /// Batch-decrypt the day's owners and return one plaintext league per owner, in
-/// request order — metadosis's once-per-WWD snapshot. A single undecryptable
+/// request order - metadosis's once-per-WWD snapshot. A single undecryptable
 /// blob fails the whole batch (state corruption must be loud and deterministic,
 /// not silently skipped).
 pub fn snapshot_leagues(
@@ -315,16 +315,16 @@ pub fn snapshot_leagues(
 }
 
 /// Owner-authorized RCFI/league read. Verifies the signed authorization INSIDE
-/// the enclave (the trust boundary — a compromised host reaches this transport
+/// the enclave (the trust boundary - a compromised host reaches this transport
 /// directly), then decrypts and evaluates. `resident_chain_id` is the enclave's
-/// own boot-bound chain id, passed by the dispatch — NOT taken from the
+/// own boot-bound chain id, passed by the dispatch - NOT taken from the
 /// host-controlled request.
 ///
 /// Chain binding: the auth message embeds a chain id, but the state key is
 /// derived from `resident_chain_id`, so a signature made for a different chain
 /// (same reused EOA on devnet/testnet) must not authorize a read here. We reject
 /// unless `req.chain_id == resident_chain_id` and only then hash the signed
-/// message — otherwise the host could set `req.chain_id` to whatever the
+/// message - otherwise the host could set `req.chain_id` to whatever the
 /// captured signature covered and defeat the scoping.
 ///
 /// Freshness caveat: `expiry` is checked against the host-supplied
@@ -332,7 +332,7 @@ pub fn snapshot_leagues(
 /// `eth_call` path, so expiry only bounds a leaked signature for requests
 /// forwarded by an HONEST host; a fully compromised host can pass
 /// `block_timestamp = 0` and reuse a stale (but genuine) signature indefinitely.
-/// It can still never forge a signature or decrypt raw cohorts — only re-read
+/// It can still never forge a signature or decrypt raw cohorts - only re-read
 /// the derived index/league the owner already exposed by signing.
 pub fn query_index(
     state_key: &[u8; 32],
@@ -473,11 +473,11 @@ mod tests {
         state.cohort_in(U256::from(700u64), 200);
         state.cohort_out(U256::from(600u64), 300);
         let encoded = state.encode_padded().unwrap();
-        // 3 active+sold cohorts → bucket 8.
+        // 3 active+sold cohorts -> bucket 8.
         assert_eq!(encoded.len(), HEADER_LEN + 8 * SOLD_ENTRY_LEN);
         assert_eq!(CohortState::decode(&encoded).unwrap(), state);
 
-        // 9 combined → bucket 16.
+        // 9 combined -> bucket 16.
         for i in 0..7 {
             state.cohort_in(U256::from(1u64), 400 + i);
         }
@@ -492,7 +492,7 @@ mod tests {
         state.cohort_in(U256::from(1_000u64), 100);
         state.cohort_in(U256::from(500u64), 200);
         // Consume 700: full-consume the youngest (500 @200), split 200 off the
-        // older (1000 @100) — sold slice keeps acquired_at 100.
+        // older (1000 @100) - sold slice keeps acquired_at 100.
         state.cohort_out(U256::from(700u64), 300);
         assert_eq!(state.active, vec![(U256::from(800u64), 100)]);
         assert_eq!(
@@ -541,7 +541,7 @@ mod tests {
         let out_in = apply_cohort_section(&sk, alice(), U256::from(1_000u64), &s_in).unwrap();
         assert_eq!(out_in.qualified_start_initialized, Some(1_000_000));
         assert!(!out_in.new_blob.is_empty());
-        // Global anchor was just set by this op → league floor.
+        // Global anchor was just set by this op -> league floor.
         assert_eq!(out_in.league, MIN_LEAGUE);
 
         // Second acquisition: existing qualified_start, global anchor known.
@@ -553,7 +553,7 @@ mod tests {
         );
         let out_in2 = apply_cohort_section(&sk, alice(), U256::from(500u64), &s_in2).unwrap();
         assert_eq!(out_in2.qualified_start_initialized, None);
-        // Sole holder, no sales → top league.
+        // Sole holder, no sales -> top league.
         assert_eq!(out_in2.league, MAX_LEAGUE);
 
         // Probe: no rewrite, same league as the state it probed.
@@ -567,7 +567,7 @@ mod tests {
         assert!(probe.new_blob.is_empty());
         assert_eq!(probe.league, MAX_LEAGUE);
 
-        // Sale drops efficiency below 1 → league falls under the ceiling.
+        // Sale drops efficiency below 1 -> league falls under the ceiling.
         let s_out = section(
             FidelityCohortOp::Out,
             1_000_000 + 200 * DAY,
@@ -577,7 +577,7 @@ mod tests {
         let out_out = apply_cohort_section(&sk, alice(), U256::from(1_200u64), &s_out).unwrap();
         assert!(out_out.league < MAX_LEAGUE);
 
-        // Determinism: identical inputs → identical outcome (byte-identical blob).
+        // Determinism: identical inputs -> identical outcome (byte-identical blob).
         let again = apply_cohort_section(&sk, alice(), U256::from(1_200u64), &s_out).unwrap();
         assert_eq!(again, out_out);
     }
@@ -597,7 +597,7 @@ mod tests {
                     owner: alice(),
                     cohort_blob: minted.new_blob,
                 },
-                // Bob has no cohort state — league floor, not an error.
+                // Bob has no cohort state - league floor, not an error.
                 outbe_tee::protocol::FidelitySnapshotEntry {
                     owner: bob,
                     cohort_blob: Vec::new(),
@@ -619,15 +619,15 @@ mod tests {
         assert!(snapshot_leagues(&sk, &bad).is_err());
     }
 
-    /// 1e18-scaled fixed point → f64 (via micro-units to avoid precision loss).
+    /// 1e18-scaled fixed point -> f64 (via micro-units to avoid precision loss).
     fn fp_to_f64(fp: U256) -> f64 {
         let micros: u128 = (fp / U256::from(1_000_000_000_000u128)).to::<u128>();
         micros as f64 / 1_000_000.0
     }
 
     /// Golden replay of the PDF `reference/decay.py` scenario through the enclave
-    /// `CohortState` port — the on-chain math moved here, so this is where the
-    /// float-model agreement is pinned (±1 decayed day, ±1e-3 efficiency). The
+    /// `CohortState` port - the on-chain math moved here, so this is where the
+    /// float-model agreement is pinned (+/-1 decayed day, +/-1e-3 efficiency). The
     /// fixture lives in the fidelity crate (regenerated from `decay.py`); we read
     /// it across the workspace rather than duplicate the generated artifact.
     #[test]
@@ -747,7 +747,7 @@ mod tests {
         let sig = query_sig(&signer, CHAIN, account, 2_000_000);
         let req = query_req(CHAIN, account, minted.new_blob, 2_000_000, 1_500_000, sig);
         let out = query_index(&sk, CHAIN, &req).unwrap();
-        // Sole holder, no sales → top league; rcfi > 0.
+        // Sole holder, no sales -> top league; rcfi > 0.
         assert_eq!(out.league, MAX_LEAGUE);
         assert!(out.rcfi > U256::ZERO);
     }
@@ -778,7 +778,7 @@ mod tests {
             1_500_000,
             sig,
         );
-        // Resident chain is CHAIN, not foreign_chain → rejected before decrypt.
+        // Resident chain is CHAIN, not foreign_chain -> rejected before decrypt.
         assert!(query_index(&sk, CHAIN, &req).is_err());
     }
 

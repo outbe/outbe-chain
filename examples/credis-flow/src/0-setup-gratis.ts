@@ -33,7 +33,7 @@ import {
 // plaintext-seeded at genesis anymore (both are TEE-encrypted at rest), so genesis
 // seeds the user a Settled *gem* instead. This script burns that gem for confidential
 // Promis (`minePromis`), then converts the Promis 1:1 into confidential Gratis
-// (`mineGratis`) — leaving the user real, enclave-encrypted Gratis to pledge.
+// (`mineGratis`) - leaving the user real, enclave-encrypted Gratis to pledge.
 const amountArg = process.argv[2];
 const envName = process.argv[3] || DEFAULT_ENV;
 
@@ -107,7 +107,7 @@ async function main() {
   );
   const gratisBefore = decryptBalance(gratisKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
 
-  console.log("=== Setup Gratis via Gem → Promis → Gratis (confidential / TEE) ===");
+  console.log("=== Setup Gratis via Gem -> Promis -> Gratis (confidential / TEE) ===");
   console.log(`Env:            ${envName} (${envPath})`);
   console.log(`RPC:            ${rpcUrl}`);
   console.log(`User:           ${userAddress}`);
@@ -123,7 +123,7 @@ async function main() {
   console.log(`  Promis:   ${formatToken(promisBefore, promisMeta.decimals, promisMeta.symbol)} (decrypted)`);
   console.log(`  Gratis:   ${formatToken(gratisBefore, gratisMeta.decimals, gratisMeta.symbol)} (decrypted)`);
 
-  // Step 1 — Gem → Promis: burn the gem, minting `promisLoad` confidential Promis to
+  // Step 1 - Gem -> Promis: burn the gem, minting `promisLoad` confidential Promis to
   // the owner. The Promis mint MAC binds the minted amount (= promisLoad) and the
   // caller's current Promis op-nonce. PoW gates the burn (difficulty 1).
   const powNonce = findPowNonce(gemId);
@@ -142,9 +142,9 @@ async function main() {
   console.log(`  TX hash: ${tx1.hash}`);
   const receipt1 = await tx1.wait();
   if (!receipt1) throw new Error("minePromis tx receipt missing");
-  console.log(`  Block:   ${receipt1.blockNumber} — minted ${formatToken(promisLoad, promisMeta.decimals, promisMeta.symbol)}`);
+  console.log(`  Block:   ${receipt1.blockNumber} - minted ${formatToken(promisLoad, promisMeta.decimals, promisMeta.symbol)}`);
 
-  // Step 2 — Promis → Gratis: burn `amount` Promis and mint `amount` Gratis. Both
+  // Step 2 - Promis -> Gratis: burn `amount` Promis and mint `amount` Gratis. Both
   // ledgers are confidential, so mineGratis takes TWO modify authorizations, each
   // bound to its own ledger's current op-nonce: the Promis BURN auth (PromisOp.Burn)
   // and the Gratis MINT auth (GratisOp.Mint). The Promis op-nonce has advanced to 1

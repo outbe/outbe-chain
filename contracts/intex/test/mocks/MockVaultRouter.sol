@@ -9,7 +9,7 @@ import {MockSettlementVault} from "./MockSettlementVault.sol";
 /// @notice Minimal test double mirroring `outbe-vault/VaultRouter` for the methods
 ///         `EscrowAdapter` actually calls (`deposit`).
 /// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addLiquiditySource` are open
-///      (no role checks) — test-helper only. Production `VaultRouter` is `onlyOwner` for both.
+///      (no role checks) - test-helper only. Production `VaultRouter` is `onlyOwner` for both.
 contract MockVaultRouter {
     using SafeERC20 for IERC20;
 
@@ -17,10 +17,10 @@ contract MockVaultRouter {
     mapping(address => MockSettlementVault) public assetVault;
 
     /// @dev Maps caller address to the registered StablesSource slot
-    ///      (`Unknown` = 0 means not registered → `deposit` reverts).
+    ///      (`Unknown` = 0 means not registered -> `deposit` reverts).
     mapping(address => IVaultRouter.StablesSource) public liquiditySourceTypes;
 
-    /// @dev When true, `deposit` reverts — used to simulate a vault-side failure during
+    /// @dev When true, `deposit` reverts - used to simulate a vault-side failure during
     ///      finalization (the instruction's split is valid but the payout deposit fails).
     bool public revertOnDeposit;
 

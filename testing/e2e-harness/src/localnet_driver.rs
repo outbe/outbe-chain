@@ -1025,7 +1025,7 @@ fn enclave_profile_banner() -> String {
     } else {
         "mock enclave under gramine-direct in the pinned test container"
     };
-    format!("{} — {detail}", mode.evidence_name())
+    format!("{} - {detail}", mode.evidence_name())
 }
 
 /// The enclave execution profile this host can actually run.
@@ -1033,7 +1033,7 @@ fn enclave_profile_banner() -> String {
 /// The Gramine test image is published for `linux/amd64` only and does not
 /// survive emulation, so every non-Linux host runs the mock enclave as a native
 /// host process instead. This is a distinct named profile with its own evidence
-/// label — never a silent fallback to `mock`'s.
+/// label - never a silent fallback to `mock`'s.
 const fn localnet_tee_mode() -> TeeMode {
     if cfg!(target_os = "linux") {
         TeeMode::Mock

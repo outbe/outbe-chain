@@ -167,7 +167,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
     function test_DecodeMulti_BatchPayloadBody_FailsClosed() public {
         // The reverse direction: a `BatchPayload` body routed as `SEND_MULTI`. `abi.decode` itself
         // reverts on the out-of-bounds offset (a `MultiPayload` needs a third array), so it fails
-        // closed before the canonical check — the key property is no misdecode-and-crosschainMint.
+        // closed before the canonical check - the key property is no misdecode-and-crosschainMint.
         bytes memory batchBody = abi.encode(_batchOfSize(1));
         bytes memory packet =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V2, IntexNFT1155BridgeCodec.SEND_MULTI, batchBody);

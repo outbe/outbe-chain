@@ -12,7 +12,7 @@ import {WcoenRoute} from "./routes/WcoenRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 
 /// @dev Registers the matching bridge on every remote chain, for every route. Bridges share one CREATE3 address
-///      across chains, so the remote address equals the local one — `REMOTE_CHAIN_IDS` lists chain ids only, and the
+///      across chains, so the remote address equals the local one - `REMOTE_CHAIN_IDS` lists chain ids only, and the
 ///      same list can be used unchanged on every chain (the local id is skipped).
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `OUTBE_CHAIN_ID`.

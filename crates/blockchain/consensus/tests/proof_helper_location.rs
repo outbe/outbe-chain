@@ -1,6 +1,6 @@
 //! Asserts the canonical fingerprint helpers live in `outbe-consensus-proof`
 //! and not in `outbe-consensus`. If a future refactor moves them back, the
-//! cycle they unblocked (EVM↔consensus) returns silently — this test catches
+//! cycle they unblocked (EVM<->consensus) returns silently - this test catches
 //! that regression at compile time.
 //!
 //! We do not depend on `outbe-consensus` here on purpose: `outbe-consensus-proof`

@@ -24,7 +24,7 @@ use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use crate::session::EnclaveSession;
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
-// Stored once in a process-global OnceLock<Mutex<_>> — a single instance for the
+// Stored once in a process-global OnceLock<Mutex<_>> - a single instance for the
 // node's lifetime, never passed by value in bulk, so boxing the larger variant
 // would add indirection for no benefit.
 #[allow(clippy::large_enum_variant)]
@@ -107,9 +107,9 @@ pub fn install_authorized_enclave_client(
 /// request's connection is dropped once and the next request reconnects cleanly
 /// (poison no longer masquerades as "not configured").
 ///
-/// TODO(tee-perf): every enclave call — consensus-path ops (gratis/promis,
+/// TODO(tee-perf): every enclave call - consensus-path ops (gratis/promis,
 /// begin-block sweeps, per-WWD snapshot batches) and read-only queries (e.g.
-/// eth_call fidelity index with signed auth) — serializes on this single
+/// eth_call fidelity index with signed auth) - serializes on this single
 /// Mutex-guarded blocking connection, and a request that times out (30s),
 /// reconnects and retries can hold it for two timeout windows. A query storm on
 /// an RPC node can stall block execution behind it. Future optimization: split

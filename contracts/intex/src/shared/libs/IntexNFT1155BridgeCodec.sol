@@ -8,8 +8,8 @@ pragma solidity 0.8.30;
  * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`.
  *
  *      The body migrated from a hand-rolled `abi.encodePacked` packed concat
- *      — which grew the buffer one item at a time (O(n^2) recopy) and decoded by manual offset
- *      slicing — to single-pass `abi.encode`/`abi.decode` over named structs. The body version is
+ *      - which grew the buffer one item at a time (O(n^2) recopy) and decoded by manual offset
+ *      slicing - to single-pass `abi.encode`/`abi.decode` over named structs. The body version is
  *      bumped `V1 -> V2` so any stale V1 packet fails closed via {UnsupportedBodyVersion} instead
  *      of misdecoding. `MAX_BATCH_SIZE` caps the decoded array length; address well-formedness and
  *      the zero-recipient reject stay with the adapter (it owns the crosschainMint semantics).
@@ -58,7 +58,7 @@ library IntexNFT1155BridgeCodec {
     /// @param minimum The minimum required length (`HEADER_LEN`).
     error InvalidPayloadLength(uint256 got, uint256 minimum);
 
-    /// @notice A `bytes32` interpreted as an address has non-zero high bits — a truncated/forged
+    /// @notice A `bytes32` interpreted as an address has non-zero high bits - a truncated/forged
     ///         recipient that would otherwise silently round-trip through `address(uint160(...))`.
     /// @param got The malformed `bytes32` slot.
     error MalformedAddress(bytes32 got);
@@ -72,20 +72,20 @@ library IntexNFT1155BridgeCodec {
     error ArrayLengthMismatch();
 
     /// @notice The body is not the canonical `abi.encode` of the routed payload type. `abi.decode`
-    ///         is permissive — it will misread a wrong-schema body (e.g. a `MultiPayload` encoding
+    ///         is permissive - it will misread a wrong-schema body (e.g. a `MultiPayload` encoding
     ///         routed as `SEND`) into a garbage payload, and it ignores trailing bytes. Re-encoding
     ///         the decoded value and requiring an exact match closes both, so a mismatched or
     ///         padded packet fails closed instead of crosschain-minting to a wrong recipient.
     error MalformedBody();
 
-    /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` — no growing buffer.
+    /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` - no growing buffer.
     /// @param _payload The single-recipient batch (`to`, `tokenIds`, `amounts`).
     /// @return The wire body: `[BODY_VERSION_V2][SEND][abi.encode(_payload)]`.
     function encodeBatch(BatchPayload memory _payload) internal pure returns (bytes memory) {
         return abi.encodePacked(BODY_VERSION_V2, SEND, abi.encode(_payload));
     }
 
-    /// @notice Encode a multi-recipient batch body. Single-pass `abi.encode` — no growing buffer.
+    /// @notice Encode a multi-recipient batch body. Single-pass `abi.encode` - no growing buffer.
     /// @param _payload The multi-recipient batch (`recipients`, `tokenIds`, `amounts`).
     /// @return The wire body: `[BODY_VERSION_V2][SEND_MULTI][abi.encode(_payload)]`.
     function encodeMulti(MultiPayload memory _payload) internal pure returns (bytes memory) {

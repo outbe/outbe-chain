@@ -99,7 +99,7 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Build UserOp with the owner permission validation ─────────────────────
+  // -- Build UserOp with the owner permission validation ---------------------
   // Kernel v4 models the owner as a permission (SudoPolicy + ECDSASigner) carrying
   // BundleSpendProtectorHook, so the UserOp uses the permission nonce type (0x02).
   const nonceKey = permissionNonceKey(ownerPermissionId());
@@ -162,7 +162,7 @@ async function main() {
   console.log(`  Block:      ${receipt!.blockNumber}`);
   console.log(`  Gas used:   ${receipt!.gasUsed}`);
 
-  // ── State after ───────────────────────────────────────────────────────────
+  // -- State after -----------------------------------------------------------
 
   const [bundleBalAfter, accountBalAfter, userBalAfter] = await Promise.all([
     bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),

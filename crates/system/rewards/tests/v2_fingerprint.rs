@@ -102,7 +102,7 @@ fn v2_rewards_fingerprint_changes_on_signer_bitmap_change() {
 }
 
 // ---------------------------------------------------------------------------
-// switching `proof_kind` (Finalization ↔
+// switching `proof_kind` (Finalization <->
 // CertifiedNotarization) changes the fingerprint.
 // ---------------------------------------------------------------------------
 
@@ -157,7 +157,7 @@ fn v2_rewards_fingerprint_changes_on_vrf_material_or_seed_hash_change() {
 // the fingerprint includes the canonical VRF proof hash
 // (`outbe_consensus::proof::canonical_vrf_proof_hash_v2(VrfProof)`).
 // Changing the proof hash argument while keeping the metadata identical
-// must change the fingerprint — proves the proof hash is bound.
+// must change the fingerprint - proves the proof hash is bound.
 // ---------------------------------------------------------------------------
 
 #[test]

@@ -47,8 +47,8 @@ contract CreateX {
 /// @dev Deploys the CreateX factory at a deterministic address using CREATE2.
 ///
 /// Required env vars:
-///   DEPLOYER_PK    — deployer private key
-///   CONTRACT_SALT  — salt string for deterministic deployment
+///   DEPLOYER_PK    - deployer private key
+///   CONTRACT_SALT  - salt string for deterministic deployment
 contract DeployCreateXDeterministic is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");

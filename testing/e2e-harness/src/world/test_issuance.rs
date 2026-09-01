@@ -131,7 +131,7 @@ sol! {
 }
 
 /// One series to issue. `issuance` is its three-byte currency code, which with the
-/// reference byte spells the id — `20260824-USD-U`.
+/// reference byte spells the id - `20260824-USD-U`.
 #[derive(Clone, Copy, Debug)]
 pub struct SeriesSpec {
     pub issuance: [u8; 3],

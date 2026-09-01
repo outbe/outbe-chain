@@ -63,10 +63,10 @@ fn convert_stables_to_gratis(
 /// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
 /// pending pledge-lock ticket (authorized by the caller's modify key, which binds the
 /// STABLES figure). The gratis cost is derived from the oracle rate and rejected if it
-/// exceeds `max_gratis` — that cap is the pledger's slippage protection, authenticated
+/// exceeds `max_gratis` - that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The loan's own terms — the policy rate, the floor and call prices —
+/// `requestCredis`. The loan's own terms - the policy rate, the floor and call prices -
 /// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,

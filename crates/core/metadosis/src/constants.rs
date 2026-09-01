@@ -23,7 +23,7 @@ pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
 /// UTC-hour boundary.
 pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 1;
 
-/// Symbolic rate: 32% of tribute nominal → gratis demand.
+/// Symbolic rate: 32% of tribute nominal -> gratis demand.
 pub const SYMBOLIC_RATE: u64 = 32;
 
 /// RED day reduction coefficient: divide by 8.

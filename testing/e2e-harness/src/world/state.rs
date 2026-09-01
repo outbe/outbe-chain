@@ -236,6 +236,14 @@ pub struct FixtureState {
     /// offline long enough for the protocol's documented share-reveal path.
     /// Every other reveal/fatal/alarm remains forbidden by the log audit.
     pub expected_dkg_reveal: Option<String>,
+    /// One manual-lease scenario deliberately fail-stops this validator after
+    /// its finalized lease expires. Only the exact two-sink Reth shutdown
+    /// trailers causally bound to that guard are accepted by the log audit.
+    pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    /// The same manual-lease scenario deliberately fail-stops this role-neutral
+    /// FullNode. Its execution-engine path emits one exact guarded fatal trailer
+    /// bundle, distinct from the validator's graceful shutdown profile.
+    pub expected_tee_lease_guard_shutdown_full_node: Option<usize>,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -480,6 +488,8 @@ impl Default for FixtureState {
             voting_window: 6,
             allow_unsupported_update_fatal: false,
             expected_dkg_reveal: None,
+            expected_tee_lease_guard_shutdown_validator: None,
+            expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,
             promoted_validator_pid: None,
             wwd: None,

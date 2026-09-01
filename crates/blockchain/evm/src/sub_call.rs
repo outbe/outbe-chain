@@ -13,7 +13,7 @@
 //!
 //! Atomicity is provided by the OUTER caller wrapping
 //! `storage.call(...)` / `storage.staticcall(...)` in `StorageHandle::with_checkpoint`.
-//! The driver itself does NOT take an extra checkpoint — `make_call_frame`
+//! The driver itself does NOT take an extra checkpoint - `make_call_frame`
 //! handles per-frame journal checkpoints internally.
 
 use alloy_evm::eth::EthEvmContext;
@@ -91,7 +91,7 @@ where
 {
     let effective_is_static = outer_is_static || input.is_static;
 
-    // Static context + non-zero value → reject early.
+    // Static context + non-zero value -> reject early.
     if effective_is_static && !input.value.is_zero() {
         return Err(SubCallError::StateChangeDuringStaticCall);
     }
@@ -163,7 +163,7 @@ where
     // (revm-handler-18.1.0/src/handler.rs:416-446).
     let frame_result = run_exec_loop(&mut evm, frame_input)?;
 
-    // Translate FrameResult → SubCallOutput.
+    // Translate FrameResult -> SubCallOutput.
     let call_outcome = match frame_result {
         FrameResult::Call(outcome) => outcome,
         FrameResult::Create(_) => {

@@ -21,10 +21,10 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @title InboundValidationTest
 /// @notice Inbound validation over the ERC-7786 bridge: a malformed/unknown payload no longer advances a lane
-///         silently — the router/adapter reverts with a typed error, the bridge rolls back, and the transport
+///         silently - the router/adapter reverts with a typed error, the bridge rolls back, and the transport
 ///         redelivers. Each case asserts the exact typed revert propagates out of `bridge.deliverAs`.
 /// @dev Delivery goes through the loopback bridge as the authenticated peer, so the peer table + bridge gate are
-///      honored and the payload is the only thing under test — exactly what we want for validation coverage.
+///      honored and the payload is the only thing under test - exactly what we want for validation coverage.
 contract InboundValidationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -65,11 +65,11 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter — BridgeMsgCodec validation
+    // TargetRouter - BridgeMsgCodec validation
     // ---------------------------------------------------------------
 
     function test_TM_TooShortPayload_RevertsInvalidPayloadLength() public {
-        // Only the bodyVersion byte — header itself is shorter than 2.
+        // Only the bodyVersion byte - header itself is shorter than 2.
         bytes memory packet = hex"01";
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, 0, 1, 2));
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -155,11 +155,11 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginRouter — body-srcChainId cross-check + msgType
+    // OriginRouter - body-srcChainId cross-check + msgType
     // ---------------------------------------------------------------
 
     function test_OM_UnknownMsgType_RevertsUnknownMsgType() public {
-        // Pick a msgType the codec itself does not know — `minLengthFor` returns 0 so the
+        // Pick a msgType the codec itself does not know - `minLengthFor` returns 0 so the
         // per-type length assertion is a no-op, and the OM dispatch else-branch raises `UnknownMsgType(0xFE)`.
         bytes memory packet = hex"01FE";
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 0xFE));
@@ -232,7 +232,7 @@ contract InboundValidationTest is CrossChainTest {
         }
         // Hand-build the over-cap payload: the outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN (64),
         // so encodeBidsBatch can no longer produce an over-cap batch. Such a message can therefore only
-        // reach the inbound handler via a trusted-peer bug — exactly the case the inbound BidsBatchTooLarge
+        // reach the inbound handler via a trusted-peer bug - exactly the case the inbound BidsBatchTooLarge
         // decode guard exists to reject.
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
@@ -248,7 +248,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginRouter.wire() — Desis interface probe
+    // OriginRouter.wire() - Desis interface probe
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
@@ -276,11 +276,11 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // IntexNFT1155Bridge — V2 codec: version + length + size + msgType + address validation
+    // IntexNFT1155Bridge - V2 codec: version + length + size + msgType + address validation
     // ---------------------------------------------------------------
 
     function test_NFTBatch_UnknownMsgType_RevertsUnknownMsgType() public {
-        // Valid V2 version byte, unknown msgType 0x99 — routing rejects it.
+        // Valid V2 version byte, unknown msgType 0x99 - routing rejects it.
         bytes memory packet = hex"0299";
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.UnknownMsgType.selector, 0x99));
         _deliverToBatch(packet);
@@ -302,7 +302,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     function test_NFTBatch_TruncatedBody_Reverts() public {
-        // Valid header but the abi.encode body is truncated — abi.decode rejects it (no misread).
+        // Valid header but the abi.encode body is truncated - abi.decode rejects it (no misread).
         bytes memory packet =
             abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V2, IntexNFT1155BridgeCodec.SEND, hex"deadbeef");
         vm.expectRevert();
@@ -389,7 +389,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     function test_NFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
-        // SEND_MULTI cap parity to the SEND OverCap test — decodeMulti rejects oversize arrays
+        // SEND_MULTI cap parity to the SEND OverCap test - decodeMulti rejects oversize arrays
         // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);

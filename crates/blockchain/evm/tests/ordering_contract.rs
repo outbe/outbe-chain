@@ -1,4 +1,4 @@
-//! — executor ordering contract.
+//! - executor ordering contract.
 //!
 //! Pins the invariant that backs the slashindicator precompile's epoch-lag
 //! admissibility: `ValidatorSet.epoch_number` names the committee that was
@@ -90,8 +90,8 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");
 
         // (3) The scheduled height is not activation authority. Until the
-        // receipt-visible BoundaryOutcome executes, every consumer — including
-        // OCOMP — must continue to observe the old epoch and its snapshot.
+        // receipt-visible BoundaryOutcome executes, every consumer - including
+        // OCOMP - must continue to observe the old epoch and its snapshot.
         let vs_after = ValidatorSet::new(storage);
         let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(

@@ -561,7 +561,7 @@ async fn pairs(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-/// Number of registered pairs — the bound for walking the registry by index.
+/// Number of registered pairs - the bound for walking the registry by index.
 async fn read_pair_count(client: &(impl Rpc + Sync)) -> Result<u32> {
     let call = IOracle::getPairCountCall {};
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;

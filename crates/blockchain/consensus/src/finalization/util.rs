@@ -22,13 +22,13 @@ use crate::{block::ConsensusBlock, hybrid::HybridCertificate};
 /// Result of replay classification for a finalization event.
 #[derive(Debug, PartialEq)]
 pub enum ReplayClassification {
-    /// Block number > last finalized — genuinely new finalization.
+    /// Block number > last finalized - genuinely new finalization.
     New,
-    /// Block number < last finalized — historical journal replay, drop.
+    /// Block number < last finalized - historical journal replay, drop.
     HistoricalReplay,
-    /// Same (number, hash) as current finalized — duplicate, drop.
+    /// Same (number, hash) as current finalized - duplicate, drop.
     DuplicateReplay,
-    /// Same number but different hash — fatal chain inconsistency.
+    /// Same number but different hash - fatal chain inconsistency.
     FatalInconsistency,
 }
 
@@ -70,7 +70,7 @@ pub struct RetryFailure {
 ///
 /// Returns `Ok(T)` on the first successful attempt. After `max_retries` failures
 /// (`Err` or attempt-timeout), returns `Err(RetryFailure { attempts, last_kind })`.
-/// A never-completing future counts as one failed attempt — it cannot wedge the caller.
+/// A never-completing future counts as one failed attempt - it cannot wedge the caller.
 pub async fn retry_with_backoff<T, F, Fut>(
     clock: &impl commonware_runtime::Clock,
     mut resolve: F,
@@ -121,7 +121,7 @@ pub fn extract_header_artifact_from_block(
 ///
 /// Core (unguarded) form: the caller MUST guarantee
 /// `certificate.signers.len() == committee_len`. On the verify path this holds
-/// by construction — the certificate is decoded with
+/// by construction - the certificate is decoded with
 /// `Finalization::read_cfg(.., &committee_len)`, which binds the `Signers`
 /// width to `committee_len` (see
 /// [`crate::finalization::attestation::validate_consensus_metadata`]).
@@ -147,7 +147,7 @@ pub(crate) fn build_signer_bitmap(
 /// Producer-side guarded wrapper around [`build_signer_bitmap`].
 ///
 /// Returns the empty sentinel (`Vec::new()`) when the live certificate's signer
-/// width does not match `committee_len` — i.e. the certificate was formed
+/// width does not match `committee_len` - i.e. the certificate was formed
 /// against a different committee than the producer's snapshot. The empty
 /// sentinel is rejected downstream by the `signer_bitmap.len() != committee.len()`
 /// structural check in
@@ -205,7 +205,7 @@ mod tests {
     // cycle and, on exhaustion, records the stall metric and retries the NEXT
     // cycle instead of returning a node-fatal error (actor.rs `handle_finalized`).
     // The loop can only EXIT via `Ok(..) => process_finalization(..)`, so a
-    // persistent failure can never return the fatal error — it parks and retries.
+    // persistent failure can never return the fatal error - it parks and retries.
     // These tests pin the building block the loop depends on: exhaustion after
     // exactly `max_retries` and recovery when the resolver clears mid-cycle.
 
@@ -256,7 +256,7 @@ mod tests {
         };
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(600)).start(
             |context| async move {
-                // Fail the first two attempts, succeed on the third — models a
+                // Fail the first two attempts, succeed on the third - models a
                 // transient all-peers stall that clears mid-cycle: the loop
                 // resolves and advances rather than staying parked.
                 let calls = Arc::new(AtomicU32::new(0));

@@ -10,7 +10,7 @@ import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/sha
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
 
 /// @notice A non-canonical recipient (dirty high bits) is rejected on the send path before any burn, matching the
-///         receive path — otherwise the burn would have no mint counterpart and the message would wedge.
+///         receive path - otherwise the burn would have no mint counterpart and the message would wedge.
 contract BridgeRecipientValidationTest is CrossChainTest {
     uint32 private constant B_CHAIN_ID = 2;
     uint256 private constant FEE = 0.001 ether;
@@ -25,7 +25,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint256 private constant AMOUNT = 100;
 
-    /// @dev A bytes32 with a bit set above the low 160 — not a canonical left-padded address.
+    /// @dev A bytes32 with a bit set above the low 160 - not a canonical left-padded address.
     bytes32 private constant DIRTY = bytes32(uint256(1) << 160);
 
     function setUp() public {

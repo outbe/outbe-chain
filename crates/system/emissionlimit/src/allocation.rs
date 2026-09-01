@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_allocation_percentages() {
-        // Day 5-sink table: 4×4 % + Metadosis terminal 84 %.
+        // Day 5-sink table: 4x4 % + Metadosis terminal 84 %.
         let total = U256::from(10000u64);
         let allocations = allocate_emission(total).unwrap();
         for sink in [
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_allocation_rounding_dust_goes_to_terminal_sink() {
-        // 4 × 4 % = 16 % → each non-terminal sink gets floor(101 * 4 / 100) = 4.
+        // 4 x 4 % = 16 % -> each non-terminal sink gets floor(101 * 4 / 100) = 4.
         // Sum of fixed shares = 16. Metadosis terminal absorbs the
         // remainder = 85, including the rounding dust (101 - 16 = 85).
         let total = U256::from(101u64);

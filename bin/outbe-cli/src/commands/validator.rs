@@ -642,7 +642,7 @@ mod tests {
     /// Manually ABI-encode a validatorByAddress return value.
     /// 12 fields: address, bytes(dynamic), uint256, uint8, 7x uint64, bool
     fn mock_validator_detail(addr: Address, status: u8, stake: alloy_primitives::U256) -> Vec<u8> {
-        // Use SolValue for the two groups (≤12 elements each) and concatenate.
+        // Use SolValue for the two groups (<=12 elements each) and concatenate.
         // Group1: (addr, offset_to_bytes, stake, status, slashCount,
         //          missedBlocks, missedVotes, blocksProposed, joinedAtHeight,
         //          deactivatedAtHeight, unbondingEnd)
@@ -697,7 +697,7 @@ mod tests {
             eth_call_map: Some(call_map(map)),
             ..Default::default()
         };
-        // info() decodes and prints — verify it doesn't error
+        // info() decodes and prints - verify it doesn't error
         info(&mock, addr).await.unwrap();
     }
 

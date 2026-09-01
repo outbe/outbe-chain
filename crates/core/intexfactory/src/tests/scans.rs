@@ -72,8 +72,8 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // the current day). The finalized per-UTC-day VWAP is already closed by
     // then and must be the scan's price source. Exactly `threshold` (21)
     // breach days are seeded through the production finalization path and the
-    // scan day itself stays unfinalized, so reading any other day — or any
-    // other store — drops below the threshold and fails the call.
+    // scan day itself stays unfinalized, so reading any other day - or any
+    // other store - drops below the threshold and fails the call.
     with_factory(|s| {
         let _f = qualify_series(&s, 7, sample(7));
         let mut oracle = OracleContract::new(s.clone());
@@ -489,7 +489,7 @@ fn an_unpriced_reference_currency_is_skipped_not_fatal() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        // Listed before its pair exists — the registry and the pair registry are
+        // Listed before its pair exists - the registry and the pair registry are
         // populated independently.
         oracle.reference_currencies.push(EUR_ISO).unwrap();
         oracle.reference_currencies.push(REFERENCE_ISO).unwrap();

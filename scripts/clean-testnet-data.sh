@@ -25,9 +25,9 @@ if [ -d "$OUTPUT_DIR" ]; then
         rm -rf "$OUTPUT_DIR/pids"
         echo
     else
-        echo "No validator-* directories found in $OUTPUT_DIR — nothing to clean."
+        echo "No validator-* directories found in $OUTPUT_DIR - nothing to clean."
     fi
     shopt -u nullglob
 else
-    echo "$OUTPUT_DIR does not exist — nothing to clean."
+    echo "$OUTPUT_DIR does not exist - nothing to clean."
 fi

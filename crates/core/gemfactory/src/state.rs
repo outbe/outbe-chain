@@ -10,7 +10,7 @@ use crate::errors::GemFactoryError;
 use crate::schema::{GemFactoryContract, GemPosition};
 
 impl GemFactoryContract<'_> {
-    /// `keccak256(owner ‖ index_be)` — per-owner position enumeration key.
+    /// `keccak256(owner || index_be)` - per-owner position enumeration key.
     pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
         let mut buf = [0u8; 24];
         buf[0..20].copy_from_slice(owner.as_slice());

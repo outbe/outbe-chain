@@ -16,7 +16,7 @@ use std::{
 ///
 /// `register` is insert-once: the first value for an epoch wins and a duplicate
 /// registration is ignored (returns `false`). A poisoned mutex is recovered in
-/// place — the stored map is plain data, so a panic-poisoned lock does not
+/// place - the stored map is plain data, so a panic-poisoned lock does not
 /// corrupt it, and a panic on one path cannot wedge the providers.
 pub struct EpochRegistry<T> {
     inner: Arc<Mutex<HashMap<Epoch, Arc<T>>>>,
@@ -58,7 +58,7 @@ impl<T> EpochRegistry<T> {
 }
 
 // Manual impls: the registry only holds an `Arc`, so it is `Clone`/`Default`
-// regardless of whether `T` is — avoids spurious `T: Clone`/`T: Default` bounds
+// regardless of whether `T` is - avoids spurious `T: Clone`/`T: Default` bounds
 // the derives would add.
 impl<T> Clone for EpochRegistry<T> {
     fn clone(&self) -> Self {

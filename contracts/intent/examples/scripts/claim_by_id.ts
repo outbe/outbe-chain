@@ -4,7 +4,7 @@ import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 
 /**
- * Claim an order after quoting ends — locks winner's collateral.
+ * Claim an order after quoting ends - locks winner's collateral.
  * If winner lacks collateral, auction restarts automatically.
  *
  * Usage: tsx scripts/claim_by_id.ts <originChain> <orderId>

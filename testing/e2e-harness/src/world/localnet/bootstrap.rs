@@ -28,7 +28,7 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^6`) as hex — the per-validator liquid balance.
+/// 10000 COEN (`10000 * 10^6`) as hex - the per-validator liquid balance.
 const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
@@ -548,7 +548,7 @@ impl Localnet {
         self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
-        // Step 1: DKG bootstrap — keys, polynomial, dkg-output, validators.json,
+        // Step 1: DKG bootstrap - keys, polynomial, dkg-output, validators.json,
         // reth-bootnodes.txt.
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.args([
@@ -622,7 +622,7 @@ impl Localnet {
         if let Ok(raw) = fs::read_to_string(&bpath) {
             let mut out = String::new();
             for (i, line) in raw.lines().filter(|l| !l.trim().is_empty()).enumerate() {
-                // enode://<id>@<host>:<port> — swap the trailing port for p2p[i].
+                // enode://<id>@<host>:<port> - swap the trailing port for p2p[i].
                 match line.trim().rsplit_once(':') {
                     Some((head, _)) => {
                         out.push_str(head);
@@ -766,7 +766,7 @@ impl Localnet {
             // decimals, so a validator's 10000 COEN is 10^10 base units and buys
             // 13 gas at a Gwei. Every harness transaction is priced at
             // MIN_PROTOCOL_BASE_FEE for that reason, and the base fee only sheds
-            // 12.5% per under-target block — about 140 blocks before the floor
+            // 12.5% per under-target block - about 140 blocks before the floor
             // is reachable, while the localnet starts issuing work at block 2.
             "baseFeePerGas": format!("0x{MIN_PROTOCOL_BASE_FEE:x}"),
             "difficulty": "0x0",
@@ -830,7 +830,7 @@ impl Localnet {
             .and_then(|a| a.as_object_mut())
             .ok_or_else(|| eyre!("genesis has no alloc object"))?;
 
-        // SlashIndicator lives at 0x…ee01 (config slot 1 = proposer felony, slot
+        // SlashIndicator lives at 0x...ee01 (config slot 1 = proposer felony, slot
         // 12 = voter felony). Match the address however it's spelled in alloc.
         let key = alloc.keys().find(|k| ends_with_ee01(k)).cloned();
         let key = key.unwrap_or_else(|| {

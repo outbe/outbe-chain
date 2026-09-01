@@ -1,4 +1,4 @@
-//! — wire codec for `InvalidVrfProofEvidence`.
+//! - wire codec for `InvalidVrfProofEvidence`.
 //!
 //! Carries everything `SlashIndicator.submitInvalidVrfProofEvidence(bytes)`
 //! needs to:
@@ -89,7 +89,7 @@ pub struct InvalidVrfProofEvidence {
 impl InvalidVrfProofEvidence {
     /// Encodes evidence into its canonical wire form.
     ///
-    /// Output is byte-for-byte deterministic — two encoders running on
+    /// Output is byte-for-byte deterministic - two encoders running on
     /// identical input produce identical bytes.
     pub fn encode(&self) -> Vec<u8> {
         let total = FIXED_PREFIX_LEN + self.phase1_tx_bytes.len();
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn changing_any_field_changes_encoding() {
         // Pins that the codec doesn't accidentally collapse fields into
-        // the same byte slot — a regression would mean two distinct
+        // the same byte slot - a regression would mean two distinct
         // evidence blobs produce identical wire bytes.
         let base = sample().encode();
 

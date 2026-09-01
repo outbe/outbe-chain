@@ -9,16 +9,16 @@ pragma solidity ^0.8.4;
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/CREATE3.sol)
 /// @author Modified from 0xSequence (https://github.com/0xSequence/create3/blob/master/contracts/Create3.sol)
 library CREATE3 {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*':o*.o+.**'.*:o.o*.o*'.o:o*.o*.**'.*:o.o*.o*'.o:o*.o+.**'.*:*/
     /*                        CUSTOM ERRORS                       */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+    /*.*o:o.'+o.*o.o:*.'**.+o.*o:'*.'**.*o.*o:o.':*oo.*o.o:*.'+o.**/
 
     /// @dev Unable to deploy the contract.
     error DeploymentFailed();
 
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*':o*.o+.**'.*:o.o*.o*'.o:o*.o*.**'.*:o.o*.o*'.o:o*.o+.**'.*:*/
     /*                      BYTECODE CONSTANTS                    */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+    /*.*o:o.'+o.*o.o:*.'**.+o.*o:'*.'**.*o.*o:o.':*oo.*o.o:*.'+o.**/
 
     /**
      * -------------------------------------------------------------------+
@@ -51,9 +51,9 @@ library CREATE3 {
     /// Equivalent to `keccak256(abi.encodePacked(hex"67363d3d37363d34f03d5260086018f3"))`.
     bytes32 internal constant PROXY_INITCODE_HASH = 0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f;
 
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*':o*.o+.**'.*:o.o*.o*'.o:o*.o*.**'.*:o.o*.o*'.o:o*.o+.**'.*:*/
     /*                      CREATE3 OPERATIONS                    */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+    /*.*o:o.'+o.*o.o:*.'**.+o.*o:'*.'**.*o.*o:o.':*oo.*o.o:*.'+o.**/
 
     /// @dev Deploys `initCode` deterministically with a `salt`.
     /// Returns the deterministic address of the deployed contract,

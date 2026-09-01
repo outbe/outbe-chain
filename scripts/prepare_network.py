@@ -92,10 +92,14 @@ def resolve_network_profile(
         raise ValueError(f"{network} requires chain id {expected_id}, not {chain_id}")
     if network == "mainnet" and tee_mode != "dcap-required":
         raise ValueError("Mainnet requires --tee-mode dcap-required")
-    if tee_mode == "gramine-direct-dev" and network != "devnet":
-        raise ValueError("gramine-direct-dev requires the devnet profile")
-    if tee_mode == "dcap-required" and network not in ("testnet", "mainnet"):
-        raise ValueError("dcap-required requires the testnet or mainnet profile")
+    if tee_mode == "gramine-direct-dev" and network not in ("devnet", "testnet"):
+        raise ValueError("gramine-direct-dev requires the devnet or testnet profile")
+    if tee_mode == "dcap-required" and network not in (
+        "devnet",
+        "testnet",
+        "mainnet",
+    ):
+        raise ValueError("dcap-required requires a canonical Outbe network profile")
     return network, chain_id, chain_name
 
 

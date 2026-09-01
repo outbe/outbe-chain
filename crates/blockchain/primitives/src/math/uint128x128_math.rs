@@ -13,7 +13,7 @@ use crate::math::bit_math::most_significant_bit;
 use crate::math::constants::SCALE_1_128_128;
 
 const LOG_SCALE_OFFSET: u32 = 127;
-/// `1 << 127` — the 1.0 of the inner 129.127 fixed-point space used by `log2`.
+/// `1 << 127` - the 1.0 of the inner 129.127 fixed-point space used by `log2`.
 /// Bit 127 lives at limb 1 (bits 64..127), position 63.
 const LOG_SCALE: U256 = U256::from_limbs([0, 1u64 << 63, 0, 0]);
 /// `LOG_SCALE * LOG_SCALE = 1 << 254`. Bit 254 lives at limb 3, position 62.
@@ -127,7 +127,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
             // wraps mod 2^256; we then take the upper 128 bits via >> 128.
             result = result.wrapping_mul(squared) >> 128;
         }
-        // squared = (squared * squared) >> 128 — for next bit.
+        // squared = (squared * squared) >> 128 - for next bit.
         squared = squared.wrapping_mul(squared) >> 128;
     }
 
@@ -138,7 +138,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
     }
 
     if invert {
-        // (2^256 - 1) / result ≈ 2^256 / result (off by < 1 ULP).
+        // (2^256 - 1) / result ~= 2^256 / result (off by < 1 ULP).
         Ok(U256::MAX / result)
     } else {
         Ok(result)

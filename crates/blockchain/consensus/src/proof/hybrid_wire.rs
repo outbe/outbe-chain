@@ -7,8 +7,8 @@
 //!
 //! Layout (encoded with `commonware-codec`):
 //!
-//! * [`VrfProof<V>`] — `material_version: u64` (big-endian) || `V::Signature`.
-//! * [`HybridCertificate<V>`] — `Signers` bitmap || aggregated BLS MinPk
+//! * [`VrfProof<V>`] - `material_version: u64` (big-endian) || `V::Signature`.
+//! * [`HybridCertificate<V>`] - `Signers` bitmap || aggregated BLS MinPk
 //!   signature (96 bytes) || `VrfProof<V>`.
 //!
 //! The decoder rejects an empty signer set and a missing or truncated proof.

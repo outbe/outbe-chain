@@ -7,7 +7,7 @@
 //! line-for-line. Solidity `revert` becomes Outbe `Err(PrecompileError)`;
 //! Solidity assembly becomes deterministic U256 ops with explicit widening
 //! through limb-based 512-bit multiplication. No floats, no randomness,
-//! no time — safe on consensus paths.
+//! no time - safe on consensus paths.
 
 use alloy_primitives::U256;
 
@@ -19,8 +19,8 @@ use crate::error::{PrecompileError, Result};
 ///
 /// Mirrors `Uint256x256Math._getMulProds` (Uint256x256Math.sol L120-129).
 /// Returns `(prod0, prod1)` such that `x * y == prod1 * 2^256 + prod0`.
-/// Pure Rust — no inline assembly, no `unsafe`. Deterministic across all
-/// targets because every intermediate fits in `u128` (u64*u64 ≤ 2^128 - 2^65 + 1
+/// Pure Rust - no inline assembly, no `unsafe`. Deterministic across all
+/// targets because every intermediate fits in `u128` (u64*u64 <= 2^128 - 2^65 + 1
 /// + 2*u64 carry chain).
 fn get_mul_prods(x: U256, y: U256) -> (U256, U256) {
     let xs = x.as_limbs(); // little-endian: limb[0] = bits 0..63
@@ -100,7 +100,7 @@ fn get_end_of_div_round_down(
     let prod0_adj = prod0_in.wrapping_sub(remainder);
 
     // Factor powers of two out of denominator.
-    // lpotdod = denom & -denom — largest power-of-two divisor of denom.
+    // lpotdod = denom & -denom - largest power-of-two divisor of denom.
     let lpotdod = denom & denom.wrapping_neg();
     let denom_odd = denom / lpotdod;
     let prod0_shifted = prod0_adj / lpotdod;
@@ -148,7 +148,7 @@ pub fn mul_shift_round_down(x: U256, y: U256, offset: u8) -> Result<U256> {
                 "lb_math: mul_shift overflow".into(),
             ));
         }
-        // (256 - offset) is in (0, 256] — guard offset == 0.
+        // (256 - offset) is in (0, 256] - guard offset == 0.
         if off > 0 {
             result = result.wrapping_add(prod1 << (256 - off));
         }

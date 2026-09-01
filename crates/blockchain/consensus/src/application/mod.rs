@@ -1,4 +1,4 @@
-//! Application actor — bridges Simplex consensus with Reth's execution layer.
+//! Application actor - bridges Simplex consensus with Reth's execution layer.
 //!
 //! Handles propose/verify/finalize requests from the consensus engine
 //! by communicating with Reth via `beacon_engine_handle`.

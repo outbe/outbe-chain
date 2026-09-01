@@ -1,19 +1,19 @@
 //! Governance precompile: on-chain registry of the normative objects
 //! (meta-canon, canon) and improvement proposals (OIP, GIP).
 //!
-//! - **Meta-canon / canon** — a single structured text each, versioned, with a
+//! - **Meta-canon / canon** - a single structured text each, versioned, with a
 //!   keccak hash and a `version -> hash` revision map. Two operations: read and
 //!   full-overwrite write. No status model.
-//! - **OIP / GIP** — separate record types with independent id sequences; each
+//! - **OIP / GIP** - separate record types with independent id sequences; each
 //!   carries a small header (author, status, blocks, text hash) plus the
 //!   proposal text in-record. Status lifecycle:
 //!   `Draft -> Approved | Rejected | Rework`, `Rework -> Draft`,
 //!   `Approved -> Implemented`.
-//! - **diff** — unified diff of a proposal's text against the current canon or
+//! - **diff** - unified diff of a proposal's text against the current canon or
 //!   meta-canon (view-only, via `similar`).
 //!
 //! Writes to the normative texts and to proposal status are gated by the
-//! `authorities` set (seeded at genesis with the validator addresses) — PoC
+//! `authorities` set (seeded at genesis with the validator addresses) - PoC
 //! scaffolding standing in for the not-yet-built decision pipeline.
 //! Approved OIP/GIP records may also be materialized via the vote path
 //! ([`GovernanceVoteTarget`]) after validator quorum.

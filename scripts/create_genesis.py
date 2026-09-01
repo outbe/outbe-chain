@@ -2,8 +2,8 @@
 """Create a complete Outbe genesis.json from one network.yaml.
 
 The yaml carries the minimum: which machines run the founding validators and
-where their key material lives. Everything else — public keys, Radicle node
-ids, OCOMP registrations, precompile storage, the OCOMP and TEE manifests —
+where their key material lives. Everything else - public keys, Radicle node
+ids, OCOMP registrations, precompile storage, the OCOMP and TEE manifests -
 is derived from the key directory and written into the genesis in one run.
 
     python3 scripts/create_genesis.py network.yaml
@@ -56,14 +56,14 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import launch_bundle  # noqa: E402  (sibling module, path set just above)
 
 # Canonical production baseline: every protocol parameter a network.yaml does not set comes
-# from this file, so the defaults have exactly one home — and it is the same
+# from this file, so the defaults have exactly one home - and it is the same
 # yaml format, readable and runnable on its own.
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
-# A `gramine-direct-dev` enclave is unattested, so it is confined to non-Mainnet
-# development use; `dcap-required` is confined to Testnet or Mainnet. Mixing them would
-# put an unattested enclave on an attested network, or the reverse.
+# Devnet and Testnet may select either `gramine-direct-dev` or `dcap-required`.
+# Mainnet requires `dcap-required`. The selected mode is bound into the genesis policy
+# and cannot change through successor-policy activation.
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
 MAINNET_CHAIN_ID = 676
@@ -134,7 +134,6 @@ TOP_LEVEL_KEYS = {
     "enclave_runner",
     "enclave_sgx",
     "signed_enclave_dir",
-    "allow_unattested_chain_id",
     "allow_stale_timestamp",
     "node_binary",
     "ocomp_binary",
@@ -387,8 +386,6 @@ def validate_config(config: dict[str, Any]) -> None:
     if network == "mainnet":
         if mode != "dcap-required":
             raise ValueError("Mainnet requires tee.mode dcap-required")
-        if config.get("allow_unattested_chain_id"):
-            raise ValueError("Mainnet forbids allow_unattested_chain_id")
         if "protocol_constants" in config:
             raise ValueError(
                 "Mainnet forbids protocol_constants overrides and uses canonical production defaults"
@@ -401,22 +398,18 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("Mainnet requires explicit production price feed endpoints")
         if any("testnet" in endpoint.lower() for endpoint in endpoints):
             raise ValueError("Mainnet may not use a testnet price endpoint")
-    if (
-        mode == "gramine-direct-dev"
-        and chain_id != DEVNET_CHAIN_ID
-        and not config.get("allow_unattested_chain_id")
+    if mode == "gramine-direct-dev" and chain_id not in (
+        DEVNET_CHAIN_ID,
+        TESTNET_CHAIN_ID,
     ):
         raise ValueError(
-            f"tee.mode gramine-direct-dev is unattested and is allowed only on the "
-            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}. A deliberate "
-            f"non-devnet network on a real SGX enclave without Intel collateral "
-            f"must say so with `allow_unattested_chain_id: true`"
+            f"tee.mode gramine-direct-dev requires the devnet or testnet chain id "
+            f"({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
         )
     if mode == "dcap-required":
-        if chain_id not in (TESTNET_CHAIN_ID, MAINNET_CHAIN_ID):
+        if chain_id not in (DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID):
             raise ValueError(
-                f"tee.mode dcap-required requires the testnet or mainnet chain id "
-                f"({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID}), not {chain_id}"
+                f"tee.mode dcap-required requires a canonical Outbe chain id, not {chain_id}"
             )
         image = str(config.get("enclave_image", ""))
         if re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) is None:
@@ -611,7 +604,7 @@ def discover_validators(
 
 # A genesis carries a TEE lease that starts counting at its own timestamp. Boot
 # a chain from a genesis stamped far in the past and block 1 dies on
-# `requested lease is already expired` — a runtime revert that says nothing
+# `requested lease is already expired` - a runtime revert that says nothing
 # about the real cause. Refuse to build one instead.
 MAX_GENESIS_AGE_SECONDS = 6 * 60 * 60
 
@@ -627,8 +620,8 @@ def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
             f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
         )
     # An explicit genesisTime pins the ValidatorSet epoch start; without it the
-    # seeder falls back to the wall clock and the genesis hash — which the
-    # OCOMP registrations sign — changes on every run.
+    # seeder falls back to the wall clock and the genesis hash - which the
+    # OCOMP registrations sign - changes on every run.
     genesis_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
@@ -732,7 +725,7 @@ def run_seed_stage(
     # The seeded OFFERING worldwide-day must track the genesis date, or the
     # runtime derives a different active day and metadosis wedges. An explicit
     # value always wins, including alongside fresh_metadosis: the two do
-    # different things — the day retargets the S-curve peak and NOD references,
+    # different things - the day retargets the S-curve peak and NOD references,
     # fresh_metadosis drops the pre-seeded OFFERING day itself.
     if "worldwide_day" in config:
         # Present-but-None means the caller decided there is no retarget, which
@@ -781,8 +774,8 @@ def seed_genesis_from_config(
 ) -> dict[str, Any]:
     """Seed one genesis from an explicit profile, without the OCOMP/TEE stages.
 
-    This is the entry point `seed_genesis.py` uses so its CLI — the one the e2e
-    harness and the localnet scripts call — creates its genesis through exactly
+    This is the entry point `seed_genesis.py` uses so its CLI - the one the e2e
+    harness and the localnet scripts call - creates its genesis through exactly
     the same code path as a yaml-driven deployment. The profile is used as
     given: callers that want the baseline merged do that themselves, so a
     partial profile never silently gains sections it did not ask for.
@@ -975,7 +968,7 @@ def run_ocomp_stage(
             raise SystemExit(
                 f"{message}\n\n"
                 f"An OCOMP registration signs one exact genesis hash. This run "
-                f"seeds a different one — most often because `timestamp:` is not "
+                f"seeds a different one - most often because `timestamp:` is not "
                 f"pinned in the yaml, so each run stamps the current time.\n"
                 f"Pin the timestamp the registrations were minted for, or delete "
                 f"ocomp-registration-v1.ocb1 and ocomp-key-v1.hex under "

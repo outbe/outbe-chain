@@ -57,7 +57,7 @@ impl<'storage> StorageBytes<'storage> {
 
     pub fn write(&self, data: &[u8]) -> Result<()> {
         // Number of data-run slots the current value occupies (short form uses
-        // none — the bytes live inline in the base slot).
+        // none - the bytes live inline in the base slot).
         let old_len = self.len()?;
         let old_data_slots = if old_len <= 31 {
             0
@@ -299,8 +299,8 @@ mod tests {
         with_storage(|storage| {
             let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(sb.write_if_changed(b"hello").unwrap()); // first write
-            assert!(!sb.write_if_changed(b"hello").unwrap()); // unchanged → skip
-            assert!(sb.write_if_changed(b"world").unwrap()); // changed → write
+            assert!(!sb.write_if_changed(b"hello").unwrap()); // unchanged -> skip
+            assert!(sb.write_if_changed(b"world").unwrap()); // changed -> write
             assert_eq!(sb.read().unwrap(), b"world");
         });
     }

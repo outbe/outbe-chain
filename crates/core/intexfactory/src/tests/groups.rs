@@ -19,7 +19,7 @@ mod group_index {
         StorageHandle::enter(&mut storage, f)
     }
 
-    /// Same day, differing only in issuance currency — the members of one group.
+    /// Same day, differing only in issuance currency - the members of one group.
     fn sid(worldwide_day: u32, issuance: &[u8; 3]) -> SeriesId {
         SeriesId::pack(WorldwideDay::new(worldwide_day), *issuance, b'U').unwrap()
     }

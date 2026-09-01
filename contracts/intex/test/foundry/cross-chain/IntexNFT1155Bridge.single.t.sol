@@ -86,7 +86,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     /// @notice `token` is immutable, so a zero address would permanently brick the
     ///         adapter (every `crosschainBurn`/`crosschainMint` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
-        // Property of the implementation constructor — the token immutable is set there.
+        // Property of the implementation constructor - the token immutable is set there.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "token"));
         new IntexNFT1155Bridge(address(0), address(bridge));
     }
@@ -294,7 +294,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(to, user);
         assertEq(amount, AMOUNT);
 
-        // Fix the cause on B, then retry → minted and entry cleared.
+        // Fix the cause on B, then retry -> minted and entry cleared.
         tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(failSeries);
         adapterB.retryCrosschainMint(receiveId, 0);
@@ -332,19 +332,19 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         (,,,, bool parked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(parked, "parked on B");
 
-        // Reclaim: B sends the transfer back to its origin A — the only exit that skips B's gate.
+        // Reclaim: B sends the transfer back to its origin A - the only exit that skips B's gate.
         vm.prank(user);
         adapterB.reclaimToSource{value: FEE}(receiveId, 0);
 
         (,,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillParked, "entry consumed");
 
-        // Deliver the reverse packet on A → holder re-minted, cross-chain supply conserved.
+        // Deliver the reverse packet on A -> holder re-minted, cross-chain supply conserved.
         _deliverBToA();
         assertEq(tokenA.balanceOf(user, failTokenId), AMOUNT, "holder re-minted on origin");
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
 
-        // A second reclaim reverts — the entry is gone.
+        // A second reclaim reverts - the entry is gone.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
     }

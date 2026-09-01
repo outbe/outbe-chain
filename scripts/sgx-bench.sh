@@ -10,7 +10,7 @@
 #
 # A no-attestation manifest variant is used so the enclave loads without a
 # provisioned PCK (DCAP quote generation is unrelated to throughput). It is still
-# real SGX: memory encryption, real enclave transitions, EGETKEY — exactly the
+# real SGX: memory encryption, real enclave transitions, EGETKEY - exactly the
 # overhead we want to measure.
 #
 # Requires: gramine (gramine-manifest/-sgx/-sgx-sign), cargo, /dev/sgx_enclave.
@@ -22,7 +22,7 @@ ENDPOINT="${1:-127.0.0.1:7799}"
 BIN="${2:-$REPO/target/release/outbe-tee-enclave}"
 
 if [ ! -e /dev/sgx_enclave ] && [ ! -e /dev/sgx/enclave ]; then
-    echo "SKIP: no SGX device (/dev/sgx_enclave) — this benchmark requires SGX hardware." >&2
+    echo "SKIP: no SGX device (/dev/sgx_enclave) - this benchmark requires SGX hardware." >&2
     exit 0
 fi
 command -v gramine-sgx >/dev/null || { echo "FAIL: gramine-sgx not installed" >&2; exit 1; }

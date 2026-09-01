@@ -93,7 +93,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // constructor — zero-address guards on immutable wiring
+    // constructor - zero-address guards on immutable wiring
     // ---------------------------------------------------------------
 
     /// @notice `token` is immutable; a zero address permanently bricks every crosschainMint/crosschainBurn path.
@@ -118,7 +118,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // batchSend / quoteBatchSend — single recipient, many tokenIds
+    // batchSend / quoteBatchSend - single recipient, many tokenIds
     // ---------------------------------------------------------------
 
     function test_BatchSend_HappyPath_CrosschainBurnsSenderAndCrosschainMintsRecipient() public {
@@ -247,7 +247,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // multiSend / quoteMultiSend — many recipients
+    // multiSend / quoteMultiSend - many recipients
     // ---------------------------------------------------------------
 
     function test_MultiSend_HappyPath_CrosschainMintsEachRecipient() public {

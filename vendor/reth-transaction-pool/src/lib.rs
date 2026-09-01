@@ -20,26 +20,26 @@
 //!
 //! ```text
 //! Network Peer
-//!     ↓
+//!     v
 //! Transactions or NewPooledTransactionHashes message
-//!     ↓
+//!     v
 //! TransactionsManager (crates/net/network/src/transactions/mod.rs)
-//!     │
-//!     ├─→ For Transactions message:
-//!     │   ├─→ Validates message format
-//!     │   ├─→ Checks if transaction already known
-//!     │   ├─→ Marks peer as having seen the transaction
-//!     │   └─→ Queues for import
-//!     │
-//!     └─→ For NewPooledTransactionHashes message:
-//!         ├─→ Filters out already known transactions
-//!         ├─→ Queues unknown hashes for fetching
-//!         ├─→ Sends GetPooledTransactions request
-//!         ├─→ Receives PooledTransactions response
-//!         └─→ Queues fetched transactions for import
-//!             ↓
+//!     |
+//!     +--> For Transactions message:
+//!     |   +--> Validates message format
+//!     |   +--> Checks if transaction already known
+//!     |   +--> Marks peer as having seen the transaction
+//!     |   +--> Queues for import
+//!     |
+//!     +--> For NewPooledTransactionHashes message:
+//!         +--> Filters out already known transactions
+//!         +--> Queues unknown hashes for fetching
+//!         +--> Sends GetPooledTransactions request
+//!         +--> Receives PooledTransactions response
+//!         +--> Queues fetched transactions for import
+//!             v
 //! pool.add_external_transactions() [Origin: External]
-//!     ↓
+//!     v
 //! Transaction Validation & Pool Addition
 //! ```
 //!
@@ -47,11 +47,11 @@
 //!
 //! ```text
 //! eth_sendRawTransaction RPC call
-//!     ├─→ Decodes raw bytes
-//!     └─→ Recovers sender
-//!         ↓
+//!     +--> Decodes raw bytes
+//!     +--> Recovers sender
+//!         v
 //! pool.add_transaction() [Origin: Local]
-//!     ↓
+//!     v
 //! Transaction Validation & Pool Addition
 //! ```
 //!
@@ -69,9 +69,9 @@
 //!
 //! - **Transaction Type**: Fork-dependent support (Legacy always, EIP-2930/1559/4844/7702 need
 //!   activation)
-//! - **Size**: Input data ≤ 128KB (default)
-//! - **Gas**: Limit ≤ block gas limit
-//! - **Fees**: Priority fee ≤ max fee; local tx fee cap; external minimum priority fee
+//! - **Size**: Input data <= 128KB (default)
+//! - **Gas**: Limit <= block gas limit
+//! - **Fees**: Priority fee <= max fee; local tx fee cap; external minimum priority fee
 //! - **Chain ID**: Must match current chain
 //! - **Intrinsic Gas**: Sufficient for data and access lists
 //! - **Blobs** (EIP-4844): Valid count, KZG proofs
@@ -79,8 +79,8 @@
 //! ### Stateful Checks
 //!
 //! 1. **Sender**: No bytecode (unless EIP-7702 delegated in Prague)
-//! 2. **Nonce**: ≥ account nonce
-//! 3. **Balance**: Covers value + (`gas_limit` × `max_fee_per_gas`)
+//! 2. **Nonce**: >= account nonce
+//! 3. **Balance**: Covers value + (`gas_limit` x `max_fee_per_gas`)
 //!
 //! ### Common Errors
 //!
@@ -117,10 +117,10 @@
 //! Transactions move between subpools based on state changes:
 //!
 //! ```text
-//! Queued ─────────→ BaseFee/Blob ────────→ Pending
-//!   ↑                      ↑                       │
-//!   │                      │                       │
-//!   └────────────────────┴─────────────────────┘
+//! Queued ----------> BaseFee/Blob ---------> Pending
+//!   ^                      ^                       |
+//!   |                      |                       |
+//!   +--------------------+---------------------+
 //!         (demotions due to state changes)
 //! ```
 //!

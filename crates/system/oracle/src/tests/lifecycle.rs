@@ -279,12 +279,12 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
 
         // Weighted median: powers 100, 200, 100. Total=400, half=200.
         // Sorted: 1000(100), 1001(200), 1002(100).
-        // Cumsum: 100(<200), 300(>=200) → median = 1001.
+        // Cumsum: 100(<200), 300(>=200) -> median = 1001.
         let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, fixed18(1001));
 
         // Reward spread = max(std_dev, 1001 * 0.02 / 2) = max(~0.816, ~10.01) = ~10.01
-        // All votes within [990.99, 1011.01] → all win
+        // All votes within [990.99, 1011.01] -> all win
         assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v3).unwrap(), 1);
@@ -466,7 +466,7 @@ fn run_tally_counts_an_abstain_for_every_silent_validator() {
         let v1 = Address::new([0x11; 20]);
         register_validator(storage.clone(), v1, U256::in_units(100u64));
 
-        // No votes submitted → all abstain
+        // No votes submitted -> all abstain
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
         assert_eq!(oracle.penalty_abstain_count.read(&v1).unwrap(), 1);
@@ -717,7 +717,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
             )
             .unwrap();
 
-        // Hook fires on the first block of day_4 — the current day has NO
+        // Hook fires on the first block of day_4 - the current day has NO
         // close yet, mirroring the real start-of-day boundary block.
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(4, day_4 + 120, 1),
@@ -856,7 +856,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             )
             .unwrap();
 
-        // First block of day D+1 → day D is now fully closed and finalized.
+        // First block of day D+1 -> day D is now fully closed and finalized.
         // Odd block number avoids the vote-period tally path (period == 2).
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(11, d1_start + 5, 1),

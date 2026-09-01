@@ -4,7 +4,7 @@
 //! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
 //! asserted by decrypting the ciphertext with the account's view key, exactly as
 //! a client would. `HashMapStorageProvider` does not run a real EVM, so the
-//! runtime's Rust → Solidity sub-calls into `IVaultRouter` / `IERC20` are
+//! runtime's Rust -> Solidity sub-calls into `IVaultRouter` / `IERC20` are
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -124,7 +124,7 @@ pub fn chain_b256() -> B256 {
 }
 
 /// Registers the `COEN/840` pair and seeds its spot rate and policy rate.
-/// Idempotent — `bootstrap_for` calls it once per owner.
+/// Idempotent - `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
         .unwrap()
@@ -141,7 +141,7 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
         .unwrap();
 }
 
-/// Re-publishes the COEN/840 spot rate — how these tests move the live price
+/// Re-publishes the COEN/840 spot rate - how these tests move the live price
 /// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
 /// which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
@@ -158,7 +158,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 // -------------------------------------------------------------------------
-// Finalized daily reference series — the only price source the daily scan reads
+// Finalized daily reference series - the only price source the daily scan reads
 // -------------------------------------------------------------------------
 
 /// The most recent fully-closed UTC day at `timestamp`, i.e. the day the scan
@@ -250,7 +250,7 @@ pub fn iso_word(iso: u16) -> Bytes {
     Bytes::from(b)
 }
 
-/// 32-byte zero word — the stubbed `uint256` return for the vault sub-calls.
+/// 32-byte zero word - the stubbed `uint256` return for the vault sub-calls.
 pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
@@ -334,7 +334,7 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
 }
 
 /// Gives `who` non-empty code so `request_credis`'s deployed-account guard passes.
-/// The bytes are never executed — `HashMapStorageProvider` runs no EVM — only the
+/// The bytes are never executed - `HashMapStorageProvider` runs no EVM - only the
 /// code hash is read.
 pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
     storage

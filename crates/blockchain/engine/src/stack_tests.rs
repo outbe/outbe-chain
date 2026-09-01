@@ -144,7 +144,6 @@ where
 
 #[test]
 fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
-    let _expected_owner = StackShutdownOrNetworkExit::GlobalStop;
     let storage = tempfile::tempdir().expect("stack shutdown test storage");
     let config = commonware_tokio::Config::default()
         .with_worker_threads(1)
@@ -239,9 +238,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
             let mut shutdown = owner.stopped();
             let mut network_handle = network_handle;
             let mut engine_handle = engine_handle;
-            match wait_for_stack_shutdown_or_network_exit(&mut shutdown, &mut network_handle).await
-            {
-                StackShutdownOrNetworkExit::GlobalStop => {
+            commonware_macros::select! {
+                _ = &mut shutdown => {
                     let action = supervise_epoch_loop_result(
                         &owner,
                         Ok(EpochLoopOutcome::GlobalStop),
@@ -250,8 +248,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
                     .await
                     .expect("simplex engine must drain on global stop");
                     assert_eq!(action, EpochLoopAction::ExitStack);
-                }
-                StackShutdownOrNetworkExit::NetworkExit => {}
+                },
+                _ = &mut network_handle => {}
             }
         });
 
@@ -395,15 +393,12 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             .recv_timeout(Duration::from_secs(1))
             .expect("sole blocking worker must be occupied");
 
-        // The next first-attempt timeout queues the real voter's ordinary
-        // sync_journal behind the occupied Tokio blocking worker.
-        let send_count_before_pending_sync = vote_send_count.load(Ordering::Relaxed);
+        // Let the next first-attempt timeout queue the real voter's ordinary
+        // journal sync behind the occupied blocking worker. The sender count is
+        // deliberately not used as a barrier: it also includes unrelated and
+        // retry traffic. The direct owner-liveness assertion below proves that
+        // shutdown is waiting for the blocked journal operation.
         context.sleep(Duration::from_millis(250)).await;
-        assert_eq!(
-            vote_send_count.load(Ordering::Relaxed),
-            send_count_before_pending_sync,
-            "the first-attempt vote must remain behind its required journal sync"
-        );
         fatal_tx.send(()).expect("trigger fatal stack exit");
 
         commonware_macros::select! {
@@ -414,6 +409,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             _ = context.sleep(Duration::from_millis(50)) => {},
         }
 
+        let send_count_before_release = vote_send_count.load(Ordering::Relaxed);
         release_tx.send(()).expect("release blocking worker");
         let result = stack_owner
             .await
@@ -424,7 +420,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             "fatal result: {result:#}"
         );
         assert!(
-            vote_send_count.load(Ordering::Relaxed) > send_count_before_pending_sync,
+            vote_send_count.load(Ordering::Relaxed) > send_count_before_release,
             "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
         );
     });
@@ -519,6 +515,27 @@ fn completed_engine_outcome_is_not_polled_twice() {
         .expect("an already observed engine exit must stop the stack without repolling the handle");
 
         assert_eq!(action, EpochLoopAction::ExitStack);
+    });
+}
+
+#[test]
+fn signer_replacement_aborts_engine_after_epoch_select_completes() {
+    commonware_tokio::Runner::default().start(|context| async move {
+        let mut engine_handle = context
+            .child("replace_signer_engine")
+            .spawn(|engine| async move {
+                let _ = engine.stopped().await;
+            });
+
+        let action = supervise_epoch_loop_result(
+            &context,
+            Ok(EpochLoopOutcome::ReplaceSigner),
+            &mut engine_handle,
+        )
+        .await
+        .expect("signer replacement must stop the old engine before restarting the epoch");
+
+        assert_eq!(action, EpochLoopAction::ReplaceSigner);
     });
 }
 
@@ -1859,7 +1876,7 @@ async fn start_recovery_marshal(
     )
     .await;
 
-    // 2026.5.0: the resolver handoff changed — the marshal actor takes
+    // 2026.5.0: the resolver handoff changed - the marshal actor takes
     // `(handler::Receiver<Commitment>, R)` where `R: TargetedResolver`. The
     // receiver/handler pair is produced by `handler::init`; the `Handler` is
     // returned as the keepalive (dropping it closes the receiver and shuts the
@@ -2014,7 +2031,7 @@ fn recover_application_finalized_round_returns_none_at_genesis_height() {
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 0)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 0)
             .await
             .unwrap();
 
@@ -2042,7 +2059,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap();
 
@@ -2097,13 +2114,429 @@ fn mismatched_marshal_finalization_digest_fails_closed() {
 }
 
 #[test]
+fn certified_follower_recovery_anchor_is_bounded_by_exact_archive_and_execution() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 358,
+        archive_block_tip: 358,
+        execution_tip: 358,
+        reth_finalized: 357,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 358);
+}
+
+#[test]
+fn certified_follower_replay_suffix_covers_both_archive_tips_without_advancing_execution() {
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(428, 428, 366),
+        (366, 428)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(421, 420, 366),
+        (366, 421)
+    );
+    assert_eq!(
+        certified_follower_replay_suffix_bounds(420, 421, 366),
+        (366, 421)
+    );
+    assert_eq!(certified_follower_replay_suffix_bounds(0, 0, 0), (0, 0));
+}
+
+#[test]
+fn certified_follower_normalized_archive_does_not_promote_observed_execution_anchor() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 366,
+        archive_finalization_tip: 428,
+        archive_block_tip: 428,
+        execution_tip: 366,
+        reth_finalized: 366,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 366);
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_unexplained_ack_gap() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 359,
+        archive_block_tip: 359,
+        execution_tip: 359,
+        reth_finalized: 357,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("exceeds Marshal processed floor 357 by more than one block"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_finality_regression() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 357,
+        archive_block_tip: 357,
+        execution_tip: 357,
+        reth_finalized: 358,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Reth finalized height 358 exceeds recovery anchor 357"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_requires_matching_verified_records() {
+    let block = recovery_block(358);
+    let round = Round::new(Epoch::new(0), View::new(29));
+    let (provider, finalization) = recovery_finalization_fixture(&block, round);
+
+    let anchor = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap();
+    assert_eq!(anchor.checkpoint.block_number, 358);
+    assert_eq!(anchor.checkpoint.block_hash, block.block_hash());
+
+    let wrong_block = recovery_block(359);
+    let error = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &wrong_block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("local archived block reports height 359, expected 358"));
+}
+
+fn recovered_reth_readback(
+    head: ProjectionCheckpoint,
+    safe: Option<ProjectionCheckpoint>,
+    finalized: Option<ProjectionCheckpoint>,
+) -> RecoveredRethForkchoice {
+    RecoveredRethForkchoice {
+        head,
+        safe,
+        finalized,
+    }
+}
+
+fn exact_recovered_reth_readback(anchor: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(anchor, Some(anchor), Some(anchor))
+}
+
+fn below_recovered_reth_readback(below: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(below, Some(below), Some(below))
+}
+
+#[test]
+fn recovered_fcu_requires_valid_response_and_exact_provider_identity() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            below_recovered_reth_readback(below),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_and_transport_errors_without_changing_anchor() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Syncing,
+            recovered_reth_readback(below, None, None),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Retryable("response lost".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+}
+
+#[test]
+fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Invalid("rejected".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: B256::repeat_byte(0x99),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 359,
+                block_hash: B256::repeat_byte(0x59),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+}
+
+#[test]
+fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(exact_recovered_reth_readback(anchor)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    });
+}
+
+#[test]
+fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let speculative_head = ProjectionCheckpoint {
+            block_number: 359,
+            block_hash: B256::repeat_byte(0x59),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            recovered_reth_readback(speculative_head, Some(anchor), Some(anchor)),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_until_valid_and_provider_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let outcomes = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            RecoveredForkchoiceAttempt::Syncing,
+            RecoveredForkchoiceAttempt::Valid,
+        ])));
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_outcomes = Arc::clone(&outcomes);
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            move || {
+                let outcome = scripted_outcomes.lock().unwrap().pop_front().unwrap();
+                async move { outcome }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcomes.lock().unwrap().is_empty());
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_lost_response_completes_when_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Retryable("response lost".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_payload_invalid_fails_closed_even_if_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        let error = confirm_recovered_forkchoice(
+            context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Invalid("rejected".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("failed closed"));
+    });
+}
+
+#[test]
+fn recovered_fcu_attempt_timeout_exhaustion_fails_closed() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+
+        let error = confirm_recovered_forkchoice(
+            context,
+            anchor,
+            std::future::pending::<RecoveredForkchoiceAttempt>,
+            move || Ok(below_recovered_reth_readback(below)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("did not converge"));
+        assert!(error.contains("timed out"));
+    });
+}
+
+#[test]
 fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
     let error = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let clock = context.child("recover_clock");
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let error = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let error = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap_err()
             .to_string();
@@ -2199,7 +2632,7 @@ fn test_build_boundary_artifact_deterministic() {
         p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
     };
 
-    // Same inputs → same output.
+    // Same inputs -> same output.
     let r1 = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: Epoch::new(1),
         validator_set: &validator_set,
@@ -2881,11 +3314,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_enclave_socket: None,
         tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
-        tee_renewal_relay_key: None,
-        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-        tee_renewal_poll_secs: 30,
-        tee_renewal_warning_blocks: 600,
-        tee_renewal_critical_blocks: 120,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,
         txpool_pending_staleness_secs: 600,
@@ -3074,7 +3502,7 @@ fn test_build_peer_map_excludes_unreachable() {
     let key = bls12381::PrivateKey::random(rand_core::OsRng);
     let pk = key.public_key();
 
-    // No p2p_address and no bootnode entry → excluded.
+    // No p2p_address and no bootnode entry -> excluded.
     let bootnode_map = std::collections::BTreeMap::new();
 
     let validator_set = validators::ValidatorSet {
@@ -3634,6 +4062,44 @@ fn test_dkg_activation_always_advances_consensus_epoch() {
 }
 
 #[test]
+fn active_vrf_material_and_local_share_status_change_together() {
+    let (keys, participants, _output, share, polynomial) = run_test_dkg_complete();
+    let bridge = outbe_primitives::consensus::ConsensusExecutionBridge::new();
+    bridge.set_consensus_status(outbe_primitives::consensus::ConsensusStatus {
+        randomness_status: outbe_primitives::consensus::RandomnessStatus::Healthy,
+        ..Default::default()
+    });
+    let vrf_materials = VrfMaterialProvider::new(0, polynomial.clone(), None);
+    assert!(!bridge.has_threshold_shares());
+
+    activate_vrf_material_and_publish_local_share(
+        &bridge,
+        &vrf_materials,
+        1,
+        polynomial.clone(),
+        Some(share),
+    );
+    assert!(bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants.clone(),
+        keys[0].clone(),
+        vrf_materials.clone(),
+    )
+    .is_some());
+
+    activate_vrf_material_and_publish_local_share(&bridge, &vrf_materials, 2, polynomial, None);
+    assert!(!bridge.has_threshold_shares());
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants,
+        keys[0].clone(),
+        vrf_materials,
+    )
+    .is_none());
+}
+
+#[test]
 fn test_missing_freeze_block_hash_retries_only_before_planned_activation() {
     assert_eq!(
         pending_freeze_block_hash_decision(119, 120),
@@ -3725,7 +4191,7 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 }
 
 // =============================================================================
-// T3 — ordered::Set index shift on prefix-sort join (must pass).
+// T3 - ordered::Set index shift on prefix-sort join (must pass).
 //
 // Prepending a BLS pubkey that sorts before all existing keys to an ordered::Set
 // shifts the indices of every original key by +1. Production code that builds
@@ -3806,13 +4272,13 @@ fn ordered_set_index_shift_on_prefix_join() {
 }
 
 // =============================================================================
-// T0 — Commonware Muxer drop vs backup-capture contract.
+// T0 - Commonware Muxer drop vs backup-capture contract.
 //
 // The Outbe consensus stack uses `Muxer::new(...)` (no backup) for vote / cert
 // / resolver / dkg sub-channels and registers a fresh sub-channel for every
 // new epoch (see stack.rs:513-549, 1009-1017). If a peer sends a message on
 // epoch N's sub-channel before the receiver has registered that sub-channel
-// on its end, the message is dropped — there is no replay path back into the
+// on its end, the message is dropped - there is no replay path back into the
 // late registrant.
 //
 // These two tests pin the Muxer contract for the pinned commonware-p2p tag
@@ -3969,7 +4435,7 @@ mod muxer_contract {
                 Muxer::new(context.child("sender_mux"), s_sender, s_receiver, CAPACITY);
             s_mux.start();
 
-            // Receiver peer: register the physical channel only — sub-channel
+            // Receiver peer: register the physical channel only - sub-channel
             // is *not* registered yet.
             let (r_sender, r_receiver) = oracle
                 .control(pk_receiver.clone())
@@ -3999,7 +4465,7 @@ mod muxer_contract {
             // not registered there).
             context.sleep(Duration::from_millis(100)).await;
 
-            // Now the receiver registers the sub-channel — too late.
+            // Now the receiver registers the sub-channel - too late.
             let (_, mut rx) = r_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
 
             // Bound the wait. With LINK latency = 0 and SubReceiver mailbox
@@ -4016,7 +4482,7 @@ mod muxer_contract {
                     );
                 }
                 _ = &mut timed => {
-                    // Expected: timed out without receiving — message was dropped.
+                    // Expected: timed out without receiving - message was dropped.
                 }
             }
         });
@@ -4024,7 +4490,7 @@ mod muxer_contract {
 
     /// With `.with_backup()`, the same early message is captured into the
     /// backup receiver as `(subchannel, (peer_pk, payload))`. The late-
-    /// registrant of the sub-channel still does **not** see it — backup is
+    /// registrant of the sub-channel still does **not** see it - backup is
     /// a capture surface, not an auto-replay mechanism.
     #[test]
     fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
@@ -4103,7 +4569,7 @@ mod muxer_contract {
                 "backup-captured bytes did not contain the original payload as suffix"
             );
 
-            // Now register the sub-channel on the receiver — assert that the
+            // Now register the sub-channel on the receiver - assert that the
             // late registrant does **not** receive the message that was
             // already drained into backup.
             let (_, mut rx) = r_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
@@ -4114,7 +4580,7 @@ mod muxer_contract {
                     let _ = received;
                     panic!(
                         "muxer with backup auto-replayed into the late registrant; this is \
-                         not the v2026.3.0 contract — production fix design must change"
+                         not the v2026.3.0 contract - production fix design must change"
                     );
                 }
                 _ = &mut timed_late => {
@@ -4126,7 +4592,7 @@ mod muxer_contract {
 }
 
 // =============================================================================
-// T1 / T2a / T2b / T5 — multi-node simplex deterministic harness.
+// T1 / T2a / T2b / T5 - multi-node simplex deterministic harness.
 //
 // These tests run the actual `simplex::Engine` over a deterministic
 // simulated network with outbe-chain's `HybridScheme<MinSig>` and the
@@ -4150,7 +4616,7 @@ fn epoch_transition_finalizes_view_one() {
     let runner = deterministic::Runner::timed(Duration::from_secs(30));
     runner.start(|ctx| async move {
         let mut harness = outbe_consensus::test_harness::Harness::new(&ctx, 3).await;
-        // Epoch::new(2) → RoundRobin leader = (2+1) % 3 = 0; arbitrary
+        // Epoch::new(2) -> RoundRobin leader = (2+1) % 3 = 0; arbitrary
         // baseline cycle.
         let outcome = harness
             .run_cycle(
@@ -4189,7 +4655,7 @@ fn cross_node_race_stalls_under_lazy_registration() {
         // differs. In the lazy path, `dkg_completion_delay` is ignored
         // (no pre-register) so followers' Mux registers the new epoch
         // only at `activation_delay = 500ms`. Leader fires at 150ms;
-        // 150-500ms window has no follower route → Mux drop → stall.
+        // 150-500ms window has no follower route -> Mux drop -> stall.
         let mut dkg_completion = HashMap::new();
         let mut activation = HashMap::new();
         for i in 0..3 {
@@ -4247,7 +4713,7 @@ fn pre_register_helper_avoids_cross_node_race() {
         // Same timing scenario as T2a: leader activates fast,
         // followers slow. The only difference is `use_pre_registration:
         // true`, which in the harness invokes
-        // `register_epoch_subchannels` at modeled DKG completion —
+        // `register_epoch_subchannels` at modeled DKG completion -
         // exactly the function the production fix calls in
         // stack.rs:1124-1190.
         let mut dkg_completion = HashMap::new();
@@ -4390,11 +4856,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_enclave_socket: None,
         tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
-        tee_renewal_relay_key: None,
-        tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-        tee_renewal_poll_secs: 30,
-        tee_renewal_warning_blocks: 600,
-        tee_renewal_critical_blocks: 120,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,
         txpool_pending_staleness_secs: 600,
@@ -4420,7 +4881,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
     assert_eq!(address, Some(evm_signer.address()));
 
     // Verifier-join: an EVM signer NOT in either set must NOT bail when verifier_join
-    // is true — it returns None (the node syncs as a verifier). The same signer with
+    // is true - it returns None (the node syncs as a verifier). The same signer with
     // verifier_join=false bails (the existing member-required contract).
     let empty = crate::validators::ValidatorSet {
         public_keys: Vec::new(),
@@ -4436,13 +4897,103 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         None,
         "non-member must run as verifier (None) when verifier-join"
     );
+
+    // Lease recovery crosses a different boundary from an unregistered live join:
+    // the old finalized DKG committee excludes this validator, while the canonical
+    // reshare target already binds its EVM address to the same BLS key. Keep that
+    // identity available for the post-DKG signer transition, but do not infer any
+    // threshold authority from it (the runtime still has no signing share).
+    let (boundary_keys, boundary_participants, boundary_output, _polynomial) = run_test_dkg();
+    let boundary_set = ValidatorSet {
+        public_keys: boundary_keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x31),
+            Address::with_last_byte(0x32),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing; 3],
+    };
+    let boundary = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+        epoch: Epoch::new(7),
+        validator_set: &boundary_set,
+        output: &boundary_output,
+        is_full_dkg: false,
+        dkg_cycle: 6,
+        freeze_height: 420,
+        planned_activation_height: 421,
+        vrf_material_version: 7,
+        is_validator_set_change: true,
+        tee_reshare_registrations: Vec::new(),
+        tee_expired_target_exclusions: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        Some(evm_signer.address()),
+        "a shareless validator in the canonical reshare target must retain its identity for post-DKG promotion"
+    );
+
+    let mismatched_target = ValidatorSet {
+        public_keys: vec![bls12381::PrivateKey::from_seed(8).public_key()],
+        addresses: vec![evm_signer.address()],
+        p2p_addresses: vec![ValidatorP2pAddress::Missing],
+    };
+    let mismatch = super::validate_validator_evm_signer(
+        &args,
+        &bls_key,
+        &boundary_set,
+        &mismatched_target,
+        Some((&boundary_participants, &boundary)),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        mismatch.contains("belongs to a different BLS consensus key"),
+        "shareless recovery must fail closed on an address/BLS mismatch: {mismatch}"
+    );
+
+    assert_eq!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &empty,
+            Some((&boundary_participants, &boundary)),
+            true,
+        )
+        .unwrap(),
+        None,
+        "an unregistered shareless verifier has no canonical proposer identity"
+    );
+    assert!(
+        super::validate_validator_evm_signer(
+            &args,
+            &bls_key,
+            &boundary_set,
+            &active_set,
+            Some((&boundary_participants, &boundary)),
+            false,
+        )
+        .is_err(),
+        "an excluded validator must fail closed outside shareless recovery mode"
+    );
 }
 
 // T-3 / behavioural counterpart of the removed source-grep test in
 // `crates/blockchain/evm/tests/genesis.rs`. `validate_recovered_vrf_material`
 // must reject when the locally-recovered VRF group public key disagrees with
 // the finalized boundary artifact, and must accept when they match (or when
-// no boundary is supplied — bootstrap path).
+// no boundary is supplied - bootstrap path).
 #[test]
 fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() {
     let (_keys, _participants, _output, _share, polynomial) = run_test_dkg_complete();
@@ -4450,15 +5001,15 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
     let local_group_pk =
         alloy_primitives::keccak256(commonware_codec::Encode::encode(polynomial.public()));
 
-    // No boundary → bootstrap path is allowed.
+    // No boundary -> bootstrap path is allowed.
     super::validate_recovered_vrf_material(&polynomial, None).expect("bootstrap path must accept");
 
-    // Matching boundary → accept.
+    // Matching boundary -> accept.
     let matching = test_boundary_with_vrf_hash(local_group_pk, 1);
     super::validate_recovered_vrf_material(&polynomial, Some(&matching))
         .expect("matching VRF group public key must accept");
 
-    // Mismatching boundary → reject with the operator-facing error string.
+    // Mismatching boundary -> reject with the operator-facing error string.
     let mismatching = test_boundary_with_vrf_hash(B256::repeat_byte(0xEE), 1);
     let err = super::validate_recovered_vrf_material(&polynomial, Some(&mismatching))
         .expect_err("mismatched VRF group public key must reject");
@@ -4470,18 +5021,18 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 — recovery picks participants from the recovered DKG output's committee
+// T4 - recovery picks participants from the recovered DKG output's committee
 //      (the share holders), NOT the latest on-chain set, and fails fast when
 // the restored material does not match the recovered boundary.
 //
 // `select_recovery_participants` is the pure decision the recovery path now
-// uses at stack.rs §7. The output's `players()` is already a sorted/deduped
+// uses at stack.rs section 7. The output's `players()` is already a sorted/deduped
 // `commonware_utils::ordered::Set`, so participant indices derive from it
-// canonically — the test asserts membership and the explicit drift error.
+// canonically - the test asserts membership and the explicit drift error.
 // =============================================================================
 
 /// Build a `DkgBoundaryArtifact` whose `reshare.new_active_set` records `n`
-/// distinct validator addresses — the committee the ceremony ran for.
+/// distinct validator addresses - the committee the ceremony ran for.
 fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
     let mut boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0xC1), 7);
     boundary.reshare.new_active_set = (0..n).map(|i| Address::repeat_byte(i as u8 + 1)).collect();
@@ -4491,7 +5042,7 @@ fn test_boundary_with_active_set_len(n: usize) -> DkgBoundaryArtifact {
 #[test]
 fn recovery_uses_recovered_committee_not_latest() {
     // Recovered DKG output for a 3-validator committee. `players()` is the
-    // sorted set of the three consensus pubkeys — the share holders.
+    // sorted set of the three consensus pubkeys - the share holders.
     let recovered_players: commonware_utils::ordered::Set<bls12381::PublicKey> = (1u64..=3)
         .map(bls12381::PrivateKey::from_seed)
         .map(|key| key.public_key())
@@ -4515,7 +5066,7 @@ fn recovery_uses_recovered_committee_not_latest() {
     );
 
     // Subcase 2: the recovered boundary records a 4-validator active set while the
-    // restored DKG output has only 3 players — the consensus material does not
+    // restored DKG output has only 3 players - the consensus material does not
     // match the recovered chain boundary. Recovery must fail fast with an explicit
     // drift error rather than build the scheme against the wrong committee.
     let boundary_drift = test_boundary_with_active_set_len(4);
@@ -4535,7 +5086,7 @@ fn recovery_uses_recovered_committee_not_latest() {
 /// commonware 2026.5.0's `validate_label` panics if a span/metric label is not
 /// `[a-zA-Z][a-zA-Z0-9_]*`. The `with_label` -> `.child()` migration carried
 /// dotted labels `dkg.live`/`dkg.retry`, which panicked at block ~90 during DKG
-/// rotation — a rare path no short localnet hits. This feeds the labels the
+/// rotation - a rare path no short localnet hits. This feeds the labels the
 /// engine passes to `Context::child(...)` through the REAL commonware validator
 /// (the same function the runtime invokes), so an invalid label fails here
 /// instead of in production. Asserts real label values via the real validator;
@@ -4598,7 +5149,7 @@ fn dotted_label_is_rejected_by_commonware_validate_label() {
 #[test]
 fn marshal_init_option_height_maps_none_to_genesis_zero() {
     // Exercise the PRODUCTION mapping (super::map_marshal_init_height), not stdlib
-    // Option::unwrap_or — so a regression in how Actor::init's Option<Height> is
+    // Option::unwrap_or - so a regression in how Actor::init's Option<Height> is
     // mapped (e.g. mapping None to a non-zero height, or dropping Some(n)) fails here.
     assert_eq!(super::map_marshal_init_height(None).get(), 0);
     assert_eq!(
@@ -4611,8 +5162,8 @@ fn marshal_init_option_height_maps_none_to_genesis_zero() {
     );
 }
 
-/// A node that has already finalized (`Some(N>0)`) — or whose execution layer
-/// recovered after a crash with consensus still durable — must classify as an
+/// A node that has already finalized (`Some(N>0)`) - or whose execution layer
+/// recovered after a crash with consensus still durable - must classify as an
 /// existing-chain join: it must NOT re-run the initial genesis DKG and the
 /// genesis-formation gate must NOT (re)form genesis. An inverted height check
 /// would compile clean but re-run genesis DKG on a restarted validator.
@@ -4771,14 +5322,14 @@ mod restart_recovery {
 
     #[test]
     fn zero_finalized_tip_is_not_recoverable() {
-        // No durable finalized tip at all → fresh/corrupt, never the benign case.
+        // No durable finalized tip at all -> fresh/corrupt, never the benign case.
         assert!(!unfinalized_head_lead_is_recoverable(5, 0));
     }
 
     #[test]
     fn lead_beyond_bound_stays_fatal() {
         // A head far ahead of the finalized tip is suspicious, not an in-flight
-        // head — it must NOT be silently tolerated.
+        // head - it must NOT be silently tolerated.
         assert!(!unfinalized_head_lead_is_recoverable(
             69 + MAX_UNFINALIZED_HEAD_LEAD + 1,
             69
@@ -4896,11 +5447,6 @@ mod restart_recovery {
             tee_enclave_socket: None,
             tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
             tee_bootstrap_timeout_secs: 60,
-            tee_renewal_relay_key: None,
-            tee_renewal_rpc_url: "http://127.0.0.1:8545".to_owned(),
-            tee_renewal_poll_secs: 30,
-            tee_renewal_warning_blocks: 600,
-            tee_renewal_critical_blocks: 120,
             tee_canary_interval_secs: 30,
             tee_canary_failure_threshold: 3,
             txpool_pending_staleness_secs: 600,
@@ -4946,7 +5492,7 @@ fn read_ms_uses_default_when_absent() {
     );
 }
 
-/// Test 9: a present value is returned verbatim (including 0 — the value is read
+/// Test 9: a present value is returned verbatim (including 0 - the value is read
 /// here; the `> 0` rule is enforced by `validate_timing`, see Test 11).
 #[test]
 fn read_ms_accepts_present_value() {

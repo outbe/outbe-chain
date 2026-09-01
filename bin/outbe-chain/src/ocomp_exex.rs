@@ -2102,7 +2102,7 @@ mod tests {
         );
     }
 
-    /// A hole at or below the tip is not a persistence lag — the history this
+    /// A hole at or below the tip is not a persistence lag - the history this
     /// node claims to have is inconsistent, so it must not start.
     #[test]
     fn checkpoint_missing_below_the_canonical_tip_fails_closed() {

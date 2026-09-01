@@ -2,21 +2,21 @@
 //!
 //! Exposes the read-only and write entrypoints that other modules
 //! (EmissionLimit, AgentReward) call as part of the daily Cycle dispatch
-//! chain (`Cycle → EmissionLimit → AgentReward → Rewards`). Until this
+//! chain (`Cycle -> EmissionLimit -> AgentReward -> Rewards`). Until this
 //! refactor lands, day-boundary settle was owned by `RewardsLifecycle`
 //! and triggered from `on_finalized_metadata`; with Phase 3
 //! that responsibility moves out of Rewards and Rewards becomes a pure
 //! storage + accounting layer that exposes the data the new orchestrator
 //! needs:
 //!
-//! * [`read_daily_fee_sum_raw`] — locked-in raw fee total per UTC day,
+//! * [`read_daily_fee_sum_raw`] - locked-in raw fee total per UTC day,
 //!   used by AgentReward to choose between forwarding the validator
 //!   pool to Metadosis or emitting a topup.
-//! * [`read_voters_for_day`] — ordered (Address, participation count)
+//! * [`read_voters_for_day`] - ordered (Address, participation count)
 //!   pairs for a UTC day; first-seen-on-day order is deterministic.
-//! * [`prepare_daily_validator_gem_batch`] — freezes the exact validator Gem
+//! * [`prepare_daily_validator_gem_batch`] - freezes the exact validator Gem
 //!   obligations for a UTC day without consulting Oracle state.
-//! * [`deliver_oldest_reward_gem_batch`] — delivers one complete FIFO batch
+//! * [`deliver_oldest_reward_gem_batch`] - delivers one complete FIFO batch
 //!   when a fresh canonical price exists.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -550,7 +550,7 @@ fn deliver_oldest_reward_gem_batch_inner(
 /// The COEN price a batch for `reward_utc_day` mints at.
 ///
 /// The reward belongs to its day, so that day's finalized VWAP is the answer.
-/// A day the oracle closed empty falls back to the live quote — today's rule —
+/// A day the oracle closed empty falls back to the live quote - today's rule -
 /// so no reward is ever lost to a day that carries no price. `None` means the
 /// day is not closed yet: the batch waits, exactly as it does today.
 fn resolve_reward_entry_price(
@@ -679,7 +679,7 @@ mod tests {
     }
 
     /// Seeds COEN/840 oracle pair at `rate_6`. Required because
-    /// `deliver_oldest_reward_gem_batch` → `mint_gem` resolves `coen_rate` for floor
+    /// `deliver_oldest_reward_gem_batch` -> `mint_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -826,7 +826,7 @@ mod tests {
             bootstrap_genesis(&ctx);
             seed_oracle(&ctx, U256::from(2u64) * one_coen840());
 
-            // counts 1 + 3 = 4; topup 400 → VAL_X 100, VAL_Y 300.
+            // counts 1 + 3 = 4; topup 400 -> VAL_X 100, VAL_Y 300.
             let voters = vec![(VAL_X, 1u64), (VAL_Y, 3u64)];
             let outcome =
                 prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(400u64), &voters)

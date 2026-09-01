@@ -9,14 +9,14 @@ import {CreateX} from "./0_DeployCreateX.s.sol";
 import {Router} from "../src/router/Router.sol";
 
 /// @dev Registers the matching Router on each remote chain. Routers share one CREATE3 address across chains, so the
-///      remote address equals the local (computed here) — env only lists chain ids.
+///      remote address equals the local (computed here) - env only lists chain ids.
 ///
 /// Required env vars (DEPLOYER_PK must be the Router owner):
-///   DEPLOYER_PK      — owner private key
-///   CONTRACT_SALT    — salt string used at deploy
-///   CREATEX_ADDRESS  — deployed CreateX factory
-///   ROUTER_ADDRESS   — local Router to configure
-///   REMOTE_CHAIN_IDS — csv of remote EVM chain ids
+///   DEPLOYER_PK      - owner private key
+///   CONTRACT_SALT    - salt string used at deploy
+///   CREATEX_ADDRESS  - deployed CreateX factory
+///   ROUTER_ADDRESS   - local Router to configure
+///   REMOTE_CHAIN_IDS - csv of remote EVM chain ids
 contract ConfigureRouter is Script {
     function run() public {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");

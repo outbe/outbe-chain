@@ -1,4 +1,4 @@
-//! — integration tests for `SlashIndicator.submitInvalidVrfProofEvidence`.
+//! - integration tests for `SlashIndicator.submitInvalidVrfProofEvidence`.
 //! The tests are grouped by axis:
 //!
 //! * size / age / epoch-lag caps
@@ -13,8 +13,8 @@
 //! real ECDSA-signed Phase 1 TxLegacy. The cert carries a mandatory but
 //! cryptographically invalid VRF proof while its BLS vote aggregate remains
 //! valid, producing canonical failure class 7. This proves end-to-end that:
-//!   * the codec → admissibility → proposer recovery → snapshot lookup
-//!     → verifier → felony chain is wired correctly;
+//!   * the codec -> admissibility -> proposer recovery -> snapshot lookup
+//!     -> verifier -> felony chain is wired correctly;
 //!   * the recovered proposer is byte-equal to the EVM address derived
 //!     from the test's `PrivateKeySigner`;
 //!   * the felony helper credits the submitter with 10% of the slashed
@@ -74,7 +74,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 // ---------------------------------------------------------------------------
-// Fixture constants — chosen so admissibility checks pass by default and
+// Fixture constants - chosen so admissibility checks pass by default and
 // individual tests can perturb a single axis without disturbing the others.
 // ---------------------------------------------------------------------------
 
@@ -264,7 +264,7 @@ fn build_metadata(
 // ---------------------------------------------------------------------------
 // Phase 1 tx signing helper. Returns (encoded_2718_bytes, recovered_address).
 // The recovered address matches what `submit_invalid_vrf_evidence` ecrecovers
-// from the encoded bytes — proves the proposer-attribution chain.
+// from the encoded bytes - proves the proposer-attribution chain.
 // ---------------------------------------------------------------------------
 
 fn signer_with_address() -> (PrivateKeySigner, Address) {
@@ -313,7 +313,7 @@ fn sign_phase1_metadata_tx(
 /// function to reach the verifier: registered + staked proposer, epoch
 /// counter, and the committee snapshot. The provider's block number must
 /// be set separately via `with_storage_at` (StorageHandle does not expose
-/// a setter — block_number is part of the provider's block context).
+/// a setter - block_number is part of the provider's block context).
 fn setup_storage(
     storage: StorageHandle,
     proposer: Address,
@@ -434,7 +434,7 @@ fn with_storage_no_canonical_parent<R>(block_number: u64, f: impl FnOnce(Storage
 }
 
 /// Provider with `block_number` set and the canonical fixture seeded with
-/// a DIFFERENT hash at `PARENT_BLOCK_NUMBER` — drives the
+/// a DIFFERENT hash at `PARENT_BLOCK_NUMBER` - drives the
 /// "canonical mismatch" branch.
 fn with_storage_with_foreign_canonical_parent<R>(
     block_number: u64,
@@ -451,7 +451,7 @@ fn with_storage_with_foreign_canonical_parent<R>(
     })
 }
 
-/// Raw provider — does NOT auto-register `SUBMITTER` as an ACTIVE
+/// Raw provider - does NOT auto-register `SUBMITTER` as an ACTIVE
 /// validator. Used by ACL-rejection tests.
 fn with_storage_no_acl<R>(block_number: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -468,8 +468,8 @@ fn with_storage_no_acl<R>(block_number: u64, f: impl FnOnce(StorageHandle) -> R)
 // only the staked set can spend chain CPU on the verifier.
 //
 // Two-axis pin:
-//   (a) random EOA with no ValidatorSet entry → reject with status 0.
-//   (b) registered-but-EXITING validator → reject because status != ACTIVE.
+//   (a) random EOA with no ValidatorSet entry -> reject with status 0.
+//   (b) registered-but-EXITING validator -> reject because status != ACTIVE.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_rejects_non_active_submitter() {
@@ -539,7 +539,7 @@ fn invalid_vrf_evidence_rejects_after_max_age() {
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
         let mut schedule = relaxed_schedule();
-        schedule.invalid_vrf_evidence_max_age_blocks = 5; // child is 10 blocks old → stale
+        schedule.invalid_vrf_evidence_max_age_blocks = 5; // child is 10 blocks old -> stale
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
@@ -559,7 +559,7 @@ fn evidence_epoch_deadline_inadmissible_after_grace_epoch() {
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
         let mut schedule = relaxed_schedule();
-        schedule.invalid_vrf_evidence_max_epoch_lag = 1; // child is 5 epochs old → stale
+        schedule.invalid_vrf_evidence_max_epoch_lag = 1; // child is 5 epochs old -> stale
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
@@ -667,7 +667,7 @@ fn evidence_with_missing_committee_snapshot_rejected() {
 
 // ===========================================================================
 // proposer recovered from phase1_tx is NOT in the snapshot's
-// committee → reject.
+// committee -> reject.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
@@ -675,7 +675,7 @@ fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
         let (signer, _proposer) = signer_with_address();
         let dkg = build_dkg(4);
         // Build a snapshot whose committee does NOT contain the
-        // proposer-derived address — use a different placeholder for
+        // proposer-derived address - use a different placeholder for
         // slot 0 (the same `foreign_addr` is what setup_storage
         // registers + stakes, so its identity is consistent).
         let foreign_addr = address!("0xfefefefefefefefefefefefefefefefefefefefe");
@@ -698,7 +698,7 @@ fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
 }
 
 // ===========================================================================
-// VALID proof submitted as evidence → reject ("nothing to slash").
+// VALID proof submitted as evidence -> reject ("nothing to slash").
 // ===========================================================================
 #[test]
 fn evidence_with_valid_proof_rejected_as_not_slashable() {
@@ -728,7 +728,7 @@ fn evidence_with_valid_proof_rejected_as_not_slashable() {
 }
 
 // ===========================================================================
-// non-VRF verifier failure (BLS aggregate invalid) → reject as
+// non-VRF verifier failure (BLS aggregate invalid) -> reject as
 // "non-VRF class".
 // ===========================================================================
 #[test]
@@ -741,11 +741,11 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
         // aggregate (sign with all 4 keys but claim only signers
         // {0,1,2} in the bitmap). The verifier reconstructs the
         // expected aggregate from the bitmap and rejects with
-        // BitmapMismatch / BlsAggregateInvalid — a non-VRF class.
+        // BitmapMismatch / BlsAggregateInvalid - a non-VRF class.
         let cert = build_cert(&dkg, &[0, 1, 2], PARENT_BLOCK_HASH, true);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
         let mut metadata = build_metadata(&snapshot, &cert_bytes);
-        // Claim all 4 signers in the bitmap even though only 3 signed —
+        // Claim all 4 signers in the bitmap even though only 3 signed -
         // this makes the BLS aggregate mismatch the reconstructed
         // expected payload.
         metadata.signer_bitmap = vec![1u8; 4];
@@ -768,11 +768,11 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
 }
 
 // ===========================================================================
-// HAPPY PATH — invalid mandatory VRF proof, BLS aggregate valid → felony.
+// HAPPY PATH - invalid mandatory VRF proof, BLS aggregate valid -> felony.
 // Pins:
 //   * proposer recovered from phase1_tx_bytes matches the registered
-//     validator (ecrecover ↔ ValidatorSet identity wiring is correct)
-//   * proposer status flips ACTIVE → JAILED
+//     validator (ecrecover <-> ValidatorSet identity wiring is correct)
+//   * proposer status flips ACTIVE -> JAILED
 //   * stake is slashed by 5% (the helper's config default)
 //   * submitter receives 10% of slashed amount in their balance
 //   * dedup slot is marked
@@ -855,7 +855,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
 }
 
 // ===========================================================================
-// dedup — second submission of the SAME evidence reverts.
+// dedup - second submission of the SAME evidence reverts.
 // Independent of the happy path (uses a stand-alone happy submission then
 // re-submits) so the dedup contract is testable even if the felony helper
 // is later refactored.
@@ -923,7 +923,7 @@ fn classify_vrf_failure_covers_all_reachable_vrf_variants_only() {
     );
     assert_eq!(classify_vrf_failure(&InvalidVrfSignature), Some(7));
 
-    // Representative non-VRF variants must return None — the precompile
+    // Representative non-VRF variants must return None - the precompile
     // reverts with "non-VRF class" rather than slashing.
     assert_eq!(
         classify_vrf_failure(&BelowQuorum {
@@ -961,7 +961,7 @@ fn codec_wire_constants_are_stable() {
 }
 
 // ===========================================================================
-// body test #4 — boundary form of the block-age cap.
+// body test #4 - boundary form of the block-age cap.
 //
 // `invalid_vrf_evidence_rejects_after_max_age` proves admissibility
 // rejects evidence past the deadline. This test pins the OTHER side of
@@ -971,7 +971,7 @@ fn codec_wire_constants_are_stable() {
 // ===========================================================================
 #[test]
 fn evidence_max_age_inadmissible_after_deadline() {
-    // (a) deadline exactly — admissibility passes; we expect a later
+    // (a) deadline exactly - admissibility passes; we expect a later
     // failure path (here the codec, because metadata is empty), proving
     // we got past the block-age gate.
     let mut schedule = relaxed_schedule();
@@ -990,7 +990,7 @@ fn evidence_max_age_inadmissible_after_deadline() {
         );
     });
 
-    // (b) one block past deadline — explicit stale revert.
+    // (b) one block past deadline - explicit stale revert.
     let past_block = CHILD_BLOCK_NUMBER + 6;
     with_storage_at(past_block, |storage| {
         let evidence = evidence_skeleton(vec![]).encode();
@@ -1003,7 +1003,7 @@ fn evidence_max_age_inadmissible_after_deadline() {
 }
 
 // ===========================================================================
-// body test #6 — admissibility reads `current_epoch` from
+// body test #6 - admissibility reads `current_epoch` from
 // ValidatorSet epoch storage, NOT from any in-memory cache.
 //
 // We install an epoch snapshot through the test fixture API and assert the
@@ -1020,7 +1020,7 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
         let mut schedule = relaxed_schedule();
-        schedule.invalid_vrf_evidence_max_epoch_lag = 1; // 7 > 1 → epoch-stale
+        schedule.invalid_vrf_evidence_max_epoch_lag = 1; // 7 > 1 -> epoch-stale
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
@@ -1030,7 +1030,7 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
             "precompile must read the ValidatorSet epoch from storage; got: {msg}",
         );
         // The current_epoch in the error message must be exactly the
-        // value we just wrote — pins the storage-read path.
+        // value we just wrote - pins the storage-read path.
         assert!(
             msg.contains(&format!("current_epoch {}", CHILD_EPOCH + 7)),
             "rejection must echo the stored epoch value; got: {msg}",
@@ -1039,7 +1039,7 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
 }
 
 // ===========================================================================
-// body test #9 — at-most-one-slash even when several evidences
+// body test #9 - at-most-one-slash even when several evidences
 // carry different (submitter-asserted) failure codes for the SAME
 // `(child_block_hash, phase1_tx_hash)`. The dedup key derives from the
 // canonical preimage only, so the failure-code axis is not a way around
@@ -1072,7 +1072,7 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
         // Second submission: SAME child + SAME phase1_tx, but a different
         // submitter-asserted failure code. Must dedup.
         let mut ev2 = evidence_skeleton(phase1);
-        ev2.failure_code = 3; // WrongVrfMaterialVersion claim — not the truth
+        ev2.failure_code = 3; // WrongVrfMaterialVersion claim - not the truth
         let evidence2 = ev2.encode();
 
         let err = SlashIndicator::new(storage.clone())
@@ -1093,7 +1093,7 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
 }
 
 // ===========================================================================
-// body test #10 — confirms the new entry-point reuses the
+// body test #10 - confirms the new entry-point reuses the
 // existing `apply_evidence_felony` helper rather than reimplementing
 // 5%/10% economics inline. Asserts the same conservation that the
 // double-proposal and conflicting-vote paths already enforce:
@@ -1153,7 +1153,7 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
 }
 
 // ===========================================================================
-// body test #11 — evidence whose `parent_block_hash`
+// body test #11 - evidence whose `parent_block_hash`
 // is not canonical at `parent_block_number` is rejected as
 // non-attributable. Covers both branches:
 //   (a) parent number is OUTSIDE the canonical-history window (None)
@@ -1162,7 +1162,7 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
 // ===========================================================================
 #[test]
 fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
-    // (a) parent outside the canonical window → "not in canonical-history window".
+    // (a) parent outside the canonical window -> "not in canonical-history window".
     with_storage_no_canonical_parent(CHILD_BLOCK_NUMBER + 1, |storage| {
         let evidence = evidence_skeleton(vec![]).encode();
         let mut si = SlashIndicator::new(storage);
@@ -1176,7 +1176,7 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
         );
     });
 
-    // (b) parent in window but canonical hash differs → "not canonical at block".
+    // (b) parent in window but canonical hash differs -> "not canonical at block".
     let foreign_parent =
         b256!("0xfeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface");
     with_storage_with_foreign_canonical_parent(CHILD_BLOCK_NUMBER + 1, foreign_parent, |storage| {
@@ -1194,7 +1194,7 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
 }
 
 // ===========================================================================
-// body test #14 — after a successful slash the canonical
+// body test #14 - after a successful slash the canonical
 // `(child_hash, phase1_tx_hash)` dedup slot must be set, AND a fresh
 // `SlashIndicator` facade attached to the same storage must still see
 // it (the slot is persisted in EVM storage, not cached on the contract
@@ -1220,7 +1220,7 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap();
 
-        // Fresh facade — proves the dedup slot is read from storage, not
+        // Fresh facade - proves the dedup slot is read from storage, not
         // an in-instance cache.
         let canonical = invalid_vrf_evidence_hash_v2(CHILD_BLOCK_HASH, phase1_hash);
         let later = SlashIndicator::new(storage);
@@ -1235,13 +1235,13 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 }
 
 // ===========================================================================
-// body test #2 — `submitInvalidVrfProofEvidence` rides the
+// body test #2 - `submitInvalidVrfProofEvidence` rides the
 // regular precompile dispatch path used by mempool / txpool transactions,
 // NOT the begin-zone system-tx phase.
 //
 // Behavioural pin (not a source grep):
 //   * ABI-decode the canonical 4-byte selector through `ISlashIndicator`
-//     (the txpool precompile's interface) — the route exists.
+//     (the txpool precompile's interface) - the route exists.
 //   * Confirm the dispatch closure reaches the runtime entry-point with
 // an ACTIVE-validator caller (the ACL gate) and proceeds
 //     into the decode phase. A begin-zone phase wouldn't enforce the

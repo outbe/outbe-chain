@@ -97,7 +97,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         IntexState state;
         /// @notice Worldwide day whose tributes fed this series.
         uint32 worldwideDay;
-        /// @notice Series identifier — the readable id this record belongs to.
+        /// @notice Series identifier - the readable id this record belongs to.
         bytes14 seriesId;
     }
 
@@ -239,7 +239,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Burn `amount` Issued Intex from `holder` when the tokens are parked in the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued or Qualified — no Call Event yet). The parked capacity record lives in the
+    ///      (Issued or Qualified - no Call Event yet). The parked capacity record lives in the
     ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
     /// @param holder Holder whose Issued tokens are burned.
     /// @param seriesId Series identifier.

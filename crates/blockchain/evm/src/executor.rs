@@ -139,7 +139,7 @@ fn validate_execution_summary_artifact(
 
 /// Outbe runtime addresses that receive `0xEF` EIP-161 marker bytecode in every
 /// block's pre-execution step ([`OutbeBlockExecutor::apply_pre_execution_changes`])
-/// so their persistent EVM storage survives state-root computation — EIP-161
+/// so their persistent EVM storage survives state-root computation - EIP-161
 /// emptiness (nonce==0 && balance==0 && empty code) ignores storage, so without
 /// the marker a stateful account holding only storage is pruned.
 ///
@@ -160,7 +160,7 @@ pub mod marker_addresses {
         PROMIS_ADDRESS,
         // PromisFactory is a live stateful precompile (in
         // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
-        // per-block runtime marker is its only EIP-161 preservation path —
+        // per-block runtime marker is its only EIP-161 preservation path -
         // mirroring GRATIS_FACTORY / GEM_FACTORY above.
         PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
@@ -223,11 +223,11 @@ pub mod marker_addresses {
 /// bind new VRF material, so matching active-set hash is not a no-op.
 ///
 /// Tri-state behaviour:
-/// - `current_hash == reshare.active_set_hash` → write incoming snapshot and
+/// - `current_hash == reshare.active_set_hash` -> write incoming snapshot and
 ///   re-activate the same active set atomically.
-/// - mismatch + `is_validator_set_change == true` → apply boundary activation
+/// - mismatch + `is_validator_set_change == true` -> apply boundary activation
 ///   and write incoming snapshot atomically.
-/// - mismatch + `is_validator_set_change == false` → fatal.
+/// - mismatch + `is_validator_set_change == false` -> fatal.
 pub(crate) fn apply_boundary_outcome(
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
@@ -410,7 +410,7 @@ fn committee_snapshot_from_boundary(
 /// - signer bitmap length matches committee length
 /// - committee has no duplicate addresses
 /// - every committee member is a registered validator (not necessarily a
-///   current consensus participant — historical EXITING/UNBONDING is fine)
+///   current consensus participant - historical EXITING/UNBONDING is fine)
 /// - every `missed_proposer` is a member of `metadata.ordered_committee`
 /// - bitmap entries are 0 or 1 only
 pub(crate) fn validate_finalized_metadata(
@@ -465,7 +465,7 @@ pub(crate) fn validate_finalized_metadata(
 /// Phase 1 `CertifiedParentAccounting` precompile via
 /// `PreloadedSystemTxContext.finalized_summary`. Renamed from
 /// `FinalizedExecutionSummary` because under V2 the parent need not be
-/// finalized — it only needs to be the certified-parent of the block
+/// finalized - it only needs to be the certified-parent of the block
 /// being executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccountedParentArtifact {
@@ -603,15 +603,15 @@ where
 /// against `HashMapStorageProvider`. Ordering is load-bearing:
 ///
 /// 1. Genesis-state validation (blocks 0/1 only, if consensus config was supplied).
-/// 2. `VoteLifecycle::begin_block` — tally expired proposals and dispatch approved ones.
-/// 3. `UpdateLifecycle::begin_block_with_handlers` — activate scheduled updates at activation height.
-/// 4. `RewardsLifecycle::begin_block` — locks in `genesis_utc_day` on
+/// 2. `VoteLifecycle::begin_block` - tally expired proposals and dispatch approved ones.
+/// 3. `UpdateLifecycle::begin_block_with_handlers` - activate scheduled updates at activation height.
+/// 4. `RewardsLifecycle::begin_block` - locks in `genesis_utc_day` on
 ///    block 0; the per-block emission and per-day settle paths have
 ///    moved to the Cycle module.
 /// 5. Metadosis WWD state machine has moved to the hourly ProtocolCycle
 ///    handler; no per-block hook here anymore.
 /// 6. Staking matured-unbonding processing.
-/// 7. `OracleLifecycle::begin_block` — tally + daily S-curve only.
+/// 7. `OracleLifecycle::begin_block` - tally + daily S-curve only.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.
@@ -665,7 +665,7 @@ fn run_outbe_pre_execution_hooks_inner(
 
     // EmissionLimit no longer participates in pre-execution lifecycle.
     // Per-block emission dispatch was removed (Phase 4 of
-    // the Cycle epic) — the closed-form daily cap, sink allocation,
+    // the Cycle epic) - the closed-form daily cap, sink allocation,
     // and AgentReward / Metadosis dispatch all run from ProtocolCycle's
     // persisted UTC-day decision instead.
 
@@ -972,7 +972,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     verified_phase1_vrf_proof_hash: Option<B256>,
     /// Proposer-only one-time Phase 3b `TeeBootstrap` payload. When `Some` on the
     /// proposer path, `begin_block_system_tx_inputs` injects the bootstrap system
-    /// tx after `BoundaryOutcome` — identically to `build_begin_system_txs` so the
+    /// tx after `BoundaryOutcome` - identically to `build_begin_system_txs` so the
     /// body the proposer signs and the inputs the executor expects match. `None`
     /// on the validator path (the body carries it via `expected_begin_system_txs`)
     /// and until the tribute-DKG bootstrap producer supplies a payload.
@@ -1185,7 +1185,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// halt). Without a bound, an attacker can stuff a whole block with
     /// thousands of zero-cost 21k soft-failures, crowding out real transactions.
     /// 64 is far above the handful of soft-failures honest operation produces
-    /// per block, yet caps stuffing at `64 * 21k ≈ 1.34M` gas — under ~5% of a
+    /// per block, yet caps stuffing at `64 * 21k ~= 1.34M` gas - under ~5% of a
     /// 30M-gas block. Protocol constant: both the proposer (build) and validator
     /// (re-execution) read it, so they agree on the bound.
     const MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK: u32 = 64;
@@ -1196,7 +1196,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// Returns `Ok(())` when the soft-failure is within the per-block budget (and
     /// records it); past [`Self::MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK`] it
     /// returns `Err(BlockValidationError::InvalidTx)`, which the payload builder
-    /// SKIPS (`mark_invalid` + continue — the tx is excluded from the block and
+    /// SKIPS (`mark_invalid` + continue - the tx is excluded from the block and
     /// evicted from the pool) while a validator REJECTS a block that exceeds the
     /// cap (the `?` on the re-execution path propagates it as a block failure).
     /// The counter is the number of zero-fee soft-receipts in the block and is
@@ -1310,9 +1310,9 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 /// makes adding a new revm variant a compile error.
 ///
 /// Codes:
-/// - 201 — explicit revert (Solidity `require`, `revert`, etc.)
-/// - 202 — out-of-gas (any `OutOfGasError` variant)
-/// - 299 — other halt reasons (precompile error, opcode not found, …)
+/// - 201 - explicit revert (Solidity `require`, `revert`, etc.)
+/// - 202 - out-of-gas (any `OutOfGasError` variant)
+/// - 299 - other halt reasons (precompile error, opcode not found, ...)
 pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltReason>) -> u16 {
     match result {
         // Callers only reach this fn under `!result.is_success()`, so the Success
@@ -2143,16 +2143,16 @@ where
     /// 2. Payload-builder-supplied [`AccountedParentArtifact`] hint.
     ///    Accepted only when the metadata's
     ///    `(finalized_block_number, finalized_block_hash)` matches
-    ///    `(block_number - 1, self.parent_hash)` — i.e., the hint must be for
+    ///    `(block_number - 1, self.parent_hash)` - i.e., the hint must be for
     ///    the actual parent of the block being executed. The proposer payload
     ///    builder decodes this from `parent_header.extra_data` at build time,
     ///    so the hint inherits the integrity of the parent block hash chain.
     ///
     /// Returns an error only on real provider I/O failure. `HeaderNotFound`
-    /// is a visibility miss (e.g. the FCU-Valid → MDBX-commit race), so the
+    /// is a visibility miss (e.g. the FCU-Valid -> MDBX-commit race), so the
     /// executor treats it like `Ok(None)` and lets the checked
     /// `parent_artifact_hint` fallback engage. A provider miss with no usable
-    /// hint is fatal — the executor never silently accepts a
+    /// hint is fatal - the executor never silently accepts a
     /// canonical-by-number artifact.
     fn accounted_parent_artifact_for_metadata(
         &self,
@@ -2243,7 +2243,7 @@ where
         // Block 0 (genesis) has no begin-zone system txs. Mirror the proposer
         // body builder (`OutbeEvmConfig::build_begin_system_txs`), which returns
         // empty for block 0, so both deterministic paths agree even if a stray
-        // `pending_tee_bootstrap` is set — never inject a begin-zone tx at genesis.
+        // `pending_tee_bootstrap` is set - never inject a begin-zone tx at genesis.
         if block_number == 0 {
             return Ok(Vec::new());
         }
@@ -2293,7 +2293,7 @@ where
         // mandatory LateFinalizeCredits phase for every block >= 2,
         // ordered immediately after Phase 1 (CPA). Proposer mode builds it from
         // the header artifact (empty until Phase 7 wires gathered credits);
-        // verifier mode re-derives it from the body and the header↔calldata
+        // verifier mode re-derives it from the body and the header<->calldata
         // parity check enforces equality.
         if block_number >= 2 {
             let input = if verifier_mode {
@@ -2410,7 +2410,7 @@ where
         // (begin_order 5) and `OracleSlashWindow` (begin_order 7).
         // Verifier mode: include it iff the body carries it at this ordinal.
         // Proposer mode: inject the `pending_tee_bootstrap` payload supplied by
-        // the bootstrap producer — identically to `build_begin_system_txs` so the
+        // the bootstrap producer - identically to `build_begin_system_txs` so the
         // proposer's signed body and the executor's expected inputs match.
         if block_number == 1 {
             let input = if verifier_mode {
@@ -2724,13 +2724,13 @@ where
     /// credits. Each batch in `header.extra_data`'s
     /// `LateFinalizeCreditsArtifact` carries a BLS aggregate over a recently
     /// finalized block's individual finalize votes. This runs on the same
-    /// pre-exec path as [`Self::verify_phase1_in_preexec`] — synchronous, no
+    /// pre-exec path as [`Self::verify_phase1_in_preexec`] - synchronous, no
     /// state mutation, `Err` aborts the block before any begin-zone state diff
-    /// reaches Reth's state-root task — and enforces, for every batch:
+    /// reaches Reth's state-root task - and enforces, for every batch:
     ///
-    /// - the target sits inside the inclusion window: `1 ≤ block − fb ≤ K`;
+    /// - the target sits inside the inclusion window: `1 <= block - fb <= K`;
     /// - the committee snapshot for `(epoch, committee_set_hash)` exists;
-    /// - the aggregate verifies against that snapshot (no quorum/VRF floor —
+    /// - the aggregate verifies against that snapshot (no quorum/VRF floor -
     ///   late credits are the sub-quorum tail, see
     ///   [`outbe_consensus::proof::verify_late_finalize_proof`]).
     ///
@@ -2793,9 +2793,9 @@ where
 
             // NOTE: the canonical-binding authentication (fb_number/epoch/
             // committee_set_hash vs the escrow) is intentionally NOT done here.
-            // The escrow for the closest in-window target (block N−1) is written
+            // The escrow for the closest in-window target (block N-1) is written
             // by THIS block's CPA, which runs in the body AFTER this pre-exec
-            // gate — so the binding is not yet present at pre-exec. The
+            // gate - so the binding is not yet present at pre-exec. The
             // authentication therefore lives in the begin-zone body
             // (`run_late_finalize_credits`, after the CPA), where a mismatch is
             // FATAL and aborts the block. This pre-exec gate covers the BLS proof
@@ -2859,7 +2859,7 @@ where
     /// gating on `AccountingProgressStore`).
     ///
     /// The commit is performed via `inner.commit_transaction`, which is the
-    /// same code path the main tx loop uses for system txs — it pushes the
+    /// same code path the main tx loop uses for system txs - it pushes the
     /// Phase 1 receipt at `receipts[0]`, commits state via `db.commit`,
     /// signals Reth's parallel state-root task via
     /// `system_caller.on_state(StateChangeSource::Transaction(0), &state)`,
@@ -2871,7 +2871,7 @@ where
     /// `execute_transaction_with_commit_condition` intercept (cursor
     /// variant `Phase1Preexecuted` with non-zero `tx_hash`) validates the
     /// body[0] tx matches the cached `signature_hash` and returns `Ok(None)`
-    /// without re-executing or re-committing — receipt and state are
+    /// without re-executing or re-committing - receipt and state are
     /// already in place from this pre-exec call.
     ///
     /// Skip conditions:
@@ -2919,7 +2919,7 @@ where
             ))
         })?;
 
-        // Resolve proposer first — `begin_zone_proposer` is `Option`-aware
+        // Resolve proposer first - `begin_zone_proposer` is `Option`-aware
         // and may consult `expected_begin_system_txs` or the configured EVM
         // signer; the prebuilt validation below pins
         // `prebuilt.signer()` against this address.
@@ -3054,7 +3054,7 @@ where
         if !result.result.is_success() {
             // Phase 1 (CertifiedParentAccounting) is consensus-critical
             // (`SystemTxKind::revert_fails_block()` is true for it), so a revert here
-            // is a hard block failure, not a soft-receipt skip — its finalized-parent
+            // is a hard block failure, not a soft-receipt skip - its finalized-parent
             // accounting is one-shot and never retried. The revert is deterministic in
             // committed chain state, so every validator rejects the same block.
             let reason = format!(
@@ -3101,7 +3101,7 @@ where
     /// finalized_summary)` plus the body index the cursor is pointing at.
     /// Errors if the cursor is `UserTxs` (no system tx expected) or if the
     /// cursor's expected kind does not match the resolved expected kind for
-    /// that body index (e.g. block 1 + Phase 1 cursor — a programmer
+    /// that body index (e.g. block 1 + Phase 1 cursor - a programmer
     /// invariant violation).
     fn expected_system_tx_for_cursor(
         &self,
@@ -3113,7 +3113,7 @@ where
             // Cursor=UserTxs: all begin-zone system txs are consumed.
             // Encountering a reserved system transaction address here is
             // either an unsolicited user-tx attempt at the reserved
-            // address or a duplicate / out-of-band system tx — both fatal.
+            // address or a duplicate / out-of-band system tx - both fatal.
             return Err(BlockExecutionError::Internal(
                 InternalBlockExecutionError::Other(
                     "tx to reserved system transaction address after begin-zone system txs are consumed"
@@ -3353,7 +3353,7 @@ where
         // `run_outbe_pre_execution_hooks` (Cycle / Rewards / Oracle) observe
         // post-Phase-1 accounting state. The proposer-supplied body[0] in
         // the main tx loop is validated against the cached witness hash and
-        // skipped (validate-without-reexec) — receipt + state are already
+        // skipped (validate-without-reexec) - receipt + state are already
         // in place from this call. Reth state-root ordering is preserved
         // because the preceding `verify_phase1_in_preexec` returned `Ok`.
         self.apply_phase1_commit_in_preexec(block_number, &block_artifacts)?;
@@ -3402,7 +3402,7 @@ where
                 result
             })?
         };
-        // Provider dropped here — mutable DB borrow released.
+        // Provider dropped here - mutable DB borrow released.
 
         // Log hook events via tracing for operator observability.
         // Whitelisted addresses are published through the mandatory HookEvents
@@ -3501,7 +3501,7 @@ where
                 // Witness validate-without-reexec: if Phase 1
                 // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
                 // the cursor carries the cached witness `tx_hash`. Body[0] in the
-                // main tx loop is the proposer-supplied Phase 1 tx — validate it
+                // main tx loop is the proposer-supplied Phase 1 tx - validate it
                 // matches the cache (signature hash) and skip re-execution.
                 // Receipt + state already exist from the pre-exec commit.
                 if let crate::system_tx::SystemTxPhase::Phase1Preexecuted {
@@ -3533,7 +3533,7 @@ where
                                 has_tee_bootstrap,
                                 self.ocomp_lifecycle_active,
                             );
-                        // Ok(None) signals "no further commit" — pre-exec already
+                        // Ok(None) signals "no further commit" - pre-exec already
                         // pushed receipt[0] and committed state. The block builder
                         // still keeps this validated witness in body[0].
                         return Ok(None);
@@ -3750,7 +3750,7 @@ where
                     // revert permanently loses it (stranded fee escrow, dropped
                     // emission/reshare, unrecorded parent accounting). The revert is a
                     // deterministic function of committed chain state, so every
-                    // validator rejects the same block identically — no state-root
+                    // validator rejects the same block identically - no state-root
                     // split. Non-critical phases (OracleSlashWindow, HookEvents)
                     // keep the soft-receipt skip for failures that fit within the
                     // aggregate internal-work budget. An OOG consumes the full
@@ -3945,11 +3945,11 @@ where
 
             // a zero-fee policy rejection used to be `BlockExecutionError::msg(.)`,
             // which payload_builder turned into a fatal `PayloadBuilderError::evm(...)` and
-            // aborted block build — see EPIC for the halt of 2026-05-15. The tx is now
+            // aborted block build - see EPIC for the halt of 2026-05-15. The tx is now
             // included with a `status=0` synthetic receipt carrying an `OutbeFailure(code, reason)`
             // log. Mempool eviction happens via Reth's standard `on_canonical_state_change` once
             // the block becomes canonical (`pool.remove_transactions(block.body)`), so no custom
-            // side-channel is required (см. Won't Do).
+            // side-channel is required (see Won't Do).
             let zero_fee_tx = zero_fee_transaction(tx, signer);
             let zero_fee = match outbe_zerofee::registry().classify(&zero_fee_tx) {
                 Ok(value) => value,
@@ -4031,7 +4031,7 @@ where
 
             // EIP-7702 sponsored free-tx path. Oracle hook had its chance via
             // `classify` above; this branch handles the second source of fee
-            // waivers — EOAs that have delegated to [`outbe_zerofee::ZEROFEE_ADDRESS`]
+            // waivers - EOAs that have delegated to [`outbe_zerofee::ZEROFEE_ADDRESS`]
             // via a Pectra set-code authorization. The same `disable_balance_check
             // + disable_base_fee + disable_fee_charge` cfg snapshot is applied;
             // the counter increment is committed to the persistent state through
@@ -4114,7 +4114,7 @@ where
             let delegated_to = if let Some(code) = maybe_code {
                 code.eip7702_address()
             } else if code_hash != revm::primitives::KECCAK_EMPTY {
-                // basic() did not populate `code` — fetch bytecode by
+                // basic() did not populate `code` - fetch bytecode by
                 // hash directly. This is the steady-state path for any
                 // account whose code was set in a prior block.
                 match self.inner.evm.db_mut().code_by_hash(code_hash) {
@@ -4134,8 +4134,8 @@ where
             // A delegated account opts into sponsorship ONLY by sending the
             // exact free-tx envelope (`classify_sponsorship` Ok: value == 0,
             // priority_fee == 0, gas <= cap, calldata <= cap, to in
-            // whitelist). If the envelope does not match — most importantly
-            // `priority_fee > 0` ("I am paying") — the transaction is NOT a
+            // whitelist). If the envelope does not match - most importantly
+            // `priority_fee > 0` ("I am paying") - the transaction is NOT a
             // sponsorship request and falls through to the normal fee path
             // below, even though the account is delegated. This keeps
             // EIP-7702 delegation ADDITIVE: delegating to the paymaster never
@@ -4144,7 +4144,7 @@ where
             //
             // The stateful `authorize_sponsorship` inside the branch still
             // soft-fails a correctly-shaped attempt with code 110 (quota
-            // exhausted) or 107 (self) — those
+            // exhausted) or 107 (self) - those
             // are zero-tip requests that explicitly asked for free and must
             // not be silently charged.
             let wants_sponsorship = delegated_to == Some(outbe_zerofee::ZEROFEE_ADDRESS)
@@ -4199,7 +4199,7 @@ where
                     // (see line 1944). Without this notification the
                     // parallel task computes a partial root that omits
                     // ZEROFEE_ADDRESS' counter slot and forces a fallback
-                    // recompute at block close — correctness is preserved
+                    // recompute at block close - correctness is preserved
                     // because the final root walks the full bundle state,
                     // but the parallel optimisation is lost.
                     let changes = provider.take_committed_changes();
@@ -4209,7 +4209,7 @@ where
                 // Notify the parallel state-root task about the counter
                 // write committed via the provider above. The pre-fee
                 // counter increment is logically part of THIS transaction's
-                // processing — `Transaction(idx)` is the canonical variant
+                // processing - `Transaction(idx)` is the canonical variant
                 // alloy-evm itself uses in `commit_transaction` after each
                 // tx (see alloy_evm::block::state_hook). `receipts.len()`
                 // is this tx's zero-based index: its receipt has not yet
@@ -4655,7 +4655,7 @@ mod tests {
         // marker. Each state-owning exemption must have canonical genesis-marker
         // evidence in `tests/genesis.rs`; an unproven exemption would re-open reth22-1.
         const MARKER_EXEMPT: [Address; 9] = [
-            // Stateless verifiers — no EVM storage to preserve.
+            // Stateless verifiers - no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
             // Debug adapter owns no persistent state; any child effects are journaled
@@ -4682,7 +4682,7 @@ mod tests {
             assert!(
                 OUTBE_RUNTIME_MARKER_ADDRESSES.contains(addr),
                 "stateful dispatch-registered precompile {addr} is missing from the EIP-161 \
-                 runtime marker list (OUTBE_RUNTIME_MARKER_ADDRESSES) — its storage would be \
+                 runtime marker list (OUTBE_RUNTIME_MARKER_ADDRESSES) - its storage would be \
                  silently pruned at state-root (reth22-1). Add it to the marker list, or, if it \
                  is stateless / genesis-seeded, to MARKER_EXEMPT with justification."
             );
@@ -6766,6 +6766,129 @@ mod tests {
     }
 
     #[test]
+    fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
+        const ACTIVE_COUNT: usize = 128;
+        const DEADLINE: u64 = 2;
+
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut validators = Vec::with_capacity(ACTIVE_COUNT);
+        validators.push((proposer, dummy_pubkey(0x80)));
+        for index in 1..ACTIVE_COUNT {
+            validators.push((
+                numbered_test_address(0x81, index as u64),
+                dummy_pubkey(index as u8),
+            ));
+        }
+        let addresses: Vec<_> = validators.iter().map(|(address, _)| *address).collect();
+        let mut state = state_with_active_validators_seeded_at_block(&validators, 1, |storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for (index, validator) in addresses.iter().enumerate() {
+                let node_hash = keccak256((index as u64).to_be_bytes());
+                registry
+                    .validator_v1_node_hash
+                    .write(validator, node_hash)
+                    .unwrap();
+                registry
+                    .v1_node_enclave_id
+                    .write(&node_hash, B256::with_last_byte(0x11))
+                    .unwrap();
+                registry
+                    .v1_node_binding_id
+                    .write(&node_hash, B256::with_last_byte(0x12))
+                    .unwrap();
+                registry
+                    .v1_node_intent_hash
+                    .write(&node_hash, B256::with_last_byte(0x13))
+                    .unwrap();
+                registry
+                    .v1_node_valid_until
+                    .write(&node_hash, DEADLINE)
+                    .unwrap();
+            }
+        });
+        let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(DEADLINE);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let parent_hash = B256::repeat_byte(0x91);
+        let mut parent_metadata =
+            metadata_with(addresses.clone(), vec![1; ACTIVE_COUNT], Vec::new());
+        parent_metadata.finalized_block_number = 1;
+        parent_metadata.finalized_block_hash = parent_hash;
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut execution = execution_ctx(Some(0), Bytes::new());
+        execution.inner.parent_hash = parent_hash;
+        execution.parent_consensus_metadata = Some(parent_metadata.clone());
+        execution.parent_artifact_hint = Some(AccountedParentArtifact {
+            summary: ExecutionSummaryArtifact {
+                validator_fee_sum: U256::ZERO,
+            },
+            timestamp: 1,
+            state_root: Some(B256::repeat_byte(0x92)),
+        });
+        execution.proposer_evm_address = Some(proposer);
+        let mut executor = config.create_executor(evm, execution);
+        super::with_phase1_verify_disabled(|| {
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution changes should apply");
+        });
+
+        let system_txs = begin_system_txs_for_test(
+            &config,
+            2,
+            parent_hash,
+            &Bytes::new(),
+            Some(parent_metadata),
+            proposer,
+        );
+        let mut cycle_gas = None;
+        let mut cycle_internal_gas = None;
+        let mut cycle_receipt_index = None;
+        for tx in system_txs {
+            let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
+                .expect("valid begin-zone system transaction")
+                .kind();
+            let internal_before = executor.system_tx_execution_gas;
+            let output = executor
+                .execute_transaction(tx)
+                .expect("TEE expiry begin-zone prefix should execute");
+            if kind == SystemTxKind::CycleTick {
+                cycle_gas = Some(output.tx_gas_used());
+                cycle_internal_gas = Some(
+                    executor
+                        .system_tx_execution_gas
+                        .saturating_sub(internal_before),
+                );
+                cycle_receipt_index = Some(executor.receipts().len() - 1);
+                break;
+            }
+        }
+        let cycle_gas = cycle_gas.expect("CycleTick gas must be captured");
+        let cycle_internal_gas =
+            cycle_internal_gas.expect("CycleTick internal gas must be captured");
+        let receipt = &executor.receipts()[cycle_receipt_index.expect("CycleTick receipt index")];
+        assert!(receipt.success, "worst-case TEE expiry sweep must not OOG");
+        assert_eq!(
+            receipt
+                .logs
+                .iter()
+                .filter(|log| {
+                    log.address == outbe_primitives::addresses::VALIDATOR_SET_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&keccak256("ValidatorJailed(address,uint64)"))
+                })
+                .count(),
+            ACTIVE_COUNT
+        );
+        eprintln!(
+            "TEE expiry CycleTick gas: active={ACTIVE_COUNT}, visible={cycle_gas}, internal={cycle_internal_gas}, limit=30000000"
+        );
+        assert!(cycle_gas < 30_000_000);
+        assert!(cycle_internal_gas < 30_000_000);
+    }
+
+    #[test]
     fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
@@ -7895,7 +8018,7 @@ mod tests {
     }
 
     /// A revert in a consensus-critical begin-zone phase (here
-    /// CycleTick) is a hard block failure, not a soft-receipt skip — its one-shot
+    /// CycleTick) is a hard block failure, not a soft-receipt skip - its one-shot
     /// work (a day's emission / terminal Metadosis) must never be silently
     /// dropped. No receipt is pushed; the block aborts.
     #[test]
@@ -8137,7 +8260,7 @@ mod tests {
 
     /// The per-block zero-fee soft-failure cap admits up to
     /// `MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK` soft-failures, then rejects further
-    /// ones with a tx-level `InvalidTx` — the variant the payload builder SKIPS
+    /// ones with a tx-level `InvalidTx` - the variant the payload builder SKIPS
     /// (mark_invalid + continue) and a validator REJECTS the block on, NOT a
     /// fatal `Internal` error that would abort the build (the 2026-05-15 halt).
     #[test]
@@ -8528,7 +8651,7 @@ mod tests {
         ctx.parent_consensus_metadata = Some(metadata.clone());
         let mut executor = config.create_executor(evm, ctx);
 
-        // opt out of Phase 1 `verify_v2_proof` preflight — this
+        // opt out of Phase 1 `verify_v2_proof` preflight - this
         // unit test exercises the slashing log emission path, not the
         // verifier itself, and does not seed a matching committee snapshot.
         super::with_phase1_verify_disabled(|| {
@@ -8567,7 +8690,7 @@ mod tests {
                         Some(topic) if *topic == voter_misdemeanor || *topic == voter_felony
                     )
             }),
-            "Phase 1 (CPA) must no longer emit voter slashing — it is relocated to window close"
+            "Phase 1 (CPA) must no longer emit voter slashing - it is relocated to window close"
         );
         // Proposer slashing stays in Phase 1 (driven by `missed_proposers` metadata).
         assert!(
@@ -8599,7 +8722,7 @@ mod tests {
     }
 
     /// an unverifiable late-finalize credit carried in
-    /// `header.extra_data` is FATAL in **pre-exec** — the block is rejected
+    /// `header.extra_data` is FATAL in **pre-exec** - the block is rejected
     /// before any transaction executes (no receipts), not as a soft receipt.
     /// Phase 1 is disabled (no CPA proof seeded); the late-finalize preflight is
     /// the sole gate under test, enabled via the dedicated
@@ -8614,7 +8737,7 @@ mod tests {
         let mut state = state_with_active_proposer(proposer);
 
         // Block-2 header artifact: an in-window credit (distance 2 - 1 = 1)
-        // whose committee snapshot was never written → verify cannot resolve it.
+        // whose committee snapshot was never written -> verify cannot resolve it.
         let artifact = OutbeBlockArtifacts {
             execution_summary: None,
             consensus_header_artifact: None,
@@ -8644,7 +8767,7 @@ mod tests {
         ctx.inner.parent_hash = parent_hash;
         let mut executor = config.create_executor(evm, ctx);
 
-        // Phase 1 disabled; late-finalize verify stays ENABLED → the
+        // Phase 1 disabled; late-finalize verify stays ENABLED -> the
         // unverifiable credit aborts the block in pre-exec.
         let err = super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes())
             .expect_err("unverifiable late-finalize credit must be FATAL in pre-exec");
@@ -8668,7 +8791,7 @@ mod tests {
     ///
     /// The block executes at `N+K` so the begin-zone `settle_matured` is not a
     /// no-op: a pre-seeded matured escrow (block `N`, non-zero fee, one credited
-    /// voter at `k=1`) is actually **paid** — and the resulting fee-share
+    /// voter at `k=1`) is actually **paid** - and the resulting fee-share
     /// **balance delta** (voter + drained `REWARDS`) must match byte-for-byte on
     /// both the proposer and validator paths. This closes the gap
     /// where a zero `validator_fee_sum` made settlement prove nothing.
@@ -8696,7 +8819,7 @@ mod tests {
         // executor below constructs `OutbeEvmConfig`, which now installs it for
         // every constructor; install it here too so the finalize
         // aggregate signed below uses the same `finalize_namespace` the verify
-        // path reads — otherwise the late-finalize BLS check fails on a namespace
+        // path reads - otherwise the late-finalize BLS check fails on a namespace
         // mismatch (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at
         // verify time). CHAIN_ID matches the Outbe Devnet identity used by
         // `test_chain_spec()` throughout this shared lib-test process.
@@ -8733,9 +8856,9 @@ mod tests {
         let progress_marker = settle_block - 2; // CPA progress gate: last_accounted.
 
         // Live credit for the finalized parent (fb = settle_block - 1, distance 1),
-        // signers 0..2. The credit targets the finalized parent (`parent_hash`) —
-        // the very block the block-(N+K) CPA escrows — so its canonical binding
-        // (number→{fb_hash, epoch, committee_set_hash}) is written by
+        // signers 0..2. The credit targets the finalized parent (`parent_hash`) -
+        // the very block the block-(N+K) CPA escrows - so its canonical binding
+        // (number->{fb_hash, epoch, committee_set_hash}) is written by
         // `on_finalized_metadata` and the credit authenticates against it.
         // The CPA metadata carries no base voters, so only the late credit's
         // signers are recorded. This exercises the *recording* path's parity.
@@ -8745,7 +8868,7 @@ mod tests {
 
         // Pre-seeded MATURED escrow for block N = settle_block - K with a non-zero
         // fee and one credited voter at k=1. `settle_matured(settle_block, K)`
-        // settles this block, so the begin-zone actually PAYS — proving the
+        // settles this block, so the begin-zone actually PAYS - proving the
         // fee-share balance delta is identical on both paths. A
         // distinct fb_hash and a dedicated voter address keep this concern isolated
         // from the live recording credit above.
@@ -8754,7 +8877,7 @@ mod tests {
         let settle_voter = Address::with_last_byte(0x77);
         let settle_committee = 4u64;
         let settle_fee = U256::from(4_000u64);
-        // payout_i = fee · w(1) / (committee · w_max) = 4000 · 100 / 400 = 1000.
+        // payout_i = fee * w(1) / (committee * w_max) = 4000 * 100 / 400 = 1000.
         let expected_payout = settle_fee * outbe_rewards::constants::decay_weight(1)
             / outbe_rewards::constants::fixed_denominator(settle_committee);
         let proposal = Proposal::new(
@@ -8816,7 +8939,7 @@ mod tests {
             // Register the committee members so the window-close absentee pass can
             // slash them: all four are absent for the settled block (which credited
             // only `settle_voter`). At a single miss this is counter-only (no felony),
-            // adding no balance effect — only the parity-checked miss counters.
+            // adding no balance effect - only the parity-checked miss counters.
             let mut seeded: Vec<(Address, [u8; 48])> = vec![(proposer, dummy_pubkey(0xA2))];
             for member in &snapshot.committee {
                 seeded.push((member.address, member.consensus_pubkey));
@@ -8934,7 +9057,7 @@ mod tests {
                     let voter_balance = storage.balance(settle_voter)?;
                     let rewards_balance = storage.balance(REWARDS_ADDRESS)?;
                     // `addrs[3]` is a committee member absent for the settled block
-                    // and not in the live in-window credit → a pure window-close
+                    // and not in the live in-window credit -> a pure window-close
                     // absentee. Its miss count must match on both paths.
                     let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
                     let absentee_miss = si.get_voter_miss_count(addrs[3])?;
@@ -8975,7 +9098,7 @@ mod tests {
         // fee-share, and REWARDS was drained of the settled escrow.
         assert_eq!(
             proposer_out.4, expected_payout,
-            "settled k=1 voter must receive fee · w(1) / D"
+            "settled k=1 voter must receive fee * w(1) / D"
         );
         assert!(
             !expected_payout.is_zero(),
@@ -10796,7 +10919,7 @@ mod tests {
 
         let mut executor = config.create_executor(evm, ctx);
         // the rejection now fires in `apply_pre_execution_changes`
-        // (Phase 1 verifier preflight) rather than during the main tx loop —
+        // (Phase 1 verifier preflight) rather than during the main tx loop -
         // `verify_v2_proof` reads the same `parent_hash` mismatch via
         // `begin_block_system_tx_inputs` BEFORE any begin-zone state change.
         let err = executor.apply_pre_execution_changes().expect_err(
@@ -11120,7 +11243,7 @@ mod tests {
         fn run() -> Vec<reth_ethereum::Receipt> {
             let config = OutbeEvmConfig::new(test_chain_spec());
             // No validator-set seeding, no feeder delegation: the oracle vote will
-            // hit `authorize_fee_waiver` → `UnauthorizedSigner` (code 107).
+            // hit `authorize_fee_waiver` -> `UnauthorizedSigner` (code 107).
             let zero_fee_tx = test_oracle_submit_vote_tx()
                 .try_into_recovered()
                 .expect("oracle submitVote tx signer should recover");
@@ -11173,7 +11296,7 @@ mod tests {
         assert!(!receipts_a[0].success);
         assert_eq!(receipts_a[0].logs.len(), 1);
         // Soft-fail log must come from the zero-fee policy address with the
-        // OutbeFailure topic0 — anything else is a parity drift.
+        // OutbeFailure topic0 - anything else is a parity drift.
         assert_eq!(
             receipts_a[0].logs[0].address,
             outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS
@@ -11182,7 +11305,7 @@ mod tests {
             receipts_a[0].logs[0].data.topics()[0],
             crate::failure_receipt::OUTBE_FAILURE_TOPIC0
         );
-        // Code 107 (UnauthorizedSigner) — padded to 32 bytes BE.
+        // Code 107 (UnauthorizedSigner) - padded to 32 bytes BE.
         let mut expected_topic1 = [0u8; 32];
         expected_topic1[30] = 0;
         expected_topic1[31] = 107;
@@ -11254,7 +11377,7 @@ mod tests {
             let ctx = execution_ctx(Some(1), Bytes::new());
             // Construct OutbeBlockExecutor directly (instead of through
             // `config.create_executor`) to keep the concrete type so we can
-            // call `current_execution_summary` — the method is private to
+            // call `current_execution_summary` - the method is private to
             // `OutbeBlockExecutor` and hidden behind the `BlockExecutorFor`
             // opaque return type otherwise.
             let mut executor = OutbeBlockExecutor::new(
@@ -11301,10 +11424,10 @@ mod tests {
     /// tx returns `Ok(non-zero gas)` from `execute_transaction`, which signals
     /// the `BasicBlockBuilder` to append the tx to `block.body`. Reth's pool
     /// then evicts the tx hash on canonical commit via the standard
-    /// `on_new_head_block` → `pool.remove_transactions(block_hashes)` path.
+    /// `on_new_head_block` -> `pool.remove_transactions(block_hashes)` path.
     ///
     /// This is the contract that lets (T4 Won't Do) skip any custom
-    /// `mark_invalid` plumbing — confirmation that the executor's `Ok` return
+    /// `mark_invalid` plumbing - confirmation that the executor's `Ok` return
     /// is enough for the natural-eviction flow downstream.
     #[test]
     fn soft_fail_returns_ok_so_tx_lands_in_block_body() {
@@ -11345,7 +11468,7 @@ mod tests {
         let ctx = execution_ctx(Some(1), Bytes::new());
         let mut executor = config.create_executor(evm, ctx);
 
-        // Soft-fail path returns `Ok` — the contract that lets the wrapping
+        // Soft-fail path returns `Ok` - the contract that lets the wrapping
         // `BasicBlockBuilder` append the tx to `block.body.transactions`.
         let gas_output = executor
             .execute_transaction(zero_fee_tx)
@@ -11877,7 +12000,7 @@ mod tests {
     /// 1. Read active consensus set (OLD set)
     /// 2. Decode participation bitmap against OLD set
     /// 3. Record participation / slashing
-    /// 4. THEN activate_reshared_set() → set changes to NEW set
+    /// 4. THEN activate_reshared_set() -> set changes to NEW set
     ///
     /// Verifies that get_active_consensus_set() returns the OLD set
     /// at step 2, and the NEW set only after step 4.
@@ -11904,7 +12027,7 @@ mod tests {
 
             // The fixture helpers activated A, B, C; D remains a ready joiner.
 
-            // Step 1: Read old active set — should be [A, B, C].
+            // Step 1: Read old active set - should be [A, B, C].
             let old_set = vs.get_active_consensus_set().unwrap();
             let old_addrs: Vec<Address> = old_set.iter().map(|v| v.validator_address).collect();
             assert!(old_addrs.contains(&val_a));
@@ -11914,7 +12037,7 @@ mod tests {
             assert_eq!(old_addrs.len(), 3);
 
             // Step 2-3: Participation/slashing would happen here using old_addrs.
-            // (We just verify the set is correct — actual slashing tested in Task 01 code.)
+            // (We just verify the set is correct - actual slashing tested in Task 01 code.)
 
             // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
             let new_hash = B256::with_last_byte(0x02);
@@ -11996,14 +12119,14 @@ mod tests {
             let new_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
-            // Decode participation against OLD set (3 validators) → should work.
+            // Decode participation against OLD set (3 validators) -> should work.
             let decoded = outbe_primitives::participation::decode_participation_extended(
                 &extra_data,
                 &old_addrs,
             );
             assert!(decoded.is_some(), "decode against OLD set must succeed");
 
-            // Decode against NEW set (4 validators) → count mismatch → returns None.
+            // Decode against NEW set (4 validators) -> count mismatch -> returns None.
             let mut new_addrs: Vec<Address> = new_set.iter().map(|v| v.validator_address).collect();
             new_addrs.sort();
             let decoded_wrong = outbe_primitives::participation::decode_participation_extended(
@@ -12042,9 +12165,9 @@ mod tests {
             let set1 = vs.get_active_consensus_set().unwrap();
             let hash1 = vs.active_consensus_set_hash().unwrap();
 
-            // Second call with same hash → idempotency guard in executor.rs
+            // Second call with same hash -> idempotency guard in executor.rs
             // checks `current_hash != reshare.active_set_hash`.
-            // Here: current_hash == hash → no-op.
+            // Here: current_hash == hash -> no-op.
             let current_hash = vs.active_consensus_set_hash().unwrap();
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
@@ -12071,7 +12194,7 @@ mod tests {
             ordered_committee: committee,
             signer_bitmap,
             // convert V1-shape `Vec<Address>` test fixture into V2
-            // `Vec<MissedProposerEvent>` (view defaults to 0 — V2 contract is
+            // `Vec<MissedProposerEvent>` (view defaults to 0 - V2 contract is
             // empty list, this fixture exercises the validation path only).
             missed_proposers: missed_proposers
                 .into_iter()
@@ -12784,7 +12907,7 @@ mod tests {
             EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
             None,
             Bytes::new(),
-            None, // accounted_parent_artifact_provider — None forces hint path
+            None, // accounted_parent_artifact_provider - None forces hint path
             false,
             None,
             parent_hash,
@@ -12910,7 +13033,7 @@ mod tests {
     }
 
     /// (c): hint rejected when `metadata.finalized_block_number` does
-    /// not equal `block_number - 1`. Same error class as (b) — no silent
+    /// not equal `block_number - 1`. Same error class as (b) - no silent
     /// fallback.
     #[test]
     fn hint_rejected_when_metadata_number_mismatch() {
@@ -13013,7 +13136,7 @@ mod tests {
     // EIP-7702 sponsored free-tx integration tests
     //
     // These tests verify the executor pre-fee hook end-to-end against
-    // real `State<DB>` + revm — NOT just the storage-primitive level.
+    // real `State<DB>` + revm - NOT just the storage-primitive level.
     // They cover the four claims the unit tests do NOT prove:
     //   1. Counter persists through revm tx revert (anti-drain).
     //   2. `SponsorshipAuthorized` event lands on the inner tx receipt.
@@ -13026,7 +13149,7 @@ mod tests {
     use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
     /// Sponsored signer derived from the alloy test-signature recovery.
-    /// We don't care WHICH address it is — only that it is stable across
+    /// We don't care WHICH address it is - only that it is stable across
     /// runs and we attach delegation + balance + nonce to it.
     fn sponsored_test_tx(input: Vec<u8>) -> reth_ethereum::TransactionSigned {
         TxEip1559 {
@@ -13056,7 +13179,7 @@ mod tests {
                 gas_limit: 30_000_000,
                 basefee: alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE,
                 beneficiary: OWNER,
-                // 2026-04-01 00:00:00 UTC — matches BLOCK_DAY constant
+                // 2026-04-01 00:00:00 UTC - matches BLOCK_DAY constant
                 // in the zerofee unit tests for cross-reference.
                 timestamp: U256::from(1_775_001_600u64),
                 ..Default::default()
@@ -13315,7 +13438,7 @@ mod tests {
     }
 
     /// Happy path: a sponsored tx with `value=0`, `priority_fee=0`,
-    /// `to ∈ whitelist` is admitted by the
+    /// `to in whitelist` is admitted by the
     /// executor pre-fee hook, executed under zero-fee cfg overrides,
     /// and produces a receipt with a `SponsorshipAuthorized` log. The
     /// signer's balance is untouched and ZEROFEE_ADDRESS' counter slot
@@ -13351,7 +13474,7 @@ mod tests {
             let receipts = executor.receipts();
             assert_eq!(receipts.len(), 1);
 
-            // Find the SponsorshipAuthorized log on the receipt — this
+            // Find the SponsorshipAuthorized log on the receipt - this
             // is the guarantee. Topic[0] must match the event sig
             // hash; signer is topic[1] indexed.
             let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
@@ -13373,7 +13496,7 @@ mod tests {
         }
         state.merge_transitions(BundleRetention::Reverts);
 
-        // Balance must be exactly what we put in — no fee debit. This
+        // Balance must be exactly what we put in - no fee debit. This
         // is the consensus-visible guarantee the README promises.
         let after = signer_balance(&mut state, signer);
         assert_eq!(
@@ -13395,7 +13518,7 @@ mod tests {
     /// EIP-7702 delegation to a different address must NOT trigger the
     /// sponsored path. The tx goes through the normal fee path; with
     /// `priority_fee = 0` and signer's balance below the gas cost, the
-    /// EVM `disable_balance_check` would normally let it through — we
+    /// EVM `disable_balance_check` would normally let it through - we
     /// assert it does NOT.
     #[test]
     fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
@@ -13439,7 +13562,7 @@ mod tests {
             let mut executor = config.create_executor(evm, ctx);
 
             // The tx is shaped like a sponsored envelope (priority_fee=0,
-            // small gas) — but because signer's code points to ORACLE,
+            // small gas) - but because signer's code points to ORACLE,
             // the pre-fee hook leaves it to the normal path. The normal
             // path requires balance to cover `gas_limit * max_fee_per_gas`,
             // which 2 COEN (2_000_000 unit) covers at the protocol fee floor,
@@ -13463,7 +13586,7 @@ mod tests {
         }
         state.merge_transitions(BundleRetention::Reverts);
 
-        // Counter must remain at 0 — no quota burn for delegation to
+        // Counter must remain at 0 - no quota burn for delegation to
         // foreign address.
         let counter = zerofee_counter_for(&mut state, signer);
         assert_eq!(counter, 0, "non-sponsored path must not burn quota");
@@ -13535,7 +13658,7 @@ mod tests {
 
     /// F2/code-110 executor-level proof: when the signer has already
     /// burned all 8 slots for today, a 9th sponsored tx is NOT rejected
-    /// by the pre-fee hook as a hard error — it lands in the block with
+    /// by the pre-fee hook as a hard error - it lands in the block with
     /// a `status=0` receipt carrying `OutbeFailure(110)`, the counter
     /// stays at 8 (no over-burn), and no balance is debited. This is the
     /// exact contract the README promises and the txpool relies on
@@ -13550,7 +13673,7 @@ mod tests {
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
 
-        // pectra_evm_env uses timestamp 1_775_001_600 → UTC day 20260401.
+        // pectra_evm_env uses timestamp 1_775_001_600 -> UTC day 20260401.
         const TODAY: u32 = 20_260_401;
         let initial_balance = U256::from(1u64);
 
@@ -13606,7 +13729,7 @@ mod tests {
                 "rejected tx must not emit SponsorshipAuthorized"
             );
         }
-        // Counter must stay at exactly the limit — no 9th increment.
+        // Counter must stay at exactly the limit - no 9th increment.
         // Read LIVE storage (not bundle_state): the rejected tx makes no
         // counter change, so the seeded value only exists in the base
         // state, not in the post-execution change set.
@@ -13718,7 +13841,7 @@ mod tests {
         }
         state.merge_transitions(BundleRetention::Reverts);
 
-        // Counter bumped to 1 and no fee debited — confirms the fallback
+        // Counter bumped to 1 and no fee debited - confirms the fallback
         // branch actually routed into the sponsored path.
         let counter = zerofee_counter_for(&mut state, signer);
         assert_eq!(
@@ -13730,7 +13853,7 @@ mod tests {
     }
 
     /// Additive-delegation guarantee: a delegated account that sets a tip
-    /// (`priority_fee > 0`) is NOT requesting sponsorship — its tx must
+    /// (`priority_fee > 0`) is NOT requesting sponsorship - its tx must
     /// run through the normal fee path (balance debited, no quota burn,
     /// no SponsorshipAuthorized event), exactly as if the account were
     /// not delegated. This is what lets a signer keep transacting and
@@ -13741,7 +13864,7 @@ mod tests {
     fn eip7702_delegated_account_with_priority_fee_pays_normally() {
         let config = OutbeEvmConfig::new(test_chain_spec());
         // Same target/calldata as the sponsored happy path, but with a
-        // non-zero priority fee — the "I am paying" signal.
+        // non-zero priority fee - the "I am paying" signal.
         let mut input = vec![0xae, 0x16, 0x9a, 0x50];
         input.extend_from_slice(&[0u8; 32]);
         let paying_tx: reth_ethereum::TransactionSigned = TxEip1559 {
@@ -13785,7 +13908,7 @@ mod tests {
                 receipts[0].success,
                 "paying delegated tx must succeed as a normal tx"
             );
-            // No SponsorshipAuthorized event — this was not a sponsored tx.
+            // No SponsorshipAuthorized event - this was not a sponsored tx.
             let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
             assert!(
                 !receipts[0]
@@ -13798,7 +13921,7 @@ mod tests {
         state.merge_transitions(BundleRetention::Reverts);
 
         // Fee WAS debited (normal path), and the daily quota counter was
-        // NOT touched — the tx never entered the sponsorship branch.
+        // NOT touched - the tx never entered the sponsorship branch.
         assert!(
             signer_balance(&mut state, signer) < initial_balance,
             "normal fee path must debit the signer's balance"
