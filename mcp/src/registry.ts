@@ -136,6 +136,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     note: "Governance (canon, meta-canon, OIP, GIP)",
     abi: ABI.IGovernance,
   },
+
+  paynote: {
+    address: A("0x0000000000000000000000000000000000001019"),
+    note: "PayNote shielded ERC20 note pool (deposit + tree queries; spending is a Rust-only API)",
+    abi: ABI.IPayNote,
+  },
 };
 
 /** Resolve a contract by registry name or raw 0x address. */

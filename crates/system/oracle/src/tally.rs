@@ -11,7 +11,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
 
 use crate::errors::OracleError;
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_primitives::units::ONE_COEN;
 
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
@@ -341,7 +341,7 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
             .map(|v| {
                 // Use stake as power, converted from raw COEN units to whole COEN.
                 // This gives units in whole tokens as consensus power.
-                (v.stake / SCALE_1E6_U256).saturating_to::<u64>()
+                (v.stake / ONE_COEN).saturating_to::<u64>()
             })
             .unwrap_or(0);
 

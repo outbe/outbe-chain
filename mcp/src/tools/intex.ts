@@ -57,6 +57,14 @@ interface Network {
   wallet?: WalletClient;
 }
 
+const SCALE_1E6 = 1_000_000n;
+const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
+
+/** Convert the protocol-6 auction basis and rate into the native-18 WCOEN lock. */
+export function wcoenLockAmount(quantity: bigint, promisLoadProtocol: bigint, bidRate: bigint): bigint {
+  return ((quantity * promisLoadProtocol * bidRate) / SCALE_1E6) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+}
+
 const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
@@ -151,10 +159,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return { txHash: hash, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() };
   }
 
-  // A bid is a RATE: the fraction of the per-Intex strike (promis_load, in WCOEN)
-  // the bidder will pay, as 1e6 fixed-point. Payment-token meta (WCOEN, 6 dec) is
-  // cached per network so outputs can name the token and size the escrow lock.
-  const SCALE_1E6 = 1_000_000n;
+  // A bid is a RATE: the fraction of the protocol-6 per-Intex PROMIS load that
+  // the bidder will pay, as 1e6 fixed-point. The result crosses into native-18
+  // WCOEN only at the escrow boundary. Payment-token meta is cached per network.
   const metaCache = new Map<string, { decimals: number; symbol: string }>();
   async function paymentMeta(n: Network): Promise<{ decimals: number; symbol: string }> {
     const cached = metaCache.get(n.name);
@@ -523,8 +530,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         },
         paymentToken: { symbol: meta.symbol, decimals: dec },
         params: {
-          // strike basis: per-Intex promis_load in the payment token (WCOEN). Escrow lock = qty * this * rate / 1e6.
-          promisLoadMinor: { raw: d.params.promisLoadMinor.toString(), value: formatUnits(d.params.promisLoadMinor, dec) },
+          // Protocol-6 per-Intex PROMIS load. Escrow converts the calculated lock to WCOEN-18.
+          promisLoadMinor: {
+            raw: d.params.promisLoadMinor.toString(),
+            value: formatUnits(d.params.promisLoadMinor, 6),
+            scale: "1e6 PROMIS protocol units",
+          },
           callTrigger: {
             callWindow: d.params.callTrigger.callWindow,
             callThreshold: d.params.callTrigger.callThreshold,
@@ -786,8 +797,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_reveal",
     "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
-      "and submits revealBid; the escrow then locks quantity * strike * rate / 1e6 in WCOEN, where strike is " +
-      "the auction's promis_load. The reference currency must be one the day prices, the issuance currency any " +
+    "and submits revealBid; the escrow calculates quantity * protocol-6 PROMIS load * rate / 1e6, then converts " +
+      "that result by 1e12 into native-18 WCOEN for the lock. The reference currency must be one the day prices, the issuance currency any " +
       "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
     {
       worldwideDay: worldwideDayArg,
@@ -804,8 +815,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const { decimals: dec, symbol } = await paymentMeta(n);
       const bidRate = toBidRate(rate);
 
-      // Escrow lock = quantity * strike * bidRate / 1e6, where strike is the auction's
-      // per-Intex promisLoadMinor (WCOEN). Read it so the auto-approve covers exactly the lock.
+      // Calculate in protocol-6 from the per-Intex PROMIS load and 1e6 rate,
+      // then convert exactly once to native-18 WCOEN for the escrow boundary.
       const info = (await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
@@ -813,7 +824,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [worldwideDay],
       })) as { params: { promisLoadMinor: bigint; commitBondMinor: bigint } };
       const strike = info.params.promisLoadMinor;
-      const lockAmount = (BigInt(quantity) * strike * bidRate) / SCALE_1E6;
+      const lockAmount = wcoenLockAmount(BigInt(quantity), strike, bidRate);
       const lockHuman = formatUnits(lockAmount, dec);
       const token = addr(n, "paymentToken");
       const escrow = addr(n, "escrow");

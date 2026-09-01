@@ -8,16 +8,16 @@ MODULE_PATH = pathlib.Path(__file__).with_name("seed_genesis.py")
 REPO_ROOT = MODULE_PATH.parents[1]
 SEED_PROFILES = {
     "seed-testnet-lowstake.json": {
-        "min_stake": "1000000000",
-        "validator_stake": "100000000000",
+        "min_stake": "1000000000000000000000",
+        "validator_stake": "100000000000000000000000",
     },
     "seed-testnet.json": {
-        "min_stake": "100000000000",
-        "validator_stake": "100000000000",
+        "min_stake": "100000000000000000000000",
+        "validator_stake": "100000000000000000000000",
     },
     "churn-seed.json": {
-        "min_stake": "1000000000",
-        "validator_stake": "1000000000",
+        "min_stake": "1000000000000000000000",
+        "validator_stake": "1000000000000000000000",
     },
 }
 SPEC = importlib.util.spec_from_file_location("seed_genesis", MODULE_PATH)
@@ -27,13 +27,13 @@ SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
-    def test_checked_in_genesis_fixtures_use_scale6_native_balances(self):
+    def test_checked_in_genesis_fixtures_use_scale18_native_balances(self):
         node_fixture = json.loads(
             (REPO_ROOT / "crates/blockchain/node/tests/assets/genesis.json").read_text()
         )
         node_balances = [entry["balance"] for entry in node_fixture["alloc"].values()]
-        self.assertEqual(node_balances.count("0xe8d4a51000"), 21)
-        self.assertEqual(set(node_balances), {"0x0", "0xe8d4a51000"})
+        self.assertEqual(node_balances.count("0xd3c21bcecceda1000000"), 21)
+        self.assertEqual(set(node_balances), {"0x0", "0xd3c21bcecceda1000000"})
 
         fixture_root = REPO_ROOT / "testing/e2e-harness/fixtures/ocomp-final-v1"
         base = json.loads((fixture_root / "base/genesis.json").read_text())
@@ -44,20 +44,23 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(base["alloc"], final["alloc"])
 
         balances = [entry["balance"] for entry in base["alloc"].values()]
-        self.assertEqual(balances.count("0x2540be400"), 4)
-        self.assertEqual(balances.count("0x3b9aca00"), 2)
-        self.assertEqual(balances.count("0x5d21dba000"), 1)
-        self.assertEqual(set(balances), {"0x0", "0x2540be400", "0x3b9aca00", "0x5d21dba000"})
+        self.assertEqual(balances.count("0x21e19e0c9bab2400000"), 4)
+        self.assertEqual(balances.count("0x3635c9adc5dea00000"), 2)
+        self.assertEqual(balances.count("0x54b40b1f852bda000000"), 1)
+        self.assertEqual(
+            set(balances),
+            {"0x0", "0x21e19e0c9bab2400000", "0x3635c9adc5dea00000", "0x54b40b1f852bda000000"},
+        )
 
         release = json.loads((REPO_ROOT / "release/testnet-genesis.json").read_text())
         self.assertEqual(release["alloc"], {})
 
-    def test_checked_in_seed_profiles_use_six_decimal_monetary_units(self):
+    def test_checked_in_seed_profiles_split_native_and_protocol_units(self):
         for filename, staking_expected in SEED_PROFILES.items():
             with self.subTest(filename=filename):
                 seed = json.loads(MODULE_PATH.with_name(filename).read_text())
 
-                self.assertEqual(set(seed["balance"].values()), {"1000000000"})
+                self.assertEqual(set(seed["balance"].values()), {"1000000000000000000000"})
                 self.assertEqual(seed["gems"][0]["gem_load"], "1000000000")
                 if filename.startswith("seed-testnet"):
                     # A network profile seeds no worldwide day: the runtime

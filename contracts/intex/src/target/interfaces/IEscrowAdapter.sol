@@ -185,7 +185,7 @@ interface IEscrowAdapter {
     /// @notice Zero value provided where non-zero is required.
     /// @param f Field name.
     error ZeroValue(string f);
-    /// @notice Payment token does not report 6 decimals.
+    /// @notice Payment token does not report 18 decimals.
     /// @param actual Decimals the token reports.
     error PaymentTokenDecimals(uint8 actual);
     /// @notice Bidder already has locked funds for this series.

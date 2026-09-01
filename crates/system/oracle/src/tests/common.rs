@@ -6,7 +6,7 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::Units;
+use outbe_primitives::units::checked_whole_coen_to_native;
 use outbe_validatorset::StakeProjection;
 
 /// No shared mutable state between tests; contracts read/write through the
@@ -32,6 +32,13 @@ pub(super) const USDT: Address = address!("0xdac17f958d2ee523a2206206994597c13d8
 pub(super) const USDC: Address = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
 pub(super) const ETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 pub(super) const BTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
+
+/// Native COEN fixture amount. This is deliberately unavailable for Oracle
+/// prices and protocol assets, which retain six-decimal precision.
+pub(super) fn native_coen(whole_coen: u64) -> U256 {
+    checked_whole_coen_to_native(U256::from(whole_coen))
+        .expect("whole-COEN test fixture must fit native U256")
+}
 
 /// Canonical COEN/ISO price and COEN volume scale after the denomination cutover.
 pub(super) const COEN_ISO_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
@@ -287,7 +294,7 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
+        vs.config_min_stake.write(native_coen(1)).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
         vs.config_owner.write(Address::ZERO).unwrap();
     }
@@ -307,7 +314,7 @@ pub(super) fn register_waiting_for_readiness(storage: StorageHandle, addr: Addre
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();
         vs.config_max_validators.write(128).unwrap();
-        vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
+        vs.config_min_stake.write(native_coen(1)).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
         vs.config_owner.write(Address::ZERO).unwrap();
     }

@@ -43,8 +43,13 @@ fn format_decimals(value: alloy_primitives::U256, decimals: u8) -> String {
     }
 }
 
-/// Format a raw native COEN amount in six-decimal `unit`.
+/// Format a raw native COEN amount in 18-decimal base units.
 pub fn format_coen_amount(value: alloy_primitives::U256) -> String {
+    format_decimals(value, 18)
+}
+
+/// Format a six-decimal protocol amount, such as a COEN/ISO oracle rate.
+pub fn format_protocol_amount(value: alloy_primitives::U256) -> String {
     format_decimals(value, 6)
 }
 
@@ -65,42 +70,50 @@ mod tests {
 
     #[test]
     fn test_format_unit_one_coen() {
-        assert_eq!(format_coen_amount(U256::from(1_000_000u64)), "1");
+        assert_eq!(
+            format_coen_amount(U256::from(1_000_000_000_000_000_000u128)),
+            "1"
+        );
     }
 
     #[test]
     fn test_format_unit_large_whole() {
-        let val = U256::from(1_000_000_000u64);
+        let val = U256::from(1_000_000_000_000_000_000_000u128);
         assert_eq!(format_coen_amount(val), "1000");
     }
 
     #[test]
     fn test_format_unit_fractional() {
-        let val = U256::from(1_500_000u64);
+        let val = U256::from(1_500_000_000_000_000_000u128);
         assert_eq!(format_coen_amount(val), "1.5");
     }
 
     #[test]
     fn test_format_unit_pure_fraction() {
-        let val = U256::from(500_000u64);
+        let val = U256::from(500_000_000_000_000_000u128);
         assert_eq!(format_coen_amount(val), "0.5");
     }
 
     #[test]
     fn test_format_unit_one_native_unit() {
-        assert_eq!(format_coen_amount(U256::from(1u64)), "0.000001");
+        assert_eq!(format_coen_amount(U256::from(1u64)), "0.000000000000000001");
     }
 
     #[test]
     fn test_format_unit_trailing_zeros_trimmed() {
-        let val = U256::from(1_200_000u64);
+        let val = U256::from(1_200_000_000_000_000_000u128);
         assert_eq!(format_coen_amount(val), "1.2");
     }
 
     #[test]
     fn test_format_unit_all_decimal_places() {
-        let val = U256::from(999_999u64);
-        assert_eq!(format_coen_amount(val), "0.999999");
+        let val = U256::from(999_999_999_999_999_999u128);
+        assert_eq!(format_coen_amount(val), "0.999999999999999999");
+    }
+
+    #[test]
+    fn test_format_protocol_amount_remains_six_decimals() {
+        assert_eq!(format_protocol_amount(U256::from(1_500_000u64)), "1.5");
     }
 
     #[test]

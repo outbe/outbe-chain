@@ -10,7 +10,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
-    units::SCALE_1E6_U256,
+    units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -55,6 +55,10 @@ fn pledge_stables() -> U256 {
 
 fn pledge_cost() -> U256 {
     SCALE_1E6_U256
+}
+
+fn native_stake() -> U256 {
+    checked_protocol_to_native(pledge_cost()).expect("benchmark stake fits native COEN")
 }
 
 fn oracle_rate() -> U256 {
@@ -127,7 +131,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         return Err("Credis benchmark pledge price drifted".to_owned());
     }
     storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, pledge_cost())
+        .increase_balance(CREDIS_FACTORY_ADDRESS, native_stake())
         .map_err(|error| error.to_string())?;
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .map_err(|error| error.to_string())?;
@@ -180,7 +184,7 @@ impl BenchmarkScenario for CredisScenario {
 
         let started = Instant::now();
         let output = StorageHandle::enter(&mut provider, |storage| {
-            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, pledge_cost())
+            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, native_stake())
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);

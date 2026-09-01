@@ -3,7 +3,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::Units;
 use outbe_validatorset::ValidatorLifecycle;
 
 use crate::schema::{OracleContract, SCALE_1E18};
@@ -237,7 +236,7 @@ fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         let rate = fixed18(50);
         let volume = fixed18(1000);
 
@@ -280,9 +279,9 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         let v2 = Address::new([0x22; 20]);
         let v3 = Address::new([0x33; 20]);
 
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
-        register_validator(storage.clone(), v2, U256::in_units(200u64));
-        register_validator(storage.clone(), v3, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
+        register_validator(storage.clone(), v2, native_coen(200));
+        register_validator(storage.clone(), v3, native_coen(100));
 
         // All vote very close: 1000, 1001, 1002 (spread < 0.2% of median)
         // With 2% reward band, all should be within band.
@@ -326,9 +325,9 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
         let v2 = Address::new([0x22; 20]);
         let v3 = Address::new([0x33; 20]);
 
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
-        register_validator(storage.clone(), v2, U256::in_units(200u64));
-        register_validator(storage.clone(), v3, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
+        register_validator(storage.clone(), v2, native_coen(200));
+        register_validator(storage.clone(), v3, native_coen(100));
 
         // v1 and v2 vote 50, v3 votes 500 (extreme outlier)
         oracle
@@ -365,8 +364,8 @@ fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
 
         let valid = Address::new([0x11; 20]);
         let invalid = Address::new([0x22; 20]);
-        register_validator(storage.clone(), valid, U256::in_units(100u64));
-        register_validator(storage.clone(), invalid, U256::in_units(100u64));
+        register_validator(storage.clone(), valid, native_coen(100));
+        register_validator(storage.clone(), invalid, native_coen(100));
         oracle
             .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
             .unwrap();
@@ -395,8 +394,8 @@ fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
 
         let lower_voter = Address::new([0x11; 20]);
         let higher_voter = Address::new([0x22; 20]);
-        register_validator(storage.clone(), lower_voter, U256::in_units(100u64));
-        register_validator(storage.clone(), higher_voter, U256::in_units(100u64));
+        register_validator(storage.clone(), lower_voter, native_coen(100));
+        register_validator(storage.clone(), higher_voter, native_coen(100));
         oracle
             .submit_vote(
                 lower_voter,
@@ -443,7 +442,7 @@ fn run_tally_cross_rate_overflow_rolls_back_every_tally_effect() {
         oracle.register_pair(higher).unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         oracle
             .submit_vote(
                 validator,
@@ -486,7 +485,7 @@ fn run_tally_counts_an_abstain_for_every_silent_validator() {
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
 
         // No votes submitted -> all abstain
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
@@ -506,7 +505,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
             .unwrap();
 
         let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
         oracle
             .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)])
             .unwrap();
@@ -535,7 +534,7 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
         init_oracle(&mut oracle);
 
         let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
 
         // Simulate many misses (below 5% success rate)
         for _ in 0..20 {
@@ -598,7 +597,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
             .unwrap();
 
         let validator = Address::new([0x33; 20]);
-        let stake = U256::in_units(100u64);
+        let stake = native_coen(100);
         register_waiting_for_readiness(storage.clone(), validator, stake);
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.test_set_pending_set_change(false).unwrap();
@@ -649,7 +648,7 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
             .unwrap();
 
         let validator = Address::new([0x44; 20]);
-        let stake = U256::in_units(100u64);
+        let stake = native_coen(100);
         register_validator(storage.clone(), validator, stake);
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.test_set_pending_set_change(false).unwrap();
@@ -689,7 +688,7 @@ fn slash_window_never_force_exits_a_protected_validator() {
         oracle.config_allow_protected.write(true).unwrap();
 
         let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, U256::in_units(100u64));
+        register_validator(storage.clone(), v1, native_coen(100));
 
         // Mark as protected
         oracle.protected_validator.write(&v1, true).unwrap();

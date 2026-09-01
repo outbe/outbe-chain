@@ -28,8 +28,8 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^6`) as hex - the per-validator liquid balance.
-const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
+/// 10000 COEN (`10000 * 10^18`) as hex - the per-validator liquid balance.
+const VALIDATOR_BALANCE_HEX: &str = "0x21e19e0c9bab2400000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
@@ -762,10 +762,8 @@ impl Localnet {
             "extraData": "0x",
             "gasLimit": "0x1c9c380",
             // Start at the EIP-1559 floor. Omitting this takes reth's 1 Gwei
-            // Ethereum default, which no account here can pay: COEN carries six
-            // decimals, so a validator's 10000 COEN is 10^10 base units and buys
-            // 13 gas at a Gwei. Every harness transaction is priced at
-            // MIN_PROTOCOL_BASE_FEE for that reason, and the base fee only sheds
+            // Ethereum default. Every harness transaction is priced at the
+            // chain's MIN_PROTOCOL_BASE_FEE, and the base fee only sheds
             // 12.5% per under-target block - about 140 blocks before the floor
             // is reachable, while the localnet starts issuing work at block 2.
             "baseFeePerGas": format!("0x{MIN_PROTOCOL_BASE_FEE:x}"),
@@ -1092,7 +1090,7 @@ fn localnet_ocomp_vote_window_blocks(profile: &BootstrapProfile) -> u64 {
 fn validator_balance_hex(profile: &BootstrapProfile) -> String {
     profile.validator_balance_coen.map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
-        |coen| format!("0x{:x}", u128::from(coen) * 1_000_000),
+        |coen| format!("0x{:x}", u128::from(coen) * 1_000_000_000_000_000_000),
     )
 }
 
@@ -1440,7 +1438,7 @@ mod tests {
         let tuned = validator_balance_hex(&tuned_profile);
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
-            2_100_000u128 * 1_000_000
+            2_100_000u128 * 1_000_000_000_000_000_000
         );
     }
 

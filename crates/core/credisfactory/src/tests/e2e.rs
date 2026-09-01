@@ -32,7 +32,7 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
             alice(),
             handle,
             spend,
-            pledge_cost(),
+            pledge_stake(),
         )
         .unwrap();
 
@@ -254,14 +254,14 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
         let second_handle = pledge(&storage, alice(), 2);
 
         let first_spend = credis_spend_auth(alice(), first_handle, alice());
-        fund_stake(&storage, pledge_cost());
+        fund_stake(&storage, pledge_stake());
         let (first, _) = runtime::request_credis(
             storage.clone(),
             cca(),
             alice(),
             first_handle,
             first_spend,
-            pledge_cost(),
+            pledge_stake(),
         )
         .unwrap();
 
@@ -278,21 +278,21 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
             alice(),
             second_handle,
             spend,
-            pledge_cost(),
+            pledge_stake(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("called position"), "got: {err}");
 
         // Settling the call in full clears the block.
         settle_principal(&storage, alice(), first, pledge_stables());
-        fund_stake(&storage, pledge_cost());
+        fund_stake(&storage, pledge_stake());
         runtime::request_credis(
             storage.clone(),
             cca(),
             alice(),
             second_handle,
             spend,
-            pledge_cost(),
+            pledge_stake(),
         )
         .unwrap();
     });
@@ -492,10 +492,11 @@ fn request_credis_requires_the_stake_to_equal_the_collateral() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(3u64));
 
+        let expected = pledge_stake();
         for (i, wrong) in [
             U256::ZERO,
-            pledge_cost() - U256::from(1u64),
-            pledge_cost() + U256::from(1u64),
+            expected - U256::from(1u64),
+            expected + U256::from(1u64),
         ]
         .into_iter()
         .enumerate()
@@ -524,8 +525,8 @@ fn request_credis_escrows_the_stake_against_the_position() {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
 
-        assert_eq!(staked(&storage, position_id), pledge_cost());
-        assert_eq!(factory_balance(&storage), pledge_cost());
+        assert_eq!(staked(&storage, position_id), pledge_stake());
+        assert_eq!(factory_balance(&storage), pledge_stake());
         assert_eq!(
             storage.balance(cca()).unwrap(),
             U256::ZERO,
@@ -552,7 +553,7 @@ fn the_closing_settlement_returns_the_stake_to_the_cca() {
         );
         assert_eq!(
             staked(&storage, position_id),
-            pledge_cost(),
+            pledge_stake(),
             "stake stays escrowed while principal is outstanding"
         );
         assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
@@ -560,7 +561,7 @@ fn the_closing_settlement_returns_the_stake_to_the_cca() {
         // Clearing the remainder closes the position and returns the stake.
         settle_principal(&storage, alice(), position_id, pledge_stables());
         assert_eq!(staked(&storage, position_id), U256::ZERO, "claim cleared");
-        assert_eq!(storage.balance(cca()).unwrap(), pledge_cost());
+        assert_eq!(storage.balance(cca()).unwrap(), pledge_stake());
         assert_eq!(factory_balance(&storage), U256::ZERO);
     });
     teardown();
@@ -610,7 +611,7 @@ fn request_credis_rejects_an_undeployed_smart_account() {
 
         // bob was never bootstrapped, so it has no code.
         let err =
-            runtime::request_credis(storage.clone(), cca(), bob(), handle, spend, pledge_cost())
+            runtime::request_credis(storage.clone(), cca(), bob(), handle, spend, pledge_stake())
                 .unwrap_err();
         assert!(err.to_string().contains("not deployed"), "got: {err}");
     });

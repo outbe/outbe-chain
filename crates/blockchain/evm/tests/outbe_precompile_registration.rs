@@ -11,7 +11,7 @@ use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
 
-fn expected_exact_addresses() -> [Address; 40] {
+fn expected_exact_addresses() -> [Address; 41] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -25,6 +25,7 @@ fn expected_exact_addresses() -> [Address; 40] {
         INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
+        PAYNOTE_ADDRESS,
         VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
@@ -159,7 +160,7 @@ fn sponsored_whitelist_includes_gemfactory_cashout_entrypoint() {
 
     assert!(
         SPONSORED_TARGET_WHITELIST.contains(&GEM_FACTORY_ADDRESS),
-        "zero-balance Gem owners need sponsored settleGem and mineGemPromis"
+        "zero-balance Gem owners need sponsored settleGem and minePromis"
     );
 }
 

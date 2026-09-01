@@ -1,7 +1,8 @@
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::units::checked_protocol_to_native;
 
 /// Maximum share per address (32% cap).
 const MAX_ADDRESS_SHARE_PCT: u64 = 32;
@@ -218,10 +219,9 @@ pub fn distribute_daily(
     Ok(total_excess)
 }
 
-/// Capped pool flow used for both WAA and SRA. Mints the pool onto
-/// `AGENT_REWARD_ADDRESS`, runs the 32 % cap distribution, credits
-/// claimable balances, burns the undistributed excess, clears the
-/// per-pool day index, and returns the excess.
+/// Capped pool flow used for both WAA and SRA. Distribution math and the
+/// returned excess stay in six-decimal emission units. Native backing and
+/// claimable balances cross the boundary once into 18-decimal COEN.
 fn distribute_capped(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
@@ -232,9 +232,13 @@ fn distribute_capped(
     if amount.is_zero() {
         return Ok(U256::ZERO);
     }
+    let native_amount = checked_protocol_to_native(amount)
+        .ok_or_else(|| PrecompileError::Revert("native AgentReward pool overflow".into()))?;
     let mut contract = ctx.contract::<AgentRewardContract>();
-    ctx.storage
-        .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, amount)?;
+    ctx.storage.increase_balance(
+        outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+        native_amount,
+    )?;
 
     let counts = match kind {
         PoolKind::Waa => contract.get_all_waa_counts(prev_day)?,
@@ -245,8 +249,10 @@ fn distribute_capped(
     if counts.is_empty() {
         // No tributes - burn the pool we just minted so the pre-funded
         // balance does not leak onto AGENT_REWARD_ADDRESS.
-        ctx.storage
-            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, amount)?;
+        ctx.storage.decrease_balance(
+            outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+            native_amount,
+        )?;
         return Ok(amount);
     }
 
@@ -258,12 +264,19 @@ fn distribute_capped(
     let (rewards, excess) = calculate_distribution_with_cap(amount, &counts);
     for r in &rewards {
         if !r.reward_amount.is_zero() {
-            contract.add_claimable_reward(reward_pool, r.address, r.reward_amount)?;
+            let native_reward = checked_protocol_to_native(r.reward_amount).ok_or_else(|| {
+                PrecompileError::Revert("native AgentReward share overflow".into())
+            })?;
+            contract.add_claimable_reward(reward_pool, r.address, native_reward)?;
         }
     }
     if !excess.is_zero() {
-        ctx.storage
-            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, excess)?;
+        let native_excess = checked_protocol_to_native(excess)
+            .ok_or_else(|| PrecompileError::Revert("native AgentReward excess overflow".into()))?;
+        ctx.storage.decrease_balance(
+            outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+            native_excess,
+        )?;
     }
     match kind {
         PoolKind::Waa => contract.clear_waa_counts(prev_day)?,
@@ -273,16 +286,17 @@ fn distribute_capped(
     Ok(excess)
 }
 
-/// Mints `amount` onto `target`'s native balance. Used for the CCA
-/// pool, which is a plain accumulator in v1 - no distribution logic,
-/// no excess.
+/// Converts the six-decimal emission `amount` and mints it onto `target`'s
+/// native balance. Used for the CCA pool, which is a plain accumulator in v1.
 fn accumulate_to_address(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     target: alloy_primitives::Address,
     amount: U256,
 ) -> Result<()> {
     if !amount.is_zero() {
-        ctx.storage.increase_balance(target, amount)?;
+        let native_amount = checked_protocol_to_native(amount)
+            .ok_or_else(|| PrecompileError::Revert("native CCA reward overflow".into()))?;
+        ctx.storage.increase_balance(target, native_amount)?;
     }
     Ok(())
 }

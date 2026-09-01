@@ -63,7 +63,7 @@ use outbe_tee_enclave::{
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::FullProvable;
+use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
@@ -251,7 +251,7 @@ fn build_fixture() -> Fixture {
     };
     let binding = OutbeV1::binding(&CALLER.into_array(), &draft_id.0, CHAIN_ID).unwrap();
     let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
-    let tree = Imt::<OutbeV1>::new(INCLUSION_DEPTH).unwrap();
+    let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
     let path = tree.empty_inclusion_path(0);
 
     let proof_started = Instant::now();

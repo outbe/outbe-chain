@@ -29,6 +29,7 @@ const ANCHOR: u64 = NOW - NOW % 86_400;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load the ladder picks for `ENTRY_PRICE`, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
+const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 
 // --- PROMIS load ladder ---
 
@@ -134,6 +135,11 @@ fn the_band_survives_integer_division_in_the_narrowest_decade() {
 fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
     assert_eq!(ladder_load(None, 0), 100_000_000_000_000);
     assert_eq!(ladder_load(None, u128::MAX), 1);
+}
+
+#[test]
+fn native_escrow_conversion_saturates_instead_of_wrapping() {
+    assert_eq!(runtime::rate_lock(u64::MAX, u128::MAX, u32::MAX), u128::MAX);
 }
 
 #[test]
@@ -952,7 +958,7 @@ fn schedule_starts_a_green_brief() {
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
         assert_eq!(
             cfg.commit_bond_minor,
-            100_000_000u128 * 1_000_000u128,
+            100_000_000u128 * 1_000_000_000_000_000_000u128,
             "production commit bond is denominated in WCOEN-unit"
         );
     });
@@ -1746,7 +1752,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result = clear(&s);
-        // escrow basis = promis_load; lock/pay = qty * basis * rate / 1_000_000.
+        // Escrow math stays protocol-scale, then crosses into 18-decimal WCOEN.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
@@ -1758,9 +1764,15 @@ fn clear_refunds_equal_locked_minus_paid() {
             .iter()
             .position(|&a| a == bidder(1))
             .unwrap();
-        assert_eq!(result.paid_amounts[w_idx], LOAD_MINOR * 300 / 1_000_000);
+        assert_eq!(
+            result.paid_amounts[w_idx],
+            LOAD_MINOR * 300 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+        );
         assert_eq!(result.refunded_amounts[w_idx], 0);
-        assert_eq!(result.refunded_amounts[l_idx], LOAD_MINOR * 200 / 1_000_000);
+        assert_eq!(
+            result.refunded_amounts[l_idx],
+            LOAD_MINOR * 200 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+        );
         assert_eq!(supply, result.issued_intex_count);
     });
 }
@@ -1811,25 +1823,25 @@ fn clear_rate_escrow_scales_by_basis() {
         let result = clear(&s);
 
         assert_eq!(result.clearing_rate, 600_000);
-        // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.
+        // Lock/pay crosses the six-decimal result into WCOEN; clearing rate 60%.
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
         assert_eq!(
             result.paid_amounts[idx(bidder(0))],
-            LOAD_MINOR * 600_000 / 1_000_000
+            LOAD_MINOR * 600_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(
             result.refunded_amounts[idx(bidder(0))],
-            LOAD_MINOR * 200_000 / 1_000_000
+            LOAD_MINOR * 200_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(
             result.paid_amounts[idx(bidder(1))],
-            LOAD_MINOR * 600_000 / 1_000_000
+            LOAD_MINOR * 600_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
         assert_eq!(
             result.refunded_amounts[idx(bidder(2))],
-            LOAD_MINOR * 400_000 / 1_000_000
+            LOAD_MINOR * 400_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
     });
 }

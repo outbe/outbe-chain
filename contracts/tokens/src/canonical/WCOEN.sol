@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 contract WCOEN {
     string public name = "Wrapped COEN";
     string public symbol = "WCOEN";
-    uint8 public decimals = 6;
+    uint8 public decimals = 18;
 
     error NativeTransferFailed(address to, uint256 amount);
 

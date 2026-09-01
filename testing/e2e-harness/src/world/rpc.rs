@@ -437,6 +437,7 @@ impl Rpc {
             nonce: 0,
             mac: B256::ZERO,
             opNonce: 0,
+            payNoteProof: Bytes::new(),
         };
         // This is an intentional negative transaction. Supplying an explicit
         // bounded gas limit prevents the RPC client from replacing the actual
@@ -564,7 +565,12 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    pub fn mine_first_materialized_capacity_nod(&self, port: u16, private_key: &str) -> Result<()> {
+    pub fn mine_first_materialized_capacity_nod(
+        &self,
+        port: u16,
+        private_key: &str,
+        pay_note_proof: &[u8],
+    ) -> Result<()> {
         let owner = self
             .address_of(private_key)
             .ok_or_else(|| eyre!("derive capacity owner"))?
@@ -609,6 +615,7 @@ impl Rpc {
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
+                payNoteProof: Bytes::copy_from_slice(pay_note_proof),
             },
             None,
         )?;
@@ -664,7 +671,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn nod_id_of_owner_by_index_on(
+    pub(crate) fn nod_id_of_owner_by_index_on(
         &self,
         port: u16,
         owner: Address,
@@ -683,7 +690,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn nod_data_on(
+    pub(crate) fn nod_data_on(
         &self,
         port: u16,
         nod_id: &[u8],

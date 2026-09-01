@@ -19,6 +19,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     time::{date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key},
+    units::{checked_protocol_to_native, native_to_protocol_floor},
 };
 
 /// Calendar work owned by one hourly ProtocolCycle execution.
@@ -75,6 +76,16 @@ pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<Pr
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
     ctx.storage.gas_used().unwrap_or(0)
+}
+
+/// Applies raw 18-decimal gas fees to a six-decimal validator emission budget,
+/// then floors only the remaining native amount back to Gem-load precision.
+fn validator_gem_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
+    let native_budget = checked_protocol_to_native(validator_amount)
+        .ok_or_else(|| PrecompileError::Revert("native validator budget overflow".into()))?;
+    Ok(native_to_protocol_floor(
+        native_budget.saturating_sub(fees_native),
+    ))
 }
 
 fn wrap(step: &str, r: Result<()>) -> Result<()> {
@@ -188,12 +199,10 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
             tracing::error!(target: "outbe::cycle", backtrace = %_bt, "stacktrace");
             e
         })?;
-    let topup = if validator_amount.is_zero() || voters.is_empty() || fees >= validator_amount {
+    let topup = if validator_amount.is_zero() || voters.is_empty() {
         U256::ZERO
     } else {
-        validator_amount
-            .checked_sub(fees)
-            .ok_or_else(|| PrecompileError::Revert("validator topup underflow".into()))?
+        validator_gem_topup_protocol(validator_amount, fees)?
     };
     let preparation = outbe_rewards::api::prepare_daily_validator_gem_batch(
         ctx, prev_day, topup, &voters,
@@ -359,4 +368,30 @@ pub(crate) fn run_emission_limit_daily(
         outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp)),
     )?;
     outbe_metadosis::commands::start_metadosis(ctx, scope, parent)
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+
+    #[test]
+    fn validator_fees_stay_native_until_the_remaining_budget_is_floored() {
+        let allocation = U256::from(2u64);
+        let one_protocol_unit_native = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+
+        assert_eq!(
+            validator_gem_topup_protocol(allocation, one_protocol_unit_native - U256::ONE).unwrap(),
+            U256::ONE
+        );
+        assert_eq!(
+            validator_gem_topup_protocol(allocation, one_protocol_unit_native + U256::ONE).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            validator_gem_topup_protocol(allocation, one_protocol_unit_native * U256::from(2u64))
+                .unwrap(),
+            U256::ZERO
+        );
+    }
 }

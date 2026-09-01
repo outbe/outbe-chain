@@ -882,14 +882,11 @@ fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Resul
 
 /// Ceiling for advised gas price: one COEN per gas, already far above anything
 /// this chain charges, so a fee spike can never advise an unpayable number.
-const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000;
+const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000_000_000_000_000;
 
 /// Reth suggests a one gwei tip while its oracle has no sampled block to learn
-/// from. A gwei is an Ethereum-scale number, and one COEN unit is a millionth
-/// of a COEN, so that cold-start advice prices a single gas at a thousand COEN
-/// and makes the first transactions on a young chain unaffordable. Advise the
-/// protocol floor instead, and cap the advice at a figure that stays sane in
-/// this denomination.
+/// from. Keep the cold-start floor tiny in raw native units and cap sampled
+/// advice at one 18-decimal COEN per gas.
 fn apply_outbe_gas_price_oracle_defaults<C: reth_cli::chainspec::ChainSpecParser, Ext, SubCmd>(
     command: &mut reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
 ) where

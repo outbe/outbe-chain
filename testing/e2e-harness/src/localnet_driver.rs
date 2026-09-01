@@ -1008,12 +1008,12 @@ fn print_funded_accounts(cli: &LocalnetCli, rpc_ports: &[u16]) {
     }
 }
 
-/// COEN carries six decimals; render base units as a decimal amount.
+/// COEN carries 18 decimals; render base units as a decimal amount.
 fn coen(balance: alloy_primitives::U256) -> String {
-    const UNITS: u64 = 1_000_000;
+    const UNITS: u64 = 1_000_000_000_000_000_000;
     let whole = balance / alloy_primitives::U256::from(UNITS);
     let fraction = balance % alloy_primitives::U256::from(UNITS);
-    format!("{whole}.{:06}", fraction.to::<u64>())
+    format!("{whole}.{:018}", fraction.to::<u64>())
 }
 
 /// One line naming the resolved enclave profile, so no run is ambiguous about

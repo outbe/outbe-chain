@@ -59,11 +59,11 @@ fn config_defaults_to_prod_when_unset() {
         );
         assert_eq!(
             crate::config::IntexParams::PROD.commit_bond_minor,
-            100_000_000u128 * 1_000_000u128
+            100_000_000u128 * 1_000_000_000_000_000_000u128
         );
         assert_eq!(
             crate::config::IntexParams::DEV.commit_bond_minor,
-            100u128 * 1_000_000u128
+            100u128 * 1_000_000_000_000_000_000u128
         );
     });
 }

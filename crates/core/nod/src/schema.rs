@@ -9,10 +9,10 @@ use outbe_primitives::storage::types::StorageKey;
 use serde::{Deserialize, Serialize};
 
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
-/// `NodContract::nod_id(owner, worldwide_day)`; `cost_amount_minor` is computed
-/// from `cost_of_gratis_minor * gratis_load_minor / SCALE_1E6_U256`. `issued_at` is
-/// stamped inside `issue` from the current block timestamp and is not part of
-/// caller inputs.
+/// `NodContract::nod_id(owner, worldwide_day)`; the cost is derived from
+/// `entry_price_minor` and `gratis_load_minor` (see
+/// [`crate::api::cost_amount_minor`]). `issued_at` is stamped inside `issue`
+/// from the current block timestamp and is not part of caller inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -21,7 +21,6 @@ pub struct NodIssueParams {
     pub floor_price_minor: U256,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub cost_amount_minor: U256,
     pub issuance_currency: u16,
     /// Reference currency (ISO 4217 numeric) propagated from the originating
     /// Tribute. Used for off-chain pricing references on the Nod.
@@ -53,21 +52,13 @@ pub struct NodItemState {
     pub bucket_key: B256,
 
     #[attribute(order = 6)]
-    pub cost_amount_minor: U256,
-
-    #[attribute(order = 7)]
     pub issuance_currency: u16,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub reference_currency: u16,
 
-    #[attribute(order = 9)]
+    #[attribute(order = 8)]
     pub issued_at: u64,
-
-    /// True once `cost_amount_minor` has been paid into the reserve vault
-    /// through `NodFactory.settleNod`. Mining requires it.
-    #[attribute(order = 10)]
-    pub is_settled: bool,
 }
 
 /// Bucket record exists while `total_nods > 0`; the body is dropped when the
@@ -314,7 +305,7 @@ pub struct NodContract {
     #[attribute(order = 39)]
     pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `entry_price_minor x CALL_RATE_PCT / 100`, snapshotted at qualification so
+    /// `entry_price_minor x (100 + CALL_RATE_PCT) / 100`, snapshotted at qualification so
     /// the daily scan never loads a bucket body just to decide.
     #[attribute(order = 40)]
     pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,

@@ -114,7 +114,6 @@ fn lysis_inner(
                 floor_price_minor: action.floor_price_minor,
                 gratis_load_minor: action.gratis_load_minor,
                 entry_price_minor: action.entry_price_minor,
-                cost_amount_minor: action.cost_amount_minor,
                 issuance_currency: action.issuance_currency,
                 reference_currency: action.reference_currency,
             },

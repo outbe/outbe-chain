@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, U256};
 use outbe_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -20,11 +21,20 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
-    #[error("nod is already settled")]
-    NodAlreadySettled,
+    #[error("PayNote proof names spender {actual}, expected {expected}")]
+    PayNoteSpenderMismatch { expected: Address, actual: Address },
 
-    #[error("nod is not settled")]
-    NodNotSettled,
+    #[error("PayNote proof carries asset {asset}, which is not registered for reference currency {reference_currency}")]
+    PayNoteAssetMismatch {
+        asset: Address,
+        reference_currency: u16,
+    },
+
+    #[error("PayNote covers {covered}, nod cost is {required}")]
+    PayNoteUndercoversCost { covered: u128, required: u128 },
+
+    #[error("nod cost {cost} exceeds the maximum a PayNote can cover")]
+    SettlementCostTooLarge { cost: U256 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
@@ -52,9 +62,6 @@ pub enum NodFactoryError {
 
     #[error("certified Nod generation is not fully materialized")]
     NodGenerationNotMaterialized,
-
-    #[error("no settlement asset registered for reference currency {reference_currency}")]
-    NoSettlementAsset { reference_currency: u16 },
 
     #[error("nod call settlement deadline has expired")]
     CallDeadlineExpired,

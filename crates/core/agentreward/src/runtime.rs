@@ -5,6 +5,7 @@ use outbe_common::WorldwideDay;
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -82,10 +83,10 @@ impl AgentRewardContract<'_> {
         }
     }
 
-    /// Claims the pool's whole balance as a Gem: mints the Gem, burns the native
-    /// COEN backing the balance and clears it. The Gem load is not that COEN - it
-    /// becomes Promis at mining time - so leaving the backing in place would let
-    /// one emission exist twice.
+    /// Claims the pool's balance as a Gem: mints the Gem, burns the native COEN
+    /// that backed it and clears what was converted. The Gem load is not that
+    /// COEN - it becomes Promis at mining time - so leaving the backing in place
+    /// would let one emission exist twice.
     ///
     /// Any failure reverts the call and leaves the balance for the next day, which
     /// brings a new VWAP with it.
@@ -96,6 +97,17 @@ impl AgentRewardContract<'_> {
                 "no claimable balance in this pool".into(),
             ));
         }
+        // The balance is native COEN; a Gem load is a protocol amount. Only the
+        // part that survives the conversion is minted and burned, so a sub-unit
+        // remainder keeps accumulating instead of being lost.
+        let gem_load = native_to_protocol_floor(balance);
+        if gem_load.is_zero() {
+            return Err(PrecompileError::Revert(
+                "claimable balance is below one protocol unit".into(),
+            ));
+        }
+        let burned = checked_protocol_to_native(gem_load)
+            .ok_or_else(|| PrecompileError::Revert("native AgentReward claim overflow".into()))?;
         let entry_price = resolve_gem_entry_price(&self.storage)?.ok_or_else(|| {
             PrecompileError::Revert("agentreward has no usable COEN price yet".into())
         })?;
@@ -107,14 +119,14 @@ impl AgentRewardContract<'_> {
             &self.storage,
             address,
             gem_type,
-            balance,
+            gem_load,
             AGENT_GEM_CURRENCY,
             AGENT_GEM_CURRENCY,
             entry_price,
         )?;
         self.storage
-            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, balance)?;
-        self.write_pool_claimable_reward(pool, address, U256::ZERO)?;
+            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
+        self.write_pool_claimable_reward(pool, address, balance - burned)?;
 
         Ok(gem_id)
     }

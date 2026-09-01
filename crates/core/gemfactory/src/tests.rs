@@ -10,7 +10,10 @@ use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
 use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+
 use crate::constants::POSITION_VALIDITY_SECONDS;
+use crate::expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
@@ -886,7 +889,7 @@ fn settle_rejects_non_qualified_state() {
 }
 
 #[test]
-fn mine_gem_promis_full_genesis_flow() {
+fn mine_promis_full_genesis_flow() {
     outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -901,7 +904,7 @@ fn mine_gem_promis_full_genesis_flow() {
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
         let minted =
-            runtime::mine_gem_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
+            runtime::mine_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
                 .unwrap();
         assert_eq!(minted, load);
 
@@ -925,7 +928,7 @@ fn mine_gem_promis_full_genesis_flow() {
 // covered on localnet with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
 
 #[test]
-fn mine_gem_promis_rejects_non_settled() {
+fn mine_promis_rejects_non_settled() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -938,13 +941,13 @@ fn mine_gem_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled - mine should reject before PoW.
-        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, 0, no_auth());
+        let res = runtime::mine_promis(storage, ALICE, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
 
 #[test]
-fn mine_gem_promis_rejects_non_owner() {
+fn mine_promis_rejects_non_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -956,8 +959,8 @@ fn mine_gem_promis_rejects_non_owner() {
             840,
         )
         .unwrap();
-        // mine_gem_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_gem_promis(storage, BOB, gem_id, 0, no_auth());
+        // mine_promis checks ownership before state, so no settle needed.
+        let res = runtime::mine_promis(storage, BOB, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("not gem owner"));
     });
 }
@@ -1059,6 +1062,65 @@ fn parking_marks_the_units_realized_on_the_source_series() {
             PARK_UNITS as u32
         );
     });
+}
+
+/// The position stays visible afterwards, as the spent object it is.
+#[test]
+fn an_expired_position_returns_its_remainder() {
+    with_storage(None, |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let capacity = parked_capacity(six_decimal_u128());
+
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(unallocated(storage), U256::ZERO);
+
+        // At the instant issuing starts reverting, the sweep takes it.
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 1);
+        assert_eq!(unallocated(storage), capacity);
+
+        let factory = GemFactoryContract::new(storage.clone());
+        let record = factory.positions.get(id).unwrap().unwrap();
+        assert_eq!(record.remaining_capacity, U256::ZERO);
+        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
+    });
+}
+
+#[test]
+fn a_drained_position_leaves_the_queue() {
+    with_storage(Some(six_decimal_unit()), |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        runtime::mint_merchant_gem(storage, ALICE, id, BOB, parked_capacity(six_decimal_u128()))
+            .unwrap();
+
+        let factory = GemFactoryContract::new(storage.clone());
+        assert!(factory.live_queue_slot(0).unwrap().is_none());
+
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(unallocated(storage), U256::ZERO);
+    });
+}
+
+fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'a> {
+    BlockRuntimeContext::new(BlockContext::empty_for_tests(1, now, 1), storage.clone())
+}
+
+fn unallocated(storage: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
 }
 
 #[test]

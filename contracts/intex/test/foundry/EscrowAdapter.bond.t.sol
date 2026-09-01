@@ -25,7 +25,7 @@ contract EscrowAdapterBondTest is Test {
 
     uint32 worldwideDay1 = 1;
 
-    uint128 constant BOND_AMOUNT = 100e6;
+    uint128 constant BOND_AMOUNT = 100e18;
 
     /// @dev Live ERC6909 balance held by the escrow in The Compact for the active lockId.
     function _liveCompactBalance() internal view returns (uint256) {
@@ -41,7 +41,7 @@ contract EscrowAdapterBondTest is Test {
         escrow.wire(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        paymentToken.mint(bidder1, 1000e6);
+        paymentToken.mint(bidder1, 1000e18);
         vm.prank(bidder1);
         paymentToken.approve(address(escrow), type(uint256).max);
     }
@@ -186,12 +186,12 @@ contract EscrowAdapterBondTest is Test {
         vm.warp(block.timestamp + escrow.COMMIT_BOND_ABANDON_DELAY());
         vm.prank(outsider);
         escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
-        assertEq(paymentToken.balanceOf(bidder1), 1000e6, "full principal recovered");
+        assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
     }
 
     /// @dev Any bond amount round-trips lock -> release without residue in The Compact.
     function testFuzz_LockRelease_RoundTrips(uint128 amount) public {
-        amount = uint128(bound(amount, 1, 1000e6));
+        amount = uint128(bound(amount, 1, 1000e18));
 
         vm.prank(auction);
         escrow.lockCommitBond(worldwideDay1, bidder1, amount);
@@ -200,7 +200,7 @@ contract EscrowAdapterBondTest is Test {
         vm.prank(auction);
         escrow.releaseCommitBond(worldwideDay1, bidder1);
         assertEq(_liveCompactBalance(), 0, "no residue");
-        assertEq(paymentToken.balanceOf(bidder1), 1000e6, "principal intact");
+        assertEq(paymentToken.balanceOf(bidder1), 1000e18, "principal intact");
     }
 
     // --- shared-lockId accounting ---
@@ -212,7 +212,7 @@ contract EscrowAdapterBondTest is Test {
         _lockBond();
         assertTrue(escrow.hasOutstandingLocks(), "bond counts as outstanding");
 
-        address otherToken = address(new MockERC20("X", "X", 6));
+        address otherToken = address(new MockERC20("X", "X", 18));
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, BOND_AMOUNT));
         escrow.wire(auction, address(compact), otherToken);

@@ -27,7 +27,7 @@ use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::scaled_math::checked_mul_div_ceil;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 
 /// Reads the pledged asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
@@ -170,6 +170,9 @@ pub fn mine_coen(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
+    let native_amount = checked_protocol_to_native(amount)
+        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+
     // Fold the sale cohort into the gratis burn round-trip; persist the returned
     // fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
@@ -178,16 +181,16 @@ pub fn mine_coen(
     let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
     outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
 
-    // Mint native COEN to the seller 1:1 against the burned gratis.
-    storage.increase_balance(account, amount)?;
+    // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
+    storage.increase_balance(account, native_amount)?;
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::CoenMined {
             sender: account,
-            amount,
+            amount: native_amount,
         }),
     )?;
 
-    Ok(amount)
+    Ok(native_amount)
 }

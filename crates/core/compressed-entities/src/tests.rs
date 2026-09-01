@@ -129,13 +129,74 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         league_id: 2,
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::from(3),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
-        is_settled: false,
     };
     let expected = hex::decode(concat!(
+        "0a2000000001",
+        "11111111111111111111111111111111111111111111111111111111",
+        "1214",
+        "2222222222222222222222222222222222222222",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "2001",
+        "2802",
+        "32200000000000000000000000000000000000000000000000000000000000000002",
+        "3a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "48c806",
+        "50d207",
+        "5805"
+    ))
+    .unwrap();
+
+    let payload = encode_nod_item_v1(&body).unwrap();
+    assert_eq!(payload, expected);
+    assert_eq!(decode_nod_item_v1(&payload).unwrap(), body);
+}
+
+/// Field 12 carried the Nod's settled flag until settlement moved to a PayNote
+/// spend at mine time. It was written only when a Nod was settled, so retiring
+/// it left every live body's bytes untouched — but a body that does carry it
+/// describes state this schema no longer has, and must be refused rather than
+/// quietly decoded without it.
+#[test]
+fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
+    let body = NodItemBodyV1 {
+        nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::from(1), [0x11; 32]),
+        owner: Address::repeat_byte(0x22),
+        gratis_load_minor: U256::from(1),
+        worldwide_day: WorldwideDay::from(1),
+        league_id: 2,
+        floor_price_minor: U256::from(2),
+        bucket_key: B256::repeat_byte(0x33),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 5,
+    };
+    let payload = encode_nod_item_v1(&body).unwrap();
+    assert!(decode_nod_item_v1(&payload).is_ok());
+
+    // `0x60, 0x01` is field 12, varint wire type, value 1 — the settled marker.
+    let mut settled = payload.clone();
+    settled.extend_from_slice(&[0x60, 0x01]);
+    assert!(matches!(
+        decode_nod_item_v1(&settled),
+        Err(CanonicalBodyError::UnknownField { field: 12 })
+    ));
+}
+
+/// Field 8 carried the Nod's cost until it became a derivation from the
+/// bucket's entry price and the Nod's gratis load. Every body wrote it, so
+/// retiring it is a deliberate wire break: a body that still carries it states
+/// a cost this schema no longer owns, and must be refused rather than decoded
+/// with the value dropped on the floor.
+#[test]
+fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
+    // The exact bytes this schema produced before the cost became a derivation
+    // from the bucket's entry price and the Nod's gratis load: field 8 sitting
+    // in its canonical position between `bucket_key` and `issuance_currency`.
+    let with_cost = hex::decode(concat!(
         "0a2000000001",
         "11111111111111111111111111111111111111111111111111111111",
         "1214",
@@ -153,9 +214,10 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
     ))
     .unwrap();
 
-    let payload = encode_nod_item_v1(&body).unwrap();
-    assert_eq!(payload, expected);
-    assert_eq!(decode_nod_item_v1(&payload).unwrap(), body);
+    assert!(matches!(
+        decode_nod_item_v1(&with_cost),
+        Err(CanonicalBodyError::UnknownField { field: 8 })
+    ));
 }
 
 #[test]
@@ -357,11 +419,9 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         league_id: 2,
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::from(3),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
-        is_settled: false,
     };
     assert!(matches!(
         decode_nod_item_v1(&shorten_length_delimited(

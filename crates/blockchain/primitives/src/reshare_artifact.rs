@@ -77,8 +77,8 @@ const LATE_FINALIZE_SIG_LEN: usize = 96;
 const LATE_FINALIZE_MAX_BITMAP_LEN: usize = 32;
 /// Wire cap on per-block late-finalize credits in one block, pinned to the
 /// inclusion window `K`. An honest proposer emits at most one
-/// credit per in-window finalized block - `build_artifact` iterates `[N-K, N-1]`
-/// - so `K` is the protocol maximum. Capping the wire to `K` (instead of an
+/// credit per in-window finalized block (`build_artifact` iterates
+/// `[N-K, N-1]`), so `K` is the protocol maximum. Capping the wire to `K` (instead of an
 /// arbitrary 256) stops an adversarial block inflating decode/snapshot/BLS-verify
 /// work past the protocol bound. `K` is a small protocol constant (3) and always
 /// fits `usize`.

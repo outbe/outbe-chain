@@ -8,7 +8,7 @@ use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::FullProvable;
+use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
@@ -59,7 +59,7 @@ fn generated_pinned_full_proof_verifies_through_chain_seam() {
         fields: vec![Fr::from(20_250_115u64), Fr::from(840u64), Fr::from(100u64)],
     };
     let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-    let tree = Imt::<OutbeV1>::new(INCLUSION_DEPTH).unwrap();
+    let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
     let path = tree.empty_inclusion_path(0);
     let (witness, public) = draft
         .derive_full_witness(&mut rng, &signer, binding, &path)

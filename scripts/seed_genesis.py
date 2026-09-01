@@ -169,6 +169,10 @@ GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
 # liquidity source/target registry (see `seed_vault_router`). Mirrors the Rust
 # constant `outbe_primitives::addresses::VAULT_ROUTER_ADDRESS`.
 VAULT_ROUTER_ADDRESS = "0000000000000000000000000000000000001017"
+# PayNote shielded ERC20 note pool. Registered as a VaultRouter liquidity
+# source so `deposit` can route pulled ERC20 into the asset's reserve vault.
+# Mirrors the Rust constant `outbe_primitives::addresses::PAYNOTE_ADDRESS`.
+PAYNOTE_ADDRESS = "0000000000000000000000000000000000001019"
 # Gem NFT token precompile. Genesis can seed Settled gems (see `seed_gems`) so a
 # demo account has a mineable gem to convert Gem -> Promis -> Gratis; Gratis and
 # Promis are TEE-encrypted and can no longer be plaintext-seeded at genesis.
@@ -217,7 +221,7 @@ RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
-MIN_STAKE = 100_000 * 10**6
+MIN_STAKE = 100_000 * 10**18
 DEFAULT_UNBONDING_PERIOD = 21 * 24 * 3600
 DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 # ~1 hour at a ~3s block (40 min at 2s ... 2.7 h at 8s). The epoch is the cadence
@@ -724,10 +728,10 @@ def address_pair(base: str, quote: str) -> bytes:
 
 # Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
 # genesis-seeded - `add_gem` parks Issued gems in a bin-tree index this seeder
-# does not reproduce, and `mineGemPromis` requires state == Settled.
+# does not reproduce, and `minePromis` requires state == Settled.
 GEM_STATE_SETTLED = 3
 # Default gem type when unspecified (GemTypes::Wallet). Not validated by
-# `mineGemPromis`, so any agent class works.
+# `minePromis`, so any agent class works.
 GEM_TYPE_WALLET = 3
 
 
@@ -752,7 +756,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
     """Seed Settled gems into the flat `GemContract` storage at GEM_ADDRESS.
 
     Reproduces exactly what `GemContract::add_gem` writes for a Settled gem, so a
-    seeded gem is fully mineable (`mineGemPromis` -> confidential Promis) and
+    seeded gem is fully mineable (`minePromis` -> confidential Promis) and
     burns cleanly. Layout pinned by the `gem_storage_layout_matches_genesis_seeder`
     test in `crates/core/gem/src/tests.rs`:
 
@@ -769,9 +773,9 @@ def seed_gems(storage: StorageBuilder, gems: list):
       slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
       slot 22:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+) nor
-    the callable-gem index, so those slots are intentionally left empty (add_gem
-    only indexes Issued gems; the callable index only holds Qualified/Called).
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+), the
+    qualified one, or the called queue, so those slots are intentionally left empty
+    (add_gem indexes Issued gems by floor price and Qualified ones by call price).
     """
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):
@@ -1023,14 +1027,18 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
 # VaultRouter default liquidity registry seeded at genesis. The discriminant
 # values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
 # (see contracts/precompiles/src/IVaultRouter.sol).
-#   StablesSource: Unknown=0 NodCostAmount=1 IntexCostAmount=2
-#                  CredisCostAmount=3 GemCostAmount=4
+#   StablesSource: Unknown=0 IntexCostAmount=1 CredisCostAmount=2
+#                  GemCostAmount=3 PayNoteDeposit=4
 #   StablesTarget: Unknown=0 Credis=1
+#
+# NodFactory is deliberately absent: a Nod's cost is discharged by spending a
+# PayNote at mine time, and the underlying assets reached the vault through
+# PAYNOTE_ADDRESS when the note was deposited.
 VAULT_ROUTER_LIQUIDITY_SOURCES = [
-    (NOD_FACTORY_ADDRESS, 1),     # NodCostAmount
-    (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
-    (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
-    (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
+    (INTEX_FACTORY_ADDRESS, 1),   # IntexCostAmount
+    (CREDIS_FACTORY_ADDRESS, 2),  # CredisCostAmount
+    (GEM_FACTORY_ADDRESS, 3),     # GemCostAmount
+    (PAYNOTE_ADDRESS, 4),         # PayNoteDeposit
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis
