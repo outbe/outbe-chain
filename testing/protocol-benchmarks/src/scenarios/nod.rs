@@ -78,7 +78,6 @@ fn issue_params(index: usize) -> NodIssueParams {
         league_id: 1,
         floor_price_minor: U256::from(540),
         entry_price_minor: U256::from(500),
-        cost_amount_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
     }

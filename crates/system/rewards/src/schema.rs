@@ -83,9 +83,9 @@ pub struct Rewards {
     pub participation_counted_for_block: Mapping<B256, Mapping<Address, bool>>,
 
     /// Per-day raw fee sum from finalized metadata (`fees_raw`). Source
-    /// of truth for the cap-vs-fees formula at settle time:
-    ///   `topup           = cap.saturating_sub(daily_fee_sum_raw)`
-    ///   `fee_against_cap = min(daily_fee_sum_raw, cap)`
+    /// of truth for the cap-vs-fees formula at settle time. The emission cap is
+    /// six-decimal protocol value while this sum stays raw native COEN:
+    ///   `topup = floor((cap * 1e12).saturating_sub(daily_fee_sum_raw) / 1e12)`
     /// Equals `daily_fees_paid + daily_fee_dust` (invariant).
     pub daily_fee_sum_raw: Mapping<u32, U256>,
 

@@ -9,7 +9,7 @@ use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E6_U64;
+use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
 use outbe_tee::protocol::{GratisOp, PromisOp};
@@ -94,11 +94,13 @@ fn mine_coen_success_burns_and_mints_native() {
         .unwrap();
 
         let call = mine_coen_call(one_promis, &auth(PromisOp::Burn, alice(), one_promis, 1));
-        dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        let output = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        let minted = IPromisFactory::mineCoenCall::abi_decode_returns(&output).unwrap();
 
-        // Promis burned to zero; native COEN minted 1:1.
+        // One six-decimal PROMIS becomes one 18-decimal native COEN.
+        assert_eq!(minted, ONE_COEN);
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(storage.balance(alice()).unwrap(), one_promis);
+        assert_eq!(storage.balance(alice()).unwrap(), ONE_COEN);
     });
 }
 

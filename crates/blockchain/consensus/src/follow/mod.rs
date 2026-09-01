@@ -198,11 +198,11 @@ impl CommitteeChain {
     ///
     /// Two carriers register a committee:
     /// - [`CommitteePreAnnounce`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::CommitteePreAnnounce)
-    ///   - the Path A committee-chaining carrier: epoch `E`'s committee riding a
+    ///   the Path A committee-chaining carrier: epoch `E`'s committee riding a
     ///   block finalized by the already-trusted `E-1` committee. This is the
     ///   authenticated path - the trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
-    ///   - the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
+    ///   the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
     ///   from it ONLY for a not-yet-known epoch (the genesis anchor; and, until the
     ///   pre-announce producer is wired, epochs lacking a pre-announce). We must NOT
     ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce:

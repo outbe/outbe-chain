@@ -115,6 +115,13 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
+        // ISO 0 is not a currency, and its bin namespace aliases the
+        // un-namespaced key while never appearing in the oracle's
+        // reference-currency registry — a bucket parked there would be
+        // invisible to the qualifier forever.
+        if item.reference_currency == 0 {
+            return Err(NodError::ZeroReferenceCurrency.into());
+        }
 
         let canonical_bucket_key = Self::bucket_key(
             item.worldwide_day,
@@ -197,23 +204,6 @@ impl NodContract<'_> {
                 BodyInput::NodBucket(&canonical_bucket),
             )
         }
-    }
-
-    /// Marks a loaded Nod item settled using the capability retained by the caller's checks.
-    pub(crate) fn record_nod_settled(
-        &mut self,
-        scope: &ExecutionScope,
-        item: LoadedNodItem,
-    ) -> Result<()> {
-        let (mut item, capability) = item.into_parts();
-        item.is_settled = true;
-        let canonical = crate::repository::canonical_item(&item);
-        update(
-            self.storage_handle(),
-            scope,
-            capability,
-            BodyInput::NodItem(&canonical),
-        )
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.

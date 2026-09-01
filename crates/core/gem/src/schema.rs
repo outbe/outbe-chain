@@ -142,26 +142,58 @@ pub struct GemContract {
     #[attribute(order = 10)]
     pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Callable-gem index: dense list of gems in Qualified or Called state,
-    // the only gems the daily Called scan needs to visit. Membership invariant:
-    // a gem is listed iff its state is Qualified or Called. Maintained by
-    // add_gem / set_state / burn. `callable_gem_index` maps gem_id -> position
-    // for O(1) swap-remove.
+    // --- Qualified-gem bin index, by call_price_minor: the price pass enters
+    // only the bins a breach could have reached.
     #[attribute(order = 11)]
-    pub callable_gems: outbe_primitives::storage::dsl::List<U256>,
+    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
     #[attribute(order = 12)]
-    pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+
+    #[attribute(order = 13)]
+    pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+
+    #[attribute(order = 14)]
+    pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    #[attribute(order = 15)]
+    pub qualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    #[attribute(order = 16)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    #[attribute(order = 17)]
+    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Next bin the qualify scan visits, per reference currency. Non-zero only
     /// while a sweep was cut short by the per-block budget.
-    #[attribute(order = 13)]
+    #[attribute(order = 18)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Where the next qualify scan starts, so a heavy currency cannot starve the
     /// ones behind it when the per-block budget runs out.
-    #[attribute(order = 14)]
+    #[attribute(order = 19)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    // --- Called-gem queue, in call order. Calling is driven by price, expiry
+    // only by time, so the two stages keep separate structures.
+    #[attribute(order = 20)]
+    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 21)]
+    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> gem id; zero marks a slot already taken.
+    #[attribute(order = 22)]
+    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 23)]
+    pub called_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    /// Held off the record so the head check costs no record load.
+    #[attribute(order = 24)]
+    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+
+    /// UTC day an unfinished call sweep is pinned to, so its later slices decide
+    /// against the prices it opened with. 0 = none in flight; a date key is never 0.
+    #[attribute(order = 25)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

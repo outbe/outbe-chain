@@ -213,7 +213,7 @@ mod group_scans {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
 
-    use crate::constants::MAX_SERIES_ACTIONS_PER_SWEEP;
+    use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
     use crate::qualified::{self, ScanBudget};
     use crate::runtime;
     use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -385,24 +385,24 @@ mod group_scans {
         budget.spend_actions(2);
 
         // What is left still fits a small group.
-        assert!(budget.admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP - 2));
+        assert!(budget.admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK - 2));
         // One series wider than the remainder waits for the next slice.
-        assert!(!budget.admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP - 1));
+        assert!(!budget.admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK - 1));
 
         // A group wider than the whole allowance would stall forever, so an
         // untouched budget takes it on.
-        assert!(ScanBudget::for_qualify().admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP + 1));
+        assert!(ScanBudget::for_qualify().admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK + 1));
     }
 
     #[test]
     fn the_budget_stops_when_either_half_runs_out() {
         let mut budget = ScanBudget::for_qualify();
-        budget.spend_actions(MAX_SERIES_ACTIONS_PER_SWEEP);
+        budget.spend_actions(MAX_SERIES_ACTIONS_PER_BLOCK);
         assert!(budget.is_spent());
         assert!(!budget.admits_actions(1));
 
         let mut budget = ScanBudget::for_qualify();
-        for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
+        for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
             budget.spend_decision();
         }
         assert!(

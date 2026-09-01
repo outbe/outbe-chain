@@ -34,6 +34,9 @@ contract IntexAuction is
     ///         and is then reclaimable via `claimCommitBond`; reveal/cancel/red-day return it immediately.
     uint32 public constant UNREVEALED_BOND_LOCK_PERIOD = 24 hours;
 
+    /// @dev Native/WCOEN atomic units represented by one six-decimal protocol unit.
+    uint256 private constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
+
     /// @dev EIP-712 type hash for the revealed bid; the currency pair is part of the signed
     ///      struct, so a bidder cannot swap currencies between commit and reveal.
     bytes32 private constant REVEAL_BID_TYPEHASH = keccak256(
@@ -377,11 +380,12 @@ contract IntexAuction is
         if (issuanceCurrency == 0 || issuanceCurrency > 999) revert InvalidIssuanceCurrency(issuanceCurrency);
         _requirePriced(a.params.prices, worldwideDay, referenceCurrency);
 
-        // Escrow lock in WCOEN = qty * escrowBasis * rate / 1e6; escrowBasis is the per-Intex
-        // PROMIS load spent as payment-token minor units, which holds while both carry six decimals.
+        // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
+        // result exactly once into 18-decimal WCOEN before locking funds.
         // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
         uint256 escrowBasis = a.params.promisLoadMinor;
-        uint256 lockAmount = uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.SCALE_1E6;
+        uint256 lockAmount =
+            uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.

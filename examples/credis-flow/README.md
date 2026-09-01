@@ -20,8 +20,10 @@ holder, client-side) can read them.
 - **Writes** carry `(mac, opNonce)`:
   `pledgeGratis(amountStables, asset, maxGratis, mac, opNonce)` returns a
   `pledgeHandle`; `unpledgeGratis(amountStables, handle, mac, opNonce)`;
-  `mineCoen(amount, mac, opNonce)`. `mac = HMAC(modifyKey, op || amount || opNonce ||
-  chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
+  `mineCoen(amount, mac, opNonce)`. Its input `amount` is protocol-6 GRATIS; its
+  return value and `CoenMined.amount` are native-18 COEN. `mac = HMAC(modifyKey,
+  op || amount || opNonce || chainId)` and `opNonce` must equal
+  `gratis.opNonceOf(account)`.
 - **The loan is priced at pledge time.** You name the *credit* you want
   (`amountStables` of `asset`), not the collateral: the chain converts it to gratis at
   the COEN/840 oracle rate and seals the stables amount, the asset and the rate into
@@ -215,7 +217,8 @@ npx tsx src/2-top-up-smart-account.ts
 
 # CCA requests credis against a prior pledge (latest ticket, or an explicit path).
 # The disbursed amount and the asset come from the ticket, not from calldata.
-# Payable: the CCA attaches COEN equal to the pledged collateral, which is escrowed
+# Payable: the CCA converts the protocol-6 collateral to the same whole-token
+# amount of native-18 COEN and attaches it; that native value is escrowed
 # against the position, returned when it settles in full, and burned if it voids.
 # Requires the smart account from the previous step to already be deployed.
 npx tsx src/3-request-credis.ts

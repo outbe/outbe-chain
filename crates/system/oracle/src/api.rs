@@ -134,8 +134,6 @@ pub fn currency_cross_rate(
 /// of reverting and halting the block. Storage faults still propagate.
 pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    // `COEN_ASSET` is the zero address, so `new_coen_to` is always canonical
-    // and the stored rate needs no reciprocal inversion.
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     if index == 0 {
         return Ok(None);

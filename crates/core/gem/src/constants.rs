@@ -9,6 +9,13 @@ pub const BIN_STEP_BP: u16 = 25;
 /// currencies. The per-currency bin cursor resumes the rest next block.
 pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
+/// Gems one call slice may call before it gives out; the sweep resumes on the
+/// next block.
+pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
+
+/// Gems the daily expiry sweep may forfeit before it gives out.
+pub const MAX_GEM_FORFEITS_PER_RUN: u32 = 256;
+
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;

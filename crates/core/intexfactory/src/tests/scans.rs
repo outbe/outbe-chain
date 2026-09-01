@@ -265,7 +265,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
         // Bogus ids (no series record) are per-series skipped but still count toward the cap.
-        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP;
+        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK;
         let f1 = U256::from(EXPECTED_FLOOR);
         let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
         {
@@ -525,7 +525,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
         // record are skipped per series but still count against it.
         {
             let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
+            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
                 factory
                     .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                     .unwrap();

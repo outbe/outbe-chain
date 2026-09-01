@@ -2,9 +2,20 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
+use outbe_primitives::math::scaled_math::checked_mul_div_floor;
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{NodBucketState, NodContract, NodItemState};
+
+/// The Nod's cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
+///
+/// Derived rather than stored — the entry price lives on the Nod's bucket and
+/// the load on the Nod itself, and lysis mints the Nod from exactly this
+/// formula.
+pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
+    checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
+}
 
 /// A decoded Nod item paired with the exact generic capability that verified it.
 pub struct LoadedNodItem {
@@ -54,18 +65,6 @@ pub fn add_nod(
     storage
         .clone()
         .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
-}
-
-/// Marks a previously loaded Nod item as settled atomically.
-pub fn settle_nod(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    item: LoadedNodItem,
-) -> Result<()> {
-    let mut nod = NodContract::new(storage.clone());
-    storage
-        .clone()
-        .with_checkpoint(|| nod.record_nod_settled(scope, item))
 }
 
 /// Removes a previously loaded Nod item and updates or deletes its loaded bucket atomically.

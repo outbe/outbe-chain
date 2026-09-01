@@ -73,7 +73,7 @@ contract IntexAuctionFuzzTest is Test {
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, MIN_RATE, SCALE_1E6));
-        uint128 expected = uint128(uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6);
+        uint128 expected = uint128(uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6 * 1e12);
 
         uint32 worldwideDay = 20260202;
         _start(worldwideDay);
@@ -84,7 +84,11 @@ contract IntexAuctionFuzzTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
-        assertEq(escrow.lockedFunds(worldwideDay, iba1), expected, "locked == qty * escrow_basis * rate / 1e6");
+        assertEq(
+            escrow.lockedFunds(worldwideDay, iba1),
+            expected,
+            "locked == protocol escrow amount converted to 18-decimal WCOEN"
+        );
     }
 
     function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 rateSeed, uint256 wonSeed) public {

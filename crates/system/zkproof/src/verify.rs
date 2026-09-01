@@ -7,10 +7,11 @@
 
 use std::sync::OnceLock;
 
+use alloy_primitives::Address;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::noir::CIRCUIT_REGISTRY;
+use outbe_zk_canonical::noir::{full_proof::FullProof, paynote::Paynote as PayNote};
 use outbe_zk_canonical::{CircuitId, RegistryEntry};
 use tracing::{info, trace};
 
@@ -39,6 +40,38 @@ pub struct FullProofPublicInputs {
     pub nft_hash: [u8; 32],
     pub binding_hash: [u8; 32],
     pub merkle_root: [u8; 32],
+}
+
+/// Public-input count fixed by the `outbe.paynote@1.0.0` ABI: `chain_id`,
+/// `root`, `nullifier`, `asset`, `spender`, `spend_amount`,
+/// `change_commitment`. The `EthAddress` newtype collapses to a single field
+/// leaf, so `asset` and `spender` are one word each.
+const PAYNOTE_PUBLIC_INPUT_COUNT: usize = 7;
+/// Byte length of the combined-proof public section: 4-byte count header plus
+/// 7 canonical 32-byte words.
+const PAYNOTE_PUBLIC_PREFIX_LEN: usize = 4 + PAYNOTE_PUBLIC_INPUT_COUNT * 32;
+/// Proof words in a canonical `outbe.paynote@1.0.0` combined proof. The
+/// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
+/// is part of the pinned circuit identity (same VK, same transcript shape).
+/// PayNote is a 2^14 circuit — one tier above emit_mint's 2^13, hence a longer
+/// transcript than that circuit's 238. Asserted against a real proof by
+/// `outbe-paynote`'s round-trip test.
+pub const PAYNOTE_PROOF_WORDS: usize = 250;
+/// Exact total length of a canonical `outbe.paynote@1.0.0` combined proof:
+/// 4-byte count header, 7 public words, [`PAYNOTE_PROOF_WORDS`] proof words.
+pub const PAYNOTE_COMBINED_LEN: usize = PAYNOTE_PUBLIC_PREFIX_LEN + 32 * PAYNOTE_PROOF_WORDS;
+
+/// Public claim carried by the canonical `outbe.paynote@1.0.0` combined-proof
+/// format, in circuit order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PayNotePublicInputs {
+    pub chain_id: u64,
+    pub root: [u8; 32],
+    pub nullifier: [u8; 32],
+    pub asset: Address,
+    pub spender: Address,
+    pub spend_amount: u128,
+    pub change_commitment: [u8; 32],
 }
 
 /// One-shot initialization of the Barretenberg global CRS.
@@ -159,6 +192,83 @@ pub fn verify_full_proof(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     verify_inner(FullProof::VK_BYTES, combined_proof)
 }
 
+/// Decode and validate the 7 public inputs embedded in a canonical
+/// `outbe.paynote@1.0.0` combined proof.
+///
+/// Accepts only the exact wire the frozen circuit fixes: a 7-count header, a
+/// right-aligned `u64` chain-ID word at index `0`, canonical BN254 field words
+/// at `1`, `2` and `6`, address words at `3` and `4` bounded to the 160-bit
+/// range (top twelve bytes zero), a right-aligned `u128` spend-amount word at
+/// `5`, and the fixed-length proof tail — the whole blob is exactly
+/// [`PAYNOTE_COMBINED_LEN`] bytes.
+///
+/// The proof bytes remain self-contained and are passed unchanged to
+/// Barretenberg; this claim is what the caller books against its own state.
+pub fn decode_paynote_public_inputs(
+    combined_proof: &[u8],
+) -> Result<PayNotePublicInputs, ZkProofError> {
+    let header = combined_proof
+        .get(..4)
+        .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
+    let count = u32::from_be_bytes(header.try_into().expect("four-byte slice")) as usize;
+    if count != PAYNOTE_PUBLIC_INPUT_COUNT {
+        return Err(ZkProofError::WrongPublicInputCount {
+            expected: PAYNOTE_PUBLIC_INPUT_COUNT,
+            actual: count,
+        });
+    }
+    // The frozen circuit's transcript is fixed-length: any other total length
+    // is not this circuit's wire format, whether short or long.
+    if combined_proof.len() != PAYNOTE_COMBINED_LEN {
+        return Err(ZkProofError::WrongCombinedProofLength {
+            expected: PAYNOTE_COMBINED_LEN,
+            actual: combined_proof.len(),
+        });
+    }
+
+    let mut words = [[0u8; 32]; PAYNOTE_PUBLIC_INPUT_COUNT];
+    for (index, word) in combined_proof[4..PAYNOTE_PUBLIC_PREFIX_LEN]
+        .chunks_exact(32)
+        .enumerate()
+    {
+        words[index].copy_from_slice(word);
+    }
+
+    // Field-typed inputs must be canonical before they are compared or hashed.
+    for index in [1usize, 2, 6] {
+        if !is_canonical_field_word(&words[index]) {
+            return Err(ZkProofError::NonCanonicalPublicInput(index));
+        }
+    }
+
+    let chain_id = read_u64_be_padded(&words[0]).ok_or(ZkProofError::NonCanonicalPublicInput(0))?;
+    let asset =
+        read_address_be_padded(&words[3]).ok_or(ZkProofError::NonCanonicalPublicInput(3))?;
+    let spender =
+        read_address_be_padded(&words[4]).ok_or(ZkProofError::NonCanonicalPublicInput(4))?;
+    let spend_amount =
+        read_u128_be_padded(&words[5]).ok_or(ZkProofError::NonCanonicalPublicInput(5))?;
+
+    Ok(PayNotePublicInputs {
+        chain_id,
+        root: words[1],
+        nullifier: words[2],
+        asset,
+        spender,
+        spend_amount,
+        change_commitment: words[6],
+    })
+}
+
+/// Verify the pinned canonical `outbe.paynote@1.0.0` circuit.
+///
+/// Malformed combined proofs are errors. Well-formed proofs that do not verify
+/// return `Ok(false)`.
+pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
+    decode_paynote_public_inputs(combined_proof)?;
+    verify_inner(PayNote::VK_BYTES, combined_proof)
+}
+
 /// Stateless lookup against `outbe-zk-canonical`'s static circuit registry.
 /// Activation/deprecation timing is enforced by consumer contracts, so
 /// the on-chain verifier is unconditionally permissive over registered
@@ -222,6 +332,36 @@ fn read_u64_be_padded(slot: &[u8]) -> Option<u64> {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&slot[24..32]);
     Some(u64::from_be_bytes(buf))
+}
+
+/// Read a u128 from the right-aligned 16 bytes of a 32-byte big-endian
+/// uint256 slot. Returns None if the upper 16 bytes are non-zero.
+fn read_u128_be_padded(slot: &[u8]) -> Option<u128> {
+    if slot.len() != 32 {
+        return None;
+    }
+    if slot[..16].iter().any(|&b| b != 0) {
+        return None;
+    }
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(&slot[16..32]);
+    Some(u128::from_be_bytes(buf))
+}
+
+/// Read a 20-byte address from the right-aligned bytes of a 32-byte
+/// big-endian slot. Returns None if the upper 12 bytes are non-zero — the
+/// circuit range-checks `EthAddress` to 160 bits, so anything wider is not a
+/// claim this circuit can have produced.
+fn read_address_be_padded(slot: &[u8]) -> Option<Address> {
+    if slot.len() != 32 {
+        return None;
+    }
+    if slot[..12].iter().any(|&b| b != 0) {
+        return None;
+    }
+    let mut buf = [0u8; 20];
+    buf.copy_from_slice(&slot[12..32]);
+    Some(Address::from(buf))
 }
 
 fn bool_to_32b(b: bool) -> [u8; 32] {

@@ -13,6 +13,7 @@ import {
   DEFAULT_CREDIS_FACTORY_ADDRESS,
   formatTokenMeta,
   formatCoen,
+  protocolAmountToNativeCoen,
   formatTokenDiff,
   fetchTokenMeta,
   DEFAULT_ENV,
@@ -114,7 +115,7 @@ async function main() {
   // The CCA matches the user's collateral one for one in native COEN. The required
   // amount is the gratis the quote cost, which the ticket recorded at pledge time -
   // it is not in calldata, because it was sealed into the pledge.
-  const stake = BigInt(ticket.amount);
+  const stake = protocolAmountToNativeCoen(BigInt(ticket.amount));
   console.log(`CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral)`);
 
   // The loan is delivered by a call into the smart account, so the precompile now

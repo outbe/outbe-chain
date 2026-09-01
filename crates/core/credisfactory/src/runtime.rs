@@ -9,6 +9,7 @@ use outbe_oracle::api::get_policy_rate;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_protocol_to_native;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
@@ -93,12 +94,15 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidAsset.into());
     }
 
-    // The CCA matches the borrower's collateral one for one, in COEN. Checked only
+    // The CCA matches the borrower's six-decimal GRATIS collateral one for one in
+    // value, but msg.value and the escrow are native 18-decimal COEN. Checked only
     // after `consume_pledge` because the required amount is sealed in the ticket, not
     // in calldata - a caller cannot know it from the call alone, and must read it from
     // the pledge quote. Exact equality, not a floor: an overpayment has no release path
     // (the escrow returns exactly what the position recorded) and would strand.
-    if stake != terms.gratis_amount {
+    let required_stake = checked_protocol_to_native(terms.gratis_amount)
+        .ok_or_else(|| PrecompileError::Revert("native COEN stake overflow".into()))?;
+    if stake != required_stake {
         return Err(CredisFactoryError::CcaStakeMismatch.into());
     }
 

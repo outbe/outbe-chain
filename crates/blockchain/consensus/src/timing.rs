@@ -33,7 +33,7 @@
 //!   build and deliver the proposal. The leader self-nullifies (forfeits its
 //!   slot) if it overruns; nothing else bounds build time.
 //! - **Max block-*validation* time = `certificationTimeoutMs - leaderTimeoutMs`**
-//!   - what remains of the certification window after proposal delivery, for
+//!   what remains of the certification window after proposal delivery, for
 //!   every validator's `new_payload` re-execution **plus** the 2f+1 vote round.
 //!
 //! **Calibration rule (the single dial):** size `gasLimit` so a *full*

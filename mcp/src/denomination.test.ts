@@ -24,6 +24,7 @@ import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
+import { wcoenLockAmount } from "./tools/intex.js";
 import { view as readHumanizedView } from "./tools/util.js";
 
 async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promise<T>): Promise<T> {
@@ -54,10 +55,10 @@ async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promi
   }
 }
 
-test("Outbe chain metadata declares six native decimals", async () => {
+test("Outbe chain metadata declares eighteen native decimals", async () => {
   await withChainIdRpc(54_322_345, async (rpcUrl) => {
     const ctx = await createCtx(rpcUrl);
-    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 6 });
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 18 });
   });
 });
 
@@ -76,19 +77,27 @@ test("unknown external EVM chain metadata retains eighteen native decimals", asy
 });
 
 test("network-native parsing and formatting follows chain metadata", () => {
-  const outbe = { nativeCurrency: { decimals: 6 } } as Chain;
+  const outbe = { nativeCurrency: { decimals: 18 } } as Chain;
   const bsc = { nativeCurrency: { decimals: 18 } } as Chain;
 
-  assert.equal(parseNativeAmount(outbe, "1.5"), 1_500_000n);
-  assert.equal(formatNativeAmount(outbe, 1_500_000n), "1.5");
+  assert.equal(parseNativeAmount(outbe, "1.5"), 1_500_000_000_000_000_000n);
+  assert.equal(formatNativeAmount(outbe, 1_500_000_000_000_000_000n), "1.5");
   assert.equal(parseNativeAmount(bsc, "1.5"), 1_500_000_000_000_000_000n);
   assert.equal(formatNativeAmount(bsc, 1_500_000_000_000_000_000n), "1.5");
 });
 
-test("MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone", () => {
+test("MCP Intex converts protocol-6 PROMIS lock math to native-18 WCOEN", () => {
+  assert.equal(wcoenLockAmount(2n, 1_500_000n, 500_000n), 1_500_000_000_000_000_000n);
+});
+
+test("MCP formats native monetary fields at scale18 and leaves dimensionless FP18 alone", () => {
   assert.deepEqual(
-    formatParam({ name: "balance", type: "uint256" } as AbiParameter, 1_500_000n),
-    { raw: "1500000", value: "1.5" },
+    formatParam(
+      { name: "balance", type: "uint256" } as AbiParameter,
+      1_500_000_000_000_000_000n,
+      { contractName: "agentreward", functionName: "getClaimableBalance" },
+    ),
+    { raw: "1500000000000000000", value: "1.5" },
   );
   assert.deepEqual(
     formatParam(
@@ -243,7 +252,7 @@ test("MCP Oracle aggregate views format each market row independently", async ()
   assert.deepEqual(scurve.peakPrices, [{ raw: "1234567", value: "1.234567" }]);
 });
 
-test("MCP signed COEN inputs convert whole amounts to six-decimal units", async () => {
+test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", async () => {
   type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
   const handlers = new Map<string, ToolHandler>();
   const server = {
@@ -254,14 +263,14 @@ test("MCP signed COEN inputs convert whole amounts to six-decimal units", async 
   const account = privateKeyToAccount(
     "0x0000000000000000000000000000000000000000000000000000000000000001",
   );
-  const sent: { data: Hex }[] = [];
+  const sent: { data: Hex; value: bigint }[] = [];
   const ctx = {
     rpcUrl: "http://unused.invalid",
-    chain: { id: 1 } as Chain,
+    chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
     publicClient: {} as PublicClient,
     account,
     walletClient: {
-      sendTransaction: async (transaction: { data: Hex }) => {
+      sendTransaction: async (transaction: { data: Hex; value: bigint }) => {
         sent.push(transaction);
         return `0x${"11".repeat(32)}` as Hex;
       },
@@ -275,18 +284,21 @@ test("MCP signed COEN inputs convert whole amounts to six-decimal units", async 
       contract: "staking",
       args: { validator: account.address, amount: "1.5", wait: false },
       amountIndex: 1,
+      value: 1_500_000_000_000_000_000n,
     },
     {
       tool: "staking_unstake",
       contract: "staking",
       args: { amount: "1.5", wait: false },
       amountIndex: 0,
+      value: 0n,
     },
     {
       tool: "agentreward_claim",
       contract: "agentreward",
       args: { amount: "1.5", wait: false },
       amountIndex: 0,
+      value: 0n,
     },
   ] as const;
 
@@ -298,7 +310,8 @@ test("MCP signed COEN inputs convert whole amounts to six-decimal units", async 
     assert(transaction, `${item.tool} submitted a transaction`);
     const entry = resolveContract(item.contract);
     const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
-    assert.equal(decoded.args?.[item.amountIndex], 1_500_000n, item.tool);
+    assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
+    assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
   }
 });
 

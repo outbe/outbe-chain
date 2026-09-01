@@ -1,4 +1,4 @@
-//! - integration tests for `SlashIndicator.submitInvalidVrfProofEvidence`.
+//! Integration tests for `SlashIndicator.submitInvalidVrfProofEvidence`.
 //! The tests are grouped by axis:
 //!
 //! * size / age / epoch-lag caps

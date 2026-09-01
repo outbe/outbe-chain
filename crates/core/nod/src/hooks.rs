@@ -25,10 +25,11 @@
 //! Multi-currency: a floor is only comparable to the rate of its own
 //! `reference_currency`, so every bin column is namespaced by ISO code and
 //! each reference currency walks an independent trie. The block reads the
-//! oracle's whole reference-currency registry, prices each one in registry
-//! order, and shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget
-//! across them. A currency whose COEN pair is unregistered or unpriced is
-//! skipped for the block rather than halting it.
+//! oracle's whole reference-currency registry in order, prices each one, and
+//! shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget across them;
+//! each currency resumes from its own per-bin cursor next block. A currency
+//! whose COEN pair is unregistered or unpriced is skipped for the block
+//! rather than halting it.
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
@@ -121,9 +122,6 @@ pub fn qualify_buckets_with_rate(
     rate: U256,
     budget: u32,
 ) -> Result<u32> {
-    if rate.is_zero() || budget == 0 {
-        return Ok(0);
-    }
     let r_bin = NodContract::price_to_bin(rate)?;
     let mut nod = NodContract::new(ctx.storage.clone());
     let mut bin_cursor = 0_u32;

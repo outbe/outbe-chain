@@ -5,9 +5,9 @@
 //! network: the peers are this chain's validators, and the repositories worth
 //! holding are the ones registered in the `RadicleRegistry` precompile.
 //!
-//! `rad init` rewrites the network-facing part of that config from chain state
-//! - validator set, Radicle NodeId bindings and P2P hosts are all read over
-//! RPC, never hard-coded - and leaves the identity keys untouched.
+//! `rad init` rewrites the network-facing part of that config from chain
+//! state - validator set, Radicle NodeId bindings and P2P hosts are all read
+//! over RPC, never hard-coded - and leaves the identity keys untouched.
 
 use std::{
     fs,

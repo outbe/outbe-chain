@@ -350,7 +350,7 @@ mod call_sweep {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
     use crate::called;
-    use crate::constants::{MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP};
+    use crate::constants::{MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK};
     use crate::schema::IntexFactoryContract;
 
     const CHAIN_ID: u64 = 1;
@@ -692,7 +692,7 @@ mod call_sweep {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
             // One series per group, so the action budget bounds the groups taken.
-            let groups = MAX_SERIES_ACTIONS_PER_SWEEP + MAX_SERIES_ACTIONS_PER_SWEEP / 2;
+            let groups = MAX_SERIES_ACTIONS_PER_BLOCK + MAX_SERIES_ACTIONS_PER_BLOCK / 2;
             for day in 20260101..20260101 + groups {
                 seed_called_candidate(&s, day);
             }
@@ -710,7 +710,7 @@ mod call_sweep {
             sweep_at(&s, deadline + 1);
             assert_eq!(
                 unallocated(&s),
-                per_group * U256::from(MAX_SERIES_ACTIONS_PER_SWEEP)
+                per_group * U256::from(MAX_SERIES_ACTIONS_PER_BLOCK)
             );
 
             sweep_at(&s, deadline + 2);
@@ -729,7 +729,7 @@ mod call_sweep {
             fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
             // One group per day, half again as many as one slice may move.
-            let groups = MAX_SERIES_ACTIONS_PER_SWEEP + MAX_SERIES_ACTIONS_PER_SWEEP / 2;
+            let groups = MAX_SERIES_ACTIONS_PER_BLOCK + MAX_SERIES_ACTIONS_PER_BLOCK / 2;
             let days = 20260101..20260101 + groups;
             for day in days.clone() {
                 seed_called_candidate(&s, day);
@@ -742,7 +742,7 @@ mod call_sweep {
 
             // The daily trigger opens the sweep and takes what it can.
             let first = called::scan_and_call(&ctx).unwrap();
-            assert_eq!(first, MAX_SERIES_ACTIONS_PER_SWEEP);
+            assert_eq!(first, MAX_SERIES_ACTIONS_PER_BLOCK);
             assert_ne!(
                 IntexFactoryContract::new(s.clone())
                     .call_sweep_day
@@ -800,7 +800,7 @@ mod call_sweep {
                 U256::from(TRIGGER),
             );
 
-            let groups = MAX_SERIES_ACTIONS_PER_SWEEP + 1;
+            let groups = MAX_SERIES_ACTIONS_PER_BLOCK + 1;
             let days = 20260101..20260101 + groups;
             for day in days.clone() {
                 seed_called_candidate(&s, day);
@@ -812,7 +812,7 @@ mod call_sweep {
             );
             assert_eq!(
                 called::scan_and_call(&ctx).unwrap(),
-                MAX_SERIES_ACTIONS_PER_SWEEP
+                MAX_SERIES_ACTIONS_PER_BLOCK
             );
 
             // The next slice lands after midnight. Pinned to the day it opened on,
@@ -951,7 +951,7 @@ mod call_sweep {
 
             // All issued five days ago: every one is visited, decided, and left alone.
             let young_at = (scan_ts - 5 * DAY) as u32;
-            let groups = MAX_GROUP_DECISIONS_PER_SWEEP + 1;
+            let groups = MAX_GROUP_DECISIONS_PER_BLOCK + 1;
             for day in 20260101..20260101 + groups {
                 seed_young_candidate(&s, day, young_at);
             }
@@ -1027,7 +1027,7 @@ mod call_sweep {
             let young = 20260001;
             seed_young_candidate_at(&s, young, (scan_ts - 5 * DAY) as u32, TRIGGER);
             // Above it: enough mature groups at a higher trigger to spend every action.
-            for day in 20260101..20260101 + MAX_SERIES_ACTIONS_PER_SWEEP + 1 {
+            for day in 20260101..20260101 + MAX_SERIES_ACTIONS_PER_BLOCK + 1 {
                 seed_candidate_at(&s, day, ISSUED_AT, TRIGGER * 2);
             }
 
@@ -1037,7 +1037,7 @@ mod call_sweep {
             );
             assert_eq!(
                 called::scan_and_call(&ctx).unwrap(),
-                MAX_SERIES_ACTIONS_PER_SWEEP,
+                MAX_SERIES_ACTIONS_PER_BLOCK,
                 "the slice stops on its action budget"
             );
             assert_ne!(
@@ -1134,7 +1134,7 @@ mod call_sweep {
 
             // The first currency is small; the second holds more than one slice can move.
             seed_candidate_for(&s, REFERENCE_ISO, 20260101);
-            for day in 20260201..20260201 + MAX_SERIES_ACTIONS_PER_SWEEP + 1 {
+            for day in 20260201..20260201 + MAX_SERIES_ACTIONS_PER_BLOCK + 1 {
                 seed_candidate_for(&s, SECOND_ISO, day);
             }
 

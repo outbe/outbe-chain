@@ -76,5 +76,9 @@ interface IGemFactory {
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
     /// @notice A settled gem was burned to mine confidential Promis.
-    event GemBurned(uint256 indexed gemId, address owner, uint256 promisLoad);
+    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoad);
+    /// @notice A position ended its validity with capacity it never issued.
+    event GemPositionExpired(
+        uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
+    );
 }

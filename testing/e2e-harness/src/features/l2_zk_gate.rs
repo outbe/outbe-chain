@@ -25,7 +25,7 @@ use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::FullProvable;
+use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
@@ -108,7 +108,7 @@ fn generate_zk_offer_fixture(
         let binding =
             OutbeV1::binding(&l1_owner.into_array(), &tribute_draft_id.0, chain_id).unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let tree = Imt::<OutbeV1>::new(INCLUSION_DEPTH).unwrap();
+        let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
         let path = tree.empty_inclusion_path(0);
         let (witness, public) = draft
             .derive_full_witness(&mut rng, &signer, binding, &path)
