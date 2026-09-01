@@ -36,8 +36,7 @@ while IFS= read -r line || [[ -n $line ]]; do
   case $name in
     OUTBE_EXTERNAL_IP|OUTBE_CERTIFIED_RPC|OUTBE_VALIDATOR_ADDRESS|\
     OUTBE_BOOTNODES|OUTBE_CONSENSUS_PEERS|OUTBE_MONGODB_IMAGE|\
-    OUTBE_ENCLAVE_RUNTIME|OUTBE_TEE_RENEWAL_RELAY_KEY|\
-    OUTBE_TEE_RENEWAL_ARGS|OCOMP_CHAIN_ID|OCOMP_GENESIS_HASH|\
+    OUTBE_ENCLAVE_RUNTIME|OCOMP_CHAIN_ID|OCOMP_GENESIS_HASH|\
     OCOMP_BOOT_NONCE|OCOMP_PROTOCOL_BUNDLE_HASHES)
       ;;
     *)
@@ -66,10 +65,6 @@ required=(
 for name in "${required[@]}"; do
   [[ -n ${!name:-} ]] || fail "missing $name in $ENV_FILE"
 done
-[[ ${OUTBE_TEE_RENEWAL_RELAY_KEY+set} == set ]] || \
-  fail "missing OUTBE_TEE_RENEWAL_RELAY_KEY in $ENV_FILE"
-[[ ${OUTBE_TEE_RENEWAL_ARGS+set} == set ]] || \
-  fail "missing OUTBE_TEE_RENEWAL_ARGS in $ENV_FILE"
 
 [[ $OUTBE_EXTERNAL_IP =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || \
   fail 'OUTBE_EXTERNAL_IP must be an IPv4 literal'
@@ -97,10 +92,6 @@ done
 
 case $OUTBE_ENCLAVE_RUNTIME in
   system-gramine)
-    [[ -z $OUTBE_TEE_RENEWAL_RELAY_KEY ]] || \
-      fail 'system-gramine does not use a TEE renewal relay key'
-    [[ -z $OUTBE_TEE_RENEWAL_ARGS ]] || \
-      fail 'system-gramine does not use TEE renewal arguments'
     command -v gramine-sgx >/dev/null || fail 'gramine-sgx is not installed'
     [[ -f $OUTBE_ROOT/outbe-tee-enclave.manifest.sgx ]] || \
       fail 'signed Gramine manifest is missing'
@@ -108,12 +99,6 @@ case $OUTBE_ENCLAVE_RUNTIME in
       fail 'signed Gramine enclave signature is missing'
     ;;
   bundled-sgx)
-    [[ $OUTBE_TEE_RENEWAL_RELAY_KEY == \
-      /opt/outbe-chain/keys/tee-renewal-relay-key.hex ]] || \
-      fail 'bundled-sgx requires the canonical TEE renewal relay key path'
-    expected_renewal_args="--tee-renewal.relay-key $OUTBE_TEE_RENEWAL_RELAY_KEY --tee-renewal.rpc-url http://127.0.0.1:8545"
-    [[ $OUTBE_TEE_RENEWAL_ARGS == "$expected_renewal_args" ]] || \
-      fail 'bundled-sgx has invalid TEE renewal arguments'
     [[ -x $OUTBE_ROOT/sgx/bin/outbe-tee-enclave-launch ]] || \
       fail 'bundled SGX launcher is missing or not executable'
     for relative in \
@@ -206,12 +191,6 @@ find "$KEYS_DIR" -type d -exec chmod 0700 {} +
 for secret in "${secrets[@]}"; do
   chmod 0600 "$KEYS_DIR/$secret"
 done
-if [[ -n $OUTBE_TEE_RENEWAL_RELAY_KEY ]]; then
-  [[ -f $OUTBE_TEE_RENEWAL_RELAY_KEY && ! -L $OUTBE_TEE_RENEWAL_RELAY_KEY ]] || \
-    fail 'TEE renewal relay key is missing'
-  chown outbe:outbe "$OUTBE_TEE_RENEWAL_RELAY_KEY"
-  chmod 0600 "$OUTBE_TEE_RENEWAL_RELAY_KEY"
-fi
 
 canonical_hex_file() {
   local path=$1
@@ -227,10 +206,6 @@ canonical_hex_file "$KEYS_DIR/reth-p2p-secret.hex" 64 \
   'reth-p2p-secret.hex'
 canonical_hex_file "$KEYS_DIR/ocomp-key-v1.hex" 65 'ocomp-key-v1.hex'
 canonical_hex_file "$KEYS_DIR/ocomp-evm-key.hex" 64 'ocomp-evm-key.hex'
-if [[ -n $OUTBE_TEE_RENEWAL_RELAY_KEY ]]; then
-  canonical_hex_file "$OUTBE_TEE_RENEWAL_RELAY_KEY" 65 \
-    'TEE renewal relay key'
-fi
 
 "$OUTBE_ROOT/outbe-keygen" verify --key "$KEYS_DIR/signing-key.hex"
 
