@@ -331,7 +331,9 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
             .add_claimable_reward(RewardPool::Waa, alice, backing)
             .unwrap();
 
-        let gem_id = contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        let gem_id = contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .unwrap();
         assert!(!gem_id.is_zero());
 
         let gem = gem_of(&storage, alice);
@@ -366,7 +368,9 @@ fn the_sra_pool_mints_an_sra_gem_at_the_discounted_cost() {
             .add_claimable_reward(RewardPool::Sra, alice, backing)
             .unwrap();
 
-        contract.claim_reward(RewardPool::Sra, alice).unwrap();
+        contract
+            .claim_reward(RewardPool::Sra, alice, U256::ZERO)
+            .unwrap();
         let sra_gem = gem_of(&storage, alice);
         assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
         // SRA_RATE = 64: the Sra Gem costs 0.64 of the full agent cost.
@@ -395,7 +399,9 @@ fn a_claim_prices_on_the_last_finalized_utc_day() {
             .add_claimable_reward(RewardPool::Waa, alice, backing)
             .unwrap();
 
-        contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .unwrap();
         // The closed day's VWAP wins over the live quote.
         assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
     });
@@ -416,7 +422,9 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
             .add_claimable_reward(RewardPool::Waa, alice, backing)
             .unwrap();
 
-        let err = contract.claim_reward(RewardPool::Waa, alice).unwrap_err();
+        let err = contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .unwrap_err();
         assert!(err.to_string().contains("no usable COEN price"));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
         assert_eq!(
@@ -444,8 +452,67 @@ fn a_load_whose_cost_rounds_to_zero_keeps_its_balance() {
             .add_claimable_reward(RewardPool::Waa, alice, dust)
             .unwrap();
 
-        assert!(contract.claim_reward(RewardPool::Waa, alice).is_err());
+        assert!(contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .is_err());
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), dust);
+    });
+}
+
+#[test]
+fn a_partial_claim_mints_only_what_was_asked_for() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+    let taken = native(200);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, backing)
+            .unwrap();
+
+        contract
+            .claim_reward(RewardPool::Waa, alice, taken)
+            .unwrap();
+        assert_eq!(gem_of(&storage, alice).gem_load_minor, U256::from(200u64));
+        // The rest stays a balance, which cannot be Called and cannot be forfeited.
+        assert_eq!(
+            contract.get_claimable_reward(alice).unwrap(),
+            backing - taken
+        );
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            backing - taken
+        );
+    });
+}
+
+#[test]
+fn claiming_more_than_the_pool_holds_is_refused() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN, 0);
+        contract
+            .storage
+            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
+            .unwrap();
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, backing)
+            .unwrap();
+
+        let err = contract
+            .claim_reward(RewardPool::Waa, alice, backing + U256::from(1u64))
+            .unwrap_err();
+        assert!(err.to_string().contains("insufficient claimable balance"));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
     });
 }
 
@@ -465,7 +532,9 @@ fn a_sub_unit_remainder_stays_claimable() {
             .add_claimable_reward(RewardPool::Waa, alice, backing)
             .unwrap();
 
-        contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .unwrap();
         // The Gem carries the convertible part; what is below one protocol unit
         // keeps accumulating and its backing is not burned.
         assert_eq!(gem_of(&storage, alice).gem_load_minor, U256::from(500u64));
@@ -489,7 +558,9 @@ fn claiming_an_empty_pool_is_refused() {
             .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
             .unwrap();
 
-        let err = contract.claim_reward(RewardPool::Sra, alice).unwrap_err();
+        let err = contract
+            .claim_reward(RewardPool::Sra, alice, U256::ZERO)
+            .unwrap_err();
         assert!(err.to_string().contains("no claimable balance"));
     });
 }
@@ -514,7 +585,9 @@ fn the_pools_are_claimed_apart() {
             .unwrap();
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), waa + sra);
 
-        contract.claim_reward(RewardPool::Waa, alice).unwrap();
+        contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO)
+            .unwrap();
         assert_eq!(
             contract
                 .get_pool_claimable_reward(RewardPool::Waa, alice)
@@ -822,7 +895,7 @@ fn iagentreward_sol_matches_contract_public_annotations() {
     let expected = [
         ("getClaimableBalance", "address", true, "uint256"),
         ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
-        ("claimReward", "uint8", false, "uint256"),
+        ("claimReward", "uint8,uint256", false, "uint256"),
     ];
     for (name, args_types, is_view, ret_types) in expected {
         let canon = sol_function_canonical(SOL, name)

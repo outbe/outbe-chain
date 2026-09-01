@@ -29,14 +29,15 @@ impl AgentRewardContract<'_> {
         self.get_pool_claimable_reward(RewardPool::from_abi(pool)?, account)
     }
 
-    #[contract_public("claimReward(uint8) returns (uint256)")]
-    fn _abi_claim_reward(&mut self, sender: Address, pool: u8) -> Result<U256> {
+    #[contract_public("claimReward(uint8,uint256) returns (uint256)")]
+    fn _abi_claim_reward(&mut self, sender: Address, pool: u8, amount: U256) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
-        // Nothing to claim is a no-op, not a failure - the pre-Gem claim behaved
-        // the same way.
-        if self.get_pool_claimable_reward(pool, sender)?.is_zero() {
+        // amount = 0 means claim the whole pool balance, and nothing to claim is
+        // then a no-op rather than a failure - the pre-Gem claim behaved the same
+        // way.
+        if amount.is_zero() && self.get_pool_claimable_reward(pool, sender)?.is_zero() {
             return Ok(U256::ZERO);
         }
-        self.claim_reward(pool, sender)
+        self.claim_reward(pool, sender, amount)
     }
 }

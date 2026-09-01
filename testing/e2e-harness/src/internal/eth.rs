@@ -1177,7 +1177,11 @@ pub(crate) fn send_reward_call(
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
-    let data = IAgentReward::claimRewardCall { pool: WAA_POOL }.abi_encode();
+    let data = IAgentReward::claimRewardCall {
+        pool: WAA_POOL,
+        amount: U256::ZERO,
+    }
+    .abi_encode();
     block_on(async move {
         let provider = ProviderBuilder::new()
             .wallet(wallet)

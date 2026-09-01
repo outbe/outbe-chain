@@ -86,27 +86,43 @@ impl AgentRewardContract<'_> {
         }
     }
 
-    /// Claims the pool's balance as a Gem: mints the Gem, burns the native COEN
-    /// that backed it and clears what was converted. The Gem load is not that
-    /// COEN - it becomes Promis at mining time - so leaving the backing in place
-    /// would let one emission exist twice.
+    /// Claims `amount` of the pool's balance as a Gem, or all of it when `amount`
+    /// is zero. Mints the Gem, burns the native COEN that backed it and clears
+    /// what was converted. The Gem load is not that COEN - it becomes Promis at
+    /// mining time - so leaving the backing in place would let one emission exist
+    /// twice.
+    ///
+    /// The balance is the safe form of the reward and the Gem is not: an unsettled
+    /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
+    /// own risk control, and what it leaves behind keeps accruing.
     ///
     /// Any failure reverts the call and leaves the balance for the next day, which
     /// brings a new VWAP with it.
-    pub fn claim_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
+    pub fn claim_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<U256> {
         let balance = self.get_pool_claimable_reward(pool, address)?;
         if balance.is_zero() {
             return Err(PrecompileError::Revert(
                 "no claimable balance in this pool".into(),
             ));
         }
+        let requested = if amount.is_zero() { balance } else { amount };
+        if requested > balance {
+            return Err(PrecompileError::Revert(
+                "insufficient claimable balance".into(),
+            ));
+        }
         // The balance is native COEN; a Gem load is a protocol amount. Only the
         // part that survives the conversion is minted and burned, so a sub-unit
         // remainder keeps accumulating instead of being lost.
-        let gem_load = native_to_protocol_floor(balance);
+        let gem_load = native_to_protocol_floor(requested);
         if gem_load.is_zero() {
             return Err(PrecompileError::Revert(
-                "claimable balance is below one protocol unit".into(),
+                "claimed amount is below one protocol unit".into(),
             ));
         }
         let burned = checked_protocol_to_native(gem_load)

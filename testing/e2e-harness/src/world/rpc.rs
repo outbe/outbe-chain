@@ -1642,7 +1642,10 @@ impl Rpc {
             &self.cfg.rpc0,
             addresses::AGENT_REWARD_ADDR,
             key,
-            &IAgentReward::claimRewardCall { pool },
+            &IAgentReward::claimRewardCall {
+                pool,
+                amount: U256::ZERO,
+            },
             None,
         )?;
         let receipt = eth::receipt_json(&self.cfg.rpc0, &tx_hash)

@@ -196,13 +196,21 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",
-    "Claim the whole AgentReward balance of one pool (0 = WAA, 1 = SRA) as a Gem. Requires OUTBE_PRIVATE_KEY.",
+    "Claim AgentReward from one pool (0 = WAA, 1 = SRA) as a Gem. Omit amount to claim the whole pool balance. Requires OUTBE_PRIVATE_KEY.",
     {
       pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA"),
+      amount: coen.optional().describe("amount to claim; omit for the whole balance"),
       wait: z.boolean().optional(),
     },
-    handler(({ pool, wait }) =>
-      submit(ctx, "agentreward", "claimReward", [pool], GAS_DEFAULT, wait ?? true),
+    handler(({ pool, amount, wait }) =>
+      submit(
+        ctx,
+        "agentreward",
+        "claimReward",
+        [pool, amount === undefined ? 0n : parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 
