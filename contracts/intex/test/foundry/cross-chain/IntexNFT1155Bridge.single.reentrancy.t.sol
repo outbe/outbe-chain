@@ -104,7 +104,7 @@ contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);
 
-        tokenA.mint(user, AMOUNT, SERIES_ID);
+        tokenA.issue(user, AMOUNT, SERIES_ID);
     }
 
     function test_receiveMessage_blocks_reentry_to_send() public {

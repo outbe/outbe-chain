@@ -59,7 +59,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_HopAToB_TotalSupplyPreservedAndBelowCap() public {
         uint256 minted = 100;
-        tokenA.mint(user, minted, SERIES_ID);
+        tokenA.issue(user, minted, SERIES_ID);
 
         uint256 bridged = 60;
         _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
@@ -76,7 +76,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_RoundTripAToBToA_TotalSupplyPreserved() public {
         uint256 minted = 100;
-        tokenA.mint(user, minted, SERIES_ID);
+        tokenA.issue(user, minted, SERIES_ID);
 
         _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, minted);
         assertEq(tokenA.totalSupply(TOKEN_ID), 0, "A drained after outbound");
@@ -103,7 +103,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         uint256 minted = 100;
         uint256 bridged = 100;
-        tokenA.mint(user, minted, parkSeries);
+        tokenA.issue(user, minted, parkSeries);
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, bridged);
 
@@ -143,7 +143,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
-        tokenA.mint(user, minted, parkSeries);
+        tokenA.issue(user, minted, parkSeries);
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
 
@@ -173,7 +173,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint256 minted = bound(mintedSeed, 1, ISSUED_INTEX_COUNT);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
-        tokenA.mint(user, minted, SERIES_ID);
+        tokenA.issue(user, minted, SERIES_ID);
         if (bridged > 0) {
             _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
         }
