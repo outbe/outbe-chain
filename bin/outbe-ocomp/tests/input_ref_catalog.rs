@@ -774,6 +774,191 @@ fn manifest_mismatch_does_not_seal_and_exact_seal_replays_but_rebinding_fails() 
 }
 
 #[test]
+fn deleting_the_final_header_never_rebinds_the_prepared_manifest_authority() {
+    let fixture = one_chunk_stage_fixture();
+    let mut publisher = InputRefCatalogPublisher::open_or_resume(
+        &fixture.catalog_root,
+        fixture.subject,
+        fixture.limits,
+        fixture.list_limits,
+    )
+    .unwrap();
+    publisher.append(&fixture.reference).unwrap();
+    let prepared = publisher.prepare(&fixture.reader, &fixture.bundle).unwrap();
+    let original = fixture.manifest(prepared.summary(), 120);
+    let original_ref = fixture.publish_manifest(&original);
+    drop(
+        prepared
+            .seal(&fixture.cas, &original_ref, &fixture.bundle)
+            .unwrap(),
+    );
+    fs::remove_file(fixture.catalog_root.join("catalog.prepared")).unwrap();
+    drop(
+        InputRefCatalogPublisher::open_or_resume(
+            &fixture.catalog_root,
+            fixture.subject,
+            fixture.limits,
+            fixture.list_limits,
+        )
+        .unwrap(),
+    );
+    assert!(fixture.catalog_root.join("catalog.prepared").is_file());
+    fs::remove_file(fixture.catalog_root.join("catalog.header")).unwrap();
+
+    let mut bounded = InputRefCatalogPublisher::open_or_resume(
+        &fixture.catalog_root,
+        fixture.subject,
+        fixture.limits,
+        fixture.list_limits,
+    )
+    .unwrap();
+    let mut extra = fixture.reference.clone();
+    extra.ordinal = 1;
+    assert!(matches!(
+        bounded.append(&extra),
+        Err(InputRefCatalogError::UnexpectedReference { ordinal: 1 })
+    ));
+    drop(bounded);
+
+    let mut mutations = Vec::new();
+    let mut candidate = original.clone();
+    candidate.checkpoint.finalized_block_number += 1;
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.wwd += 1;
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.sealed_tribute_collection_key = hash(121);
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.sealed_tribute_collection_root = hash(122);
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.tribute_nominal_total += U256::from(1);
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.fidelity_opening_root = hash(123);
+    mutations.push(candidate);
+    let mut candidate = original.clone();
+    candidate.oracle_opening_root = hash(124);
+    mutations.push(candidate);
+
+    for candidate in mutations {
+        let candidate_ref = fixture.publish_manifest(&candidate);
+        let mut replay = InputRefCatalogPublisher::open_or_resume(
+            &fixture.catalog_root,
+            fixture.subject,
+            fixture.limits,
+            fixture.list_limits,
+        )
+        .unwrap();
+        assert_eq!(
+            replay.append(&fixture.reference).unwrap(),
+            InputRefAdmissionOutcome::ExactReplay
+        );
+        assert!(matches!(
+            replay
+                .prepare(&fixture.reader, &fixture.bundle)
+                .unwrap()
+                .seal(&fixture.cas, &candidate_ref, &fixture.bundle),
+            Err(InputRefCatalogError::AuthorityMismatch)
+        ));
+        assert!(!fixture.catalog_root.join("catalog.header").exists());
+    }
+
+    let mut exact = InputRefCatalogPublisher::open_or_resume(
+        &fixture.catalog_root,
+        fixture.subject,
+        fixture.limits,
+        fixture.list_limits,
+    )
+    .unwrap();
+    exact.append(&fixture.reference).unwrap();
+    drop(
+        exact
+            .prepare(&fixture.reader, &fixture.bundle)
+            .unwrap()
+            .seal(&fixture.cas, &original_ref, &fixture.bundle)
+            .unwrap(),
+    );
+    assert!(fixture.catalog_root.join("catalog.header").is_file());
+}
+
+#[test]
+fn a_partial_legacy_header_first_catalog_migrates_and_finishes_exact_refs() {
+    let fixture = one_chunk_stage_fixture();
+    let manifest = fixture.manifest(
+        outbe_ocomp::input_ref_catalog::InputRefCatalogSummaryV1 {
+            input_chunk_count: 1,
+            input_chunk_list_root: outbe_ocomp_protocol::ordered_list_root(
+                ListKind::InputChunkReferences,
+                &[fixture
+                    .reference
+                    .encode_canonical_record(&fixture.limits)
+                    .unwrap()],
+                fixture.list_limits,
+            )
+            .unwrap(),
+            exact_encoded_bytes: fixture.reference.encoded_bytes,
+            exact_record_count: fixture.reference.record_count,
+            tribute_count: fixture.reference.record_count,
+        },
+        125,
+    );
+    let manifest_ref = fixture.publish_manifest(&manifest);
+    drop(
+        VerifiedInputChunkRefCatalog::open(
+            &fixture.catalog_root,
+            &fixture.cas,
+            &manifest_ref,
+            fixture.limits,
+            fixture.list_limits,
+        )
+        .unwrap(),
+    );
+
+    let mut migrated = InputRefCatalogPublisher::open_or_resume(
+        &fixture.catalog_root,
+        fixture.subject,
+        fixture.limits,
+        fixture.list_limits,
+    )
+    .unwrap();
+    assert_eq!(
+        migrated.append(&fixture.reference).unwrap(),
+        InputRefAdmissionOutcome::NewlyAdmitted
+    );
+    drop(
+        migrated
+            .prepare(&fixture.reader, &fixture.bundle)
+            .unwrap()
+            .seal(&fixture.cas, &manifest_ref, &fixture.bundle)
+            .unwrap(),
+    );
+}
+
+#[test]
+fn staged_catalog_rejects_a_symlinked_ancestor() {
+    let fixture = one_chunk_stage_fixture();
+    let redirected = fixture.catalog_root.with_file_name("redirected");
+    fs::create_dir(&redirected).unwrap();
+    let symlinked_parent = fixture.catalog_root.with_file_name("symlinked-parent");
+    symlink(&redirected, &symlinked_parent).unwrap();
+    let root = symlinked_parent.join("catalog");
+
+    assert!(matches!(
+        InputRefCatalogPublisher::open_or_resume(
+            &root,
+            fixture.subject,
+            fixture.limits,
+            fixture.list_limits,
+        ),
+        Err(InputRefCatalogError::UnsafePath(_))
+    ));
+    assert!(!redirected.join("catalog").exists());
+}
+
+#[test]
 fn staged_prepare_streams_past_the_old_4096_reference_limit() {
     const CHUNK_COUNT: u32 = 4_097;
 

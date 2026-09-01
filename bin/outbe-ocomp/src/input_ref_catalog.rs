@@ -31,6 +31,7 @@ const ENTRY_MAGIC: [u8; 8] = *b"OUTBICR1";
 const CONFLICT_MAGIC: [u8; 8] = *b"OUTBICF1";
 const STAGING_MAGIC: [u8; 8] = *b"OUTBICS1";
 const HEADER_FILE: &str = "catalog.header";
+const PREPARED_FILE: &str = "catalog.prepared";
 const STAGING_FILE: &str = "catalog.staging";
 const LOCK_FILE: &str = "catalog.lock";
 const CONFLICT_FILE: &str = "catalog.abstained";
@@ -81,6 +82,7 @@ pub struct InputRefCatalogPublisher {
     next_ordinal: u32,
     previous_kind: Option<InputChunkKind>,
     abstained: bool,
+    prepared_header: Option<InputRefCatalogHeaderV1>,
     sealed_header: Option<InputRefCatalogHeaderV1>,
     lock: CatalogLock,
 }
@@ -91,6 +93,7 @@ pub struct PreparedInputRefCatalogPublisher {
     list_limits: OrderedListLimits,
     subject: InputRefCatalogSubjectV1,
     summary: InputRefCatalogSummaryV1,
+    prepared_header: Option<InputRefCatalogHeaderV1>,
     sealed_header: Option<InputRefCatalogHeaderV1>,
     lock: CatalogLock,
 }
@@ -114,11 +117,40 @@ impl InputRefCatalogPublisher {
         } else {
             None
         };
-        if final_header.as_ref().is_some_and(|header| {
-            header.protocol_bundle_hash != subject.protocol_bundle_hash
-                || header.job_id != subject.job_id
-                || header.attempt != subject.attempt
-        }) {
+        let mut prepared_header = if path_exists(&root.join(PREPARED_FILE))? {
+            Some(decode_header(
+                &read_bounded(&root.join(PREPARED_FILE), catalog_byte_cap(&limits))?,
+                &limits,
+            )?)
+        } else {
+            None
+        };
+        if prepared_header.is_none() {
+            if let Some(header) = &final_header {
+                persist_atomic(
+                    &root,
+                    &root.join(PREPARED_FILE),
+                    &encode_header(header, &limits)?,
+                )?;
+                prepared_header = Some(header.clone());
+            }
+        }
+        if final_header
+            .as_ref()
+            .zip(prepared_header.as_ref())
+            .is_some_and(|(sealed, prepared)| sealed != prepared)
+        {
+            return Err(InputRefCatalogError::AuthorityMismatch);
+        }
+        if final_header
+            .as_ref()
+            .or(prepared_header.as_ref())
+            .is_some_and(|header| {
+                header.protocol_bundle_hash != subject.protocol_bundle_hash
+                    || header.job_id != subject.job_id
+                    || header.attempt != subject.attempt
+            })
+        {
             return Err(InputRefCatalogError::AuthorityMismatch);
         }
         let staging_path = root.join(STAGING_FILE);
@@ -142,12 +174,7 @@ impl InputRefCatalogPublisher {
         }
         let abstained = path_exists(&root.join(CONFLICT_FILE))?;
         let (next_ordinal, previous_kind) = scan_staged_entries(&root, &limits)?;
-        if let Some(header) = &final_header {
-            if next_ordinal < header.input_chunk_count {
-                return Err(InputRefCatalogError::MissingReference {
-                    ordinal: next_ordinal,
-                });
-            }
+        if let Some(header) = final_header.as_ref().or(prepared_header.as_ref()) {
             if next_ordinal > header.input_chunk_count {
                 return Err(InputRefCatalogError::UnexpectedReference {
                     ordinal: header.input_chunk_count,
@@ -162,6 +189,7 @@ impl InputRefCatalogPublisher {
             next_ordinal,
             previous_kind,
             abstained,
+            prepared_header,
             sealed_header: final_header,
             lock,
         })
@@ -197,6 +225,7 @@ impl InputRefCatalogPublisher {
         if self
             .sealed_header
             .as_ref()
+            .or(self.prepared_header.as_ref())
             .is_some_and(|header| reference.ordinal >= header.input_chunk_count)
         {
             return Err(InputRefCatalogError::UnexpectedReference {
@@ -284,6 +313,10 @@ impl InputRefCatalogPublisher {
             .sealed_header
             .as_ref()
             .is_some_and(|header| !summary_matches_header(summary, header))
+            || self
+                .prepared_header
+                .as_ref()
+                .is_some_and(|header| !summary_matches_header(summary, header))
         {
             return Err(InputRefCatalogError::AuthorityMismatch);
         }
@@ -293,6 +326,7 @@ impl InputRefCatalogPublisher {
             list_limits: self.list_limits,
             subject: self.subject,
             summary,
+            prepared_header: self.prepared_header,
             sealed_header: self.sealed_header,
             lock: self.lock,
         })
@@ -334,6 +368,17 @@ impl PreparedInputRefCatalogPublisher {
             return Err(InputRefCatalogError::AuthorityMismatch);
         }
         let expected = expected_header(manifest_ref, &manifest, &self.limits)?;
+        if let Some(prepared) = &self.prepared_header {
+            if prepared != &expected {
+                return Err(InputRefCatalogError::AuthorityMismatch);
+            }
+        } else {
+            persist_atomic(
+                &self.root,
+                &self.root.join(PREPARED_FILE),
+                &encode_header(&expected, &self.limits)?,
+            )?;
+        }
         if let Some(sealed) = &self.sealed_header {
             if sealed != &expected {
                 return Err(InputRefCatalogError::AuthorityMismatch);
@@ -745,7 +790,11 @@ impl Iterator for InputRefCatalogClosureCursorV1<'_> {
                         .file_name()
                         .into_string()
                         .map_err(|_| InputRefCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-                    if name == HEADER_FILE || name == STAGING_FILE || name == LOCK_FILE {
+                    if name == HEADER_FILE
+                        || name == PREPARED_FILE
+                        || name == STAGING_FILE
+                        || name == LOCK_FILE
+                    {
                         return Ok(InputRefCatalogClosureStepV1::DirectoryEntryChecked);
                     }
                     let prefix = name.strip_suffix(ENTRY_SUFFIX).ok_or_else(|| {
@@ -871,6 +920,8 @@ pub enum InputRefCatalogError {
     OrdinalBinding { requested: u32, encoded: u32 },
     #[error("unexpected input-ref catalog entry at {0}")]
     UnexpectedCatalogEntry(PathBuf),
+    #[error("unsafe input-ref catalog path at {0}")]
+    UnsafePath(PathBuf),
     #[error("ambiguous temporary input-ref file remains at {0}")]
     AmbiguousTemporary(PathBuf),
     #[error("input-ref catalog lock is already held at {0}")]
@@ -930,7 +981,11 @@ fn scan_staged_entries(
             .file_name()
             .into_string()
             .map_err(|_| InputRefCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-        if name == HEADER_FILE || name == STAGING_FILE || name == LOCK_FILE || name == CONFLICT_FILE
+        if name == HEADER_FILE
+            || name == PREPARED_FILE
+            || name == STAGING_FILE
+            || name == LOCK_FILE
+            || name == CONFLICT_FILE
         {
             continue;
         }
@@ -1184,11 +1239,13 @@ fn catalog_byte_cap(limits: &SchemaLimits) -> usize {
 }
 
 fn create_private_directory(path: &Path) -> Result<(), InputRefCatalogError> {
+    reject_symlink_ancestors(path)?;
     fs::create_dir_all(path).map_err(|source| io_error("create directory", path, source))?;
+    reject_symlink_ancestors(path)?;
     let metadata =
         fs::symlink_metadata(path).map_err(|source| io_error("inspect directory", path, source))?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err(InputRefCatalogError::InvalidEnvelope);
+        return Err(InputRefCatalogError::UnsafePath(path.to_path_buf()));
     }
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(DIRECTORY_MODE))
@@ -1196,10 +1253,25 @@ fn create_private_directory(path: &Path) -> Result<(), InputRefCatalogError> {
 }
 
 fn inspect_private_directory(path: &Path) -> Result<(), InputRefCatalogError> {
+    reject_symlink_ancestors(path)?;
     let metadata =
         fs::symlink_metadata(path).map_err(|source| io_error("inspect directory", path, source))?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err(InputRefCatalogError::InvalidEnvelope);
+        return Err(InputRefCatalogError::UnsafePath(path.to_path_buf()));
+    }
+    Ok(())
+}
+
+fn reject_symlink_ancestors(path: &Path) -> Result<(), InputRefCatalogError> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(InputRefCatalogError::UnsafePath(ancestor.to_path_buf()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(io_error("inspect catalog ancestor", ancestor, source)),
+        }
     }
     Ok(())
 }
