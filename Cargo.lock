@@ -8147,6 +8147,7 @@ dependencies = [
  "futures",
  "hex",
  "k256 0.13.4",
+ "metrics",
  "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",

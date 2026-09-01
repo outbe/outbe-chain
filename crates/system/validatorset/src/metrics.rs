@@ -88,6 +88,12 @@ pub fn record_ocomp_miss(addr: Address, first_in_window: bool, recovery_deadline
         "kind" => if first_in_window { "first" } else { "repeat" },
     )
     .increment(1);
+    record_ocomp_recovery_deadline(addr, recovery_deadline);
+}
+
+/// Publish one durable open-window deadline. The per-block sweep re-emits this
+/// from chain state so a process restart cannot erase the alert series.
+pub fn record_ocomp_recovery_deadline(addr: Address, recovery_deadline: u64) {
     gauge!("outbe_ocomp_recovery_deadline", "addr" => addr_label(addr))
         .set(recovery_deadline as f64);
 }
@@ -106,7 +112,10 @@ pub fn clear_ocomp_recovery_deadline(addr: Address) {
     gauge!("outbe_ocomp_recovery_deadline", "addr" => addr_label(addr)).set(0.0);
 }
 
-/// Aggregate result of the bounded per-block OCOMP recovery sweep.
-pub fn record_ocomp_recovery_sweep(remaining_open: u32) {
+/// Aggregate result of the bounded per-block OCOMP recovery sweep. The block
+/// number comes from the same execution context that decides restoration or
+/// jail, so deadline alerts do not depend on the off-chain reader being alive.
+pub fn record_ocomp_recovery_sweep(current_block: u64, remaining_open: u32) {
+    gauge!("outbe_ocomp_recovery_block_number").set(current_block as f64);
     gauge!("outbe_ocomp_recovery_open_windows").set(f64::from(remaining_open));
 }

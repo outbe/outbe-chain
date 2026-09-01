@@ -284,6 +284,37 @@ fn pending_cursor_releases_the_spool_lock_between_records() {
 }
 
 #[test]
+fn acknowledged_history_is_absent_from_the_durable_pending_index() {
+    let temp = TempDir::new().expect("tempdir");
+    let spool = spool(&temp);
+    for (seed, cursor) in [(0x41, 1), (0x42, 2), (0x43, 3)] {
+        let job = spec(seed, cursor);
+        let (offer, _) = spool.put_offer(cursor, &job).expect("offer");
+        let receipt = verified_receipt(&job, cursor, seed.wrapping_add(0x20));
+        spool
+            .put_ack(&offer, &receipt, &support::protocol_bundle())
+            .expect("ack");
+    }
+    assert_eq!(
+        fs::read_dir(temp.path().join("discovery/offers"))
+            .expect("offer history")
+            .count(),
+        3,
+        "ACK history remains available for exact authority verification"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path().join("discovery/pending"))
+            .expect("pending index")
+            .count(),
+        0,
+        "completed history must not be revisited by each exporter cycle"
+    );
+
+    spool.put_offer(4, &spec(0x44, 4)).expect("pending offer");
+    assert_eq!(spool.pending_count().expect("pending count"), 1);
+}
+
+#[test]
 fn substituted_spec_generation_and_identity_latch_quarantine() {
     for conflict in ["spec", "generation", "identity"] {
         let temp = TempDir::new().expect("tempdir");

@@ -37,6 +37,12 @@ scrape_configs:
     #   outbe_parent_cert_store_size          - exact-parent certificate handoff records retained
     #   outbe_parent_cert_included_total      - Phase 1 parent certificate metadata included
     #   outbe_parent_cert_missing_total       - proposer slot forfeits/misses due to unavailable certificate
+    #   outbe_ocomp_finalized_reader_lag_blocks - unified reader backlog to finalized head
+    #   outbe_ocomp_closure_lag_blocks        - finalized history retained by open OCOMP jobs
+    #   outbe_ocomp_discovery_pending_offers  - durable refs awaiting exporter ACK
+    #   outbe_ocomp_finalized_loop_fatal      - sticky node-side reader fatal state
+    #   outbe_ocomp_recovery_open_windows     - validators inside OCOMP recovery windows
+    #   outbe_ocomp_recovery_block_number     - block checked by the per-block recovery sweep
 
   # Standalone OCOMP roles reuse their loopback-only Salvo observability
   # server for `/healthz`, `/status`, and `/metrics`. Keep these ports aligned

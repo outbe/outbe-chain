@@ -53,8 +53,6 @@ use crate::finalized_frame::FinalizedFrame;
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPIN1";
 const JOURNAL_VERSION: u16 = 5;
-const LEGACY_RECORD_VERSION: u16 = 3;
-const PREVIOUS_RECORD_VERSION: u16 = 4;
 const PIN_RECORD_VERSION: u16 = 5;
 const PIN_RECORD_MAX_BYTES: usize = 512;
 /// The registry has no OCOMP product count limit. Its only cardinality ceiling
@@ -90,6 +88,18 @@ pub struct CandidatePinV1 {
     pub ce_sealed_root: B256,
     pub protocol_bundle_hash: B256,
     pub input_lease_id: B256,
+}
+
+/// The single decoded `OffchainJobRequested` observation from one finalized
+/// frame. It is a locator only; retention and discovery independently reopen
+/// the exact block state before treating it as authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalizedRequestObservationV1 {
+    pub intent_id: B256,
+    pub wwd: u32,
+    pub pending_nonce: u64,
+    pub attempt: u32,
+    pub activation_preconditions_hash: B256,
 }
 
 /// Exact finalized job derived from the candidate's typed state.
@@ -250,15 +260,16 @@ pub trait FinalizedInputProofSource: Send + Sync {
         block: &ConsensusBlock,
     ) -> Result<Option<CandidatePinV1>, RetentionError>;
 
-    /// Discover a candidate from receipts already loaded by the single
+    /// Authenticate the one request observation decoded by the unified
     /// finalized-frame reader. Production finalized reconciliation must use
-    /// this seam and must not issue another receipt query.
-    fn candidate_for_finalized_frame(
+    /// this seam and must not traverse receipts again.
+    fn candidate_for_finalized_observation(
         &self,
         _frame: &FinalizedFrame,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
+        _observation: FinalizedRequestObservationV1,
+    ) -> Result<CandidatePinV1, RetentionError> {
         Err(RetentionError::Source(
-            "finalized-frame candidate discovery is unavailable".to_owned(),
+            "finalized-frame candidate authentication is unavailable".to_owned(),
         ))
     }
 
@@ -368,51 +379,25 @@ where
         read_ocomp_job_record_at(&self.provider, block_hash, intent_id, &self.limits)
     }
 
-    fn candidate_from_receipts(
+    fn candidate_from_observation(
         &self,
         block_number: u64,
         block_hash: B256,
         state_root: B256,
-        receipts: &[OutbeReceipt],
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
-        let mut request = None;
-        for receipt in receipts {
-            if !receipt.status() {
-                continue;
-            }
-            for log in receipt.logs() {
-                if log.address != METADOSIS_ADDRESS
-                    || log.data.topics().first()
-                        != Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
-                {
-                    continue;
-                }
-                let decoded =
-                    IMetadosis::OffchainJobRequested::decode_log(log).map_err(|error| {
-                        RetentionError::Source(format!("decode candidate request locator: {error}"))
-                    })?;
-                if request.replace(decoded).is_some() {
-                    return Err(RetentionError::Source(
-                        "candidate contains more than one OCOMP request".to_owned(),
-                    ));
-                }
-            }
-        }
-        let Some(request) = request else {
-            return Ok(None);
-        };
-        let record = self.record_at_hash(block_hash, request.data.intentId)?;
+        observation: FinalizedRequestObservationV1,
+    ) -> Result<CandidatePinV1, RetentionError> {
+        let record = self.record_at_hash(block_hash, observation.intent_id)?;
         if record.status != OcompJobStatus::AwaitingFinality {
             return Err(RetentionError::Source(
                 "event locator does not open the exact pending intent".to_owned(),
             ));
         }
-        validate_request_locator(&record.intent, &request.data, &self.limits)?;
-        Ok(Some(CandidatePinV1 {
+        validate_request_observation(&record.intent, observation, &self.limits)?;
+        Ok(CandidatePinV1 {
             block_number,
             block_hash,
             state_root,
-            intent_id: request.data.intentId,
+            intent_id: observation.intent_id,
             wwd: record.intent.wwd,
             ce_sealed_root: record.intent.ce_sealed_root,
             protocol_bundle_hash: record.intent.protocol_bundle_hash,
@@ -420,8 +405,52 @@ where
                 .intent
                 .input_lease_id()
                 .map_err(|error| RetentionError::Source(error.to_string()))?,
-        }))
+        })
     }
+}
+
+/// Decode `OffchainJobRequested` exactly once from a finalized frame shared by
+/// projection, retention and discovery. More than one request in a block is a
+/// protocol contradiction and fails closed.
+pub fn observe_finalized_request(
+    frame: &FinalizedFrame,
+) -> Result<Option<FinalizedRequestObservationV1>, RetentionError> {
+    observe_request_in_receipts(frame.receipts())
+}
+
+fn observe_request_in_receipts(
+    receipts: &[OutbeReceipt],
+) -> Result<Option<FinalizedRequestObservationV1>, RetentionError> {
+    let mut observation = None;
+    for receipt in receipts {
+        if !receipt.status() {
+            continue;
+        }
+        for log in receipt.logs() {
+            if log.address != METADOSIS_ADDRESS
+                || log.data.topics().first()
+                    != Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
+            {
+                continue;
+            }
+            let event = IMetadosis::OffchainJobRequested::decode_log(log).map_err(|error| {
+                RetentionError::Source(format!("decode finalized OCOMP request: {error}"))
+            })?;
+            let decoded = FinalizedRequestObservationV1 {
+                intent_id: event.data.intentId,
+                wwd: event.data.wwd,
+                pending_nonce: event.data.pendingNonce,
+                attempt: event.data.attempt,
+                activation_preconditions_hash: event.data.activationPreconditionsHash,
+            };
+            if observation.replace(decoded).is_some() {
+                return Err(RetentionError::Source(
+                    "finalized frame contains more than one OCOMP request".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(observation)
 }
 
 /// Read one exact typed OCOMP job record from canonical state at `block_hash`.
@@ -607,24 +636,29 @@ where
                     )
                 })?,
         };
-        self.candidate_from_receipts(
+        let Some(observation) = observe_request_in_receipts(&receipts)? else {
+            return Ok(None);
+        };
+        self.candidate_from_observation(
             block.number(),
             block.block_hash(),
             block.header().state_root(),
-            &receipts,
+            observation,
         )
+        .map(Some)
     }
 
-    fn candidate_for_finalized_frame(
+    fn candidate_for_finalized_observation(
         &self,
         frame: &FinalizedFrame,
-    ) -> Result<Option<CandidatePinV1>, RetentionError> {
+        observation: FinalizedRequestObservationV1,
+    ) -> Result<CandidatePinV1, RetentionError> {
         let identity = frame.identity();
-        self.candidate_from_receipts(
+        self.candidate_from_observation(
             identity.number,
             identity.hash,
             frame.state_root(),
-            frame.receipts(),
+            observation,
         )
     }
 
@@ -846,9 +880,9 @@ fn terminal_height_from_record(
     }
 }
 
-fn validate_request_locator(
+fn validate_request_observation(
     intent: &JobIntentV1,
-    event: &IMetadosis::OffchainJobRequested,
+    observation: FinalizedRequestObservationV1,
     limits: &SchemaLimits,
 ) -> Result<(), RetentionError> {
     let activation_hash = intent
@@ -857,10 +891,10 @@ fn validate_request_locator(
         .map_err(|error| {
             RetentionError::Source(format!("hash activation preconditions: {error}"))
         })?;
-    if intent.wwd != event.wwd
-        || intent.pending_nonce != event.pendingNonce
-        || intent.attempt != event.attempt
-        || activation_hash != event.activationPreconditionsHash
+    if intent.wwd != observation.wwd
+        || intent.pending_nonce != observation.pending_nonce
+        || intent.attempt != observation.attempt
+        || activation_hash != observation.activation_preconditions_hash
     {
         return Err(RetentionError::Source(
             "request event locator disagrees with typed state".to_owned(),
@@ -961,16 +995,16 @@ impl JournalStore {
     fn initialize(&self) -> Result<Option<JobRegistryV1>, RetentionError> {
         fs::create_dir_all(&self.root)
             .map_err(|source| self.io("create directory", &self.root, source))?;
-        if self.temporary.exists() {
-            return Err(RetentionError::AmbiguousJournal(
-                "temporary write exists after restart",
-            ));
-        }
-        if !self.journal.exists() {
+        self.recover_temporary()?;
+        self.read_registry_at(&self.journal)
+    }
+
+    fn read_registry_at(&self, path: &Path) -> Result<Option<JobRegistryV1>, RetentionError> {
+        if !path.exists() {
             return Ok(None);
         }
-        let metadata = fs::symlink_metadata(&self.journal)
-            .map_err(|source| self.io("stat", &self.journal, source))?;
+        let metadata =
+            fs::symlink_metadata(path).map_err(|source| self.io("stat", path, source))?;
         if !metadata.file_type().is_file() {
             return Err(RetentionError::AmbiguousJournal(
                 "journal is not a regular file",
@@ -979,12 +1013,57 @@ impl JournalStore {
         if metadata.len() > JOURNAL_MAX_BYTES as u64 {
             return Err(RetentionError::MalformedJournal("journal exceeds byte cap"));
         }
-        let mut file =
-            File::open(&self.journal).map_err(|source| self.io("open", &self.journal, source))?;
+        let mut file = File::open(path).map_err(|source| self.io("open", path, source))?;
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
         file.read_to_end(&mut bytes)
-            .map_err(|source| self.io("read", &self.journal, source))?;
+            .map_err(|source| self.io("read", path, source))?;
         decode_registry(&bytes).map(Some)
+    }
+
+    fn recover_temporary(&self) -> Result<(), RetentionError> {
+        let pending = match self.read_registry_at(&self.temporary) {
+            Ok(Some(pending)) => pending,
+            Ok(None) => return Ok(()),
+            Err(
+                RetentionError::MalformedJournal(_)
+                | RetentionError::UnsupportedJournalVersion { .. },
+            ) => {
+                // The temp name is never published authority. A crash before
+                // its fsync may leave arbitrary/truncated bytes; discard those
+                // and replay from the last durable frame/journal generation.
+                self.discard_temporary()?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let current = self.read_registry_at(&self.journal)?;
+        let valid_successor = match current.as_ref() {
+            None => {
+                pending.generation == 1
+                    && pending.records.len() == 1
+                    && pending.records.contains_key(&pending.last_updated)
+            }
+            Some(current) => journal_successor_is_exact(current, &pending),
+        };
+        if !valid_successor {
+            return Err(RetentionError::AmbiguousJournal(
+                "temporary write is not the exact next journal generation",
+            ));
+        }
+        fs::rename(&self.temporary, &self.journal)
+            .map_err(|source| self.io("recover temporary", &self.temporary, source))?;
+        File::open(&self.root)
+            .and_then(|directory| self.durability.sync_directory(&directory))
+            .map_err(|source| self.io("fsync recovered directory", &self.root, source))?;
+        Ok(())
+    }
+
+    fn discard_temporary(&self) -> Result<(), RetentionError> {
+        fs::remove_file(&self.temporary)
+            .map_err(|source| self.io("discard torn temporary", &self.temporary, source))?;
+        File::open(&self.root)
+            .and_then(|directory| self.durability.sync_directory(&directory))
+            .map_err(|source| self.io("fsync discarded temporary", &self.root, source))
     }
 
     fn persist(
@@ -1023,6 +1102,23 @@ impl JournalStore {
             source,
         }
     }
+}
+
+fn journal_successor_is_exact(current: &JobRegistryV1, pending: &JobRegistryV1) -> bool {
+    if current.generation.checked_add(1) != Some(pending.generation)
+        || !pending.records.contains_key(&pending.last_updated)
+    {
+        return false;
+    }
+    current.records.iter().all(|(key, record)| {
+        *key == pending.last_updated
+            || pending.records.get(key) == Some(record)
+            || (pending.records.get(key).is_none()
+                && matches!(record.state, PinStateV1::Released { .. }))
+    }) && pending
+        .records
+        .keys()
+        .all(|key| current.records.contains_key(key) || *key == pending.last_updated)
 }
 
 #[derive(Clone, Debug)]
@@ -1112,19 +1208,27 @@ impl SharedOcompRetentionSelector {
             .confirm_export_ack(job_id, source_generation, lease_generation, manifest_hash)
     }
 
-    pub fn legacy_export_recovery_required(&self, job_id: B256) -> Result<bool, RetentionError> {
+    /// Returns the exact durable authority for an already released export.
+    pub fn released_export_authority(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<ExportAuthorityV1>, RetentionError> {
         self.coordinator
             .get()
             .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
-            .legacy_export_recovery_required(job_id)
+            .released_export_authority(job_id)
     }
 
     /// Reconcile one frame already loaded by the single finalized reader.
-    pub fn reconcile_finalized_frame(&self, frame: &FinalizedFrame) -> Result<(), RetentionError> {
+    pub fn reconcile_finalized_frame(
+        &self,
+        frame: &FinalizedFrame,
+        observation: Option<FinalizedRequestObservationV1>,
+    ) -> Result<(), RetentionError> {
         self.coordinator
             .get()
             .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
-            .reconcile_finalized_frame(frame)
+            .reconcile_finalized_frame(frame, observation)
     }
 }
 
@@ -1560,9 +1664,6 @@ impl OcompRetentionCoordinator {
                 ));
             }
         };
-        // Generation zero is a migration marker for a v3/v4 export record whose exact source
-        // generation was not persisted. It must be resolved from the node-owned durable discovery
-        // spool before constructing a control reference; it is never valid control authority.
         let generations = generations
             .into_iter()
             .flatten()
@@ -1574,20 +1675,24 @@ impl OcompRetentionCoordinator {
         Ok(generations)
     }
 
-    pub fn legacy_export_recovery_required(&self, job_id: B256) -> Result<bool, RetentionError> {
+    pub fn released_export_authority(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<ExportAuthorityV1>, RetentionError> {
         let inner = self.lock()?;
         let (_, record) = record_for_job(&inner, job_id)?;
         Ok(match record.state {
-            PinStateV1::Exported { export, .. } | PinStateV1::Terminal { export, .. } => {
-                export.source_generation == 0
-            }
             PinStateV1::Released {
-                export: Some(export),
+                job_id: Some(existing),
+                reason: PinReleaseReason::RetentionSatisfied,
+                export,
                 ..
-            } => export.source_generation == 0,
+            } if existing == job_id => export,
             PinStateV1::Tentative { .. }
             | PinStateV1::Finalized { .. }
-            | PinStateV1::Released { export: None, .. } => false,
+            | PinStateV1::Exported { .. }
+            | PinStateV1::Terminal { .. }
+            | PinStateV1::Released { .. } => None,
         })
     }
 
@@ -1703,12 +1808,19 @@ impl OcompRetentionCoordinator {
     /// Reconcile retention from the exact block and receipts owned by the
     /// unified finalized reader. This is the production finalized path; unlike
     /// [`Self::reconcile_finalized`], it performs no receipt-provider query.
-    pub fn reconcile_finalized_frame(&self, frame: &FinalizedFrame) -> Result<(), RetentionError> {
+    pub fn reconcile_finalized_frame(
+        &self,
+        frame: &FinalizedFrame,
+        observation: Option<FinalizedRequestObservationV1>,
+    ) -> Result<(), RetentionError> {
         if let RetentionStatus::Quarantined { reason } = self.status() {
             return Err(RetentionError::Quarantined(reason));
         }
         let height = frame.identity().number;
-        if let Some(candidate) = self.source.candidate_for_finalized_frame(frame)? {
+        if let Some(observation) = observation {
+            let candidate = self
+                .source
+                .candidate_for_finalized_observation(frame, observation)?;
             self.record_tentative(candidate)?;
         }
         let candidates = {
@@ -1892,14 +2004,6 @@ impl OcompRetentionCoordinator {
             Err(RetentionError::InvalidTransition(_) | RetentionError::StaleGeneration { .. }) => {}
             Err(error) => return Err(error),
         }
-        if let Some(ack) = self.migrate_legacy_export_ack(
-            job_id,
-            source_generation,
-            lease_generation,
-            manifest_hash,
-        )? {
-            return Ok(ack);
-        }
         let inner = self.lock()?;
         let (_, record) = record_for_job(&inner, job_id)?;
         let export = match record.state {
@@ -1929,82 +2033,6 @@ impl OcompRetentionCoordinator {
                 "export ACK does not match the retained source generation",
             ))
         }
-    }
-
-    fn migrate_legacy_export_ack(
-        &self,
-        job_id: B256,
-        source_generation: u64,
-        lease_generation: u64,
-        manifest_hash: B256,
-    ) -> Result<Option<DurablePinAck>, RetentionError> {
-        let mut inner = self.lock()?;
-        let (key, record) = record_for_job(&inner, job_id)?;
-        let exact = ExportAuthorityV1 {
-            source_generation,
-            lease_generation,
-            manifest_hash,
-        };
-        let state = match record.state {
-            PinStateV1::Exported {
-                candidate,
-                job_id: existing,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-                export,
-            } if existing == job_id && export.source_generation == 0 => {
-                require_legacy_export_matches(export, exact)?;
-                PinStateV1::Exported {
-                    candidate,
-                    job_id,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                    export: exact,
-                }
-            }
-            PinStateV1::Terminal {
-                candidate,
-                job_id: existing,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-                export,
-                terminal_height,
-                release_height,
-            } if existing == job_id && export.source_generation == 0 => {
-                require_legacy_export_matches(export, exact)?;
-                PinStateV1::Terminal {
-                    candidate,
-                    job_id,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                    export: exact,
-                    terminal_height,
-                    release_height,
-                }
-            }
-            PinStateV1::Released {
-                candidate,
-                job_id: Some(existing),
-                reason: PinReleaseReason::RetentionSatisfied,
-                observed_height,
-                export: Some(export),
-            } if existing == job_id && export.source_generation == 0 => {
-                require_legacy_export_matches(export, exact)?;
-                PinStateV1::Released {
-                    candidate,
-                    job_id: Some(job_id),
-                    reason: PinReleaseReason::RetentionSatisfied,
-                    observed_height,
-                    export: Some(exact),
-                }
-            }
-            _ => return Ok(None),
-        };
-        self.persist_next(&mut inner, key, record, state).map(Some)
     }
 
     pub fn replay_exported(
@@ -2182,11 +2210,6 @@ impl OcompRetentionCoordinator {
             } => (candidate, job_id, release_height, export),
             _ => unreachable!("release candidate is selected from terminal records"),
         };
-        if export.source_generation == 0 {
-            return Err(RetentionError::InvalidTransition(
-                "legacy terminal export requires exact durable ACK before release",
-            ));
-        }
         if finalized_height < release_height {
             return Ok(None);
         }
@@ -2633,21 +2656,6 @@ fn exact_export_replay(
     )
 }
 
-fn require_legacy_export_matches(
-    legacy: ExportAuthorityV1,
-    exact: ExportAuthorityV1,
-) -> Result<(), RetentionError> {
-    if legacy.source_generation != 0
-        || (legacy.lease_generation != 0 && legacy.lease_generation != exact.lease_generation)
-        || (!legacy.manifest_hash.is_zero() && legacy.manifest_hash != exact.manifest_hash)
-    {
-        return Err(RetentionError::InvalidTransition(
-            "export ACK conflicts with legacy durable authority",
-        ));
-    }
-    Ok(())
-}
-
 fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {
     job_id_from_intent_id(
         candidate.intent_id,
@@ -2675,15 +2683,6 @@ pub(super) fn retention_terminal_height_for_status(
         }
         OcompJobStatus::Expired | OcompJobStatus::Canceled => Ok(Some(terminal_height)),
     }
-}
-
-fn legacy_candidate_input_lease_id(candidate: CandidatePinV1) -> B256 {
-    let mut preimage = Vec::with_capacity(26 + 4 + 32 * 2);
-    preimage.extend_from_slice(b"OUTBE_OCOMP_INPUT_LEASE_V1");
-    preimage.extend_from_slice(&candidate.wwd.to_be_bytes());
-    preimage.extend_from_slice(candidate.ce_sealed_root.as_slice());
-    preimage.extend_from_slice(candidate.protocol_bundle_hash.as_slice());
-    keccak256(preimage)
 }
 
 fn encode_registry(registry: &JobRegistryV1) -> Vec<u8> {
@@ -2735,15 +2734,6 @@ fn decode_registry(encoded: &[u8]) -> Result<JobRegistryV1, RetentionError> {
             .try_into()
             .map_err(|_| RetentionError::MalformedJournal("registry version length"))?,
     );
-    if version == LEGACY_RECORD_VERSION {
-        let record = decode_record(encoded)?;
-        let key = record_candidate(record).block_hash;
-        return Ok(JobRegistryV1 {
-            generation: record.generation,
-            last_updated: key,
-            records: BTreeMap::from([(key, record)]),
-        });
-    }
     if version != JOURNAL_VERSION {
         return Err(RetentionError::UnsupportedJournalVersion { actual: version });
     }
@@ -2891,157 +2881,6 @@ pub(crate) fn seed_retention_journal_for_test(
     }
     store.persist(&registry, changed)?;
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn seed_retention_journal_v4_for_test(
-    root: impl AsRef<Path>,
-    generation: u64,
-    last_updated: B256,
-    records: Vec<(B256, PinRecordV1)>,
-) -> Result<(), RetentionError> {
-    let record_count = records.len();
-    let records = records.into_iter().collect::<BTreeMap<_, _>>();
-    if records.is_empty()
-        || records.len() != record_count
-        || records.len() > JOURNAL_RECORD_COUNT_MAX
-        || !records.contains_key(&last_updated)
-        || records.values().map(|record| record.generation).max() != Some(generation)
-    {
-        return Err(RetentionError::MalformedJournal(
-            "invalid v4 test seed registry",
-        ));
-    }
-    let registry = JobRegistryV1 {
-        generation,
-        last_updated,
-        records,
-    };
-    let encoded = encode_registry_with(&registry, encode_record_v4_for_test);
-    fs::create_dir_all(root.as_ref()).map_err(|source| RetentionError::Io {
-        operation: "create v4 test directory",
-        path: root.as_ref().to_path_buf(),
-        source,
-    })?;
-    let path = root.as_ref().join(JOURNAL_FILENAME);
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path).map_err(|source| RetentionError::Io {
-        operation: "create v4 test journal",
-        path: path.clone(),
-        source,
-    })?;
-    file.write_all(&encoded)
-        .and_then(|()| file.sync_all())
-        .map_err(|source| RetentionError::Io {
-            operation: "write v4 test journal",
-            path,
-            source,
-        })?;
-    Ok(())
-}
-
-#[cfg(test)]
-fn encode_record_v4_for_test(record: PinRecordV1) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(PIN_RECORD_MAX_BYTES);
-    encoded.extend_from_slice(&JOURNAL_MAGIC);
-    encoded.extend_from_slice(&PREVIOUS_RECORD_VERSION.to_be_bytes());
-    encoded.extend_from_slice(&record.generation.to_be_bytes());
-    match record.state {
-        PinStateV1::Tentative { candidate } => {
-            encoded.push(1);
-            encode_candidate(&mut encoded, candidate);
-        }
-        PinStateV1::Finalized {
-            candidate,
-            job_id,
-            finality_recorded_height,
-            open_height,
-            deadline_height,
-        } => {
-            encoded.push(2);
-            encode_candidate(&mut encoded, candidate);
-            encoded.extend_from_slice(job_id.as_slice());
-            encode_finalized_window(
-                &mut encoded,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-            );
-        }
-        PinStateV1::Exported {
-            candidate,
-            job_id,
-            finality_recorded_height,
-            open_height,
-            deadline_height,
-            export,
-        } => {
-            encoded.push(3);
-            encode_candidate(&mut encoded, candidate);
-            encoded.extend_from_slice(job_id.as_slice());
-            encode_finalized_window(
-                &mut encoded,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-            );
-            encoded.extend_from_slice(&export.lease_generation.to_be_bytes());
-            encoded.extend_from_slice(export.manifest_hash.as_slice());
-        }
-        PinStateV1::Terminal {
-            candidate,
-            job_id,
-            finality_recorded_height,
-            open_height,
-            deadline_height,
-            terminal_height,
-            release_height,
-            ..
-        } => {
-            encoded.push(4);
-            encode_candidate(&mut encoded, candidate);
-            encoded.extend_from_slice(job_id.as_slice());
-            encode_finalized_window(
-                &mut encoded,
-                finality_recorded_height,
-                open_height,
-                deadline_height,
-            );
-            encoded.extend_from_slice(&terminal_height.to_be_bytes());
-            encoded.extend_from_slice(&release_height.to_be_bytes());
-        }
-        PinStateV1::Released {
-            candidate,
-            job_id,
-            reason,
-            observed_height,
-            ..
-        } => {
-            encoded.push(5);
-            encode_candidate(&mut encoded, candidate);
-            match job_id {
-                Some(job_id) => {
-                    encoded.push(1);
-                    encoded.extend_from_slice(job_id.as_slice());
-                }
-                None => encoded.push(0),
-            }
-            encoded.push(match reason {
-                PinReleaseReason::Orphaned => 1,
-                PinReleaseReason::RetentionSatisfied => 2,
-            });
-            encoded.extend_from_slice(&observed_height.to_be_bytes());
-        }
-    }
-    let checksum = keccak256(&encoded);
-    encoded.extend_from_slice(checksum.as_slice());
-    encoded
 }
 
 fn encode_record(record: PinRecordV1) -> Vec<u8> {
@@ -3208,10 +3047,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
         return Err(RetentionError::MalformedJournal("wrong magic"));
     }
     let version = u16::from_be_bytes(reader.take::<2>()?);
-    if version != LEGACY_RECORD_VERSION
-        && version != PREVIOUS_RECORD_VERSION
-        && version != PIN_RECORD_VERSION
-    {
+    if version != PIN_RECORD_VERSION {
         return Err(RetentionError::UnsupportedJournalVersion { actual: version });
     }
     let generation = u64::from_be_bytes(reader.take::<8>()?);
@@ -3219,7 +3055,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
         return Err(RetentionError::MalformedJournal("zero generation"));
     }
     let tag = reader.take::<1>()?[0];
-    let candidate = decode_candidate(&mut reader, version)?;
+    let candidate = decode_candidate(&mut reader)?;
     let state = match tag {
         1 => PinStateV1::Tentative { candidate },
         2 => {
@@ -3238,20 +3074,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
             let job_id = B256::new(reader.take::<32>()?);
             let (finality_recorded_height, open_height, deadline_height) =
                 decode_finalized_window(&mut reader)?;
-            let export = if version == PIN_RECORD_VERSION {
-                decode_export_authority(&mut reader)?
-            } else {
-                ExportAuthorityV1 {
-                    source_generation: 0,
-                    lease_generation: u64::from_be_bytes(reader.take::<8>()?),
-                    manifest_hash: B256::new(reader.take::<32>()?),
-                }
-            };
-            if export.lease_generation == 0 || export.manifest_hash.is_zero() {
-                return Err(RetentionError::MalformedJournal(
-                    "incomplete legacy export authority",
-                ));
-            }
+            let export = decode_export_authority(&mut reader)?;
             PinStateV1::Exported {
                 candidate,
                 job_id,
@@ -3265,15 +3088,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
             let job_id = B256::new(reader.take::<32>()?);
             let (finality_recorded_height, open_height, deadline_height) =
                 decode_finalized_window(&mut reader)?;
-            let export = if version == PIN_RECORD_VERSION {
-                decode_export_authority(&mut reader)?
-            } else {
-                ExportAuthorityV1 {
-                    source_generation: 0,
-                    lease_generation: 0,
-                    manifest_hash: B256::ZERO,
-                }
-            };
+            let export = decode_export_authority(&mut reader)?;
             let terminal_height = u64::from_be_bytes(reader.take::<8>()?);
             let release_height = u64::from_be_bytes(reader.take::<8>()?);
             if terminal_height.checked_add(RETAINED_EVIDENCE_WINDOW_BLOCKS) != Some(release_height)
@@ -3299,33 +3114,20 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 1 => Some(B256::new(reader.take::<32>()?)),
                 _ => return Err(RetentionError::MalformedJournal("invalid job-id flag")),
             };
-            let export = if version == PIN_RECORD_VERSION {
-                match reader.take::<1>()?[0] {
-                    0 => None,
-                    1 => Some(decode_export_authority(&mut reader)?),
-                    _ => {
-                        return Err(RetentionError::MalformedJournal(
-                            "invalid export-authority flag",
-                        ));
-                    }
+            let export = match reader.take::<1>()?[0] {
+                0 => None,
+                1 => Some(decode_export_authority(&mut reader)?),
+                _ => {
+                    return Err(RetentionError::MalformedJournal(
+                        "invalid export-authority flag",
+                    ));
                 }
-            } else {
-                None
             };
             let reason = match reader.take::<1>()?[0] {
                 1 => PinReleaseReason::Orphaned,
                 2 => PinReleaseReason::RetentionSatisfied,
                 _ => return Err(RetentionError::MalformedJournal("invalid release reason")),
             };
-            let export = export.or_else(|| {
-                (job_id.is_some() && reason == PinReleaseReason::RetentionSatisfied).then_some(
-                    ExportAuthorityV1 {
-                        source_generation: 0,
-                        lease_generation: 0,
-                        manifest_hash: B256::ZERO,
-                    },
-                )
-            });
             PinStateV1::Released {
                 candidate,
                 job_id,
@@ -3340,11 +3142,8 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
     Ok(PinRecordV1 { generation, state })
 }
 
-fn decode_candidate(
-    reader: &mut JournalReader<'_>,
-    version: u16,
-) -> Result<CandidatePinV1, RetentionError> {
-    let mut candidate = CandidatePinV1 {
+fn decode_candidate(reader: &mut JournalReader<'_>) -> Result<CandidatePinV1, RetentionError> {
+    Ok(CandidatePinV1 {
         block_number: u64::from_be_bytes(reader.take::<8>()?),
         block_hash: B256::new(reader.take::<32>()?),
         state_root: B256::new(reader.take::<32>()?),
@@ -3352,14 +3151,8 @@ fn decode_candidate(
         wwd: u32::from_be_bytes(reader.take::<4>()?),
         ce_sealed_root: B256::new(reader.take::<32>()?),
         protocol_bundle_hash: B256::new(reader.take::<32>()?),
-        input_lease_id: B256::ZERO,
-    };
-    candidate.input_lease_id = if version >= PREVIOUS_RECORD_VERSION {
-        B256::new(reader.take::<32>()?)
-    } else {
-        legacy_candidate_input_lease_id(candidate)
-    };
-    Ok(candidate)
+        input_lease_id: B256::new(reader.take::<32>()?),
+    })
 }
 
 fn decode_finalized_window(

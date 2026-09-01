@@ -62,13 +62,13 @@ use outbe_validatorset::{
 
 use crate::finalized_frame::FinalizedFrame;
 use crate::ocomp::retention::{
-    inspect_retention_journal, ocomp_snapshot_contains_key_at,
+    inspect_retention_journal, observe_finalized_request, ocomp_snapshot_contains_key_at,
     retention_pressure_watermark_for_test, retention_terminal_height_for_status,
-    seed_retention_journal_for_test, seed_retention_journal_v4_for_test, CandidateFinalityV1,
-    CandidatePinV1, ExportAuthorityV1, FinalizedInputProofSource, FinalizedJobPinV1,
-    FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator, OcompRetentionService,
-    OcompSnapshotEligibilityV1, PinRecordV1, PinReleaseReason, PinStateV1, RetentionError,
-    RetentionStatus, RethFinalizedInputProofSource, SharedOcompRetentionSelector,
+    seed_retention_journal_for_test, CandidateFinalityV1, CandidatePinV1, ExportAuthorityV1,
+    FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability,
+    OcompRetentionCoordinator, OcompRetentionService, OcompSnapshotEligibilityV1, PinRecordV1,
+    PinReleaseReason, PinStateV1, RetentionError, RetentionStatus, RethFinalizedInputProofSource,
+    SharedOcompRetentionSelector,
 };
 #[derive(Clone, Default)]
 struct DeterministicProofSource {
@@ -580,11 +580,14 @@ fn unified_finalized_frame_supplies_retention_receipts_without_a_second_read() {
         receipts,
     );
 
+    let observation = observe_finalized_request(&frame)
+        .expect("frame observation")
+        .expect("request observation");
     assert_eq!(
         source
-            .candidate_for_finalized_frame(&frame)
+            .candidate_for_finalized_observation(&frame, observation)
             .expect("frame candidate"),
-        Some(candidate)
+        candidate
     );
     assert!(
         pending_receipts
@@ -843,91 +846,6 @@ fn export_authority_survives_interleaved_global_registry_generations() {
             9,
             B256::repeat_byte(0x57),
         )
-        .unwrap();
-}
-
-#[test]
-fn v4_terminal_and_released_journals_recover_exact_export_authority() {
-    let request = block(100, B256::repeat_byte(0x91), 0x92);
-    let candidate = candidate(&request, B256::repeat_byte(0x93));
-    let job_id = job_id_from_intent_id(
-        candidate.intent_id,
-        candidate.block_hash,
-        candidate.state_root,
-    )
-    .unwrap();
-    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
-    let source_root = tempfile::tempdir().unwrap();
-    let coordinator = OcompRetentionCoordinator::open(source_root.path(), source.clone());
-    assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &request),
-        VoteOutcome::Positive
-    );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
-    let source_generation = coordinator.finalized_job_record(job_id).unwrap().0;
-    let manifest_hash = B256::repeat_byte(0x94);
-    let exported = coordinator
-        .record_exported(job_id, source_generation, 9, manifest_hash)
-        .unwrap();
-    coordinator
-        .observe_terminal(job_id, exported.generation, 120)
-        .unwrap();
-    let terminal = inspect_retention_journal(source_root.path())
-        .unwrap()
-        .records
-        .into_iter()
-        .find(|(_, record)| matches!(record.state, PinStateV1::Terminal { .. }))
-        .unwrap();
-
-    let terminal_root = tempfile::tempdir().unwrap();
-    seed_retention_journal_v4_for_test(
-        terminal_root.path(),
-        terminal.1.generation,
-        terminal.0,
-        vec![terminal],
-    )
-    .unwrap();
-    let migrated = OcompRetentionCoordinator::open(terminal_root.path(), source.clone());
-    assert_eq!(migrated.discovery_job_records(job_id).unwrap()[0].0, 0);
-    assert!(migrated.legacy_export_recovery_required(job_id).unwrap());
-    migrated
-        .confirm_export_ack(job_id, source_generation, 9, manifest_hash)
-        .unwrap();
-    assert_eq!(
-        migrated.discovery_job_records(job_id).unwrap()[0].0,
-        source_generation
-    );
-    migrated.release_due(184).unwrap().unwrap();
-    let released = inspect_retention_journal(terminal_root.path())
-        .unwrap()
-        .records
-        .into_iter()
-        .find(|(_, record)| matches!(record.state, PinStateV1::Released { .. }))
-        .unwrap();
-
-    let released_root = tempfile::tempdir().unwrap();
-    seed_retention_journal_v4_for_test(
-        released_root.path(),
-        released.1.generation,
-        released.0,
-        vec![released],
-    )
-    .unwrap();
-    let migrated_released = OcompRetentionCoordinator::open(released_root.path(), source);
-    assert!(migrated_released
-        .legacy_export_recovery_required(job_id)
-        .unwrap());
-    migrated_released
-        .confirm_export_ack(job_id, source_generation, 9, manifest_hash)
-        .unwrap();
-    drop(migrated_released);
-    let reopened = OcompRetentionCoordinator::open(
-        released_root.path(),
-        Arc::new(DeterministicProofSource::default()),
-    );
-    assert!(!reopened.legacy_export_recovery_required(job_id).unwrap());
-    reopened
-        .confirm_export_ack(job_id, source_generation, 9, manifest_hash)
         .unwrap();
 }
 
@@ -1663,7 +1581,7 @@ impl JournalDurability for FailOnceDurability {
 }
 
 #[test]
-fn ocm_pin_001_fsync_failure_multi_job_and_ambiguous_restart_are_safe() {
+fn ocm_pin_001_crash_recovery_multi_job_and_ambiguous_restart_are_safe() {
     let first = block(100, B256::repeat_byte(0x34), 4);
     let second = block(101, B256::repeat_byte(0x35), 5);
     let first_candidate = candidate(&first, B256::repeat_byte(0x43));
@@ -1692,8 +1610,44 @@ fn ocm_pin_001_fsync_failure_multi_job_and_ambiguous_restart_are_safe() {
     let restarted_after_fsync = OcompRetentionCoordinator::open(fsync_root.path(), source.clone());
     assert!(matches!(
         restarted_after_fsync.status(),
-        RetentionStatus::Quarantined { .. }
+        RetentionStatus::Ready(_)
     ));
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&restarted_after_fsync, &first),
+        VoteOutcome::Positive,
+        "a complete exact-next temp generation must recover after restart"
+    );
+
+    let successor_root = tempfile::tempdir().expect("successor recovery root");
+    let initial = OcompRetentionCoordinator::open(successor_root.path(), source.clone());
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&initial, &first),
+        VoteOutcome::Positive
+    );
+    drop(initial);
+    let interrupted_successor = OcompRetentionCoordinator::open_with_durability(
+        successor_root.path(),
+        source.clone(),
+        Arc::new(FailOnceDurability::at(FailSync::File)),
+    );
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&interrupted_successor, &second),
+        VoteOutcome::Abstained
+    );
+    assert!(successor_root.path().join("pin.v1").is_file());
+    assert!(successor_root.path().join("pin.v1.tmp").is_file());
+    drop(interrupted_successor);
+    let recovered_successor =
+        OcompRetentionCoordinator::open(successor_root.path(), source.clone());
+    assert!(matches!(
+        recovered_successor.status(),
+        RetentionStatus::Ready(_)
+    ));
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&recovered_successor, &second),
+        VoteOutcome::Positive,
+        "a valid temp successor must atomically replace the prior generation"
+    );
 
     let root = tempfile::tempdir().expect("conflict journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
@@ -1725,18 +1679,16 @@ fn ocm_pin_001_fsync_failure_multi_job_and_ambiguous_restart_are_safe() {
 
     fs::write(root.path().join("pin.v1.tmp"), b"torn").expect("inject torn write");
     let restarted = OcompRetentionCoordinator::open(root.path(), source);
-    assert!(matches!(
-        restarted.status(),
-        RetentionStatus::Quarantined { .. }
-    ));
+    assert!(matches!(restarted.status(), RetentionStatus::Ready(_)));
     assert_eq!(
         DeterministicConsensusDriver::vote(&restarted, &first),
-        VoteOutcome::Abstained
+        VoteOutcome::Positive
     );
+    assert!(!root.path().join("pin.v1.tmp").exists());
     assert_eq!(
         fs::read(root.path().join("pin.v1")).unwrap(),
         after_second_job,
-        "quarantine must preserve the last durable record"
+        "discarding an unpublished torn temp must preserve the last durable record"
     );
 
     let directory_fsync_root = tempfile::tempdir().expect("directory fsync journal root");
@@ -2112,10 +2064,23 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
         .release_due(300)
         .expect("release due terminal under pressure")
         .expect("one due terminal transitions");
+    drop(coordinator);
     let new_candidate = pressure_candidate(99_999);
+    let interrupted_compaction = OcompRetentionCoordinator::open_with_durability(
+        root.path(),
+        source.clone(),
+        Arc::new(FailOnceDurability::at(FailSync::File)),
+    );
+    assert!(interrupted_compaction
+        .record_tentative(new_candidate)
+        .is_err());
+    assert!(root.path().join("pin.v1.tmp").is_file());
+    drop(interrupted_compaction);
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+    assert!(matches!(coordinator.status(), RetentionStatus::Ready(_)));
     coordinator
         .record_tentative(new_candidate)
-        .expect("admission continues after pressure compaction");
+        .expect("recovered compacted admission is idempotent");
 
     let snapshot = inspect_retention_journal(root.path()).expect("inspect compacted journal");
     let survivors = snapshot.records.into_iter().collect::<BTreeMap<_, _>>();

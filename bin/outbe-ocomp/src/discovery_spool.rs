@@ -31,9 +31,11 @@ const LOCK_FILE: &str = ".lock";
 const TEMP_SUFFIX: &str = ".tmp";
 const OFFER_SUFFIX: &str = ".offer";
 const ACK_SUFFIX: &str = ".ack";
+const PENDING_SUFFIX: &str = ".pending";
 const QUARANTINE_SUFFIX: &str = ".quarantine";
 const OFFER_RECORD_MAGIC: [u8; 8] = *b"OUTBDSO1";
 const ACK_RECORD_MAGIC: [u8; 8] = *b"OUTBDSA2";
+const PENDING_RECORD_MAGIC: [u8; 8] = *b"OUTBDSP1";
 const QUARANTINE_MAGIC: [u8; 8] = *b"OUTBDSQ1";
 const CHECKPOINT_MAGIC: [u8; 8] = *b"OUTBDCP1";
 const RECORD_VERSION: u16 = 1;
@@ -67,6 +69,7 @@ pub struct DiscoverySpoolV1 {
     root: PathBuf,
     offers: PathBuf,
     acks: PathBuf,
+    pending: PathBuf,
     quarantine: PathBuf,
     chain_id: u64,
     genesis_hash: B256,
@@ -87,14 +90,17 @@ impl DiscoverySpoolV1 {
         create_private_directory(&root)?;
         let offers = root.join("offers");
         let acks = root.join("acks");
+        let pending = root.join("pending");
         let quarantine = root.join("quarantine");
         create_private_directory(&offers)?;
         create_private_directory(&acks)?;
+        create_private_directory(&pending)?;
         create_private_directory(&quarantine)?;
         let spool = Self {
             root,
             offers,
             acks,
+            pending,
             quarantine,
             chain_id,
             genesis_hash,
@@ -103,6 +109,7 @@ impl DiscoverySpoolV1 {
         let _lock = FileLock::acquire(&spool.root, LOCK_FILE)?;
         recover_crash_temps(&spool.offers)?;
         recover_crash_temps(&spool.acks)?;
+        recover_crash_temps(&spool.pending)?;
         recover_crash_temps(&spool.quarantine)?;
         Ok(spool)
     }
@@ -145,6 +152,9 @@ impl DiscoverySpoolV1 {
         if regular_file_exists(&path)? {
             let stored = self.read_offer_at(&path)?;
             if stored.reference == *reference && stored.spec == *spec {
+                if !regular_file_exists(&self.ack_path(&reference.observation_id))? {
+                    self.ensure_pending_marker_unlocked(reference.observation_id)?;
+                }
                 return Ok(PutOutcomeV1::ExactDuplicate);
             }
             return self.latch_conflict(reference.observation_id, "offer replay");
@@ -154,6 +164,7 @@ impl DiscoverySpoolV1 {
         }
         let encoded = encode_offer_record(reference, &canonical)?;
         persist_immutable_atomic(&self.offers, &path, &encoded)?;
+        self.ensure_pending_marker_unlocked(reference.observation_id)?;
         Ok(PutOutcomeV1::Inserted)
     }
 
@@ -205,6 +216,7 @@ impl DiscoverySpoolV1 {
         if regular_file_exists(&path)? {
             let stored = self.read_ack_for_offer(&path, &stored_offer)?;
             if stored.reference == reference && stored.committed == committed {
+                self.remove_pending_marker_unlocked(offer.observation_id)?;
                 return Ok((reference, PutOutcomeV1::ExactDuplicate));
             }
             return self
@@ -218,6 +230,7 @@ impl DiscoverySpoolV1 {
             &canonical,
         )?;
         persist_immutable_atomic(&self.acks, &path, &encoded)?;
+        self.remove_pending_marker_unlocked(offer.observation_id)?;
         Ok((reference, PutOutcomeV1::Inserted))
     }
 
@@ -226,6 +239,26 @@ impl DiscoverySpoolV1 {
         observation: &B256,
     ) -> Result<Option<PendingDiscoveryV1>, DiscoverySpoolError> {
         let _lock = FileLock::acquire(&self.root, LOCK_FILE)?;
+        self.pending_unlocked(observation)
+    }
+
+    fn pending_from_index(
+        &self,
+        observation: &B256,
+    ) -> Result<Option<PendingDiscoveryV1>, DiscoverySpoolError> {
+        let _lock = FileLock::acquire(&self.root, LOCK_FILE)?;
+        let marker = self.pending_path(observation);
+        if !regular_file_exists(&marker)? {
+            return Ok(None);
+        }
+        let encoded =
+            read_bounded_private_file(&marker, PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes())?;
+        if encoded != encode_pending_marker(*observation) {
+            return Err(DiscoverySpoolError::CorruptRecord { path: marker });
+        }
+        if !regular_file_exists(&self.offer_path(observation))? {
+            return Err(DiscoverySpoolError::MissingOffer(*observation));
+        }
         self.pending_unlocked(observation)
     }
 
@@ -257,8 +290,8 @@ impl DiscoverySpoolV1 {
     }
 
     pub fn pending_cursor(&self) -> Result<DiscoveryPendingCursorV1, DiscoverySpoolError> {
-        let entries = fs::read_dir(&self.offers)
-            .map_err(|source| io_error("list discovery offers", &self.offers, source))?;
+        let entries = fs::read_dir(&self.pending)
+            .map_err(|source| io_error("list pending discovery offers", &self.pending, source))?;
         Ok(DiscoveryPendingCursorV1 {
             spool: self.clone(),
             entries,
@@ -290,6 +323,11 @@ impl DiscoverySpoolV1 {
             .join(format!("{}{QUARANTINE_SUFFIX}", hex_id(observation)))
     }
 
+    fn pending_path(&self, observation: &B256) -> PathBuf {
+        self.pending
+            .join(format!("{}{PENDING_SUFFIX}", hex_id(observation)))
+    }
+
     fn pending_unlocked(
         &self,
         observation: &B256,
@@ -303,9 +341,36 @@ impl DiscoverySpoolV1 {
         let ack_path = self.ack_path(observation);
         if regular_file_exists(&ack_path)? {
             self.read_ack_for_offer(&ack_path, &offer)?;
+            self.remove_pending_marker_unlocked(*observation)?;
             return Ok(None);
         }
+        self.ensure_pending_marker_unlocked(*observation)?;
         Ok(Some(offer))
+    }
+
+    fn ensure_pending_marker_unlocked(&self, observation: B256) -> Result<(), DiscoverySpoolError> {
+        let path = self.pending_path(&observation);
+        if regular_file_exists(&path)? {
+            let encoded = read_bounded_private_file(
+                &path,
+                PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes(),
+            )?;
+            if encoded != encode_pending_marker(observation) {
+                return Err(DiscoverySpoolError::CorruptRecord { path });
+            }
+            return Ok(());
+        }
+        persist_immutable_atomic(&self.pending, &path, &encode_pending_marker(observation))
+    }
+
+    fn remove_pending_marker_unlocked(&self, observation: B256) -> Result<(), DiscoverySpoolError> {
+        let path = self.pending_path(&observation);
+        if !regular_file_exists(&path)? {
+            return Ok(());
+        }
+        fs::remove_file(&path)
+            .map_err(|source| io_error("remove acknowledged pending marker", &path, source))?;
+        sync_directory(&self.pending)
     }
 
     fn read_offer_at(&self, path: &Path) -> Result<PendingDiscoveryV1, DiscoverySpoolError> {
@@ -476,17 +541,17 @@ impl Iterator for DiscoveryPendingCursorV1 {
                 Ok(entry) => entry,
                 Err(source) => {
                     return Some(Err(io_error(
-                        "read discovery offer directory",
-                        &self.spool.offers,
+                        "read pending discovery directory",
+                        &self.spool.pending,
                         source,
                     )))
                 }
             };
             let path = entry.path();
-            let Some(observation) = parse_record_name(&path, OFFER_SUFFIX) else {
+            let Some(observation) = parse_record_name(&path, PENDING_SUFFIX) else {
                 return Some(Err(DiscoverySpoolError::UnexpectedEntry(path)));
             };
-            match self.spool.pending(&observation) {
+            match self.spool.pending_from_index(&observation) {
                 Ok(Some(pending)) => return Some(Ok(pending)),
                 Ok(None) => {}
                 Err(error) => return Some(Err(error)),
@@ -1043,6 +1108,14 @@ fn parse_record_name(path: &Path, suffix: &str) -> Option<B256> {
 
 fn hex_id(value: &B256) -> String {
     hex::encode(value.as_slice())
+}
+
+fn encode_pending_marker(observation: B256) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes());
+    encoded.extend_from_slice(&PENDING_RECORD_MAGIC);
+    encoded.extend_from_slice(&RECORD_VERSION.to_be_bytes());
+    encoded.extend_from_slice(observation.as_slice());
+    encoded
 }
 
 fn read_u16(encoded: &[u8], start: usize) -> Result<u16, DiscoverySpoolError> {

@@ -117,7 +117,7 @@ impl InputRefCatalogPublisher {
         } else {
             None
         };
-        let mut prepared_header = if path_exists(&root.join(PREPARED_FILE))? {
+        let prepared_header = if path_exists(&root.join(PREPARED_FILE))? {
             Some(decode_header(
                 &read_bounded(&root.join(PREPARED_FILE), catalog_byte_cap(&limits))?,
                 &limits,
@@ -125,15 +125,8 @@ impl InputRefCatalogPublisher {
         } else {
             None
         };
-        if prepared_header.is_none() {
-            if let Some(header) = &final_header {
-                persist_atomic(
-                    &root,
-                    &root.join(PREPARED_FILE),
-                    &encode_header(header, &limits)?,
-                )?;
-                prepared_header = Some(header.clone());
-            }
+        if final_header.is_some() && prepared_header.is_none() {
+            return Err(InputRefCatalogError::AuthorityMismatch);
         }
         if final_header
             .as_ref()
@@ -163,9 +156,7 @@ impl InputRefCatalogPublisher {
                 return Err(InputRefCatalogError::AuthorityMismatch);
             }
         } else {
-            if final_header.is_none() {
-                require_fresh_catalog_without_header(&root)?;
-            }
+            require_fresh_catalog_without_header(&root)?;
             persist_atomic(
                 &root,
                 &staging_path,

@@ -66,12 +66,30 @@ impl OcompPenaltyMetrics {
         }
         for (validator, outcome) in self.recovery_resolutions {
             outbe_validatorset::metrics::record_ocomp_recovery_resolution(validator, outcome);
+            match outcome {
+                "jailed" => tracing::warn!(
+                    %validator,
+                    outcome,
+                    "OCOMP recovery window expired below minimum bonded stake"
+                ),
+                _ => tracing::info!(
+                    %validator,
+                    outcome,
+                    "OCOMP recovery window closed"
+                ),
+            }
         }
         for (validator, first_in_window, recovery_deadline) in self.misses {
             outbe_validatorset::metrics::record_ocomp_miss(
                 validator,
                 first_in_window,
                 recovery_deadline,
+            );
+            tracing::warn!(
+                %validator,
+                first_in_window,
+                recovery_deadline,
+                "validator missed an OCOMP result vote"
             );
         }
     }

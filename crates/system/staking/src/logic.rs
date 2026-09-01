@@ -512,6 +512,7 @@ impl Staking<'_> {
     /// corrupt over-bound count fails before address materialization.
     pub fn close_due_ocomp_recovery_windows(&mut self) -> Result<OcompRecoverySweep> {
         let guard = self.storage.checkpoint_guard();
+        let current_block = self.storage.block_number()?;
         let validators = ValidatorSet::new(self.storage.clone());
         let validator_count = validators.validator_count()?;
         if validator_count > outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND {
@@ -522,6 +523,7 @@ impl Staking<'_> {
         }
         let addresses = validators.registered_validator_addresses()?;
         let mut sweep = OcompRecoverySweep::default();
+        let mut open_deadlines = Vec::new();
         let mut resolutions = Vec::new();
         let mut punishments = Vec::new();
 
@@ -533,7 +535,10 @@ impl Staking<'_> {
                 PrecompileError::Fatal("OCOMP recovery open-window count overflow".into())
             })?;
             match self.resolve_due_ocomp_recovery_window(validator)? {
-                OcompRecoveryResolution::NotOpen | OcompRecoveryResolution::NotDue { .. } => {}
+                OcompRecoveryResolution::NotOpen => {}
+                OcompRecoveryResolution::NotDue { recovery_deadline } => {
+                    open_deadlines.push((validator, recovery_deadline));
+                }
                 OcompRecoveryResolution::Restored { .. } => {
                     sweep.restored = sweep.restored.checked_add(1).ok_or_else(|| {
                         PrecompileError::Fatal("OCOMP restored count overflow".into())
@@ -558,6 +563,12 @@ impl Staking<'_> {
         }
 
         guard.commit();
+        for (validator, recovery_deadline) in open_deadlines {
+            outbe_validatorset::metrics::record_ocomp_recovery_deadline(
+                validator,
+                recovery_deadline,
+            );
+        }
         for punishment in punishments {
             punishment.record();
         }
@@ -569,6 +580,7 @@ impl Staking<'_> {
             outbe_validatorset::metrics::record_ocomp_recovery_resolution(validator, outcome);
         }
         outbe_validatorset::metrics::record_ocomp_recovery_sweep(
+            current_block,
             sweep.open_windows.saturating_sub(resolved_count),
         );
         Ok(sweep)

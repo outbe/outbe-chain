@@ -777,7 +777,7 @@ fn manifest_mismatch_does_not_seal_and_exact_seal_replays_but_rebinding_fails() 
 }
 
 #[test]
-fn deleting_the_final_header_never_rebinds_the_prepared_manifest_authority() {
+fn deleting_prepared_authority_fails_closed_without_format_repair() {
     let fixture = one_chunk_stage_fixture();
     let mut publisher = InputRefCatalogPublisher::open_or_resume(
         &fixture.catalog_root,
@@ -796,99 +796,19 @@ fn deleting_the_final_header_never_rebinds_the_prepared_manifest_authority() {
             .unwrap(),
     );
     fs::remove_file(fixture.catalog_root.join("catalog.prepared")).unwrap();
-    drop(
+    assert!(matches!(
         InputRefCatalogPublisher::open_or_resume(
             &fixture.catalog_root,
             fixture.subject,
             fixture.limits,
             fixture.list_limits,
-        )
-        .unwrap(),
-    );
-    assert!(fixture.catalog_root.join("catalog.prepared").is_file());
-    fs::remove_file(fixture.catalog_root.join("catalog.header")).unwrap();
-
-    let mut bounded = InputRefCatalogPublisher::open_or_resume(
-        &fixture.catalog_root,
-        fixture.subject,
-        fixture.limits,
-        fixture.list_limits,
-    )
-    .unwrap();
-    let mut extra = fixture.reference.clone();
-    extra.ordinal = 1;
-    assert!(matches!(
-        bounded.append(&extra),
-        Err(InputRefCatalogError::UnexpectedReference { ordinal: 1 })
+        ),
+        Err(InputRefCatalogError::AuthorityMismatch)
     ));
-    drop(bounded);
-
-    let mut mutations = Vec::new();
-    let mut candidate = original.clone();
-    candidate.checkpoint.finalized_block_number += 1;
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.wwd += 1;
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.sealed_tribute_collection_key = hash(121);
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.sealed_tribute_collection_root = hash(122);
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.tribute_nominal_total += U256::from(1);
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.fidelity_opening_root = hash(123);
-    mutations.push(candidate);
-    let mut candidate = original.clone();
-    candidate.oracle_opening_root = hash(124);
-    mutations.push(candidate);
-
-    for candidate in mutations {
-        let candidate_ref = fixture.publish_manifest(&candidate);
-        let mut replay = InputRefCatalogPublisher::open_or_resume(
-            &fixture.catalog_root,
-            fixture.subject,
-            fixture.limits,
-            fixture.list_limits,
-        )
-        .unwrap();
-        assert_eq!(
-            replay.append(&fixture.reference).unwrap(),
-            InputRefAdmissionOutcome::ExactReplay
-        );
-        assert!(matches!(
-            replay
-                .prepare(&fixture.reader, &fixture.bundle)
-                .unwrap()
-                .seal(&fixture.cas, &candidate_ref, &fixture.bundle),
-            Err(InputRefCatalogError::AuthorityMismatch)
-        ));
-        assert!(!fixture.catalog_root.join("catalog.header").exists());
-    }
-
-    let mut exact = InputRefCatalogPublisher::open_or_resume(
-        &fixture.catalog_root,
-        fixture.subject,
-        fixture.limits,
-        fixture.list_limits,
-    )
-    .unwrap();
-    exact.append(&fixture.reference).unwrap();
-    drop(
-        exact
-            .prepare(&fixture.reader, &fixture.bundle)
-            .unwrap()
-            .seal(&fixture.cas, &original_ref, &fixture.bundle)
-            .unwrap(),
-    );
-    assert!(fixture.catalog_root.join("catalog.header").is_file());
 }
 
 #[test]
-fn a_partial_legacy_header_first_catalog_migrates_and_finishes_exact_refs() {
+fn a_header_first_catalog_is_rejected_by_the_greenfield_staging_protocol() {
     let fixture = one_chunk_stage_fixture();
     let manifest = fixture.manifest(
         outbe_ocomp::input_ref_catalog::InputRefCatalogSummaryV1 {
@@ -920,24 +840,15 @@ fn a_partial_legacy_header_first_catalog_migrates_and_finishes_exact_refs() {
         .unwrap(),
     );
 
-    let mut migrated = InputRefCatalogPublisher::open_or_resume(
-        &fixture.catalog_root,
-        fixture.subject,
-        fixture.limits,
-        fixture.list_limits,
-    )
-    .unwrap();
-    assert_eq!(
-        migrated.append(&fixture.reference).unwrap(),
-        InputRefAdmissionOutcome::NewlyAdmitted
-    );
-    drop(
-        migrated
-            .prepare(&fixture.reader, &fixture.bundle)
-            .unwrap()
-            .seal(&fixture.cas, &manifest_ref, &fixture.bundle)
-            .unwrap(),
-    );
+    assert!(matches!(
+        InputRefCatalogPublisher::open_or_resume(
+            &fixture.catalog_root,
+            fixture.subject,
+            fixture.limits,
+            fixture.list_limits,
+        ),
+        Err(InputRefCatalogError::AuthorityMismatch)
+    ));
 }
 
 #[test]

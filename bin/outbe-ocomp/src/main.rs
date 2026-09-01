@@ -638,7 +638,12 @@ async fn run_discovery_offer_server(
                         acknowledgment,
                     } => {
                         if let Some(received) = waiting.remove(&observation_id) {
-                            server.send_ack(&received, &acknowledgment).await?;
+                            if let Err(error) = server.send_ack(&received, &acknowledgment).await {
+                                observability.discovery_error(error.to_string());
+                                eprintln!(
+                                    "OCOMP SnapshotExporter could not send optional ACK wakeup for {observation_id}: {error}"
+                                );
+                            }
                         }
                     }
                     SnapshotExporterCompletionV1::Failed {
@@ -697,7 +702,7 @@ async fn serve_received_offer(
             server
                 .send_ack(&received, &stored.reference)
                 .await
-                .map_err(|error| ServeReceivedOfferErrorV1::Fatal(Box::new(error)))?;
+                .map_err(|error| ServeReceivedOfferErrorV1::Observation(Box::new(error)))?;
             return Ok(());
         }
         if let Some(pending) = lane

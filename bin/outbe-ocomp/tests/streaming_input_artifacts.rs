@@ -275,22 +275,22 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
         max_total_bytes: 16 * 1_048_576,
     };
 
-    let legacy_cas_root = directory.path().join("legacy-cas");
-    let legacy_catalog_root = directory.path().join("legacy-refs");
-    let legacy_cas = FilesystemCas::open(
-        &legacy_cas_root,
+    let baseline_cas_root = directory.path().join("baseline-cas");
+    let baseline_catalog_root = directory.path().join("baseline-refs");
+    let baseline_cas = FilesystemCas::open(
+        &baseline_cas_root,
         CasWriterRole::SnapshotExporter,
         cas_limits,
     )
     .unwrap();
-    let mut legacy_bodies = canonical.clone().into_iter();
-    let legacy = publish_streaming_input_artifact_set(
-        &legacy_cas,
-        &legacy_catalog_root,
+    let mut baseline_bodies = canonical.clone().into_iter();
+    let baseline = publish_streaming_input_artifact_set(
+        &baseline_cas,
+        &baseline_catalog_root,
         &bundle,
         identity.clone(),
         COUNT,
-        || Ok(legacy_bodies.next()),
+        || Ok(baseline_bodies.next()),
         fidelity_openings.clone(),
         oracle_opening.clone(),
         &limits,
@@ -333,25 +333,28 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
         })
         .unwrap();
 
-    assert_eq!(durable.manifest_hash, legacy.manifest_hash);
-    assert_eq!(durable.manifest_ref, legacy.manifest_ref);
-    assert_eq!(durable.tribute_count, legacy.tribute_count);
-    assert_eq!(durable.tribute_nominal_total, legacy.tribute_nominal_total);
+    assert_eq!(durable.manifest_hash, baseline.manifest_hash);
+    assert_eq!(durable.manifest_ref, baseline.manifest_ref);
+    assert_eq!(durable.tribute_count, baseline.tribute_count);
+    assert_eq!(
+        durable.tribute_nominal_total,
+        baseline.tribute_nominal_total
+    );
     assert_eq!(
         durable_cas
             .read_verified(&durable.manifest_ref)
             .unwrap()
             .bytes(),
-        legacy_cas
-            .read_verified(&legacy.manifest_ref)
+        baseline_cas
+            .read_verified(&baseline.manifest_ref)
             .unwrap()
             .bytes(),
     );
 
-    let legacy_reader = FilesystemCasReader::open(&legacy_cas_root, cas_limits).unwrap();
-    let legacy_catalog = VerifiedInputChunkRefCatalog::reopen(
-        &legacy_catalog_root,
-        &legacy_reader,
+    let baseline_reader = FilesystemCasReader::open(&baseline_cas_root, cas_limits).unwrap();
+    let baseline_catalog = VerifiedInputChunkRefCatalog::reopen(
+        &baseline_catalog_root,
+        &baseline_reader,
         limits,
         poc_input_list_limits(),
     )
@@ -363,8 +366,8 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
         poc_input_list_limits(),
     )
     .unwrap();
-    let legacy_chunks = legacy_catalog
-        .exact_verified_cursor(&legacy_reader, &bundle)
+    let baseline_chunks = baseline_catalog
+        .exact_verified_cursor(&baseline_reader, &bundle)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -373,7 +376,7 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(durable_chunks, legacy_chunks);
+    assert_eq!(durable_chunks, baseline_chunks);
 
     let manifest = InputManifestV1::decode_canonical(
         durable_cas

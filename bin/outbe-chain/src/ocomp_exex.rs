@@ -22,9 +22,11 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use eyre::{bail, Context as _};
 use futures::StreamExt as _;
+use metrics::{counter, gauge, histogram};
 use outbe_metadosis::precompile::IMetadosis;
 use outbe_node::{
     finalized_frame::{read_bounded_finalized_frames, FinalizedFrame, RethFinalizedFrameSource},
+    ocomp::retention::{observe_finalized_request, FinalizedRequestObservationV1},
     projection::{
         projection_frame_failure_class, FinalizedProjectionSink, ProjectionRuntimeRecoveryHandle,
         ProjectionRuntimeRecoveryV1, ReadyOffchainDataProjection, RuntimeBodyFailure,
@@ -273,6 +275,28 @@ async fn wait_for_node_teardown() -> ! {
     unreachable!("pending future completed")
 }
 
+fn finalized_reader_lags(finalized_head: u64, scanned: u64, closed: u64) -> (u64, u64) {
+    (
+        finalized_head.saturating_sub(scanned),
+        finalized_head.saturating_sub(closed),
+    )
+}
+
+fn publish_finalized_reader_metrics(finalized_head: u64, scanned: u64, closed: u64) {
+    let (reader_lag, closure_lag) = finalized_reader_lags(finalized_head, scanned, closed);
+    gauge!("outbe_ocomp_finalized_head_number").set(finalized_head as f64);
+    gauge!("outbe_ocomp_finalized_reader_checkpoint_number").set(scanned as f64);
+    gauge!("outbe_ocomp_finalized_reader_lag_blocks").set(reader_lag as f64);
+    gauge!("outbe_ocomp_closure_checkpoint_number").set(closed as f64);
+    gauge!("outbe_ocomp_closure_lag_blocks").set(closure_lag as f64);
+}
+
+fn pending_offer_notifications(
+    pending: &BTreeMap<B256, DiscoveryOfferRefV1>,
+) -> Vec<DiscoveryOfferRefV1> {
+    pending.values().cloned().collect()
+}
+
 struct EmbeddedOcompExExV1<P> {
     provider: P,
     policy: EmbeddedNodePolicyV1,
@@ -285,7 +309,6 @@ struct EmbeddedOcompExExV1<P> {
     intent_jobs: BTreeMap<B256, B256>,
     discovery_spools: BTreeMap<B256, DiscoverySpoolV1>,
     pending_offers: BTreeMap<B256, DiscoveryOfferRefV1>,
-    offer_notifications: Vec<DiscoveryOfferRefV1>,
     acknowledged_exports: BTreeSet<B256>,
     retention_selector: Arc<outbe_node::ocomp::retention::SharedOcompRetentionSelector>,
     closure_checkpoint: ContiguousCheckpointStoreV1,
@@ -329,6 +352,7 @@ where
         + Sync
         + 'static,
 {
+    gauge!("outbe_ocomp_finalized_loop_fatal").set(0.0);
     let provider = ctx.provider().clone();
     let limits = poc_schema_limits();
     let mut discovery_spools = BTreeMap::new();
@@ -371,6 +395,7 @@ where
     })
     .map_err(|error| eyre::eyre!("open Node-owned OCOMP domain: {error}"))?;
     if let Some(detail) = load_persisted_fatal_evidence(domain.fatal_evidence_root())? {
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         let failure = ProjectionFailure::new(
             ProjectionFailureClass::Other,
             format!("embedded OCOMP persisted fatal evidence: {detail}"),
@@ -446,7 +471,6 @@ where
         intent_jobs: BTreeMap::new(),
         discovery_spools,
         pending_offers: BTreeMap::new(),
-        offer_notifications: Vec::new(),
         acknowledged_exports: BTreeSet::new(),
         retention_selector: config.retention_selector,
         closure_checkpoint,
@@ -574,6 +598,11 @@ where
                     .finalized_block_num_hash()
                     .wrap_err("sample unified finalized head")?;
                 if let Some(target) = finalized_target {
+                    publish_finalized_reader_metrics(
+                        target.number,
+                        runtime.scanned_height,
+                        runtime.closure_checkpoint.current()?.block_number,
+                    );
                     let next_height = runtime
                         .scanned_height
                         .checked_add(1)
@@ -585,8 +614,14 @@ where
                     .await
                     .wrap_err("unified finalized reader worker failed")??;
                     if let Some(batch) = batch {
+                        histogram!("outbe_ocomp_finalized_reader_batch_blocks")
+                            .record(batch.frames().len() as f64);
                         'frames: for frame in batch.frames() {
-                            match runtime.retention_selector.reconcile_finalized_frame(frame) {
+                            let request_observation = observe_finalized_request(frame)?;
+                            match runtime
+                                .retention_selector
+                                .reconcile_finalized_frame(frame, request_observation)
+                            {
                                 Ok(()) => {}
                                 Err(outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled)
                                     if !config.retention_required => {}
@@ -600,7 +635,7 @@ where
                                     break 'frames;
                                 }
                             }
-                            runtime.scan_requests(frame)?;
+                            runtime.record_request_observation(frame, request_observation)?;
                             let sink = Arc::clone(&projection_sink);
                             let projected_frame = frame.clone();
                             let projection_deadline =
@@ -689,6 +724,7 @@ where
                                 wait_for_node_teardown().await;
                             }
                             runtime.record_scanned_frame(frame)?;
+                            counter!("outbe_ocomp_finalized_reader_blocks_total").increment(1);
                             runtime.refresh_jobs(
                                 frame.identity().number,
                                 frame.identity().hash,
@@ -708,14 +744,21 @@ where
                         })?;
                 }
 
-                for offer in runtime.take_offer_notifications() {
+                gauge!("outbe_ocomp_discovery_pending_offers")
+                    .set(runtime.pending_offers.len() as f64);
+                for offer in pending_offer_notifications(&runtime.pending_offers) {
+                    counter!("outbe_ocomp_discovery_control_attempts_total").increment(1);
                     match DiscoveryOfferClientV1::connect(config.discovery_control_address).await {
                         Ok(mut client) => {
                             if let Err(error) = client.send_offer(&offer).await {
+                                counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "send")
+                                    .increment(1);
                                 warn!(%error, observation_id = %offer.observation_id, "failed to notify snapshot exporter; durable offer remains pending");
                             }
                         }
                         Err(error) => {
+                            counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "connect")
+                                .increment(1);
                             warn!(%error, observation_id = %offer.observation_id, "snapshot exporter control endpoint unavailable; durable offer remains pending");
                         }
                     }
@@ -733,10 +776,16 @@ where
                         block_number: target.number,
                         block_hash: target.hash,
                     })?;
+                    publish_finalized_reader_metrics(
+                        target.number,
+                        runtime.scanned_height,
+                        runtime.closure_checkpoint.current()?.block_number,
+                    );
                 }
                 Ok(())
                 }.await;
                 if let Err(error) = tick_result {
+                    counter!("outbe_ocomp_finalized_loop_errors_total").increment(1);
                     runtime.latch_fatal(B256::ZERO, format!("unified finalized loop failed: {error:#}"))?;
                     wait_for_node_teardown().await;
                 }
@@ -757,47 +806,39 @@ where
         + Sync
         + 'static,
 {
-    fn scan_requests(&mut self, frame: &FinalizedFrame) -> eyre::Result<()> {
+    fn record_request_observation(
+        &mut self,
+        frame: &FinalizedFrame,
+        observation: Option<FinalizedRequestObservationV1>,
+    ) -> eyre::Result<()> {
+        let Some(observation) = observation else {
+            return Ok(());
+        };
         let identity = frame.identity();
         let number = identity.number;
         let hash = identity.hash;
-        for receipt in frame.receipts() {
-            if !receipt.status() {
-                continue;
+        let locator = RequestLocatorV1 {
+            intent_id: observation.intent_id,
+            wwd: observation.wwd,
+            pending_nonce: observation.pending_nonce,
+            attempt: observation.attempt,
+            activation_preconditions_hash: observation.activation_preconditions_hash,
+            block_number: number,
+            block_hash: hash,
+            state_root: frame.state_root(),
+            before_request: ProjectionCheckpoint {
+                block_number: number.saturating_sub(1),
+                block_hash: frame.parent_hash(),
+            },
+        };
+        self.validate_request(&locator, hash)?;
+        match self.requests.get(&locator.intent_id) {
+            Some(existing) if same_locator(*existing, locator) => {}
+            Some(_) => {
+                bail!("conflicting OCOMP request locator replay");
             }
-            for log in receipt.logs() {
-                if log.address != METADOSIS_ADDRESS
-                    || log.data.topics().first()
-                        != Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
-                {
-                    continue;
-                }
-                let event = IMetadosis::OffchainJobRequested::decode_log(log)
-                    .wrap_err("decode OCOMP request locator")?;
-                let locator = RequestLocatorV1 {
-                    intent_id: event.data.intentId,
-                    wwd: event.data.wwd,
-                    pending_nonce: event.data.pendingNonce,
-                    attempt: event.data.attempt,
-                    activation_preconditions_hash: event.data.activationPreconditionsHash,
-                    block_number: number,
-                    block_hash: hash,
-                    state_root: frame.state_root(),
-                    before_request: ProjectionCheckpoint {
-                        block_number: number.saturating_sub(1),
-                        block_hash: frame.parent_hash(),
-                    },
-                };
-                self.validate_request(&locator, hash)?;
-                match self.requests.get(&locator.intent_id) {
-                    Some(existing) if same_locator(*existing, locator) => {}
-                    Some(_) => {
-                        bail!("conflicting OCOMP request locator replay");
-                    }
-                    None => {
-                        self.requests.insert(locator.intent_id, locator);
-                    }
-                }
+            None => {
+                self.requests.insert(locator.intent_id, locator);
             }
         }
         Ok(())
@@ -902,7 +943,7 @@ where
                                 }
                             ) =>
                         {
-                            self.recover_legacy_released_export_ack(
+                            self.verify_released_export_ack(
                                 locator,
                                 &record,
                                 job_id,
@@ -943,14 +984,8 @@ where
                     {
                         bail!("OCOMP retained pin disagrees with finalized typed state");
                     }
-                    let migration_generation = u64::from(source_generation == 0);
-                    let mut candidate = discovery_record(
-                        locator,
-                        &record,
-                        job_id,
-                        source_generation.max(migration_generation),
-                        &limits,
-                    )?;
+                    let candidate =
+                        discovery_record(locator, &record, job_id, source_generation, &limits)?;
                     let spool = self
                         .discovery_spools
                         .get(&record.intent.protocol_bundle_hash)
@@ -973,28 +1008,6 @@ where
                         .as_ref()
                         .map(|pending| pending.reference.clone())
                         .or_else(|| acknowledged.as_ref().map(|ack| ack.reference.offer_ref()));
-                    if source_generation == 0 {
-                        let reference = durable_reference.ok_or_else(|| {
-                            eyre::eyre!(
-                                "legacy OCOMP export has no exact durable discovery-spool authority"
-                            )
-                        })?;
-                        let expected = DiscoveryOfferRefV1::from_spec(
-                            self.chain_id,
-                            self.genesis_hash,
-                            reference.generation,
-                            &candidate.spec,
-                            &limits,
-                        )?;
-                        if reference != expected {
-                            bail!("legacy OCOMP discovery authority conflicts with durable spool");
-                        }
-                        candidate.generation = reference.generation;
-                        if selected.replace(candidate).is_some() {
-                            bail!("multiple OCOMP discovery generations have durable authority");
-                        }
-                        continue;
-                    }
                     let has_durable_authority = durable_reference.as_ref() == Some(&probe);
                     if has_durable_authority {
                         if selected.replace(candidate).is_some() {
@@ -1128,7 +1141,12 @@ where
             None => {
                 let (reference, _) = spool.put_offer(job.record.generation, &job.record.spec)?;
                 self.pending_offers.insert(job_id, reference.clone());
-                self.offer_notifications.push(reference.clone());
+                info!(
+                    %job_id,
+                    observation_id = %reference.observation_id,
+                    generation = reference.generation,
+                    "persisted durable OCOMP discovery offer; awaiting SnapshotExporter ACK"
+                );
                 reference
             }
         };
@@ -1145,23 +1163,30 @@ where
             .wrap_err("commit exact exporter ACK to OCOMP retention")?;
         self.acknowledged_exports.insert(job_id);
         self.pending_offers.remove(&job_id);
+        info!(
+            %job_id,
+            observation_id = %offer.observation_id,
+            generation = offer.generation,
+            lease_generation = acknowledgment.lease_generation,
+            manifest_hash = %acknowledgment.manifest_hash,
+            "committed durable SnapshotExporter ACK"
+        );
         Ok(true)
     }
 
-    fn recover_legacy_released_export_ack(
+    fn verify_released_export_ack(
         &self,
         locator: RequestLocatorV1,
         record: &OcompJobRecordV1,
         job_id: B256,
         limits: &outbe_ocomp_protocol::SchemaLimits,
     ) -> eyre::Result<()> {
-        if !self
+        let export = self
             .retention_selector
-            .legacy_export_recovery_required(job_id)?
-        {
-            return Ok(());
-        }
-        let candidate = discovery_record(locator, record, job_id, 1, limits)?;
+            .released_export_authority(job_id)?
+            .ok_or_else(|| eyre::eyre!("closed OCOMP job has no released export authority"))?;
+        let candidate =
+            discovery_record(locator, record, job_id, export.source_generation, limits)?;
         let bundle_hash = candidate.spec.summary.protocol_bundle_hash;
         let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
             eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
@@ -1169,35 +1194,21 @@ where
         let probe = DiscoveryOfferRefV1::from_spec(
             self.chain_id,
             self.genesis_hash,
-            1,
+            export.source_generation,
             &candidate.spec,
             limits,
         )?;
-        let acknowledgment = spool.ack(&probe.observation_id)?.ok_or_else(|| {
-            eyre::eyre!("legacy released OCOMP export has no durable discovery ACK")
-        })?;
+        let acknowledgment = spool
+            .ack(&probe.observation_id)?
+            .ok_or_else(|| eyre::eyre!("released OCOMP export has no durable discovery ACK"))?;
         let reference = acknowledgment.reference.offer_ref();
-        let expected = DiscoveryOfferRefV1::from_spec(
-            self.chain_id,
-            self.genesis_hash,
-            reference.generation,
-            &candidate.spec,
-            limits,
-        )?;
-        if reference != expected {
-            bail!("legacy released OCOMP ACK conflicts with canonical finalized job");
+        if reference != probe
+            || acknowledgment.lease_generation != export.lease_generation
+            || acknowledgment.manifest_hash != export.manifest_hash
+        {
+            bail!("released OCOMP ACK conflicts with canonical durable authority");
         }
-        self.retention_selector.confirm_export_ack(
-            job_id,
-            reference.generation,
-            acknowledgment.lease_generation,
-            acknowledgment.manifest_hash,
-        )?;
         Ok(())
-    }
-
-    fn take_offer_notifications(&mut self) -> Vec<DiscoveryOfferRefV1> {
-        std::mem::take(&mut self.offer_notifications)
     }
 
     fn record_scanned_frame(&mut self, frame: &FinalizedFrame) -> eyre::Result<()> {
@@ -1906,6 +1917,7 @@ where
                 })
         };
         self.fatal = Some(failure.clone());
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         self.readiness.publish(ProjectionStatus::Fatal {
             checkpoint,
             error: failure.clone(),
@@ -1919,6 +1931,7 @@ where
             return;
         }
         self.fatal = Some(failure.clone());
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         self.readiness.publish(ProjectionStatus::Fatal {
             checkpoint: Some(ProjectionCheckpoint {
                 block_number: self.scanned_height,
@@ -2719,6 +2732,30 @@ mod tests {
             [intent_id].into_iter(),
             &materialized
         ));
+    }
+
+    #[test]
+    fn finalized_reader_lag_tracks_scan_and_open_job_closure_independently() {
+        assert_eq!(finalized_reader_lags(1_000, 900, 700), (100, 300));
+        assert_eq!(finalized_reader_lags(900, 1_000, 1_000), (0, 0));
+    }
+
+    #[test]
+    fn pending_control_offers_are_replayed_until_the_ack_removes_them() {
+        let offer = DiscoveryOfferRefV1 {
+            version: 1,
+            chain_id: 7,
+            genesis_hash: B256::repeat_byte(0x11),
+            observation_id: B256::repeat_byte(0x22),
+            generation: 3,
+            discovery_record_digest: B256::repeat_byte(0x33),
+        };
+        let mut pending = BTreeMap::from([(B256::repeat_byte(0x44), offer.clone())]);
+
+        assert_eq!(pending_offer_notifications(&pending), vec![offer.clone()]);
+        assert_eq!(pending_offer_notifications(&pending), vec![offer]);
+        pending.clear();
+        assert!(pending_offer_notifications(&pending).is_empty());
     }
 
     #[test]
