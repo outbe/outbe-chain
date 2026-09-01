@@ -604,10 +604,9 @@ pub(crate) fn issued_series(
     ))
 }
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn deferred_mints(url: &str, venue_router: Address) -> usize {
-    let topic0 = alloy_primitives::keccak256(
-        b"IssuanceMintDeferred(uint256,bytes14,address,bytes)".as_slice(),
-    );
+pub(crate) fn deferred_issuances(url: &str, venue_router: Address) -> usize {
+    let topic0 =
+        alloy_primitives::keccak256(b"IssuanceDeferred(uint256,bytes14,address,bytes)".as_slice());
     logs_of(
         url,
         venue_router,

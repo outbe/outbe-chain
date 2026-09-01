@@ -353,7 +353,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
 }
 
 #[test]
-fn the_sra_pool_mints_an_sra_gem_at_the_discounted_cost() {
+fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
     let backing = native(1_000_000);

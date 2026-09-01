@@ -654,8 +654,8 @@ fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day:
         .sum();
     assert!(
         !minted.is_zero(),
-        "series {series} exists on {url} but no bidder holds any Intex ({} mints were deferred)",
-        venue_probes::deferred_mints(&url, side.target_router)
+        "series {series} exists on {url} but no bidder holds any Intex ({} issuances were deferred)",
+        venue_probes::deferred_issuances(&url, side.target_router)
     );
 }
 
