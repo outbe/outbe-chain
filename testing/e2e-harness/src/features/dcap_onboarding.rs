@@ -71,6 +71,47 @@ fn validator_reopens_exact_key(world: &mut World) {
     );
 }
 
+#[when("the validator DCAP sealed state is offered to an SGX no-attestation runtime")]
+fn validator_state_is_offered_to_no_attest(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world
+        .localnet
+        .stop_joiner(index)
+        .expect("stop validator before downgrade attempt");
+    world
+        .localnet
+        .attempt_no_attest_sealed_restart(index)
+        .expect("run bounded no-attestation downgrade attempt");
+}
+
+#[then("the downgrade runtime cannot reopen or expose the permanent key")]
+fn downgrade_cannot_reopen_key(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world
+        .localnet
+        .assert_no_attest_restart_rejected(index)
+        .expect("no-attestation runtime must fail closed");
+    world
+        .localnet
+        .restart_joiner_enclave(index)
+        .expect("restore canonical DCAP enclave after downgrade test");
+    world
+        .localnet
+        .launch_joiner(index, &[])
+        .expect("restart validator after downgrade test");
+    let expected = world
+        .state
+        .joiner_offer_public_before_restart
+        .expect("validator permanent key before downgrade test");
+    assert_eq!(
+        world
+            .localnet
+            .node_offer_public(index)
+            .expect("canonical DCAP enclave key after downgrade test"),
+        expected
+    );
+}
+
 #[when("a production full node joins, starts, and restarts with its own enclave")]
 fn full_node_joins_starts_and_restarts(world: &mut World) {
     let index = world.validators.joiner_index() + 1;

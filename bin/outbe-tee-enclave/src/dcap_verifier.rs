@@ -269,20 +269,25 @@ pub(crate) fn complete_verification_response(
         Err(message) => {
             return EnclaveResponse::Error {
                 message: message.to_string(),
-            }
+            };
         }
     };
     let onboarding_artifact = if matches!(
         request.purpose,
         VerificationPurposeV1::RegisterOnboarding { .. }
     ) {
-        match build_onboarding_artifact(&request, &mut outcome, resident_offer_key, source_manifest)
-        {
+        match build_onboarding_artifact(
+            &request,
+            &mut outcome,
+            resident_offer_key,
+            source_manifest,
+            keys.code_identity(),
+        ) {
             Ok(artifact) => artifact,
             Err(message) => {
                 return EnclaveResponse::Error {
                     message: message.to_string(),
-                }
+                };
             }
         }
     } else {
@@ -293,7 +298,7 @@ pub(crate) fn complete_verification_response(
         Err(_) => {
             return EnclaveResponse::Error {
                 message: "enclave produced a non-canonical DCAP outcome".to_string(),
-            }
+            };
         }
     };
     if matches!(
@@ -309,7 +314,7 @@ pub(crate) fn complete_verification_response(
             Err(_) => {
                 return EnclaveResponse::Error {
                     message: "enclave produced a non-canonical onboarding artifact".to_string(),
-                }
+                };
             }
         };
         let preimage = match dcap_onboarding_attestation_preimage(
@@ -321,7 +326,7 @@ pub(crate) fn complete_verification_response(
             Err(_) => {
                 return EnclaveResponse::Error {
                     message: "enclave produced an oversized onboarding result".to_string(),
-                }
+                };
             }
         };
         return EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
@@ -336,7 +341,7 @@ pub(crate) fn complete_verification_response(
         Err(_) => {
             return EnclaveResponse::Error {
                 message: "enclave produced an oversized DCAP outcome".to_string(),
-            }
+            };
         }
     };
     EnclaveResponse::DcapVerificationFinishedV1 {
@@ -351,6 +356,7 @@ fn build_onboarding_artifact(
     outcome: &mut DcapVerificationOutcomeV1,
     resident_offer_key: Option<&DerivedTributeOfferKey>,
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
+    source_code_identity: (B256, B256, u16, u16),
 ) -> Result<Option<outbe_tee::dcap_protocol::DcapOnboardingArtifactV1>, &'static str> {
     use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1};
 
@@ -390,6 +396,21 @@ fn build_onboarding_artifact(
     let source_manifest = source_manifest.ok_or("onboarding source is not initialized")?;
     let resident_offer_key =
         resident_offer_key.ok_or("onboarding source offer key is not ready")?;
+    let DcapVerificationOutcomeV1::Accepted(verdict) = outcome else {
+        unreachable!("non-accepted outcomes return before onboarding construction")
+    };
+    if source_manifest.attestation_mode
+        != outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
+        || (
+            verdict.mrenclave,
+            verdict.mrsigner,
+            verdict.isv_prod_id,
+            verdict.isv_svn,
+        ) != source_code_identity
+    {
+        *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::MeasurementRejected);
+        return Ok(None);
+    }
     if intent.chain_id != source_manifest.chain_id
         || intent.genesis_hash != source_manifest.genesis_hash
         || resident_offer_key.public() != *expected_tribute_offer_public
@@ -412,6 +433,8 @@ fn build_onboarding_artifact(
         enclave_id: intent
             .derived_enclave_id()
             .map_err(|_| "accepted onboarding enclave id is unavailable")?,
+        binding_id: intent.binding_id,
+        policy_hash: intent.policy_hash,
         recipient_x25519: intent.recipient_x25519,
         tribute_offer_public: *expected_tribute_offer_public,
         key_epoch: *key_epoch,
@@ -437,7 +460,7 @@ fn verify_complete_request(
         Ok(AttestationEvidenceV1::GramineDirectDev(_)) | Err(_) => {
             return Ok(DcapVerificationOutcomeV1::Rejected(
                 DcapRejectCodeV1::EvidenceNonCanonical,
-            ))
+            ));
         }
     };
     let policy = match TeePolicyV1::decode_canonical(&request.policy) {
@@ -445,7 +468,7 @@ fn verify_complete_request(
         Err(_) => {
             return Ok(DcapVerificationOutcomeV1::Rejected(
                 DcapRejectCodeV1::PolicyNonCanonical,
-            ))
+            ));
         }
     };
     Ok(
@@ -487,6 +510,7 @@ mod tests {
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: [0x83; 32],
             genesis_hash: B256::repeat_byte(0x84),
+            attestation_mode: AttestationMode::DcapRequired,
             node_id: NodeIdV1 {
                 reth_p2p_public: node_public,
             },
@@ -555,11 +579,12 @@ mod tests {
     }
 
     fn accepted_outcome() -> DcapVerificationOutcomeV1 {
+        let (mrenclave, mrsigner, isv_prod_id, isv_svn) = accepted_code_identity();
         DcapVerificationOutcomeV1::Accepted(DcapVerdictV1 {
-            mrenclave: B256::repeat_byte(0x91),
-            mrsigner: B256::repeat_byte(0x92),
-            isv_prod_id: 1,
-            isv_svn: 1,
+            mrenclave,
+            mrsigner,
+            isv_prod_id,
+            isv_svn,
             pck_ca: DcapPckCaV1::Processor,
             fmspc: [0x93; 6],
             pce_id: 1,
@@ -569,6 +594,10 @@ mod tests {
             qe_tcb_evaluation_data_number: 1,
             collateral_valid_until: 10_000,
         })
+    }
+
+    fn accepted_code_identity() -> (B256, B256, u16, u16) {
+        (B256::repeat_byte(0x91), B256::repeat_byte(0x92), 1, 1)
     }
 
     #[test]
@@ -790,9 +819,14 @@ mod tests {
     fn accepted_onboarding_requires_both_exact_signatures_before_artifact_creation() {
         let (request, manifest, resident) = signed_onboarding_fixture();
         let mut outcome = accepted_outcome();
-        let artifact =
-            build_onboarding_artifact(&request, &mut outcome, Some(&resident), Some(&manifest))
-                .unwrap();
+        let artifact = build_onboarding_artifact(
+            &request,
+            &mut outcome,
+            Some(&resident),
+            Some(&manifest),
+            accepted_code_identity(),
+        )
+        .unwrap();
         assert!(artifact.is_some());
 
         let mut bad_node = request;
@@ -808,6 +842,7 @@ mod tests {
             &mut outcome,
             Some(&resident),
             Some(&manifest),
+            accepted_code_identity(),
         )
         .unwrap()
         .is_none());
@@ -830,6 +865,7 @@ mod tests {
             &mut outcome,
             Some(&resident),
             Some(&manifest),
+            accepted_code_identity(),
         )
         .unwrap()
         .is_none());
@@ -848,12 +884,33 @@ mod tests {
             &mut outcome,
             Some(&resident),
             Some(&manifest),
+            accepted_code_identity(),
         )
         .unwrap()
         .is_none());
         assert_eq!(
             outcome,
             DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::QuoteMalformed)
+        );
+    }
+
+    #[test]
+    fn onboarding_rejects_host_policy_that_admits_another_enclave_binary() {
+        let (request, manifest, resident) = signed_onboarding_fixture();
+        let mut outcome = accepted_outcome();
+        let source_identity = (B256::repeat_byte(0xa1), B256::repeat_byte(0xa2), 1, 2);
+        assert!(build_onboarding_artifact(
+            &request,
+            &mut outcome,
+            Some(&resident),
+            Some(&manifest),
+            source_identity,
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(
+            outcome,
+            DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::MeasurementRejected)
         );
     }
 }

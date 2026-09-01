@@ -28,13 +28,14 @@
   "network_name": "outbe-testnet-1",
   "platform": "linux/amd64",
   "project_toolchain": "release/project-toolchain-v1.json",
-  "sealed_state_schema": 1,
+  "sealed_state_schema": 3,
   "sgx": {
     "debug": false,
     "edmm_enable": false,
     "isv_prod_id": 1,
-    "isv_svn": 1,
+    "isv_svn": 2,
     "max_threads": 16,
+    "minimum_tcb_evaluation_data_number": 1,
     "remote_attestation": "dcap",
     "sigstruct_date_source": "source-date-epoch-utc"
   },

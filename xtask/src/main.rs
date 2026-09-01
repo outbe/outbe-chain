@@ -208,6 +208,9 @@ enum SgxCommand {
     Prepare {
         #[arg(long, value_enum)]
         network: sgx::SgxReleaseNetwork,
+        /// Approved seeded ChainSpec. Its chain identity and epoch-0 committee are measured into the enclave.
+        #[arg(long)]
+        genesis: PathBuf,
         #[arg(long)]
         elf_output: PathBuf,
         #[arg(long)]
@@ -233,12 +236,32 @@ enum SgxCommand {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Verify checksums, canonical metadata and the enclave SIGSTRUCT.
+    /// Materialize the only allowed final-genesis change from a signed bundle.
+    FinalizeGenesis {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
+        /// Approved genesis without teeAttestationV1.
+        #[arg(long)]
+        seeded_genesis: PathBuf,
+        /// Signed SGX bundle whose measurements become the block-1 policy.
+        #[arg(long)]
+        bundle: PathBuf,
+        /// New final genesis; an existing path is never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+        /// Canonical evidence for the seeded-to-final transformation.
+        #[arg(long)]
+        evidence_output: PathBuf,
+    },
+    /// Verify checksums, SIGSTRUCT and the exact final genesis policy binding.
     Verify {
         #[arg(long, value_enum)]
         network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         bundle: PathBuf,
+        /// Final genesis whose block-1 policy must authorize this exact bundle.
+        #[arg(long)]
+        genesis: PathBuf,
     },
     /// Create a deterministic archive from an already verified signed bundle.
     Archive {
@@ -293,6 +316,12 @@ enum SgxCommand {
         processor_dcap_archive: PathBuf,
         #[arg(long)]
         processor_dcap_evidence: PathBuf,
+        /// Approved genesis before the release policy is inserted.
+        #[arg(long)]
+        seeded_genesis: PathBuf,
+        /// Canonical evidence for the seeded-to-final genesis transformation.
+        #[arg(long)]
+        network_binding_evidence: PathBuf,
         /// Final network genesis whose block-1 policy authorizes this enclave.
         #[arg(long)]
         genesis: PathBuf,
@@ -400,10 +429,11 @@ fn main() -> Result<()> {
             ReleaseCommand::Sgx(sgx_args) => match sgx_args.command {
                 SgxCommand::Prepare {
                     network,
+                    genesis,
                     elf_output,
                     output,
                 } => {
-                    sgx::prepare(&repo_root, network, &elf_output, &output)?;
+                    sgx::prepare(&repo_root, network, &genesis, &elf_output, &output)?;
                     println!(
                         "unsigned deterministic {network:?} SGX bundle: {}",
                         output.display()
@@ -429,8 +459,33 @@ fn main() -> Result<()> {
                     sgx::sign(&repo_root, network, &unsigned, &key_file, &output)?;
                     println!("signed {network:?} SGX bundle: {}", output.display());
                 }
-                SgxCommand::Verify { network, bundle } => {
-                    sgx::verify(&repo_root, network, &bundle)?;
+                SgxCommand::FinalizeGenesis {
+                    network,
+                    seeded_genesis,
+                    bundle,
+                    output,
+                    evidence_output,
+                } => {
+                    sgx::finalize_genesis(
+                        &repo_root,
+                        network,
+                        &seeded_genesis,
+                        &bundle,
+                        &output,
+                        &evidence_output,
+                    )?;
+                    println!(
+                        "final {network:?} genesis: {} (evidence: {})",
+                        output.display(),
+                        evidence_output.display()
+                    );
+                }
+                SgxCommand::Verify {
+                    network,
+                    bundle,
+                    genesis,
+                } => {
+                    sgx::verify_with_genesis(&repo_root, network, &bundle, &genesis)?;
                     println!(
                         "verified signed {network:?} SGX bundle: {}",
                         bundle.display()
@@ -472,6 +527,8 @@ fn main() -> Result<()> {
                     hardware_evidence,
                     processor_dcap_archive,
                     processor_dcap_evidence,
+                    seeded_genesis,
+                    network_binding_evidence,
                     genesis,
                     output,
                 } => {
@@ -492,6 +549,8 @@ fn main() -> Result<()> {
                             oci_evidence,
                             sbom,
                             sgx_evidence,
+                            seeded_genesis,
+                            network_binding_evidence,
                             genesis,
                         },
                         &output,

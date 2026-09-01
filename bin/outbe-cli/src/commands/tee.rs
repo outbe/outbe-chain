@@ -15,8 +15,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_consensus::BlockHeader as _;
 use alloy_primitives::{keccak256, Address, B256, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolValue};
 use clap::Subcommand;
 use eyre::{Result, WrapErr};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
@@ -34,13 +35,19 @@ use outbe_operator::{
 };
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1,
+    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1,
+    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, ValidatorNodeBindingV1,
+    ENCLAVE_ID_DOMAIN_V1,
 };
-use outbe_tee::protocol::{
-    EnclaveRequest, EnclaveResponse, MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
-    MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
+use outbe_primitives::{
+    addresses::TEE_REGISTRY_ADDRESS,
+    reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact},
 };
+use outbe_tee::finalized_admission::{
+    onboarding_registry_slots_v1, CertifiedHeaderV1, FinalizedAdmissionRecordKindV1,
+    FinalizedAdmissionWitnessV1, MptAccountProofV1, MptStorageProofV1,
+};
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::{
     acquire_dcap_collateral_v1, clear_committed_join_checkpoint,
     connect_committed_node_host_enclave, construct_finalized_replacement_authorization_v1,
@@ -52,7 +59,7 @@ use outbe_tee::{
     AuthorizedEnclaveClient, CommittedJoinSubmissionV1, EnclaveClient,
     FinalizedJoinAdmissionAnchorV1, FinalizedRegistryViewV1, FinalizedReplacementBindingV1,
     GeneratedDcapQuoteV1, NodeHostIdentityV1, ReplacementCandidateEnclaveV1,
-    ReplacementCandidateSubmissionV1,
+    ReplacementCandidateSubmissionV1, TransportError,
 };
 use zeroize::Zeroizing;
 
@@ -141,6 +148,10 @@ pub enum TeeCmd {
         /// Persistent Reth P2P secp256k1 secret file.
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
+        /// Exact final seeded genesis.json used to derive the release-measured
+        /// network, policy schedule and epoch-0 finality anchor.
+        #[arg(long)]
+        genesis: PathBuf,
         /// Fresh one-use nonzero 32-byte binding id. Keep it stable while
         /// tracking one submitted transaction.
         #[arg(long)]
@@ -240,6 +251,7 @@ impl TeeCmd {
                 enclave_socket,
                 node_data_dir,
                 reth_p2p_secret_key,
+                genesis,
                 binding_id,
                 valid_until,
                 timeout_secs,
@@ -251,6 +263,7 @@ impl TeeCmd {
                         enclave_socket: &enclave_socket,
                         node_data_dir: node_data_dir.as_deref(),
                         reth_p2p_secret_key: reth_p2p_secret_key.as_deref(),
+                        genesis: &genesis,
                         binding_id: &binding_id,
                         valid_until,
                         timeout_secs,
@@ -335,6 +348,9 @@ async fn renew(
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let rpc_chain_id = client.eth_chain_id().await?;
+    if manifest.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
+        eyre::bail!("committed NodeHost manifest chain id does not match eth_chainId");
+    }
     let path = reth_p2p_secret_key
         .ok_or_else(|| eyre::eyre!("NodeHost renewal requires --reth-p2p-secret-key"))?;
     let node_signing_key = load_secp256k1_key_file(path)?;
@@ -343,8 +359,7 @@ async fn renew(
         enclave_socket,
         node_data_dir,
         NodeHostIdentityV1 {
-            chain_id: rpc_chain_id,
-            genesis_hash: manifest.genesis_hash,
+            network_binding: manifest.network_binding(),
             reth_p2p_public: manifest.node_id.reth_p2p_public,
         },
         |hash| sign_node_hash(&node_signing_key, hash),
@@ -544,8 +559,7 @@ fn connect_upgrade_candidate_v1(
         candidate_enclave_socket,
         node_data_dir,
         NodeHostIdentityV1 {
-            chain_id: rpc_chain_id,
-            genesis_hash: active.genesis_hash,
+            network_binding: active.network_binding(),
             reth_p2p_public: active.node_id.reth_p2p_public,
         },
         |hash| sign_node_hash(&signing, hash),
@@ -640,6 +654,7 @@ struct TeeJoinArgs<'a> {
     enclave_socket: &'a str,
     node_data_dir: Option<&'a std::path::Path>,
     reth_p2p_secret_key: Option<&'a std::path::Path>,
+    genesis: &'a std::path::Path,
     binding_id: &'a str,
     valid_until: u64,
     timeout_secs: u64,
@@ -675,6 +690,7 @@ enum JoinTransport {
 enum JoinOfferKeyState {
     Keyless,
     ReadyExact,
+    ReadyMismatch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -752,6 +768,9 @@ fn plan_missing_committed_relay(
     offer_key_state: JoinOfferKeyState,
 ) -> Result<MissingCommittedRelayPlan> {
     match (resumes_finalized_target, offer_key_state) {
+        (_, JoinOfferKeyState::ReadyMismatch) => {
+            eyre::bail!("resident permanent offer key does not match finalized TeeRegistry")
+        }
         (false, _) => Ok(MissingCommittedRelayPlan::ConstructAndPersist),
         (true, JoinOfferKeyState::ReadyExact) => Ok(MissingCommittedRelayPlan::CleanupReadyExact),
         (true, JoinOfferKeyState::Keyless) => eyre::bail!(
@@ -812,17 +831,28 @@ async fn relay_exact_join_transaction(
 fn plan_join_completion(
     offer_key_state: JoinOfferKeyState,
     is_candidate: bool,
-) -> JoinCompletionPlan {
-    JoinCompletionPlan {
+) -> Result<JoinCompletionPlan> {
+    if offer_key_state == JoinOfferKeyState::ReadyMismatch {
+        eyre::bail!("resident permanent offer key does not match finalized TeeRegistry");
+    }
+    Ok(JoinCompletionPlan {
         ingest_offer_key: offer_key_state == JoinOfferKeyState::Keyless,
         promote_candidate: is_candidate,
-    }
+    })
 }
 
 fn classify_join_offer_key_state(
     response: EnclaveResponse,
     expected_offer_pub: [u8; 32],
 ) -> Result<JoinOfferKeyState> {
+    classify_join_offer_key_state_transport(response, expected_offer_pub)
+        .map_err(|error| eyre::eyre!(error))
+}
+
+fn classify_join_offer_key_state_transport(
+    response: EnclaveResponse,
+    expected_offer_pub: [u8; 32],
+) -> std::result::Result<JoinOfferKeyState, TransportError> {
     match response {
         EnclaveResponse::PublicKeys {
             offer_key_ready: false,
@@ -836,8 +866,10 @@ fn classify_join_offer_key_state(
         EnclaveResponse::PublicKeys {
             offer_key_ready: true,
             ..
-        } => eyre::bail!("resident permanent offer key does not match finalized TeeRegistry"),
-        other => eyre::bail!("expected enclave PublicKeys, got {other:?}"),
+        } => Ok(JoinOfferKeyState::ReadyMismatch),
+        other => Err(TransportError::DcapVerification(format!(
+            "expected enclave PublicKeys, got {other:?}"
+        ))),
     }
 }
 
@@ -877,12 +909,228 @@ impl JoinEnclave {
     }
 
     fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse> {
+        self.request_transport(request)
+            .map_err(|error| eyre::eyre!(error))
+    }
+
+    fn request_transport(
+        &mut self,
+        request: &EnclaveRequest,
+    ) -> std::result::Result<EnclaveResponse, TransportError> {
         match self {
             Self::Committed(client) => client.request(request),
             Self::Candidate(client) => client.request(request),
             Self::Development(client) => client.request(request),
         }
-        .map_err(|error| eyre::eyre!(error))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn begin_finalized_admission_v1(
+        &mut self,
+        artifact: &[u8],
+        anchor_outcome: &[u8],
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    ) -> std::result::Result<B256, TransportError> {
+        match self {
+            Self::Committed(client) => client.begin_finalized_admission_v1(
+                artifact,
+                anchor_outcome,
+                expected_intent_hash,
+                expected_tribute_offer_public,
+                expected_key_epoch,
+                expected_tribute_offer_epoch,
+            ),
+            Self::Candidate(client) => client.begin_finalized_admission_v1(
+                artifact,
+                anchor_outcome,
+                expected_intent_hash,
+                expected_tribute_offer_public,
+                expected_key_epoch,
+                expected_tribute_offer_epoch,
+            ),
+            Self::Development(_) => {
+                unreachable!("finalized admission cannot use development transport")
+            }
+        }
+    }
+
+    fn upload_finalized_admission_record_v1(
+        &mut self,
+        request_hash: B256,
+        kind: FinalizedAdmissionRecordKindV1,
+        record: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        match self {
+            Self::Committed(client) => {
+                client.upload_finalized_admission_record_v1(request_hash, kind, record)
+            }
+            Self::Candidate(client) => {
+                client.upload_finalized_admission_record_v1(request_hash, kind, record)
+            }
+            Self::Development(_) => {
+                unreachable!("finalized admission cannot use development transport")
+            }
+        }
+    }
+
+    fn finish_finalized_admission_v1(
+        &mut self,
+        request_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+    ) -> std::result::Result<[u8; 32], TransportError> {
+        match self {
+            Self::Committed(client) => {
+                client.finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
+            }
+            Self::Candidate(client) => {
+                client.finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
+            }
+            Self::Development(_) => {
+                unreachable!("finalized admission cannot use development transport")
+            }
+        }
+    }
+}
+
+enum FinalizedAdmissionAttemptErrorV1 {
+    Transport(TransportError),
+    Local(eyre::Report),
+}
+
+impl From<TransportError> for FinalizedAdmissionAttemptErrorV1 {
+    fn from(error: TransportError) -> Self {
+        Self::Transport(error)
+    }
+}
+
+impl From<eyre::Report> for FinalizedAdmissionAttemptErrorV1 {
+    fn from(error: eyre::Report) -> Self {
+        Self::Local(error)
+    }
+}
+
+trait FinalizedAdmissionRecoveryIoV1 {
+    fn upload_once(
+        &mut self,
+    ) -> impl std::future::Future<Output = std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1>>;
+
+    fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError>;
+
+    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError>;
+
+    fn expected_offer_key(&self) -> [u8; 32];
+}
+
+async fn run_finalized_admission_recovery_v1(
+    io: &mut impl FinalizedAdmissionRecoveryIoV1,
+) -> Result<[u8; 32]> {
+    let mut uploads = 0_u8;
+    loop {
+        uploads += 1;
+        match io.upload_once().await {
+            Ok(offer_public) => return Ok(offer_public),
+            Err(FinalizedAdmissionAttemptErrorV1::Local(error)) => return Err(error),
+            Err(FinalizedAdmissionAttemptErrorV1::Transport(error))
+                if !error.is_connection_fault() =>
+            {
+                return Err(eyre::eyre!(error));
+            }
+            Err(FinalizedAdmissionAttemptErrorV1::Transport(error)) => {
+                io.reconnect_exact().map_err(|reconnect| {
+                    eyre::eyre!(
+                        "finalized-admission connection fault ({error}); exact reconnect failed: {reconnect}"
+                    )
+                })?;
+                match io.probe_offer_key().map_err(|probe| {
+                    eyre::eyre!(
+                        "finalized-admission connection fault ({error}); authenticated recovery probe failed: {probe}"
+                    )
+                })? {
+                    JoinOfferKeyState::ReadyExact => return Ok(io.expected_offer_key()),
+                    JoinOfferKeyState::ReadyMismatch => eyre::bail!(
+                        "resident permanent offer key does not match finalized TeeRegistry after reconnect"
+                    ),
+                    JoinOfferKeyState::Keyless if uploads == 1 => continue,
+                    JoinOfferKeyState::Keyless => eyre::bail!(
+                        "finalized-admission replay exhausted after a second connection fault; authenticated enclave remains keyless"
+                    ),
+                }
+            }
+        }
+    }
+}
+
+struct CliFinalizedAdmissionIoV1<'a, R> {
+    rpc: &'a R,
+    finalized_height: u64,
+    context: &'a outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+    artifact: &'a [u8],
+    anchor_outcome: &'a [u8],
+    expected_intent_hash: B256,
+    expected_offer_public: [u8; 32],
+    expected_key_epoch: u64,
+    expected_offer_epoch: u64,
+    enclave: &'a mut JoinEnclave,
+    enclave_socket: &'a str,
+    node_data_dir: &'a Path,
+    node_host_identity: NodeHostIdentityV1,
+    node_signing_key: &'a k256::ecdsa::SigningKey,
+}
+
+impl<R: Rpc + Sync> FinalizedAdmissionRecoveryIoV1 for CliFinalizedAdmissionIoV1<'_, R> {
+    fn upload_once(
+        &mut self,
+    ) -> impl std::future::Future<Output = std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1>>
+    {
+        stream_finalized_admission_attempt_v1(
+            self.rpc,
+            self.finalized_height,
+            self.context,
+            self.artifact,
+            self.anchor_outcome,
+            self.expected_intent_hash,
+            self.expected_offer_public,
+            self.expected_key_epoch,
+            self.expected_offer_epoch,
+            self.enclave,
+        )
+    }
+
+    fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError> {
+        let reconnected = match self.enclave {
+            JoinEnclave::Committed(_) => JoinEnclave::Committed(
+                connect_committed_node_host_enclave(self.enclave_socket, self.node_data_dir)?,
+            ),
+            JoinEnclave::Candidate(_) => JoinEnclave::Candidate(Box::new(
+                outbe_tee::prepare_node_host_enclave_replacement_candidate(
+                    self.enclave_socket,
+                    self.node_data_dir,
+                    self.node_host_identity,
+                    |hash| sign_node_hash(self.node_signing_key, hash),
+                )?,
+            )),
+            JoinEnclave::Development(_) => {
+                return Err(TransportError::DcapVerification(
+                    "finalized admission cannot reconnect a development enclave".into(),
+                ));
+            }
+        };
+        *self.enclave = reconnected;
+        Ok(())
+    }
+
+    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError> {
+        let response = self
+            .enclave
+            .request_transport(&EnclaveRequest::GetPublicKeys)?;
+        classify_join_offer_key_state_transport(response, self.expected_offer_public)
+    }
+
+    fn expected_offer_key(&self) -> [u8; 32] {
+        self.expected_offer_public
     }
 }
 
@@ -1024,6 +1272,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         enclave_socket,
         node_data_dir,
         reth_p2p_secret_key,
+        genesis,
         binding_id,
         valid_until,
         timeout_secs,
@@ -1235,8 +1484,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                             enclave_socket,
                             node_data_dir,
                             NodeHostIdentityV1 {
-                                chain_id: rpc_chain_id,
-                                genesis_hash: policy.genesis_hash,
+                                network_binding: policy.network_binding(),
                                 reth_p2p_public,
                             },
                             |hash| sign_node_hash(&node_signing_key, hash),
@@ -1260,8 +1508,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     enclave_socket,
                     node_data_dir,
                     NodeHostIdentityV1 {
-                        chain_id: rpc_chain_id,
-                        genesis_hash: policy.genesis_hash,
+                        network_binding: policy.network_binding(),
                         reth_p2p_public,
                     },
                     |hash| sign_node_hash(&node_signing_key, hash),
@@ -1273,9 +1520,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
                 (JoinEnclave::Committed(client), manifest)
             };
-            if manifest.chain_id != policy.chain_id
-                || manifest.genesis_hash != policy.genesis_hash
-                || manifest.node_id != node_id
+            if manifest.network_binding() != policy.network_binding() || manifest.node_id != node_id
             {
                 return Err(eyre::eyre!(
                     "committed NodeHost manifest does not match the active chain and node identity"
@@ -1335,7 +1580,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         enclave.request(&EnclaveRequest::GetPublicKeys)?,
         expected_offer_pub,
     )?;
-    let completion_plan = plan_join_completion(offer_key_state, enclave.is_candidate());
+    let completion_plan = plan_join_completion(offer_key_state, enclave.is_candidate())?;
     if durable_submission
         .as_ref()
         .is_some_and(|submission| submission.is_candidate() != enclave.is_candidate())
@@ -1489,7 +1734,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     // The global EVM signer owns both the address-to-NodeHost association and
     // the transaction envelope. No second node or renewal EVM key exists.
     let calldata_hash = keccak256(&call);
-    let (tx_hash, from_block) = if enclave.is_candidate() {
+    let tx_hash = if enclave.is_candidate() {
         let node_data_dir = node_data_dir.expect("candidate join requires NodeHost state");
         let relay = if let Some(durable) = load_replacement_candidate_relay(node_data_dir)
             .map_err(|error| eyre::eyre!("load durable candidate relay: {error}"))?
@@ -1535,11 +1780,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             transaction_hash: relay.transaction_hash(),
             raw_transaction: relay.raw_transaction().to_vec(),
         };
-        let from_block = client.eth_block_number().await?;
-        (
-            relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?,
-            from_block,
-        )
+        relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?
     } else if durable_submission
         .as_ref()
         .is_some_and(DurableJoinSubmissionV1::is_committed)
@@ -1625,19 +1866,12 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             transaction_hash: relay.transaction_hash(),
             raw_transaction: relay.raw_transaction().to_vec(),
         };
-        (
-            relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?,
-            relay.from_block(),
-        )
+        relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?
     } else {
-        let from_block = client.eth_block_number().await?;
-        (
-            evm_signer
-                .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
-                .await
-                .wrap_err("V1 registerEnclave submission failed")?,
-            from_block,
-        )
+        evm_signer
+            .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
+            .await
+            .wrap_err("V1 registerEnclave submission failed")?
     };
     println!(
         "V1 registerEnclave submitted by {}: {tx_hash}",
@@ -1652,14 +1886,26 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     )
     .await?;
 
-    let resp = if completion_plan.ingest_offer_key {
-        // Accept only the artifact indexed by the canonical node identity
-        // proved in the same transaction.
-        let topic0 = format!(
-            "0x{}",
-            hex::encode(ITeeRegistry::OfferKeySealedForRegistryV1::SIGNATURE_HASH)
-        );
-        let topic1 = format!("0x{}", hex::encode(node_id_hash));
+    // The NodeHost admission checkpoint must be durable before the recipient
+    // enclave can activate the permanent key. A crash after this write can
+    // safely resume; a write failure leaves the enclave keyless.
+    let authorized_node_data_dir = if join_transport == JoinTransport::AuthorizedNodeHost {
+        let node_data_dir = node_data_dir.ok_or_else(|| {
+            eyre::eyre!("authenticated onboarding lost its required node data directory")
+        })?;
+        persist_authorized_join_admission_anchor_v1(
+            node_data_dir,
+            &finalized_join,
+            node_id_hash,
+            enclave_id,
+            intent_hash,
+        )?;
+        Some(node_data_dir)
+    } else {
+        None
+    };
+
+    let tribute_offer_public = if completion_plan.ingest_offer_key {
         match policy.attestation_mode {
             AttestationMode::DcapRequired => {
                 let expected = ExpectedOnboardingBindingV1 {
@@ -1681,6 +1927,13 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     Duration::from_secs(timeout_secs),
                 )
                 .await?;
+                let anchor_outcome = load_finalized_admission_anchor_v1(
+                    client,
+                    genesis,
+                    finalized.finalized_height,
+                    &finalized.artifact.context,
+                )
+                .await?;
                 let artifact = finalized.artifact.encode_canonical().map_err(|code| {
                     eyre::eyre!("encode finalized artifact: {:#06x}", code.code())
                 })?;
@@ -1689,146 +1942,345 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     finalized.finalized_height,
                     artifact.len()
                 );
-                enclave
-                    .request(&EnclaveRequest::IngestDcapOnboardingArtifactV1 {
-                        artifact,
-                        expected_intent_hash: intent_hash,
-                        expected_tribute_offer_public: expected_offer_pub,
-                        expected_key_epoch: key_epoch,
-                        expected_tribute_offer_epoch: tribute_offer_epoch,
-                    })
-                    .map_err(|error| {
-                        eyre::eyre!("enclave purpose-bound onboarding ingest failed: {error}")
-                    })?
+                let node_data_dir = authorized_node_data_dir
+                    .expect("DcapRequired join has a durable NodeHost admission anchor");
+                let mut recovery = CliFinalizedAdmissionIoV1 {
+                    rpc: client,
+                    finalized_height: finalized.finalized_height,
+                    context: &finalized.artifact.context,
+                    artifact: &artifact,
+                    anchor_outcome: &anchor_outcome,
+                    expected_intent_hash: intent_hash,
+                    expected_offer_public: expected_offer_pub,
+                    expected_key_epoch: key_epoch,
+                    expected_offer_epoch: tribute_offer_epoch,
+                    enclave: &mut enclave,
+                    enclave_socket,
+                    node_data_dir,
+                    node_host_identity: NodeHostIdentityV1 {
+                        network_binding: policy.network_binding(),
+                        reth_p2p_public,
+                    },
+                    node_signing_key: &node_signing_key,
+                };
+                run_finalized_admission_recovery_v1(&mut recovery)
+                    .await
+                    .wrap_err("enclave purpose-bound onboarding ingest failed")?
             }
             AttestationMode::GramineDirectDev => {
-                let sealed = poll_offer_key_sealed(
-                    client,
-                    &topic0,
-                    &topic1,
-                    &tx_hash,
-                    expected_offer_pub,
-                    from_block,
-                    timeout_secs,
+                eyre::bail!(
+                    "post-bootstrap enclave onboarding requires DcapRequired; GramineDirectDev networks must be restarted from a new founding ceremony"
                 )
-                .await?;
-                enclave
-                    .request(&EnclaveRequest::IngestSealedOfferKeyForRegistry {
-                        sealed,
-                        expected_tribute_offer_public: expected_offer_pub,
-                        chain_id: B256::from(policy.chain_id),
-                        tribute_offer_epoch,
-                    })
-                    .map_err(|error| eyre::eyre!("development onboarding ingest failed: {error}"))?
             }
         }
     } else {
-        EnclaveResponse::OfferKeyForRegistryIngested {
-            tribute_offer_public: expected_offer_pub,
-        }
+        expected_offer_pub
     };
-    match resp {
-        EnclaveResponse::OfferKeyForRegistryIngested {
-            tribute_offer_public,
-        } => {
-            if join_transport == JoinTransport::AuthorizedNodeHost {
-                let node_data_dir = node_data_dir.ok_or_else(|| {
-                    eyre::eyre!("authenticated onboarding lost its required node data directory")
-                })?;
-                persist_authorized_join_admission_anchor_v1(
-                    node_data_dir,
-                    &finalized_join,
-                    node_id_hash,
-                    enclave_id,
-                    intent_hash,
-                )?;
-                let promotion = if completion_plan.promote_candidate {
-                    let exact =
-                        read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
-                            .await
-                            .wrap_err("read finalized candidate promotion binding")?;
-                    let binding = exact.binding.ok_or_else(|| {
-                        eyre::eyre!("finalized Registry lost the candidate binding")
-                    })?;
-                    if !finalized_binding_matches_intent(&binding, &intent)? {
-                        eyre::bail!(
-                            "finalized Registry binding differs from the durable candidate intent"
-                        );
-                    }
-                    Some(FinalizedReplacementBindingV1 {
-                        view: exact.view,
-                        node_id_hash: binding.node_id_hash,
-                        enclave_id: binding.enclave_id,
-                        binding_id: binding.binding_id,
-                        intent_hash: binding.intent_hash,
-                        binding_version: binding.binding_version,
-                        registration_version: binding.registration_version,
-                        valid_until: binding.valid_until,
-                        recipient_x25519: binding.recipient_x25519.into(),
-                        attestation_ed25519: binding.attestation_ed25519.into(),
-                        noise_responder_x25519: binding.noise_responder_x25519.into(),
-                        node_host_authorization_hash: binding.node_host_authorization_hash,
-                    })
-                } else {
-                    None
-                };
-                drop(enclave);
-                if let Some(finalized_binding) = promotion {
-                    let authorization = construct_finalized_replacement_authorization_v1(
-                        node_data_dir,
-                        &finalized_binding,
-                    )
-                    .map_err(|error| {
-                        eyre::eyre!("authorize finalized candidate promotion: {error}")
-                    })?;
-                    promote_replacement_candidate(node_data_dir, &authorization).map_err(
-                        |error| eyre::eyre!("promote finalized rejoin candidate: {error}"),
-                    )?;
+    {
+        if join_transport == JoinTransport::AuthorizedNodeHost {
+            let node_data_dir = authorized_node_data_dir
+                .expect("authorized NodeHost data directory was validated before key activation");
+            let promotion = if completion_plan.promote_candidate {
+                let exact =
+                    read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
+                        .await
+                        .wrap_err("read finalized candidate promotion binding")?;
+                let binding = exact
+                    .binding
+                    .ok_or_else(|| eyre::eyre!("finalized Registry lost the candidate binding"))?;
+                if !finalized_binding_matches_intent(&binding, &intent)? {
+                    eyre::bail!(
+                        "finalized Registry binding differs from the durable candidate intent"
+                    );
                 }
-                let mut reopened =
-                    connect_committed_node_host_enclave(enclave_socket, node_data_dir)
-                        .map_err(|error| eyre::eyre!("reopen committed enclave: {error}"))?;
-                match reopened.request(&EnclaveRequest::GetPublicKeys)? {
-                    EnclaveResponse::PublicKeys {
-                        offer_key_ready: true,
-                        recipient_x25519_pub,
-                        ..
-                    } if recipient_x25519_pub == expected_offer_pub => {}
-                    other => {
-                        return Err(eyre::eyre!(
+                Some(FinalizedReplacementBindingV1 {
+                    view: exact.view,
+                    node_id_hash: binding.node_id_hash,
+                    enclave_id: binding.enclave_id,
+                    binding_id: binding.binding_id,
+                    intent_hash: binding.intent_hash,
+                    binding_version: binding.binding_version,
+                    registration_version: binding.registration_version,
+                    valid_until: binding.valid_until,
+                    recipient_x25519: binding.recipient_x25519.into(),
+                    attestation_ed25519: binding.attestation_ed25519.into(),
+                    noise_responder_x25519: binding.noise_responder_x25519.into(),
+                    node_host_authorization_hash: binding.node_host_authorization_hash,
+                })
+            } else {
+                None
+            };
+            drop(enclave);
+            if let Some(finalized_binding) = promotion {
+                let authorization = construct_finalized_replacement_authorization_v1(
+                    node_data_dir,
+                    &finalized_binding,
+                )
+                .map_err(|error| eyre::eyre!("authorize finalized candidate promotion: {error}"))?;
+                promote_replacement_candidate(node_data_dir, &authorization)
+                    .map_err(|error| eyre::eyre!("promote finalized rejoin candidate: {error}"))?;
+            }
+            let mut reopened = connect_committed_node_host_enclave(enclave_socket, node_data_dir)
+                .map_err(|error| eyre::eyre!("reopen committed enclave: {error}"))?;
+            match reopened.request(&EnclaveRequest::GetPublicKeys)? {
+                EnclaveResponse::PublicKeys {
+                    offer_key_ready: true,
+                    recipient_x25519_pub,
+                    ..
+                } if recipient_x25519_pub == expected_offer_pub => {}
+                other => {
+                    return Err(eyre::eyre!(
                             "durable onboarding reopen did not expose the exact permanent offer key: {other:?}"
                         ));
-                    }
-                }
-                if durable_submission
-                    .as_ref()
-                    .is_some_and(DurableJoinSubmissionV1::is_committed)
-                {
-                    clear_committed_join_checkpoint(node_data_dir, intent_hash).map_err(
-                        |error| eyre::eyre!("clear completed committed join checkpoint: {error}"),
-                    )?;
                 }
             }
-            if join_transport == JoinTransport::AuthorizedNodeHost {
-                println!(
+            if durable_submission
+                .as_ref()
+                .is_some_and(DurableJoinSubmissionV1::is_committed)
+            {
+                clear_committed_join_checkpoint(node_data_dir, intent_hash).map_err(|error| {
+                    eyre::eyre!("clear completed committed join checkpoint: {error}")
+                })?;
+            }
+        }
+        if join_transport == JoinTransport::AuthorizedNodeHost {
+            println!(
                     "[OK] offer key durably installed and the authenticated enclave connection reopened (offer_public 0x{}). \
                      You can now start outbe-chain node.",
                     hex::encode(tribute_offer_public)
                 );
-            } else {
-                println!(
-                    "[OK] development offer key installed in enclave (offer_public 0x{}). \
+        } else {
+            println!(
+                "[OK] development offer key installed in enclave (offer_public 0x{}). \
                      You can now start the separate GramineDirectDev node.",
-                    hex::encode(tribute_offer_public)
-                );
-            }
-            Ok(())
+                hex::encode(tribute_offer_public)
+            );
         }
-        EnclaveResponse::Error { message } => {
-            Err(eyre::eyre!("enclave rejected the offer key: {message}"))
-        }
-        other => Err(eyre::eyre!("unexpected enclave response: {other:?}")),
+        Ok(())
     }
+}
+
+async fn load_finalized_admission_anchor_v1(
+    rpc: &(impl Rpc + Sync),
+    genesis: &Path,
+    finalized_height: u64,
+    context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+) -> Result<Vec<u8>> {
+    if finalized_height == 0 {
+        eyre::bail!("onboarding admission cannot be proved at genesis");
+    }
+    let genesis_json: serde_json::Value = serde_json::from_slice(
+        &fs::read(genesis)
+            .wrap_err_with(|| format!("read exact final genesis: {}", genesis.display()))?,
+    )
+    .wrap_err("parse exact final genesis")?;
+    let policy_schedule = genesis_json
+        .pointer("/config/teeAttestationV1/policySchedule")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("final genesis has no TEE policy schedule"))?;
+    let policy_schedule = hex::decode(policy_schedule.trim_start_matches("0x"))
+        .wrap_err("decode final genesis TEE policy schedule")?;
+    let schedule = TeePolicyScheduleV1::decode_canonical(&policy_schedule)
+        .map_err(|error| eyre::eyre!("decode exact final genesis TEE policy schedule: {error}"))?;
+    if schedule.chain_id != context.chain_id || schedule.genesis_hash != context.genesis_hash {
+        eyre::bail!("exact final genesis does not match the onboarding network identity");
+    }
+
+    for height in 1..=finalized_height {
+        let public = rpc
+            .outbe_get_finalization(height)
+            .await
+            .wrap_err_with(|| format!("read finalization at height {height}"))?;
+        let finalization = json_hex_bytes(&public, "finalizationHex")?;
+        let block = json_hex_bytes(&public, "blockHex")?;
+        let certified =
+            outbe_consensus::follow::decode_public_finalized_block(&finalization, &block, 256)
+                .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
+        if certified.block.number() != height {
+            eyre::bail!("outbe_getFinalization returned height mismatch at {height}");
+        }
+        let artifacts =
+            decode_outbe_block_artifacts(certified.block.header().extra_data().as_ref())
+                .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+            artifacts.consensus_header_artifact
+        {
+            if boundary.epoch == 0 {
+                return Ok(boundary.outcome.to_vec());
+            }
+        }
+    }
+
+    eyre::bail!("finalized history has no epoch-0 BoundaryOutcome")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_finalized_admission_attempt_v1(
+    rpc: &(impl Rpc + Sync),
+    finalized_height: u64,
+    context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+    artifact: &[u8],
+    anchor_outcome: &[u8],
+    expected_intent_hash: B256,
+    expected_offer_public: [u8; 32],
+    expected_key_epoch: u64,
+    expected_offer_epoch: u64,
+    enclave: &mut JoinEnclave,
+) -> std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1> {
+    let request_hash = enclave.begin_finalized_admission_v1(
+        artifact,
+        anchor_outcome,
+        expected_intent_hash,
+        expected_offer_public,
+        expected_key_epoch,
+        expected_offer_epoch,
+    )?;
+
+    let mut next_transition_epoch = 1_u64;
+    let mut admission = None;
+    for height in 1..=finalized_height {
+        let public = rpc
+            .outbe_get_finalization(height)
+            .await
+            .wrap_err_with(|| format!("read finalization at height {height}"))?;
+        let finalization = json_hex_bytes(&public, "finalizationHex")?;
+        let block = json_hex_bytes(&public, "blockHex")?;
+        let certified =
+            outbe_consensus::follow::decode_public_finalized_block(&finalization, &block, 256)
+                .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
+        if certified.block.number() != height {
+            return Err(
+                eyre::eyre!("outbe_getFinalization returned height mismatch at {height}").into(),
+            );
+        }
+        let artifacts =
+            decode_outbe_block_artifacts(certified.block.header().extra_data().as_ref())
+                .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+        if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) =
+            artifacts.consensus_header_artifact
+        {
+            if height < finalized_height && epoch == next_transition_epoch {
+                let transition = CertifiedHeaderV1 {
+                    finalization: finalization.clone(),
+                    header: alloy_rlp::encode(certified.block.header()).to_vec(),
+                }
+                .encode_canonical()
+                .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
+                enclave.upload_finalized_admission_record_v1(
+                    request_hash,
+                    FinalizedAdmissionRecordKindV1::CommitteeTransition,
+                    &transition,
+                )?;
+                next_transition_epoch = next_transition_epoch
+                    .checked_add(1)
+                    .ok_or_else(|| eyre::eyre!("committee transition epoch overflow"))?;
+            }
+        }
+        if height == finalized_height {
+            admission = Some(CertifiedHeaderV1 {
+                finalization,
+                header: alloy_rlp::encode(certified.block.header()).to_vec(),
+            });
+        }
+    }
+
+    let slots = onboarding_registry_slots_v1(context);
+    let slot_params = slots
+        .iter()
+        .map(|slot| format!("{slot:#x}"))
+        .collect::<Vec<_>>();
+    let opening = rpc
+        .eth_get_proof(TEE_REGISTRY_ADDRESS, &slot_params, finalized_height)
+        .await
+        .wrap_err("read exact finalized TeeRegistry MPT opening")?;
+    let registry_account = MptAccountProofV1 {
+        nonce: json_hex_u64_field(&opening, "nonce")?,
+        balance: json_hex_u256_field(&opening, "balance")?,
+        code_hash: json_b256_field(&opening, "codeHash")?,
+        storage_root: json_b256_field(&opening, "storageHash")?,
+        nodes: json_hex_array(&opening, "accountProof")?,
+    };
+    let storage = opening
+        .get("storageProof")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| eyre::eyre!("eth_getProof has no storageProof array"))?;
+    let mut registry_storage = Vec::with_capacity(storage.len());
+    for item in storage {
+        registry_storage.push(MptStorageProofV1 {
+            key: json_b256_field(item, "key")?,
+            value: json_hex_u256_field(item, "value")?,
+            nodes: json_hex_array(item, "proof")?,
+        });
+    }
+    if registry_storage.len() != slots.len() {
+        return Err(eyre::eyre!("eth_getProof omitted a required TeeRegistry slot").into());
+    }
+    let admission_witness = FinalizedAdmissionWitnessV1 {
+        admission: admission.expect("positive finalized height sets admission proof"),
+        registry_account,
+        registry_storage,
+    }
+    .encode_canonical()
+    .map_err(|error| eyre::eyre!("encode finalized onboarding admission witness: {error}"))?;
+    enclave.upload_finalized_admission_record_v1(
+        request_hash,
+        FinalizedAdmissionRecordKindV1::Admission,
+        &admission_witness,
+    )?;
+    enclave
+        .finish_finalized_admission_v1(request_hash, expected_offer_public)
+        .map_err(Into::into)
+}
+
+fn json_hex_bytes(value: &serde_json::Value, field: &str) -> Result<Vec<u8>> {
+    let raw = value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+    hex::decode(raw.trim_start_matches("0x")).wrap_err_with(|| format!("decode RPC {field}"))
+}
+
+fn json_hex_array(value: &serde_json::Value, field: &str) -> Result<Vec<Vec<u8>>> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| eyre::eyre!("RPC response has no {field} array"))?
+        .iter()
+        .map(|item| {
+            let raw = item
+                .as_str()
+                .ok_or_else(|| eyre::eyre!("RPC {field} contains a non-string node"))?;
+            hex::decode(raw.trim_start_matches("0x"))
+                .wrap_err_with(|| format!("decode RPC {field} node"))
+        })
+        .collect()
+}
+
+fn json_hex_u64_field(value: &serde_json::Value, field: &str) -> Result<u64> {
+    let raw = value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+    u64::from_str_radix(raw.trim_start_matches("0x"), 16)
+        .wrap_err_with(|| format!("decode RPC {field}"))
+}
+
+fn json_hex_u256_field(value: &serde_json::Value, field: &str) -> Result<U256> {
+    let raw = value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+    U256::from_str_radix(raw.trim_start_matches("0x"), 16)
+        .map_err(|error| eyre::eyre!("decode RPC {field}: {error}"))
+}
+
+fn json_b256_field(value: &serde_json::Value, field: &str) -> Result<B256> {
+    let raw = value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+    raw.parse::<B256>()
+        .wrap_err_with(|| format!("decode RPC {field}"))
 }
 
 async fn await_finalized_join_target(
@@ -1980,194 +2432,87 @@ fn development_identity_v1(
     Ok((enclave_id, keccak256(authorization_preimage)))
 }
 
-/// Poll `eth_getLogs` for the V1 onboarding artifact emitted by the exact
-/// submitted transaction and canonical node identity.
-async fn poll_offer_key_sealed(
-    client: &(impl Rpc + Sync),
-    topic0: &str,
-    topic1: &str,
-    transaction_hash: &str,
-    expected_offer_public: [u8; 32],
-    from_block: u64,
-    timeout_secs: u64,
-) -> Result<Vec<u8>> {
-    let from = format!("0x{from_block:x}");
-    let topics = [Some(topic0.to_string()), Some(topic1.to_string())];
-    let deadline = Duration::from_secs(timeout_secs);
-    let start = tokio::time::Instant::now();
-    let mut receipt_block = None;
-    loop {
-        if let Some(receipt) = client
-            .eth_get_transaction_receipt(transaction_hash)
-            .await
-            .wrap_err("poll V1 registration transaction receipt")?
-        {
-            let receipt_hash = receipt
-                .get("transactionHash")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| eyre::eyre!("V1 registration receipt has no transactionHash"))?;
-            if !receipt_hash.eq_ignore_ascii_case(transaction_hash) {
-                return Err(eyre::eyre!(
-                    "V1 registration receipt transaction hash mismatch"
-                ));
-            }
-            let encoded_status = receipt
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| eyre::eyre!("V1 registration receipt has no status"))?;
-            let status = encoded_status.strip_prefix("0x").unwrap_or(encoded_status);
-            let status =
-                u64::from_str_radix(status, 16).wrap_err("parse V1 registration receipt status")?;
-            match status {
-                0 => {
-                    let block = receipt
-                        .get("blockNumber")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown");
-                    return Err(eyre::eyre!(
-                        "V1 registerEnclave transaction {transaction_hash} reverted in block {block}"
-                    ));
-                }
-                1 => {}
-                other => {
-                    return Err(eyre::eyre!(
-                        "V1 registration receipt has non-canonical status {other}"
-                    ));
-                }
-            }
-            let block = receipt
-                .get("blockNumber")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| eyre::eyre!("V1 registration receipt has no blockNumber"))?;
-            receipt_block = Some(block.to_owned());
-        }
-        let log_from = receipt_block.as_deref().unwrap_or(&from);
-        let log_to = receipt_block.as_deref().unwrap_or("latest");
-        let logs = client
-            .eth_get_logs(abi::TEE_REGISTRY_ADDR, &topics, log_from, log_to)
-            .await
-            .wrap_err("poll V1 onboarding event logs")?;
-        for log in &logs {
-            if let Some(sealed) = matching_offer_key_log(
-                log,
-                topic0,
-                topic1,
-                transaction_hash,
-                expected_offer_public,
-            )? {
-                return Ok(sealed);
-            }
-        }
-        if start.elapsed() >= deadline {
-            return Err(eyre::eyre!(
-                "timed out after {timeout_secs}s waiting for the matching \
-                 OfferKeySealedForRegistryV1 transaction event"
-            ));
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-}
-
-fn matching_offer_key_log(
-    log: &serde_json::Value,
-    topic0: &str,
-    topic1: &str,
-    transaction_hash: &str,
-    expected_offer_public: [u8; 32],
-) -> Result<Option<Vec<u8>>> {
-    let Some(actual_transaction_hash) = log
-        .get("transactionHash")
-        .and_then(serde_json::Value::as_str)
-    else {
-        return Err(eyre::eyre!(
-            "OfferKeySealedForRegistryV1 log has no transactionHash"
-        ));
-    };
-    if !actual_transaction_hash.eq_ignore_ascii_case(transaction_hash) {
-        return Ok(None);
-    }
-
-    let topics = log
-        .get("topics")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| eyre::eyre!("matching onboarding log has no topics array"))?;
-    if topics.len() != 2
-        || topics[0]
-            .as_str()
-            .is_none_or(|value| !value.eq_ignore_ascii_case(topic0))
-        || topics[1]
-            .as_str()
-            .is_none_or(|value| !value.eq_ignore_ascii_case(topic1))
-    {
-        return Err(eyre::eyre!(
-            "matching transaction emitted a non-canonical onboarding event topic set"
-        ));
-    }
-    let data_hex = log
-        .get("data")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("matching onboarding log has no data field"))?;
-    let data = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex))
-        .wrap_err("decode V1 onboarding event data hex")?;
-    decode_offer_key_sealed_data(&data, expected_offer_public).map(Some)
-}
-
-fn decode_offer_key_sealed_data(data: &[u8], expected_offer_public: [u8; 32]) -> Result<Vec<u8>> {
-    if data.len() < 64 || U256::from_be_slice(&data[..32]) != U256::from(32) {
-        return Err(eyre::eyre!(
-            "V1 onboarding event has non-canonical bytes offset"
-        ));
-    }
-    let encoded_len = U256::from_be_slice(&data[32..64]);
-    if encoded_len > U256::from(MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES) {
-        return Err(eyre::eyre!(
-            "V1 onboarding artifact exceeds its {}-byte cap",
-            MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES
-        ));
-    }
-    let len = encoded_len.to::<usize>();
-    if len < MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES {
-        return Err(eyre::eyre!(
-            "V1 onboarding artifact is shorter than its canonical framing"
-        ));
-    }
-    let padded_len = len
-        .checked_add(31)
-        .map(|value| value / 32 * 32)
-        .ok_or_else(|| eyre::eyre!("V1 onboarding artifact padding overflow"))?;
-    let expected_data_len = 64_usize
-        .checked_add(padded_len)
-        .ok_or_else(|| eyre::eyre!("V1 onboarding event length overflow"))?;
-    if data.len() != expected_data_len {
-        return Err(eyre::eyre!(
-            "V1 onboarding event data length is non-canonical"
-        ));
-    }
-    let sealed_end = 64 + len;
-    if data[sealed_end..].iter().any(|byte| *byte != 0) {
-        return Err(eyre::eyre!("V1 onboarding event has nonzero ABI padding"));
-    }
-    let sealed = data[64..sealed_end].to_vec();
-    if sealed.get(..32) != Some(expected_offer_public.as_slice()) {
-        return Err(eyre::eyre!(
-            "V1 onboarding artifact does not commit the active offer public key"
-        ));
-    }
-    Ok(sealed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
     use outbe_rpc::test_support::{
         ExpectedRpcCall, RecordedRpcCall, RecordedRpcResponse, RecordingRpc,
     };
+    use std::collections::VecDeque;
 
-    fn sealed_artifact(offer_public: [u8; 32]) -> Vec<u8> {
-        let mut sealed = vec![0x44; MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
-        sealed[..32].copy_from_slice(&offer_public);
-        sealed
+    #[derive(Clone, Copy)]
+    enum AdmissionAttemptScriptV1 {
+        Success,
+        ConnectionFault,
+        LostFinishResponse,
+        DeterministicFailure,
+    }
+
+    struct ScriptedAdmissionRecoveryIoV1 {
+        expected: [u8; 32],
+        attempts: VecDeque<AdmissionAttemptScriptV1>,
+        probes: VecDeque<JoinOfferKeyState>,
+        upload_count: usize,
+        reconnect_count: usize,
+        probe_count: usize,
+    }
+
+    impl ScriptedAdmissionRecoveryIoV1 {
+        fn new(
+            attempts: impl IntoIterator<Item = AdmissionAttemptScriptV1>,
+            probes: impl IntoIterator<Item = JoinOfferKeyState>,
+        ) -> Self {
+            Self {
+                expected: [0x91; 32],
+                attempts: attempts.into_iter().collect(),
+                probes: probes.into_iter().collect(),
+                upload_count: 0,
+                reconnect_count: 0,
+                probe_count: 0,
+            }
+        }
+    }
+
+    impl FinalizedAdmissionRecoveryIoV1 for ScriptedAdmissionRecoveryIoV1 {
+        fn upload_once(
+            &mut self,
+        ) -> impl std::future::Future<
+            Output = std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1>,
+        > {
+            self.upload_count += 1;
+            let expected = self.expected;
+            let event = self.attempts.pop_front().expect("scripted upload attempt");
+            async move {
+                match event {
+                    AdmissionAttemptScriptV1::Success => Ok(expected),
+                    AdmissionAttemptScriptV1::ConnectionFault
+                    | AdmissionAttemptScriptV1::LostFinishResponse => {
+                        Err(TransportError::Io(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionReset,
+                            "scripted connection fault",
+                        ))
+                        .into())
+                    }
+                    AdmissionAttemptScriptV1::DeterministicFailure => {
+                        Err(TransportError::EnclaveError("scripted rejection".into()).into())
+                    }
+                }
+            }
+        }
+
+        fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError> {
+            self.reconnect_count += 1;
+            Ok(())
+        }
+
+        fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError> {
+            self.probe_count += 1;
+            Ok(self.probes.pop_front().expect("scripted recovery probe"))
+        }
+
+        fn expected_offer_key(&self) -> [u8; 32] {
+            self.expected
+        }
     }
 
     #[test]
@@ -2294,10 +2639,8 @@ mod tests {
 
         let mismatch =
             classify_join_offer_key_state(public_keys(true, [0x48; 32]), expected_offer_pub)
-                .unwrap_err();
-        assert!(mismatch
-            .to_string()
-            .contains("resident permanent offer key does not match finalized TeeRegistry"));
+                .unwrap();
+        assert_eq!(mismatch, JoinOfferKeyState::ReadyMismatch);
 
         let unexpected =
             classify_join_offer_key_state(EnclaveResponse::Ack, expected_offer_pub).unwrap_err();
@@ -2309,33 +2652,141 @@ mod tests {
     #[test]
     fn join_completion_matrix_preserves_candidate_promotion_without_duplicate_ingest() {
         assert_eq!(
-            plan_join_completion(JoinOfferKeyState::Keyless, false),
+            plan_join_completion(JoinOfferKeyState::Keyless, false).unwrap(),
             JoinCompletionPlan {
                 ingest_offer_key: true,
                 promote_candidate: false,
             }
         );
         assert_eq!(
-            plan_join_completion(JoinOfferKeyState::Keyless, true),
+            plan_join_completion(JoinOfferKeyState::Keyless, true).unwrap(),
             JoinCompletionPlan {
                 ingest_offer_key: true,
                 promote_candidate: true,
             }
         );
         assert_eq!(
-            plan_join_completion(JoinOfferKeyState::ReadyExact, false),
+            plan_join_completion(JoinOfferKeyState::ReadyExact, false).unwrap(),
             JoinCompletionPlan {
                 ingest_offer_key: false,
                 promote_candidate: false,
             }
         );
         assert_eq!(
-            plan_join_completion(JoinOfferKeyState::ReadyExact, true),
+            plan_join_completion(JoinOfferKeyState::ReadyExact, true).unwrap(),
             JoinCompletionPlan {
                 ingest_offer_key: false,
                 promote_candidate: true,
             }
         );
+        assert!(plan_join_completion(JoinOfferKeyState::ReadyMismatch, false).is_err());
+    }
+
+    #[tokio::test]
+    async fn lost_finish_response_is_reconciled_as_ready_without_replay() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [AdmissionAttemptScriptV1::LostFinishResponse],
+            [JoinOfferKeyState::ReadyExact],
+        );
+
+        assert_eq!(
+            run_finalized_admission_recovery_v1(&mut io).await.unwrap(),
+            io.expected
+        );
+        assert_eq!(io.upload_count, 1, "committed Finish must not be replayed");
+        assert_eq!(io.reconnect_count, 1);
+        assert_eq!(io.probe_count, 1);
+    }
+
+    #[tokio::test]
+    async fn keyless_reconnect_replays_the_whole_upload_once() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [
+                AdmissionAttemptScriptV1::ConnectionFault,
+                AdmissionAttemptScriptV1::Success,
+            ],
+            [JoinOfferKeyState::Keyless],
+        );
+
+        assert_eq!(
+            run_finalized_admission_recovery_v1(&mut io).await.unwrap(),
+            io.expected
+        );
+        assert_eq!(io.upload_count, 2);
+        assert_eq!(io.reconnect_count, 1);
+        assert_eq!(io.probe_count, 1);
+    }
+
+    #[tokio::test]
+    async fn second_connection_fault_is_probed_and_keyless_state_fails_closed() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [
+                AdmissionAttemptScriptV1::ConnectionFault,
+                AdmissionAttemptScriptV1::ConnectionFault,
+            ],
+            [JoinOfferKeyState::Keyless, JoinOfferKeyState::Keyless],
+        );
+
+        let error = run_finalized_admission_recovery_v1(&mut io)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("replay exhausted"));
+        assert_eq!(io.upload_count, 2, "whole upload is replayed at most once");
+        assert_eq!(io.reconnect_count, 2);
+        assert_eq!(io.probe_count, 2, "second fault must be reconciled");
+    }
+
+    #[tokio::test]
+    async fn lost_finish_response_on_the_only_replay_is_reconciled_as_ready() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [
+                AdmissionAttemptScriptV1::ConnectionFault,
+                AdmissionAttemptScriptV1::LostFinishResponse,
+            ],
+            [JoinOfferKeyState::Keyless, JoinOfferKeyState::ReadyExact],
+        );
+
+        assert_eq!(
+            run_finalized_admission_recovery_v1(&mut io).await.unwrap(),
+            io.expected
+        );
+        assert_eq!(io.upload_count, 2);
+        assert_eq!(io.reconnect_count, 2);
+        assert_eq!(io.probe_count, 2);
+    }
+
+    #[tokio::test]
+    async fn ready_mismatch_after_reconnect_is_terminal() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [AdmissionAttemptScriptV1::ConnectionFault],
+            [JoinOfferKeyState::ReadyMismatch],
+        );
+
+        let error = run_finalized_admission_recovery_v1(&mut io)
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("does not match finalized TeeRegistry"));
+        assert_eq!(io.upload_count, 1);
+        assert_eq!(io.reconnect_count, 1);
+        assert_eq!(io.probe_count, 1);
+    }
+
+    #[tokio::test]
+    async fn deterministic_enclave_rejection_is_never_reconnected_or_replayed() {
+        let mut io = ScriptedAdmissionRecoveryIoV1::new(
+            [AdmissionAttemptScriptV1::DeterministicFailure],
+            [],
+        );
+
+        let error = run_finalized_admission_recovery_v1(&mut io)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("scripted rejection"));
+        assert_eq!(io.upload_count, 1);
+        assert_eq!(io.reconnect_count, 0);
+        assert_eq!(io.probe_count, 0);
     }
 
     #[tokio::test]
@@ -2474,6 +2925,12 @@ mod tests {
                 .to_string()
                 .contains("no durable pre-relay transaction checkpoint")
         );
+        assert!(
+            plan_missing_committed_relay(false, JoinOfferKeyState::ReadyMismatch)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match finalized TeeRegistry")
+        );
     }
 
     #[test]
@@ -2563,94 +3020,5 @@ mod tests {
         assert!(load_secp256k1_key_file(&empty).is_err());
         assert!(load_secp256k1_key_file(&wrong_width).is_err());
         assert!(load_secp256k1_key_file(&zero).is_err());
-    }
-
-    #[test]
-    fn onboarding_event_decoder_requires_canonical_bounded_abi_and_offer_key() {
-        let offer_public = [0x22; 32];
-        let sealed = sealed_artifact(offer_public);
-        let encoded = Bytes::from(sealed.clone()).abi_encode();
-        assert_eq!(
-            decode_offer_key_sealed_data(&encoded, offer_public).unwrap(),
-            sealed
-        );
-
-        let mut bad_offset = encoded.clone();
-        bad_offset[31] = 0x40;
-        assert!(decode_offer_key_sealed_data(&bad_offset, offer_public).is_err());
-
-        let mut bad_padding = encoded.clone();
-        *bad_padding.last_mut().unwrap() = 1;
-        assert!(decode_offer_key_sealed_data(&bad_padding, offer_public).is_err());
-
-        let mut trailing = encoded.clone();
-        trailing.extend_from_slice(&[0; 32]);
-        assert!(decode_offer_key_sealed_data(&trailing, offer_public).is_err());
-
-        assert!(decode_offer_key_sealed_data(&encoded, [0x23; 32]).is_err());
-    }
-
-    #[test]
-    fn onboarding_log_is_correlated_to_transaction_and_topics() {
-        let offer_public = [0x33; 32];
-        let sealed = sealed_artifact(offer_public);
-        let data = Bytes::from(sealed.clone()).abi_encode();
-        let log = serde_json::json!({
-            "transactionHash": "0xaaaa",
-            "topics": ["0xtopic0", "0xtopic1"],
-            "data": format!("0x{}", hex::encode(data)),
-        });
-        assert_eq!(
-            matching_offer_key_log(&log, "0xtopic0", "0xtopic1", "0xAAAA", offer_public,).unwrap(),
-            Some(sealed.clone())
-        );
-        assert_eq!(
-            matching_offer_key_log(&log, "0xtopic0", "0xtopic1", "0xbbbb", offer_public,).unwrap(),
-            None
-        );
-
-        let wrong_topic = serde_json::json!({
-            "transactionHash": "0xaaaa",
-            "topics": ["0xtopic0", "0xwrong"],
-            "data": format!("0x{}", hex::encode(Bytes::from(sealed).abi_encode())),
-        });
-        assert!(matching_offer_key_log(
-            &wrong_topic,
-            "0xtopic0",
-            "0xtopic1",
-            "0xaaaa",
-            offer_public,
-        )
-        .is_err());
-    }
-
-    #[tokio::test]
-    async fn onboarding_poll_reports_reverted_receipt_before_event_timeout() {
-        let transaction_hash = "0xaaaa";
-        let client = crate::rpc::mock::MockRpc {
-            transaction_receipt: Ok(Some(serde_json::json!({
-                "transactionHash": transaction_hash,
-                "blockNumber": "0xc",
-                "status": "0x0",
-                "logs": [],
-            }))),
-            logs: Ok(Vec::new()),
-            ..Default::default()
-        };
-
-        let error = poll_offer_key_sealed(
-            &client,
-            "0xtopic0",
-            "0xtopic1",
-            transaction_hash,
-            [0x33; 32],
-            11,
-            0,
-        )
-        .await
-        .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("reverted"), "unexpected error: {message}");
-        assert!(message.contains("0xc"), "missing block number: {message}");
     }
 }

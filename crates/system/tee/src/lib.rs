@@ -18,6 +18,7 @@ pub mod dcap_protocol;
 pub mod dcap_v1;
 pub mod endorsement;
 pub mod errors;
+pub mod finalized_admission;
 pub mod host_collateral;
 mod metrics;
 #[cfg(feature = "native-dcap")]
@@ -42,8 +43,8 @@ pub use client::{
 pub use client_global::{
     generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,
     is_enclave_configured, resident_offer_public_key_state_v1, resident_offer_public_key_v1,
-    seal_offer_key_for_registry, try_with_enclave, verify_dcap_evidence_v1,
-    verify_dcap_registration_and_seal_v1, InstallError, RuntimeEnclaveClient,
+    try_with_enclave, verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
+    RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
@@ -74,6 +75,10 @@ pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 /// static key is known to the initiator/host via the attested quote), with
 /// X25519 + ChaChaPoly + SHA256.
 pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
+
+/// Version of the enclave's durable, network-bound sealed-state payload.
+/// Release metadata and the enclave decoder use this single constant.
+pub const SEALED_STATE_SCHEMA_V1: u8 = 3;
 
 /// Fixed, **public** HKDF-SHA256 salt for the tribute offer encryption key.
 ///

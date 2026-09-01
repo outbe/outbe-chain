@@ -1,5 +1,7 @@
 use alloy_primitives::B256;
-use outbe_primitives::tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, NodeHostAuthorizationWitnessV1, NodeIdV1,
+};
 use outbe_tee::{
     admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,
     FinalizedRegistryViewV1, RemoteSessionAdmissionError, RemoteSessionExpectationV1,
@@ -34,6 +36,7 @@ fn exact_finalized_source_and_target_admit_one_bounded_session() {
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x41; 32],
     };
@@ -94,6 +97,7 @@ fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x91; 32],
     };
@@ -202,6 +206,7 @@ fn admission_fixture() -> (
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0xD5; 32],
     };

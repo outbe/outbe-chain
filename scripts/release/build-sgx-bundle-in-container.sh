@@ -19,12 +19,18 @@ require_env() {
 prepare() {
   for name in SGX_MAX_THREADS SGX_ISV_PROD_ID SGX_ISV_SVN; do require_env "${name}"; done
   [[ -f /elf/bin/outbe-tee-enclave ]] || { echo "missing enclave ELF" >&2; exit 2; }
+  [[ -f /out/metadata/network-descriptor-v1.bin ]] || {
+    echo "missing trusted network descriptor" >&2
+    exit 2
+  }
 
   mkdir -p "${installed}/bin" "${installed}/gramine/runtime/glibc" \
     "${installed}/host-libs" "${bundle_root}/var/lib/outbe/tee" /out/metadata
   chmod 0700 "${bundle_root}/var/lib/outbe/tee"
 
   install -m 0755 /elf/bin/outbe-tee-enclave "${installed}/bin/outbe-tee-enclave"
+  install -m 0444 /out/metadata/network-descriptor-v1.bin \
+    "${installed}/network-descriptor-v1.bin"
   install -m 0755 /source/bin/outbe-tee-enclave/gramine/entrypoint.sh \
     "${installed}/bin/outbe-tee-enclave-launch"
   install -m 0755 /usr/lib/x86_64-linux-gnu/gramine/sgx/loader \

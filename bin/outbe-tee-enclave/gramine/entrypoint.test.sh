@@ -6,6 +6,7 @@ set -euo pipefail
 readonly ENTRY=/app/outbe-tee-enclave
 readonly ARCH_LIBDIR=/lib/x86_64-linux-gnu
 readonly TEST_SIGNING_KEY=/run/secrets/outbe-test-sgx-key.pem
+readonly NETWORK_DESCRIPTOR=/opt/outbe/sgx/network-descriptor-v1.bin
 
 if [[ ! -x "${ENTRY}" ]]; then
   echo "test entrypoint: ${ENTRY} missing - mount the enclave binary" >&2
@@ -37,6 +38,10 @@ if [[ "${REMOTE_ATTESTATION}" == dcap && "${HAS_SGX}" != 1 ]]; then
   echo "test entrypoint: DCAP requires an SGX enclave device" >&2
   exit 2
 fi
+if [[ "${REMOTE_ATTESTATION}" == dcap && ! -f "${NETWORK_DESCRIPTOR}" ]]; then
+  echo "test entrypoint: DCAP requires ${NETWORK_DESCRIPTOR}" >&2
+  exit 2
+fi
 
 gramine-manifest \
   -Dlog_level="${GRAMINE_LOG_LEVEL:-error}" \
@@ -44,6 +49,7 @@ gramine-manifest \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir="${TEE_DIR}" \
   -Dremote_attestation="${REMOTE_ATTESTATION}" \
+  -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 

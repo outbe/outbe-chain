@@ -6,7 +6,8 @@
 //! magic   "TSEAL" (5B)
 //! header  format_version u8 | key_policy u8 | isv_svn u16 LE
 //!         | key_epoch u64 LE | tribute_offer_epoch u64 LE | nonce 12B   (= 32B)
-//! ciphertext = AES-256-GCM( payload ),  AAD = header || chain_id
+//! binding = canonical `NetworkBindingV1` (66B)
+//! ciphertext = AES-256-GCM( payload ),  AAD = header || binding
 //!   payload = tribute_offer_secret(32) || group_sig_len u16 LE || group_sig_bytes
 //! ```
 //!
@@ -26,6 +27,7 @@ use ring::aead;
 use zeroize::Zeroizing;
 
 use alloy_primitives::B256;
+use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
 use crate::crypto::OneNonce;
 use crate::errors::{Result, TeeError};
@@ -59,6 +61,10 @@ impl EnclaveBootConfig {
         self.tee_dir.join("sealed_root.bin")
     }
 
+    pub fn sealed_identity_path(&self) -> PathBuf {
+        self.tee_dir.join("sealed_identity.bin")
+    }
+
     /// Write-once sealed NodeHost authorization installed by I2 initialization.
     pub fn sealed_node_authorization_path(&self) -> PathBuf {
         self.tee_dir.join("sealed_node_authorization_v1.bin")
@@ -67,9 +73,10 @@ impl EnclaveBootConfig {
 
 pub const SEAL_MAGIC: &[u8; 5] = b"TSEAL";
 /// Sealed payload format: offer secret + length-prefixed group threshold signature.
-pub const SEAL_FORMAT: u8 = 2;
+pub use outbe_tee::SEALED_STATE_SCHEMA_V1 as SEAL_FORMAT;
 /// header (excluding magic) byte length: 1 + 1 + 2 + 8 + 8 + 12.
 pub const HEADER_LEN: usize = 32;
+pub const NETWORK_BINDING_LEN: usize = NetworkBindingV1::CANONICAL_LEN;
 
 /// EGETKEY key policy used to derive the sealing key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,27 +228,37 @@ pub fn seal_tribute_offer_and_group_sig(
     tribute_offer_secret: &[u8; 32],
     group_sig: &[u8],
     sealing_key: &[u8; 32],
-    chain_id: B256,
+    network_binding: NetworkBindingV1,
     header: &SealHeader,
 ) -> Result<Vec<u8>> {
     let header_bytes = header.encode();
-    let mut aad = Vec::with_capacity(HEADER_LEN + 32);
+    let binding_bytes = network_binding
+        .encode_canonical()
+        .map_err(|error| TeeError::SealedBlobBadNetworkBinding(error.to_string()))?;
+    let mut aad = Vec::with_capacity(HEADER_LEN + NETWORK_BINDING_LEN);
     aad.extend_from_slice(&header_bytes);
-    aad.extend_from_slice(chain_id.as_slice());
+    aad.extend_from_slice(&binding_bytes);
 
     let payload = encode_sealed_payload(tribute_offer_secret, group_sig)?;
     let ciphertext = aes256gcm_encrypt(sealing_key, &header.nonce, &aad, &payload)?;
 
-    let mut out = Vec::with_capacity(SEAL_MAGIC.len() + HEADER_LEN + ciphertext.len());
+    let mut out =
+        Vec::with_capacity(SEAL_MAGIC.len() + HEADER_LEN + NETWORK_BINDING_LEN + ciphertext.len());
     out.extend_from_slice(SEAL_MAGIC);
     out.extend_from_slice(&header_bytes);
+    out.extend_from_slice(&binding_bytes);
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
 
 /// The unsealed payload: `(tribute_offer_secret, group_sig, header)`. Secrets are
 /// `Zeroizing` so they wipe on drop.
-pub type UnsealedTributeOfferAndGroupSig = (Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>, SealHeader);
+pub struct UnsealedTributeOfferAndGroupSig {
+    pub tribute_offer_secret: Zeroizing<[u8; 32]>,
+    pub group_sig: Zeroizing<Vec<u8>>,
+    pub header: SealHeader,
+    pub network_binding: NetworkBindingV1,
+}
 
 /// Unseal a blob back to `(tribute_offer_secret, group_sig_bytes, header)`.
 ///
@@ -252,11 +269,26 @@ pub type UnsealedTributeOfferAndGroupSig = (Zeroizing<[u8; 32]>, Zeroizing<Vec<u
 pub fn unseal_tribute_offer_and_group_sig(
     blob: &[u8],
     sealing_key: &[u8; 32],
-    chain_id: B256,
+    expected_network_binding: NetworkBindingV1,
+    running_isv_svn: u16,
+) -> Result<UnsealedTributeOfferAndGroupSig> {
+    let unsealed = unseal_network_bound_payload(blob, sealing_key, running_isv_svn)?;
+    if unsealed.network_binding != expected_network_binding {
+        return Err(TeeError::SealedBlobNetworkBindingMismatch);
+    }
+    Ok(unsealed)
+}
+
+/// Unseal a self-describing blob during restart. The embedded binding is covered
+/// by AEAD and returned to the caller, which must compare it with the runtime
+/// attestation mode before activating any secret.
+pub fn unseal_network_bound_payload(
+    blob: &[u8],
+    sealing_key: &[u8; 32],
     running_isv_svn: u16,
 ) -> Result<UnsealedTributeOfferAndGroupSig> {
     let prefix = SEAL_MAGIC.len();
-    if blob.len() < prefix + HEADER_LEN {
+    if blob.len() < prefix + HEADER_LEN + NETWORK_BINDING_LEN {
         return Err(TeeError::SealedBlobTooShort);
     }
     if &blob[..prefix] != SEAL_MAGIC {
@@ -275,15 +307,25 @@ pub fn unseal_tribute_offer_and_group_sig(
         });
     }
 
-    let mut aad = Vec::with_capacity(HEADER_LEN + 32);
+    let binding_start = prefix + HEADER_LEN;
+    let binding_end = binding_start + NETWORK_BINDING_LEN;
+    let binding_bytes = &blob[binding_start..binding_end];
+    let network_binding = NetworkBindingV1::decode_canonical(binding_bytes)
+        .map_err(|error| TeeError::SealedBlobBadNetworkBinding(error.to_string()))?;
+    let mut aad = Vec::with_capacity(HEADER_LEN + NETWORK_BINDING_LEN);
     aad.extend_from_slice(header_bytes);
-    aad.extend_from_slice(chain_id.as_slice());
+    aad.extend_from_slice(binding_bytes);
 
-    let ciphertext = &blob[prefix + HEADER_LEN..];
+    let ciphertext = &blob[binding_end..];
     let plaintext = aes256gcm_decrypt(sealing_key, &header.nonce, &aad, ciphertext)?;
 
     let (tribute_offer_secret, group_sig) = decode_sealed_payload(&plaintext)?;
-    Ok((tribute_offer_secret, group_sig, header))
+    Ok(UnsealedTributeOfferAndGroupSig {
+        tribute_offer_secret,
+        group_sig,
+        header,
+        network_binding,
+    })
 }
 
 /// Fixed mock sealing key - stable across rebuilds so it simulates MRSIGNER
@@ -295,6 +337,8 @@ pub const MOCK_SEALING_KEY: [u8; 32] = [0x42; 32];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
+    use outbe_primitives::tee_attestation_v1::AttestationMode;
 
     const SAMPLE_SHARE: &[u8] = &[0x55; 36];
 
@@ -309,10 +353,17 @@ mod tests {
         }
     }
 
+    fn binding(chain: u8, genesis: u8, mode: AttestationMode) -> NetworkBindingV1 {
+        NetworkBindingV1 {
+            chain_id: [chain; 32],
+            genesis_hash: B256::repeat_byte(genesis),
+            attestation_mode: mode,
+        }
+    }
+
     #[test]
     fn boot_config_new_and_sealed_path() {
         let cfg = EnclaveBootConfig::new([0xCD; 32], PathBuf::from("/var/lib/outbe/tee"), 7);
-        assert_eq!(cfg.chain_id, B256::repeat_byte(0xCD));
         assert_eq!(cfg.isv_svn, 7);
         assert_eq!(
             cfg.sealed_root_path(),
@@ -323,16 +374,17 @@ mod tests {
     #[test]
     fn seal_unseal_roundtrip_tribute_offer_and_share() {
         let secret = [0x11; 32];
-        let cid = B256::repeat_byte(0xCD);
+        let network = binding(0xCD, 0xCE, AttestationMode::DcapRequired);
         let h = header(1);
         let blob =
-            seal_tribute_offer_and_group_sig(&secret, SAMPLE_SHARE, &MOCK_SEALING_KEY, cid, &h)
+            seal_tribute_offer_and_group_sig(&secret, SAMPLE_SHARE, &MOCK_SEALING_KEY, network, &h)
                 .unwrap();
-        let (got_secret, got_share, got_h) =
-            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, cid, 1).unwrap();
-        assert_eq!(*got_secret, secret);
-        assert_eq!(got_share.as_slice(), SAMPLE_SHARE);
-        assert_eq!(got_h, h);
+        let unsealed =
+            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, network, 1).unwrap();
+        assert_eq!(*unsealed.tribute_offer_secret, secret);
+        assert_eq!(unsealed.group_sig.as_slice(), SAMPLE_SHARE);
+        assert_eq!(unsealed.header, h);
+        assert_eq!(unsealed.network_binding, network);
     }
 
     #[test]
@@ -354,37 +406,37 @@ mod tests {
 
     #[test]
     fn reject_bad_magic() {
-        let cid = B256::ZERO;
+        let network = binding(1, 2, AttestationMode::DcapRequired);
         let mut blob = seal_tribute_offer_and_group_sig(
             &[0x11; 32],
             SAMPLE_SHARE,
             &MOCK_SEALING_KEY,
-            cid,
+            network,
             &header(1),
         )
         .unwrap();
         blob[0] ^= 0xFF;
         assert!(matches!(
-            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, cid, 1),
+            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, network, 1),
             Err(TeeError::SealedBlobBadMagic)
         ));
     }
 
     #[test]
     fn reject_bad_version_before_aead() {
-        let cid = B256::ZERO;
+        let network = binding(1, 2, AttestationMode::DcapRequired);
         let mut blob = seal_tribute_offer_and_group_sig(
             &[0x11; 32],
             SAMPLE_SHARE,
             &MOCK_SEALING_KEY,
-            cid,
+            network,
             &header(1),
         )
         .unwrap();
         // format_version byte is right after the 5-byte magic.
         blob[SEAL_MAGIC.len()] = 99;
         assert!(matches!(
-            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, cid, 1),
+            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, network, 1),
             Err(TeeError::SealedBlobBadVersion(99))
         ));
     }
@@ -392,17 +444,17 @@ mod tests {
     #[test]
     fn reject_rollback() {
         // Blob sealed by SVN 5, running enclave is SVN 3 -> reject.
-        let cid = B256::ZERO;
+        let network = binding(1, 2, AttestationMode::DcapRequired);
         let blob = seal_tribute_offer_and_group_sig(
             &[0x11; 32],
             SAMPLE_SHARE,
             &MOCK_SEALING_KEY,
-            cid,
+            network,
             &header(5),
         )
         .unwrap();
         assert!(matches!(
-            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, cid, 3),
+            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, network, 3),
             Err(TeeError::SealedBlobRollback {
                 blob: 5,
                 running: 3
@@ -412,36 +464,42 @@ mod tests {
 
     #[test]
     fn reject_wrong_key() {
-        let cid = B256::ZERO;
+        let network = binding(1, 2, AttestationMode::DcapRequired);
         let blob = seal_tribute_offer_and_group_sig(
             &[0x11; 32],
             SAMPLE_SHARE,
             &MOCK_SEALING_KEY,
-            cid,
+            network,
             &header(1),
         )
         .unwrap();
         let wrong = [0x43; 32];
         assert!(matches!(
-            unseal_tribute_offer_and_group_sig(&blob, &wrong, cid, 1),
+            unseal_tribute_offer_and_group_sig(&blob, &wrong, network, 1),
             Err(TeeError::SealedBlobUnsealFailed)
         ));
     }
 
     #[test]
-    fn reject_wrong_chain_id_via_aad() {
+    fn reject_any_wrong_network_binding_field() {
+        let expected = binding(1, 2, AttestationMode::DcapRequired);
         let blob = seal_tribute_offer_and_group_sig(
             &[0x11; 32],
             SAMPLE_SHARE,
             &MOCK_SEALING_KEY,
-            B256::repeat_byte(1),
+            expected,
             &header(1),
         )
         .unwrap();
-        // chain_id is part of AAD; a different chain_id fails authentication.
-        assert!(matches!(
-            unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, B256::repeat_byte(2), 1),
-            Err(TeeError::SealedBlobUnsealFailed)
-        ));
+        for foreign in [
+            binding(3, 2, AttestationMode::DcapRequired),
+            binding(1, 3, AttestationMode::DcapRequired),
+            binding(1, 2, AttestationMode::GramineDirectDev),
+        ] {
+            assert!(matches!(
+                unseal_tribute_offer_and_group_sig(&blob, &MOCK_SEALING_KEY, foreign, 1),
+                Err(TeeError::SealedBlobNetworkBindingMismatch)
+            ));
+        }
     }
 }

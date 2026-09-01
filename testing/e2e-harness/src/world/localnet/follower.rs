@@ -157,6 +157,8 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--reth-p2p-secret-key",
             reth_secret_path.display(),
+            "--genesis",
+            self.cfg.dir.join("genesis.json").display(),
             "--binding-id",
             random_hex_32()?,
             "--valid-until",

@@ -26,7 +26,7 @@ pub const DCAP_REGISTER_ENCLAVE_OPERATION_V1: u8 = 0x01;
 /// below this cap, which is shared with the existing consensus log bound.
 pub const MAX_DCAP_ONBOARDING_ARTIFACT_BYTES: usize = 512;
 
-const DCAP_ONBOARDING_CONTEXT_BYTES: usize = 241;
+const DCAP_ONBOARDING_CONTEXT_BYTES: usize = 305;
 const DCAP_ONBOARDING_ARTIFACT_FIXED_BYTES: usize = 1 + DCAP_ONBOARDING_CONTEXT_BYTES + 12 + 2;
 
 /// Maximum plaintext payload in one upload chunk. Postcard metadata and Noise
@@ -47,6 +47,8 @@ pub struct DcapOnboardingContextV1 {
     pub intent_hash: B256,
     pub node_id_hash: B256,
     pub enclave_id: B256,
+    pub binding_id: B256,
+    pub policy_hash: B256,
     pub recipient_x25519: [u8; 32],
     pub tribute_offer_public: [u8; 32],
     pub key_epoch: u64,
@@ -55,6 +57,7 @@ pub struct DcapOnboardingContextV1 {
 
 impl DcapOnboardingContextV1 {
     pub fn encode_canonical(&self) -> Vec<u8> {
+        debug_assert!(!self.binding_id.is_zero() && !self.policy_hash.is_zero());
         let mut encoded = Vec::with_capacity(DCAP_ONBOARDING_CONTEXT_BYTES);
         encoded.push(1);
         encoded.extend_from_slice(&self.chain_id);
@@ -62,6 +65,8 @@ impl DcapOnboardingContextV1 {
         encoded.extend_from_slice(self.intent_hash.as_slice());
         encoded.extend_from_slice(self.node_id_hash.as_slice());
         encoded.extend_from_slice(self.enclave_id.as_slice());
+        encoded.extend_from_slice(self.binding_id.as_slice());
+        encoded.extend_from_slice(self.policy_hash.as_slice());
         encoded.extend_from_slice(&self.recipient_x25519);
         encoded.extend_from_slice(&self.tribute_offer_public);
         encoded.extend_from_slice(&self.key_epoch.to_be_bytes());
@@ -84,12 +89,17 @@ impl DcapOnboardingContextV1 {
             intent_hash: B256::from(decoder.array::<32>()?),
             node_id_hash: B256::from(decoder.array::<32>()?),
             enclave_id: B256::from(decoder.array::<32>()?),
+            binding_id: B256::from(decoder.array::<32>()?),
+            policy_hash: B256::from(decoder.array::<32>()?),
             recipient_x25519: decoder.array()?,
             tribute_offer_public: decoder.array()?,
             key_epoch: decoder.u64()?,
             tribute_offer_epoch: decoder.u64()?,
         };
         decoder.finish()?;
+        if value.binding_id.is_zero() || value.policy_hash.is_zero() {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
         Ok(value)
     }
 
@@ -708,6 +718,8 @@ mod tests {
             intent_hash: B256::repeat_byte(0x33),
             node_id_hash: B256::repeat_byte(0x34),
             enclave_id: B256::repeat_byte(0x35),
+            binding_id: B256::repeat_byte(0x38),
+            policy_hash: B256::repeat_byte(0x39),
             recipient_x25519: [0x36; 32],
             tribute_offer_public: [0x37; 32],
             key_epoch: 7,

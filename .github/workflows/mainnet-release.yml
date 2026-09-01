@@ -12,12 +12,12 @@ on:
         description: "Existing immutable mainnet tag (vX.Y.Z-mainnet.N)"
         required: true
         type: string
-      genesis_url:
-        description: "HTTPS URL of the exact final mainnet-genesis.json"
+      seeded_genesis_url:
+        description: "HTTPS URL of the approved seeded mainnet genesis without teeAttestationV1"
         required: true
         type: string
-      genesis_sha256:
-        description: "Lowercase SHA-256 of the exact final mainnet genesis"
+      seeded_genesis_sha256:
+        description: "Lowercase SHA-256 of the approved seeded mainnet genesis"
         required: true
         type: string
 
@@ -79,10 +79,10 @@ jobs:
           echo "verified_commit=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
           echo "verified_tag_object=${tag_object}" >> "${GITHUB_OUTPUT}"
 
-      - name: Fetch and pin the exact Mainnet genesis
+      - name: Fetch and pin the approved seeded Mainnet genesis
         env:
-          OUTBE_GENESIS_SHA256: ${{ inputs.genesis_sha256 }}
-          OUTBE_GENESIS_URL: ${{ inputs.genesis_url }}
+          OUTBE_GENESIS_SHA256: ${{ inputs.seeded_genesis_sha256 }}
+          OUTBE_GENESIS_URL: ${{ inputs.seeded_genesis_url }}
         run: |
           set -euo pipefail
           [[ "${OUTBE_GENESIS_URL}" == https://* ]] || {
@@ -95,12 +95,14 @@ jobs:
           }
           mkdir -p "${RUNNER_TEMP}/release-inputs"
           curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json" "${OUTBE_GENESIS_URL}"
+            --output "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" "${OUTBE_GENESIS_URL}"
           printf '%s  %s\n' "${OUTBE_GENESIS_SHA256}" \
-            "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json" \
+            "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
             | sha256sum --check
           test "$(jq -er '.config.chainId' \
-            "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json")" = '676'
+            "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json")" = '676'
+          test "$(jq -r '.config | has("teeAttestationV1")' \
+            "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json")" = 'false'
 
       - name: Build the exact ELF matrix twice without cache
         run: |
@@ -131,10 +133,12 @@ jobs:
           set -euo pipefail
           cargo xtask release sgx prepare \
             --network mainnet \
+            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
             --elf-output "${RUNNER_TEMP}/elf-a" \
             --output "${RUNNER_TEMP}/unsigned-a"
           cargo xtask release sgx prepare \
             --network mainnet \
+            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
             --elf-output "${RUNNER_TEMP}/elf-b" \
             --output "${RUNNER_TEMP}/unsigned-b"
           cargo xtask release sgx compare \
@@ -227,10 +231,18 @@ jobs:
             --unsigned "${RUNNER_TEMP}/unsigned" \
             --key-file "${RUNNER_TEMP}/mainnet-sgx-key.pem" \
             --output "${RUNNER_TEMP}/signed"
+          mkdir "${RUNNER_TEMP}/signed-output"
+          cargo xtask release sgx finalize-genesis \
+            --network mainnet \
+            --seeded-genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --output "${RUNNER_TEMP}/signed-output/mainnet-genesis.json" \
+            --evidence-output \
+              "${RUNNER_TEMP}/signed-output/mainnet-genesis-binding-evidence.json"
           cargo xtask release sgx verify \
             --network mainnet \
-            --bundle "${RUNNER_TEMP}/signed"
-          mkdir "${RUNNER_TEMP}/signed-output"
+            --bundle "${RUNNER_TEMP}/signed" \
+            --genesis "${RUNNER_TEMP}/signed-output/mainnet-genesis.json"
           cargo xtask release sgx archive \
             --network mainnet \
             --bundle "${RUNNER_TEMP}/signed" \
@@ -246,7 +258,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-sgx-bundle
-          path: ${{ runner.temp }}/signed-output/outbe-tee-enclave-sgx.tar
+          path: ${{ runner.temp }}/signed-output
           if-no-files-found: error
           retention-days: 30
 
@@ -373,6 +385,10 @@ jobs:
             > "${RUNNER_TEMP}/published/cosign-provenance-verification.json"
           cp "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
             "${RUNNER_TEMP}/published/"
+          cp "${RUNNER_TEMP}/package/mainnet-genesis.json" \
+            "${RUNNER_TEMP}/published/"
+          cp "${RUNNER_TEMP}/package/mainnet-genesis-binding-evidence.json" \
+            "${RUNNER_TEMP}/published/"
 
       - name: Upload published-image evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -445,10 +461,11 @@ jobs:
           mkdir "${RUNNER_TEMP}/signed"
           tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
-          cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+          cargo run --locked -p outbe-e2e-harness --features release-sgx-e2e --bin outbe-release-sgx-e2e -- \
             --network mainnet \
             --image "${OUTBE_EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
+            --genesis "${RUNNER_TEMP}/published/mainnet-genesis.json" \
             --evidence "${RUNNER_TEMP}/hardware-sgx.json"
 
       - name: Upload hardware-SGX evidence
@@ -477,7 +494,7 @@ jobs:
             --network mainnet \
             --image "${OUTBE_EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
-            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json" \
+            --genesis "${RUNNER_TEMP}/published/mainnet-genesis.json" \
             --expected-pck-ca processor \
             --output-dir "${RUNNER_TEMP}/hardware-dcap-processor"
 
@@ -575,7 +592,10 @@ jobs:
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
             --processor-dcap-archive "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
-            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json" \
+            --seeded-genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
+            --network-binding-evidence \
+              "${RUNNER_TEMP}/published/mainnet-genesis-binding-evidence.json" \
+            --genesis "${RUNNER_TEMP}/published/mainnet-genesis.json" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
@@ -631,7 +651,9 @@ jobs:
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.tar"
-            "${RUNNER_TEMP}/release-inputs/mainnet-genesis.json"
+            "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json"
+            "${RUNNER_TEMP}/published/mainnet-genesis.json"
+            "${RUNNER_TEMP}/published/mainnet-genesis-binding-evidence.json"
           )
           test "$(remote_tag_object)" = "${verified_tag_object}"
           gh release create "${OUTBE_RELEASE_TAG}" "${assets[@]}" \
