@@ -54,17 +54,6 @@ interface IGratisFactory {
     ///         caller's modify key.
     function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
 
-    /// @notice Convert `amount` promis to confidential Gratis at 1:1 (burns the
-    ///         caller's confidential promis, mints gratis). Both tokens are
-    ///         enclave-confidential, so the caller supplies TWO modify
-    ///         authorizations, each binding `amount` to that ledger's own current
-    ///         op-nonce: `(mac, opNonce)` is the Gratis modify auth for the mint and
-    ///         `(promisMac, promisOpNonce)` is the Promis modify auth for the burn.
-    ///         Fetch each via `outbe_deriveKeys(<ledger>, ...)` + `opNonceOf`.
-    function mineGratisFromPromis(uint256 amount, bytes32 mac, uint64 opNonce, bytes32 promisMac, uint64 promisOpNonce)
-        external
-        returns (uint256);
-
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

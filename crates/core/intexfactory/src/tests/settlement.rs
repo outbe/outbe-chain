@@ -93,7 +93,7 @@ fn with_payment_token<R>(
 }
 
 #[test]
-fn cost_amount_prices_an_accepted_token() {
+fn settlement_quote_prices_an_accepted_token() {
     for (decimals, expected) in [
         (0, U256::ONE),
         (6, U256::from(1_000_000u64)),
@@ -101,41 +101,41 @@ fn cost_amount_prices_an_accepted_token() {
         (18, U256::from(1_000_000_000_000_000_000u64)),
     ] {
         with_payment_token(1, 840, decimals, |s| {
-            let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+            let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap();
             assert_eq!(cost, expected, "payment token decimals {decimals}");
         });
     }
 }
 
 #[test]
-fn cost_amount_rejects_an_unregistered_token() {
+fn settlement_quote_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
-        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("no registered vault"), "{err}");
     });
 }
 
 #[test]
-fn cost_amount_rejects_a_foreign_currency() {
+fn settlement_quote_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
-        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
     });
 }
 
 #[test]
-fn cost_amount_rejects_missing_series() {
+fn settlement_quote_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::quote_cost_amount(&s, sid(7), payment_token()).is_err());
+        assert!(runtime::quote_settlement(&s, sid(7), payment_token()).is_err());
     });
 }
 
 #[test]
-fn cost_amount_dispatch() {
+fn settlement_quote_dispatch() {
     with_payment_token(1, 840, 18, |s| {
         let out = precompile::dispatch(
             s.clone(),
-            &IIntexFactory::quoteCostAmountCall {
+            &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
                 paymentToken: payment_token(),
             }
@@ -144,10 +144,9 @@ fn cost_amount_dispatch() {
             U256::ZERO,
         )
         .unwrap();
-        assert_eq!(
-            IIntexFactory::quoteCostAmountCall::abi_decode_returns(&out).unwrap(),
-            U256::from(1_000_000_000_000_000_000u64)
-        );
+        let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(ret.settlementCurrency, 840);
+        assert_eq!(ret.payableUnits, U256::from(1_000_000_000_000_000_000u64));
     });
 }
 

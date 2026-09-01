@@ -34,7 +34,7 @@ const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nom
 /// Gem prices and loads are six-decimal like every other Gem amount. Scoped to
 /// Gem's own structs: the same field names on other instruments are 1e18.
 const GEM_SIX_DECIMAL_RE =
-  /^(entryPrice|floorPrice|callPrice|sourceEntryPrice|sourceFloorPrice|gemLoad|remainingCapacity)$/;
+  /^(entryPrice|floorPrice|callPrice|sourceEntryPrice|sourceFloorPrice|promisLoad|remainingCapacity)$/;
 const GEM_STRUCT_RE = /^struct IGem(Factory)?\./;
 const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
 
@@ -164,9 +164,10 @@ function isNativeCoenAmount(name: string, context: ScalarFormatContext): boolean
   const contract = context.contractName;
   const fn = context.functionName;
   if (contract === "staking" && (fn === "getStake" || fn === "getTotalStaked")) return true;
+  // `claimReward` is not here: it returns a Gem id, not an amount.
   if (
     contract === "agentreward" &&
-    (fn === "getClaimableBalance" || fn === "claimReward")
+    (fn === "getClaimableBalance" || fn === "getPoolClaimableBalance")
   ) {
     return true;
   }

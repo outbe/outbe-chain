@@ -37,7 +37,7 @@ pub fn dispatch(
                 )
             }),
             mintMerchantGem(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_merchant_gem(&storage, sender, c.positionId, c.owner, c.gemLoad)
+                runtime::mint_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset)

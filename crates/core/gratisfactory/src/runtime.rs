@@ -6,8 +6,7 @@
 //! The Fidelity cohort op rides INSIDE the gratis enclave round-trip (no extra
 //! trip): `mine` folds an acquisition (`In`), `mine_coen` a sale (`Out`), and
 //! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
-//! factory persists the returned fidelity outcome. `mine_gratis_from_promis` burns
-//! public promis and reuses `mine` (promis itself is fidelity-neutral).
+//! factory persists the returned fidelity outcome.
 //!
 //! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
 //! credit they want and this module derives the gratis it costs, sealing both plus
@@ -126,7 +125,7 @@ pub fn unpledge_gratis(
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
 /// key) and record the Fidelity acquisition cohort. The `GratisMinted` event is
-/// emitted by the Gratis token; the factory `GratisMined` is emitted here.
+/// emitted by the Gratis token.
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
@@ -141,27 +140,6 @@ pub fn mint(
     let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
     outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
     Ok(())
-}
-
-/// Burn `amount` confidential promis from `account` and mint the matching Gratis
-/// 1:1. Both tokens are enclave-confidential and independently authorized: the
-/// promis burn takes the account owner's **Promis** modify key (`promis_auth`) and
-/// the gratis mint takes their **Gratis** modify key (`gratis_auth`). Each `auth`
-/// binds `amount` to that ledger's own current op-nonce, so the caller supplies two
-/// `mac`/`opNonce` pairs.
-pub fn mine_gratis_from_promis(
-    storage: StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    gratis_auth: ModifyAuth,
-    promis_auth: ModifyAuth,
-) -> Result<U256> {
-    outbe_promis::api::burn(storage.clone(), account, amount, promis_auth)?;
-
-    // Reuse `mint`: gratis mint + fresh Fidelity cohort at the current block time.
-    mint(storage, account, amount, gratis_auth)?;
-
-    Ok(amount)
 }
 
 pub fn mine_coen(

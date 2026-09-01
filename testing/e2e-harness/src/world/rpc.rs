@@ -1635,14 +1635,17 @@ impl Rpc {
         )
     }
 
-    /// Claim the caller's complete AgentReward through an ordinary paid
-    /// transaction and return its public receipt.
-    pub fn claim_all_agent_reward(&self, key: &str) -> Result<serde_json::Value> {
+    /// Claim the caller's complete AgentReward balance in one pool as a Gem
+    /// through an ordinary paid transaction and return its public receipt.
+    pub fn claim_agent_reward_gem(&self, key: &str, pool: u8) -> Result<serde_json::Value> {
         let tx_hash = eth::send_call(
             &self.cfg.rpc0,
             addresses::AGENT_REWARD_ADDR,
             key,
-            &IAgentReward::claimRewardCall { amount: U256::ZERO },
+            &IAgentReward::claimRewardCall {
+                pool,
+                amount: U256::ZERO,
+            },
             None,
         )?;
         let receipt = eth::receipt_json(&self.cfg.rpc0, &tx_hash)

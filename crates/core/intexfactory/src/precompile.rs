@@ -9,7 +9,8 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    dispatch_call, metadata, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable,
+    view,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -158,8 +159,16 @@ pub fn dispatch(
                         c.paymentToken,
                     )
                 }),
-                quoteCostAmount(c) => view(c, |c| {
-                    runtime::quote_cost_amount(&storage, SeriesId::from(c.seriesId), c.paymentToken)
+                quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
+                    let (settlement_currency, amount) = runtime::quote_settlement(
+                        &storage,
+                        SeriesId::from(c.seriesId),
+                        c.paymentToken,
+                    )?;
+                    Ok(IIntexFactory::quoteSettlementReturn {
+                        settlementCurrency: settlement_currency,
+                        payableUnits: amount,
+                    })
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)

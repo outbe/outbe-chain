@@ -26,9 +26,8 @@ fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
         gem_type: 2, // WALLET
-        gem_load_minor: U256::from(1_000_000u64),
+        promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
-        cost_amount_minor: U256::from(500_000u64),
         floor_price_minor: U256::from(540_000u64),
         call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
@@ -86,7 +85,7 @@ fn enumerable_returns_only_owned_gems() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load_minor = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let p3 = sample_params(BOB);
         let _g3 = api::add_gem(storage, p3).unwrap();
@@ -129,10 +128,10 @@ fn burn_compacts_owner_index() {
     with_storage(|storage| {
         let g1 = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut p2 = sample_params(ALICE);
-        p2.gem_load_minor = U256::from(2u64);
+        p2.promis_load_minor = U256::from(2u64);
         let g2 = api::add_gem(storage, p2).unwrap();
         let mut p3 = sample_params(ALICE);
-        p3.gem_load_minor = U256::from(3u64);
+        p3.promis_load_minor = U256::from(3u64);
         let g3 = api::add_gem(storage, p3).unwrap();
 
         api::set_state(storage, g1, GemState::Settled).unwrap();
@@ -375,7 +374,7 @@ fn a_spent_budget_defers_the_rest_of_the_currency_list_to_the_next_block() {
         // this one sweep spends everything the block had.
         for i in 0..=crate::constants::MAX_GEM_QUALIFICATIONS_PER_BLOCK {
             let mut p = sample_params(ALICE);
-            p.gem_load_minor = U256::from(1_000_000u64 + u64::from(i));
+            p.promis_load_minor = U256::from(1_000_000u64 + u64::from(i));
             api::add_gem(storage, p).unwrap();
         }
         let eur_id = eur_gem(storage);
@@ -617,13 +616,13 @@ fn gem_storage_layout_matches_genesis_seeder() {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
         assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
-        // GemData record spans 18 slots (owner@+0 .. settled_at@+17), so
-        // the schema fields after gem_items start at 1 + 18 = 19.
-        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 18);
-        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(19u64));
-        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(20u64));
-        // all_gem_ids (List) occupies slot 21.
-        assert_eq!(gem.gem_index.base_slot(), U256::from(22u64));
+        // GemData record spans 17 slots (owner@+0 .. settled_at@+16), so
+        // the schema fields after gem_items start at 1 + 17 = 18.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 17);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(18u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(19u64));
+        // all_gem_ids (List) occupies slot 20.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(21u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);
@@ -897,7 +896,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
         let load = api::get_gem(storage, gem_id)
             .unwrap()
             .unwrap()
-            .gem_load_minor;
+            .promis_load_minor;
         let mut gem = GemContract::new(storage.clone());
         gem.mark_called(gem_id, T_NOW).unwrap();
 

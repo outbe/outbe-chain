@@ -14,7 +14,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 use crate::called;
 use crate::constants::{
     CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_ISSUANCE,
-    MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
+    MAX_SERIES_PER_MESSAGE,
 };
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
@@ -95,14 +95,12 @@ fn qualify_day(
     s: &StorageHandle<'_>,
     f: &mut IntexFactoryContract,
     worldwide_day: u32,
-    qualification_period: u32,
-    now: u64,
     rate: U256,
 ) -> u32 {
     let group = f
         .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
         .unwrap();
-    qualified::try_qualify_group(s, f, &group, qualification_period, now, rate).unwrap()
+    qualified::try_qualify_group(s, f, &group, rate).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {

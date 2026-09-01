@@ -168,7 +168,7 @@
   },
   {
     "type": "function",
-    "name": "quoteCostAmount",
+    "name": "quoteSettlement",
     "inputs": [
       {
         "name": "seriesId",
@@ -183,7 +183,12 @@
     ],
     "outputs": [
       {
-        "name": "costAmountMinor",
+        "name": "settlementCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "payableUnits",
         "type": "uint256",
         "internalType": "uint256"
       }

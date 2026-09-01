@@ -100,11 +100,11 @@ impl GemContract<'_> {
         // The load came out of a daily emission sink and nobody realized it, so it
         // goes back. Same checkpoint as the burn, or there is nothing to recover.
         outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-            .add_to_total_unallocated(item.gem_load_minor)?;
+            .add_to_total_unallocated(item.promis_load_minor)?;
         self.emit(GemExpired {
             gemId: gem_id,
             owner: item.owner,
-            gemLoad: item.gem_load_minor,
+            promisLoad: item.promis_load_minor,
         })?;
         Ok(true)
     }

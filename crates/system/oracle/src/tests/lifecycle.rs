@@ -22,13 +22,8 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         let last_closed_start = outbe_primitives::time::date_key_to_utc_timestamp(last_closed);
         let last_closed_price = coen_iso(125);
 
-        let uninitialized = crate::api::ocomp_pre_admission_projection(
-            storage.clone(),
-            wwd,
-            coen_iso(99),
-            timestamp,
-        )
-        .unwrap();
+        let uninitialized =
+            crate::api::ocomp_pre_admission_projection(storage.clone(), timestamp).unwrap();
         assert!(!uninitialized.profile_ready);
         assert_eq!(uninitialized.oracle_state_version, 0);
 
@@ -53,16 +48,10 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         .unwrap();
 
         let registered_pairs = oracle.pair_count.read().unwrap();
-        let closed = crate::api::ocomp_pre_admission_projection(
-            storage.clone(),
-            wwd,
-            coen_iso(99),
-            timestamp,
-        )
-        .unwrap();
+        let closed =
+            crate::api::ocomp_pre_admission_projection(storage.clone(), timestamp).unwrap();
         assert!(closed.profile_ready);
-        // The day-type currency is always present; other reference currencies join
-        // it only when their own pair closed.
+        // Only a currency whose own pair closed on the last UTC day is present.
         assert_eq!(closed.auction_entry_prices.len(), 1);
         let day_type_row = &closed.auction_entry_prices[0];
         assert_eq!(
@@ -80,27 +69,16 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         assert_eq!(closed.wwd_pair_entries, registered_pairs);
         assert_eq!(closed.active_scurve_entries, 1);
 
+        // The next day's last closed UTC day carries no price, so the day-type row is
+        // omitted rather than substituted: an unpriced day announces itself as empty.
         let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
-        let next_wwd = outbe_common::WorldwideDay::from_timestamp(next_timestamp);
-        let fallback = crate::api::ocomp_pre_admission_projection(
-            storage,
-            next_wwd,
-            U256::from(99),
-            next_timestamp,
-        )
-        .unwrap();
-        assert!(fallback.profile_ready);
-        let fallback_row = &fallback.auction_entry_prices[0];
-        assert_eq!(fallback_row.entry_price_minor, U256::from(99));
-        assert_eq!(
-            fallback_row.source,
-            crate::api::OcompAuctionEntryPriceSource::CurrentVwapFallback
-        );
-        assert_eq!(fallback_row.source_day, next_wwd.value());
-        assert_eq!(fallback.oracle_state_version, 5);
+        let unpriced = crate::api::ocomp_pre_admission_projection(storage, next_timestamp).unwrap();
+        assert!(unpriced.profile_ready);
+        assert!(unpriced.auction_entry_prices.is_empty());
+        assert_eq!(unpriced.oracle_state_version, 5);
         // Registry-derived, so it does not drop to zero on a day with no snapshot.
-        assert_eq!(fallback.wwd_pair_entries, registered_pairs);
-        assert_eq!(fallback.active_scurve_entries, 1);
+        assert_eq!(unpriced.wwd_pair_entries, registered_pairs);
+        assert_eq!(unpriced.active_scurve_entries, 1);
     });
 }
 

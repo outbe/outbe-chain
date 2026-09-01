@@ -8008,8 +8008,8 @@ mod tests {
                 outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
                     reward_utc_day: 20_240_101,
                     recipient_count: 2,
-                    delivered_gem_load_amount,
-                } if delivered_gem_load_amount == U256::from(200u64)
+                    delivered_promis_load_amount,
+                } if delivered_promis_load_amount == U256::from(200u64)
             ));
             assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
             assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
