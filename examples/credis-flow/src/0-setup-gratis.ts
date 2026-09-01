@@ -33,7 +33,7 @@ import {
 // plaintext-seeded at genesis anymore (both are TEE-encrypted at rest), so genesis
 // seeds the user a Settled *gem* instead. This script burns that gem for confidential
 // Promis (`minePromis`), then converts the Promis 1:1 into confidential Gratis
-// (`mineFromPromis`) - leaving the user real, enclave-encrypted Gratis to pledge.
+// (`mineGratisFromPromis`) - leaving the user real, enclave-encrypted Gratis to pledge.
 const amountArg = process.argv[2];
 const envName = process.argv[3] || DEFAULT_ENV;
 
@@ -145,7 +145,7 @@ async function main() {
   console.log(`  Block:   ${receipt1.blockNumber} - minted ${formatToken(gemLoad, promisMeta.decimals, promisMeta.symbol)}`);
 
   // Step 2 - Promis -> Gratis: burn `amount` Promis and mint `amount` Gratis. Both
-  // ledgers are confidential, so mineFromPromis takes TWO modify authorizations,
+  // ledgers are confidential, so mineGratisFromPromis takes TWO modify authorizations,
   // each bound to its own ledger's current op-nonce: the Gratis MINT auth
   // (GratisOp.Mint) and the Promis BURN auth (PromisOp.Burn). The Promis op-nonce
   // has advanced to 1 after the mint above.
@@ -169,8 +169,8 @@ async function main() {
     chainId,
     "Promis",
   );
-  console.log("\nStep 2: mineFromPromis(amount, gratisMac, gratisOpNonce, promisMac, promisOpNonce)...");
-  const tx2 = await gratisFactory.mineFromPromis(
+  console.log("\nStep 2: mineGratisFromPromis(amount, gratisMac, gratisOpNonce, promisMac, promisOpNonce)...");
+  const tx2 = await gratisFactory.mineGratisFromPromis(
     amount,
     gratisMintMac,
     gratisMintNonce,
@@ -179,7 +179,7 @@ async function main() {
   );
   console.log(`  TX hash: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
-  if (!receipt2) throw new Error("mineFromPromis tx receipt missing");
+  if (!receipt2) throw new Error("mineGratisFromPromis tx receipt missing");
   console.log(`  Block:   ${receipt2.blockNumber}`);
 
   const promisAfter = decryptBalance(

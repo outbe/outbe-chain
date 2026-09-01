@@ -30,7 +30,7 @@
   },
   {
     "type": "function",
-    "name": "mineFromPromis",
+    "name": "mineGratisFromPromis",
     "inputs": [
       {
         "name": "amount",

@@ -6,7 +6,7 @@
 //! The Fidelity cohort op rides INSIDE the gratis enclave round-trip (no extra
 //! trip): `mine` folds an acquisition (`In`), `mine_coen` a sale (`Out`), and
 //! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
-//! factory persists the returned fidelity outcome. `mine_from_promis` burns
+//! factory persists the returned fidelity outcome. `mine_gratis_from_promis` burns
 //! public promis and reuses `mine` (promis itself is fidelity-neutral).
 //!
 //! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
@@ -149,7 +149,7 @@ pub fn mint(
 /// the gratis mint takes their **Gratis** modify key (`gratis_auth`). Each `auth`
 /// binds `amount` to that ledger's own current op-nonce, so the caller supplies two
 /// `mac`/`opNonce` pairs.
-pub fn mine_from_promis(
+pub fn mine_gratis_from_promis(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,

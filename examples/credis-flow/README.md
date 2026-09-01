@@ -205,7 +205,7 @@ npx tsx src/0-setup-erc20.ts
 # TEE-encrypted at rest, so neither can be plaintext-seeded at genesis - instead
 # genesis seeds the user a Settled *gem* (scripts/seed-testnet.json "gems"). This
 # script burns it for confidential Promis (IGemFactory.minePromis), then
-# converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineFromPromis).
+# converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineGratisFromPromis).
 npx tsx src/0-setup-gratis.ts                          # converts the whole gem load by default
 
 # User pledges for a stablecoin credit line; the gratis it costs is derived on-chain

@@ -61,7 +61,7 @@ interface IGratisFactory {
     ///         op-nonce: `(mac, opNonce)` is the Gratis modify auth for the mint and
     ///         `(promisMac, promisOpNonce)` is the Promis modify auth for the burn.
     ///         Fetch each via `outbe_deriveKeys(<ledger>, ...)` + `opNonceOf`.
-    function mineFromPromis(uint256 amount, bytes32 mac, uint64 opNonce, bytes32 promisMac, uint64 promisOpNonce)
+    function mineGratisFromPromis(uint256 amount, bytes32 mac, uint64 opNonce, bytes32 promisMac, uint64 promisOpNonce)
         external
         returns (uint256);
 

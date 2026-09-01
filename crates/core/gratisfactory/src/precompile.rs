@@ -71,7 +71,7 @@ pub fn dispatch(
                     };
                     runtime::mine_coen(storage.clone(), sender, c.amount, auth)
                 }),
-                mineFromPromis(c) => mutate(c, caller, |sender, c| {
+                mineGratisFromPromis(c) => mutate(c, caller, |sender, c| {
                     let gratis_auth = ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
@@ -80,7 +80,7 @@ pub fn dispatch(
                         mac: c.promisMac.0,
                         op_nonce: c.promisOpNonce,
                     };
-                    runtime::mine_from_promis(
+                    runtime::mine_gratis_from_promis(
                         storage.clone(),
                         sender,
                         c.amount,
