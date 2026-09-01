@@ -17,10 +17,11 @@ use outbe_primitives::storage::types::Slot;
 ///   0: u32 - daily price-path scan cursor, stored as `index + 1` into the credis
 ///      active-position index. 0 means the last pass completed and the next run
 ///      starts a fresh one from the top.
-///   1: map positionId -> U256 - the originating CCA's escrowed COEN stake, taken at
-///      `requestCredis` and equal to the pledged collateral. Returned to the CCA when
-///      the position closes, burned when it voids. The native COEN itself sits in this
-///      precompile's own balance; this map is the per-position claim on it.
+///   1: map positionId -> U256 - the originating CCA's escrowed native COEN stake,
+///      taken at `requestCredis` in 18-decimal units and equal in value to the
+///      six-decimal pledged collateral. Returned to the CCA when the position closes,
+///      burned when it voids. The native COEN itself sits in this precompile's own
+///      balance; this map is the per-position claim on it.
 #[contract(addr = CREDIS_FACTORY_ADDRESS)]
 pub struct CredisFactoryContract {
     pub call_scan_cursor: Slot<u32>,
