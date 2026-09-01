@@ -4,6 +4,7 @@
 //! validator has enough durable, authenticated input to advertise, vote for,
 //! export, execute, or sign one PoC job.
 
+pub mod durable;
 pub mod finality;
 pub mod fork;
 pub mod local_result;
