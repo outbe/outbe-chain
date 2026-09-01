@@ -45,8 +45,13 @@ interface ICredis {
         address smartAccount;
         address cca;
         address asset;
-        /// ISO 4217 numeric code of the position's currency, from the disbursed asset.
+        /// ISO 4217 numeric code of the disbursed asset. Denominates the position
+        /// and keys its policy rate; it is NOT the call threshold anchor.
         uint16 issuanceCurrency;
+        /// ISO 4217 numeric code of the reference currency elected at origination
+        /// and fixed for the position's life. Threshold-evaluation anchor only:
+        /// the call is gated on the COEN/<reference> daily series.
+        uint16 referenceCurrency;
         // Pledger EOA ciphertext (not an address). The enclave recovers
         // the plaintext EOA on-chain via a RevealOwner round-trip.
         bytes eoaCiphertext;
@@ -54,15 +59,17 @@ interface ICredis {
         uint256 principal;
         /// P_out - decreases with each settlement; the position closes at zero.
         uint256 outstanding;
-        /// G - the pledged Gratis, valued 1:1 against principal at the entry price.
+        /// G - the pledged Gratis, valued 1:1 against principal at the pledge quote rate.
         uint256 collateral;
         /// The share of G still locked. Released principal-proportionally.
         uint256 collateralLocked;
         /// r - the annual policy rate of the currency, scale 1e6, fixed at opening.
         uint256 policyRate;
-        /// P_0 - the COEN price in the position's currency, quoted at pledge time.
+        /// P_0 - the COEN price in the position's REFERENCE currency, snapshotted
+        /// at origination.
         uint256 entryPrice;
-        /// P_0 + 64%. A sustained breach triggers the call.
+        /// P_0 + 64%. A sustained breach of the COEN/<reference> daily series
+        /// triggers the call.
         uint256 callPrice;
         uint64 originatedAt;
         /// Anchor of the interest day count: origination until the first settlement.

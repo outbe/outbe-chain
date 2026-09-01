@@ -31,7 +31,7 @@ holder, client-side) can read them.
   `amountStables`, so this is the slippage guard - and it is authenticated by your
   transaction signature). The gratis actually charged comes back on the
   `GratisPledged` event.
-- **Credis.** `requestCredis(smartAccount, pledgeHandle, spendAuth)` (payable - the CCA
+- **Credis.** `requestCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency)` (payable - the CCA
   attaches COEN equal to the pledged collateral) - called by the
   CCA. The user hands it a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds
   it to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" || bundle)`.

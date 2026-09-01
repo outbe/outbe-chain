@@ -34,12 +34,22 @@ interface ICredisFactory {
     /// position settles in full, and burned if it voids. The required amount is
     /// not in calldata - it was sealed into the ticket at pledge time - so read
     /// it from the pledge quote before calling.
+    /// @param referenceCurrency ISO 4217 numeric code of the threshold-evaluation
+    ///        anchor, elected here and fixed for the position's life. Must be a
+    ///        registered reference currency; the call price is struck from the
+    ///        COEN/<referenceCurrency> quote and the daily breach scan reads that same
+    ///        series. Passing the disbursed asset's own currency reuses the rate sealed
+    ///        at `pledgeGratis`, so the threshold cannot drift between pledge and
+    ///        origination; any other currency is quoted at origination instead. It does
+    ///        not denominate the position.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
-    function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth)
-        external
-        payable
-        returns (uint256 positionId, uint256 amountStables);
+    function requestCredis(
+        address smartAccount,
+        bytes32 pledgeHandle,
+        bytes32 spendAuth,
+        uint16 referenceCurrency
+    ) external payable returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.

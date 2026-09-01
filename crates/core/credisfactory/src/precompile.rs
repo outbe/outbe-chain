@@ -48,6 +48,7 @@ pub fn dispatch(
                             c.smartAccount,
                             c.pledgeHandle,
                             c.spendAuth.0,
+                            c.referenceCurrency,
                             val,
                         )?;
                         Ok(ICredisFactory::requestCredisReturn {

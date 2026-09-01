@@ -27,12 +27,16 @@ pub struct OpenPositionParams {
     /// Sealed pledger EOA, opaque here.
     pub eoa_ct: Vec<u8>,
     pub asset: Address,
+    /// ISO 4217 code of `asset`; denominates the position and keys the policy rate.
     pub issuance_currency: u16,
+    /// ISO 4217 code of the elected threshold anchor. `entry_price` must be a
+    /// COEN quote in THIS currency - the call is measured on its daily series.
+    pub reference_currency: u16,
     /// `r`, 1e18 scaled, already multiplied by the policy-rate factor.
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal: U256,
-    /// `P0` - COEN price in the position's currency, 1e18 oracle scale.
+    /// `P0` - COEN price in the position's `reference_currency`, 1e6 oracle scale.
     pub entry_price: U256,
     /// `G` - pledged Gratis collateral.
     pub collateral: U256,
@@ -139,6 +143,7 @@ impl CredisContract<'_> {
             cca: params.cca,
             asset: params.asset,
             issuance_currency: params.issuance_currency,
+            reference_currency: params.reference_currency,
             eoa_ct: params.eoa_ct,
             principal: params.principal,
             outstanding: params.principal,
