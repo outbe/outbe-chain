@@ -17,9 +17,6 @@ sol!(
     "../../../contracts/precompiles/src/INodFactory.sol"
 );
 
-/// `mineGratis` runs the pinned UltraHonk verifier on its PayNote proof, so its
-/// base gas must bound that work before storage is available to see whether the
-/// Nod is free and skips verification entirely.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
         Some(&INodFactory::mineGratisCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
