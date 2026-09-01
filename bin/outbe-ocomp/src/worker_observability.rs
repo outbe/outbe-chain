@@ -58,6 +58,7 @@ struct WorkerStatusState {
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotExporterPhaseV1 {
     Starting,
+    Reconciling,
     Idle,
     Exporting,
     Error,
@@ -262,14 +263,12 @@ impl SnapshotExporterObservabilityServerV1 {
 
     pub fn begin_reconcile(&self) {
         if let Ok(mut state) = self.state.lock() {
-            // This is the boundary between reconcile cycles. A prior-cycle
-            // error remains visible in `last_error` until a full success, but
-            // active retry work is healthy again. Errors raised by one lane in
-            // this cycle still latch `Error`, so a later lane cannot mask them.
-            state.phase = SnapshotExporterPhaseV1::Idle;
+            // A retry attempt is progress, not proof of health. Only a complete
+            // successful reconciliation clears the previous failure.
+            state.phase = SnapshotExporterPhaseV1::Reconciling;
             state.current_bundle = None;
             state.current_job = None;
-            state.healthy = true;
+            state.healthy = false;
             state.last_activity = Instant::now();
         }
     }
@@ -279,7 +278,6 @@ impl SnapshotExporterObservabilityServerV1 {
         if let Ok(mut state) = self.state.lock() {
             if state.phase != SnapshotExporterPhaseV1::Error {
                 state.phase = SnapshotExporterPhaseV1::Exporting;
-                state.healthy = true;
             }
             state.current_bundle = Some(bundle);
             state.current_job = Some(job);
@@ -825,7 +823,7 @@ mod tests {
                 .send()
                 .unwrap()
                 .status(),
-            reqwest::StatusCode::OK
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
         );
         let status = server.status().expect("retry status");
         assert_eq!(status.phase, SnapshotExporterPhaseV1::Exporting);
@@ -842,6 +840,15 @@ mod tests {
             reqwest::StatusCode::SERVICE_UNAVAILABLE
         );
         server.export_progress();
+        assert_eq!(
+            client
+                .get(format!("http://{}/healthz", server.address()))
+                .send()
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
+        server.reconcile_succeeded(0);
         assert_eq!(
             client
                 .get(format!("http://{}/healthz", server.address()))

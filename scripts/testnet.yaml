@@ -68,6 +68,7 @@ tee:
 # price_feed_websocket: prc.testnet.outbe.net
 
 # Ports. Founders sit on separate machines, so they share one layout.
+ocomp_discovery_control_port: 30414
 # consensus_p2p_port: 30400
 # reth_p2p_port: 30303
 # reth_discv5_port: 31303

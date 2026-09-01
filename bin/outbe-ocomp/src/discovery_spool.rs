@@ -33,7 +33,7 @@ const OFFER_SUFFIX: &str = ".offer";
 const ACK_SUFFIX: &str = ".ack";
 const QUARANTINE_SUFFIX: &str = ".quarantine";
 const OFFER_RECORD_MAGIC: [u8; 8] = *b"OUTBDSO1";
-const ACK_RECORD_MAGIC: [u8; 8] = *b"OUTBDSA1";
+const ACK_RECORD_MAGIC: [u8; 8] = *b"OUTBDSA2";
 const QUARANTINE_MAGIC: [u8; 8] = *b"OUTBDSQ1";
 const CHECKPOINT_MAGIC: [u8; 8] = *b"OUTBDCP1";
 const RECORD_VERSION: u16 = 1;
@@ -58,6 +58,8 @@ pub struct PendingDiscoveryV1 {
 pub struct StoredDiscoveryAckV1 {
     pub reference: DiscoveryAckRefV1,
     pub committed: SnapshotExportCommittedV1,
+    pub lease_generation: u64,
+    pub manifest_hash: B256,
 }
 
 #[derive(Clone)]
@@ -209,7 +211,12 @@ impl DiscoverySpoolV1 {
                 .latch_conflict(offer.observation_id, "ack replay")
                 .map(|outcome| (reference, outcome));
         }
-        let encoded = encode_ack_record(&reference, &canonical)?;
+        let encoded = encode_ack_record(
+            &reference,
+            receipt.lease_generation(),
+            receipt.manifest_hash(),
+            &canonical,
+        )?;
         persist_immutable_atomic(&self.acks, &path, &encoded)?;
         Ok((reference, PutOutcomeV1::Inserted))
     }
@@ -250,13 +257,11 @@ impl DiscoverySpoolV1 {
     }
 
     pub fn pending_cursor(&self) -> Result<DiscoveryPendingCursorV1, DiscoverySpoolError> {
-        let lock = FileLock::acquire(&self.root, LOCK_FILE)?;
         let entries = fs::read_dir(&self.offers)
             .map_err(|source| io_error("list discovery offers", &self.offers, source))?;
         Ok(DiscoveryPendingCursorV1 {
             spool: self.clone(),
             entries,
-            _lock: lock,
         })
     }
 
@@ -332,14 +337,18 @@ impl DiscoverySpoolV1 {
         let max = ACK_RECORD_MAGIC
             .len()
             .checked_add(DiscoveryAckRefV1::FIXED_BYTES)
-            .and_then(|value| value.checked_add(8 + self.limits.max_control_body_bytes + 32))
+            .and_then(|value| {
+                value.checked_add(8 + 32 + 8 + self.limits.max_control_body_bytes + 32)
+            })
             .ok_or(DiscoverySpoolError::Overflow)?;
         let encoded = read_bounded_private_file(path, max)?;
-        let (reference, canonical) = decode_ack_record(&encoded)?;
+        let (reference, lease_generation, manifest_hash, canonical) = decode_ack_record(&encoded)?;
         let committed = SnapshotExportCommittedV1::decode_body(canonical, &self.limits)?;
         if committed.encode_body(&self.limits)? != canonical
             || reference.chain_id != self.chain_id
             || reference.genesis_hash != self.genesis_hash
+            || lease_generation == 0
+            || manifest_hash.is_zero()
         {
             return Err(DiscoverySpoolError::CorruptRecord {
                 path: path.to_path_buf(),
@@ -348,6 +357,8 @@ impl DiscoverySpoolV1 {
         Ok(StoredDiscoveryAckV1 {
             reference,
             committed,
+            lease_generation,
+            manifest_hash,
         })
     }
 
@@ -454,7 +465,6 @@ fn verified_receipt_matches_offer(
 pub struct DiscoveryPendingCursorV1 {
     spool: DiscoverySpoolV1,
     entries: ReadDir,
-    _lock: FileLock,
 }
 
 impl Iterator for DiscoveryPendingCursorV1 {
@@ -476,7 +486,7 @@ impl Iterator for DiscoveryPendingCursorV1 {
             let Some(observation) = parse_record_name(&path, OFFER_SUFFIX) else {
                 return Some(Err(DiscoverySpoolError::UnexpectedEntry(path)));
             };
-            match self.spool.pending_unlocked(&observation) {
+            match self.spool.pending(&observation) {
                 Ok(Some(pending)) => return Some(Ok(pending)),
                 Ok(None) => {}
                 Err(error) => return Some(Err(error)),
@@ -576,6 +586,43 @@ impl ContiguousCheckpointStoreV1 {
         Ok(CheckpointAdvanceOutcomeV1::Advanced)
     }
 
+    /// Atomically advances to a later sparse checkpoint while comparing the
+    /// exact current authority. Intermediate block identities were already
+    /// validated by the unified reader and need not be retained in RAM.
+    pub fn compare_and_advance_to(
+        &self,
+        expected: ProjectionCheckpoint,
+        next: ProjectionCheckpoint,
+    ) -> Result<CheckpointAdvanceOutcomeV1, DiscoverySpoolError> {
+        validate_checkpoint(expected)?;
+        validate_checkpoint(next)?;
+        if next.block_number <= expected.block_number {
+            return Err(DiscoverySpoolError::NonContiguousCheckpoint);
+        }
+        let _lock = FileLock::acquire(&self.root, CHECKPOINT_LOCK)?;
+        let state = self.load_state()?;
+        if state.current == next && state.previous == expected {
+            return Ok(CheckpointAdvanceOutcomeV1::ExactReplay);
+        }
+        if state.current != expected {
+            return Err(DiscoverySpoolError::CheckpointCompareFailed {
+                stored: state.current,
+                expected,
+            });
+        }
+        persist_replace_atomic(
+            &self.root,
+            &self.root.join(CHECKPOINT_FILE),
+            &self.root.join(CHECKPOINT_TEMP),
+            &encode_checkpoint_state(CheckpointStateV1 {
+                baseline: state.baseline,
+                previous: expected,
+                current: next,
+            }),
+        )?;
+        Ok(CheckpointAdvanceOutcomeV1::Advanced)
+    }
+
     fn load_state(&self) -> Result<CheckpointStateV1, DiscoverySpoolError> {
         let state = decode_checkpoint_state(&read_bounded_private_file(
             &self.root.join(CHECKPOINT_FILE),
@@ -638,13 +685,22 @@ fn decode_offer_record(
 
 fn encode_ack_record(
     reference: &DiscoveryAckRefV1,
+    lease_generation: u64,
+    manifest_hash: B256,
     canonical: &[u8],
 ) -> Result<Vec<u8>, DiscoverySpoolError> {
+    if lease_generation == 0 || manifest_hash.is_zero() {
+        return Err(DiscoverySpoolError::MalformedRecord {
+            path: PathBuf::new(),
+        });
+    }
     let length = u64::try_from(canonical.len()).map_err(|_| DiscoverySpoolError::Overflow)?;
     let mut encoded =
-        Vec::with_capacity(8 + DiscoveryAckRefV1::FIXED_BYTES + 8 + canonical.len() + 32);
+        Vec::with_capacity(8 + DiscoveryAckRefV1::FIXED_BYTES + 8 + 32 + 8 + canonical.len() + 32);
     encoded.extend_from_slice(&ACK_RECORD_MAGIC);
     encoded.extend_from_slice(&reference.encode_fixed());
+    encoded.extend_from_slice(&lease_generation.to_be_bytes());
+    encoded.extend_from_slice(manifest_hash.as_slice());
     encoded.extend_from_slice(&length.to_be_bytes());
     encoded.extend_from_slice(canonical);
     let checksum = keccak256(&encoded);
@@ -652,8 +708,13 @@ fn encode_ack_record(
     Ok(encoded)
 }
 
-fn decode_ack_record(encoded: &[u8]) -> Result<(DiscoveryAckRefV1, &[u8]), DiscoverySpoolError> {
-    let header = 8 + DiscoveryAckRefV1::FIXED_BYTES + 8;
+fn decode_ack_record(
+    encoded: &[u8],
+) -> Result<(DiscoveryAckRefV1, u64, B256, &[u8]), DiscoverySpoolError> {
+    let lease_offset = 8 + DiscoveryAckRefV1::FIXED_BYTES;
+    let manifest_offset = lease_offset + 8;
+    let length_offset = manifest_offset + 32;
+    let header = length_offset + 8;
     if encoded.len() < header + 32 || encoded[..8] != ACK_RECORD_MAGIC {
         return Err(DiscoverySpoolError::MalformedRecord {
             path: PathBuf::new(),
@@ -662,7 +723,9 @@ fn decode_ack_record(encoded: &[u8]) -> Result<(DiscoveryAckRefV1, &[u8]), Disco
     verify_record_checksum(encoded)?;
     let reference =
         DiscoveryAckRefV1::decode_fixed(&encoded[8..8 + DiscoveryAckRefV1::FIXED_BYTES])?;
-    let body_len = read_u64(encoded, 8 + DiscoveryAckRefV1::FIXED_BYTES)?;
+    let lease_generation = read_u64(encoded, lease_offset)?;
+    let manifest_hash = read_b256(encoded, manifest_offset)?;
+    let body_len = read_u64(encoded, length_offset)?;
     let body_len = usize::try_from(body_len).map_err(|_| DiscoverySpoolError::Overflow)?;
     let body_end = header
         .checked_add(body_len)
@@ -672,7 +735,12 @@ fn decode_ack_record(encoded: &[u8]) -> Result<(DiscoveryAckRefV1, &[u8]), Disco
             path: PathBuf::new(),
         });
     }
-    Ok((reference, &encoded[header..body_end]))
+    Ok((
+        reference,
+        lease_generation,
+        manifest_hash,
+        &encoded[header..body_end],
+    ))
 }
 
 fn verify_record_checksum(encoded: &[u8]) -> Result<(), DiscoverySpoolError> {
@@ -724,13 +792,6 @@ fn decode_checkpoint_state(encoded: &[u8]) -> Result<CheckpointStateV1, Discover
     validate_checkpoint(state.current)?;
     if state.current.block_number < state.baseline.block_number
         || state.previous.block_number > state.current.block_number
-        || (state.previous != state.current
-            && state.current.block_number
-                != state
-                    .previous
-                    .block_number
-                    .checked_add(1)
-                    .ok_or(DiscoverySpoolError::CorruptCheckpoint)?)
     {
         return Err(DiscoverySpoolError::CorruptCheckpoint);
     }

@@ -1,10 +1,14 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
+
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 
 use alloy_primitives::{keccak256, B256};
 use clap::{Args, Parser, Subcommand};
@@ -14,17 +18,15 @@ use outbe_consensus::proof::constants::consensus_chain_id;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
+use outbe_ocomp::discovery_control::{DiscoveryAckRefV1, DiscoveryOfferRefV1};
+use outbe_ocomp::discovery_spool::{DiscoverySpoolV1, PendingDiscoveryV1, StoredDiscoveryAckV1};
+use outbe_ocomp::discovery_transport::{DiscoveryOfferServerV1, ReceivedDiscoveryOfferV1};
 use outbe_ocomp::inbox::WorkerInboxLimits;
-use outbe_ocomp::rpc_discovery::{
-    FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
-};
 use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
-use outbe_ocomp::rpc_projection::RpcFinalizedProjectionV1;
-use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
+use outbe_ocomp::supervisor::DiscoveryRecord;
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_observability::SnapshotExporterObservabilityServerV1;
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
-use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
 
@@ -74,7 +76,6 @@ struct RuntimeArgs {
 const BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
 const VALIDATOR_INDEX_ENV: &str = "OCOMP_VALIDATOR_INDEX";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
-const CAS_MAX_TOTAL_BYTES: u64 = OCOMP_POC_CAS_QUOTA_BYTES;
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const OCOMP_RPC_MAX_RESPONSE_BYTES: usize = 33_554_432;
@@ -82,6 +83,7 @@ const EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const OCOMP_TRIBUTE_PAGE_LIMIT: usize = 256;
 const PROJECTION_START_BLOCK: u64 = 1;
 const PROTOCOL_BUNDLE_HASHES_ENV: &str = "OCOMP_PROTOCOL_BUNDLE_HASHES";
+const DISCOVERY_CONTROL_ADDRESS_ENV: &str = "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProductionConfig {
@@ -247,7 +249,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cas_root: runtime.cas_root,
                 cas_limits: CasLimits {
                     max_object_bytes: CAS_MAX_OBJECT_BYTES,
-                    max_total_bytes: CAS_MAX_TOTAL_BYTES,
+                    // CAS is disk-backed and chunked. Capacity is governed by the
+                    // filesystem/operator, never by a product-level total-job cap.
+                    max_total_bytes: u64::MAX,
                 },
                 inbox_root: runtime
                     .worker_inbox_root
@@ -320,51 +324,23 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
 
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
-    let observability = SnapshotExporterObservabilityServerV1::start(
+    let discovery_control_address =
+        discovery_control_address_from_lookup(|name| env::var(name).ok())?;
+    let observability = Arc::new(SnapshotExporterObservabilityServerV1::start(
         snapshot_exporter_observability_address(runtime.supervisor_address)?,
-    )?;
+    )?);
     let limits = poc_schema_limits();
     let chain_id = required_env("OCOMP_CHAIN_ID")?.parse()?;
     let genesis_hash = required_env("OCOMP_GENESIS_HASH")?.parse()?;
-    let boot_nonce = required_env("OCOMP_BOOT_NONCE")?.parse()?;
     let bundle_hashes = required_protocol_bundle_hashes()?;
     install_consensus_domain(chain_id)?;
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
-    let projection_config = RpcProjectionConfigV1 {
-        rpc_url: rpc_url.clone(),
-        rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-        mongo: MongoStorageConfig {
-            uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
-            database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
-        },
-        chain_id,
-        genesis_hash,
-        start_block: PROJECTION_START_BLOCK,
-        tribute_page_limit: OCOMP_TRIBUTE_PAGE_LIMIT,
+    let mongo = MongoStorageConfig {
+        uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
+        database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
     };
-    let projection = retry_snapshot_exporter_startup(
-        || RpcFinalizedProjectionV1::open(projection_config.clone()),
-        |error| {
-            matches!(
-                error,
-                outbe_ocomp::rpc_projection::RpcProjectionErrorV1::StorageUnavailable
-            )
-        },
-        |error| {
-            observability.startup_error(error.to_string());
-            eprintln!("OCOMP snapshot exporter startup retry: {error}");
-            std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
-        },
-    )?;
-    let shared_projection = Arc::new(Mutex::new(projection));
-    let mut lanes = Vec::with_capacity(bundle_hashes.len());
+    let mut lanes = BTreeMap::new();
     for protocol_bundle_hash in bundle_hashes {
-        let identity = EndpointIdentity {
-            chain_id,
-            genesis_hash,
-            boot_nonce,
-            protocol_bundle_hash,
-        };
         let protocol_bundle = PinnedProtocolBundle::decode(
             &std::fs::read(protocol_bundle_path_for_hash(
                 &runtime,
@@ -373,21 +349,12 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             protocol_bundle_hash,
             &limits,
         )?;
-        let hash_directory = hex::encode(protocol_bundle_hash.as_slice());
-        let discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
-            rpc_url: rpc_url.clone(),
-            rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-            journal_root: runtime.snapshot_exporter_journal_root.join(&hash_directory),
-            projection_start_block: PROJECTION_START_BLOCK,
-            identity,
-            fork_id: protocol_bundle.bundle().fork_id,
-            limits,
-            purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
-        })?;
         let exporter_config = RpcInputExporterConfigV1 {
             rpc_url: rpc_url.clone(),
             rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-            projection: projection_config.clone(),
+            mongo: mongo.clone(),
+            projection_start_block: PROJECTION_START_BLOCK,
+            tribute_page_limit: OCOMP_TRIBUTE_PAGE_LIMIT,
             chain_id,
             genesis_hash,
             fork_id: protocol_bundle.bundle().fork_id,
@@ -395,60 +362,428 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             cas_root: runtime.cas_root.clone(),
             cas_limits: CasLimits {
                 max_object_bytes: CAS_MAX_OBJECT_BYTES,
-                max_total_bytes: CAS_MAX_TOTAL_BYTES,
+                // CAS is disk-backed and chunked. Capacity is governed by the
+                // filesystem/operator, never by a product-level total-job cap.
+                max_total_bytes: u64::MAX,
             },
             input_ref_root: runtime.snapshot_exporter_input_ref_root.clone(),
             receipt_root: runtime.snapshot_exporter_receipt_root.clone(),
-            protocol_bundle,
+            protocol_bundle: protocol_bundle.clone(),
             limits,
         };
-        let exporter = RpcInputExporterV1::open_with_shared_projection(
-            exporter_config,
-            shared_projection.clone(),
+        let exporter = retry_snapshot_exporter_startup(
+            || RpcInputExporterV1::open(exporter_config.clone()),
+            |error| error.is_retryable_startup(),
+            |error| {
+                observability.startup_error(error.to_string());
+                eprintln!("OCOMP snapshot exporter startup retry: {error}");
+                std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
+            },
         )?;
-        lanes.push((protocol_bundle_hash, discovery, exporter, None));
+        let spool = DiscoverySpoolV1::open(
+            discovery_spool_path(
+                &runtime.snapshot_exporter_journal_root,
+                protocol_bundle_hash,
+            ),
+            chain_id,
+            genesis_hash,
+            limits,
+        )?;
+        lanes.insert(
+            protocol_bundle_hash,
+            SnapshotExporterLaneV1 {
+                protocol_bundle,
+                exporter,
+                spool,
+            },
+        );
     }
-    loop {
-        observability.begin_reconcile();
-        let mut cycle_failed = false;
-        let mut pending_jobs = 0_u64;
-        for (bundle_hash, discovery, exporter, exported_job_id) in &mut lanes {
-            if let Err(error) = discovery.reconcile_once() {
-                cycle_failed = true;
-                observability.discovery_error(error.to_string());
-                eprintln!("OCOMP snapshot exporter discovery retry for {bundle_hash}: {error}");
+    let (lanes, completions) = spawn_snapshot_exporter_lanes(lanes, Arc::clone(&observability))?;
+
+    let async_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    async_runtime.block_on(run_discovery_offer_server(
+        discovery_control_address,
+        chain_id,
+        genesis_hash,
+        lanes,
+        completions,
+        observability,
+    ))
+}
+
+struct SnapshotExporterLaneV1 {
+    protocol_bundle: PinnedProtocolBundle,
+    exporter: RpcInputExporterV1,
+    spool: DiscoverySpoolV1,
+}
+
+struct SnapshotExporterLaneControlV1 {
+    spool: DiscoverySpoolV1,
+    trigger: mpsc::SyncSender<()>,
+}
+
+enum SnapshotExporterCompletionV1 {
+    Ack {
+        observation_id: B256,
+        acknowledgment: DiscoveryAckRefV1,
+    },
+    Failed {
+        bundle_hash: B256,
+        observation_id: Option<B256>,
+        detail: String,
+    },
+    Cycle {
+        bundle_hash: B256,
+        failed: bool,
+    },
+}
+
+fn spawn_snapshot_exporter_lanes(
+    lanes: BTreeMap<B256, SnapshotExporterLaneV1>,
+    observability: Arc<SnapshotExporterObservabilityServerV1>,
+) -> Result<
+    (
+        BTreeMap<B256, SnapshotExporterLaneControlV1>,
+        tokio::sync::mpsc::UnboundedReceiver<SnapshotExporterCompletionV1>,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let (completion_tx, completion_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut controls = BTreeMap::new();
+    for (bundle_hash, mut lane) in lanes {
+        let (trigger, wakeups) = mpsc::sync_channel(1);
+        let spool = lane.spool.clone();
+        let lane_observability = Arc::clone(&observability);
+        let lane_completion = completion_tx.clone();
+        std::thread::Builder::new()
+            .name(format!(
+                "ocomp-export-{}",
+                hex::encode(&bundle_hash.as_slice()[..4])
+            ))
+            .spawn(move || {
+                while wakeups.recv().is_ok() {
+                    drain_snapshot_exporter_lane(
+                        bundle_hash,
+                        &mut lane,
+                        &lane_observability,
+                        &lane_completion,
+                    );
+                }
+            })?;
+        trigger
+            .try_send(())
+            .map_err(|error| runtime_error(format!("wake snapshot exporter lane: {error}")))?;
+        controls.insert(
+            bundle_hash,
+            SnapshotExporterLaneControlV1 { spool, trigger },
+        );
+    }
+    Ok((controls, completion_rx))
+}
+
+fn drain_snapshot_exporter_lane(
+    bundle_hash: B256,
+    lane: &mut SnapshotExporterLaneV1,
+    observability: &SnapshotExporterObservabilityServerV1,
+    completions: &tokio::sync::mpsc::UnboundedSender<SnapshotExporterCompletionV1>,
+) {
+    let mut cycle_failed = false;
+    match lane.spool.pending_cursor() {
+        Ok(cursor) => {
+            for pending in cursor {
+                let pending = match pending {
+                    Ok(pending) => pending,
+                    Err(error) => {
+                        cycle_failed = true;
+                        let detail = error.to_string();
+                        observability.discovery_error(detail.clone());
+                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                            bundle_hash,
+                            observation_id: None,
+                            detail,
+                        });
+                        continue;
+                    }
+                };
+                match export_pending_discovery(lane, &pending, observability) {
+                    Ok(acknowledgment) => {
+                        let _ = completions.send(SnapshotExporterCompletionV1::Ack {
+                            observation_id: pending.reference.observation_id,
+                            acknowledgment,
+                        });
+                    }
+                    Err(error) => {
+                        cycle_failed = true;
+                        let detail = error.to_string();
+                        observability.export_error(detail.clone());
+                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                            bundle_hash,
+                            observation_id: Some(pending.reference.observation_id),
+                            detail,
+                        });
+                    }
+                }
             }
-            if let Some(record) = discovery.current_record() {
-                let job_id = record.spec.summary.job_id;
-                if *exported_job_id != Some(job_id) {
-                    observability.exporting(bundle_hash.to_string(), job_id.to_string());
-                    match exporter.export_observing(&record, || observability.export_progress()) {
-                        Ok(()) => {
-                            eprintln!(
-                                "OCOMP snapshot exporter published finalized input for {job_id} using {bundle_hash}"
-                            );
-                            *exported_job_id = Some(job_id);
-                            observability.committed();
+        }
+        Err(error) => {
+            cycle_failed = true;
+            let detail = error.to_string();
+            observability.discovery_error(detail.clone());
+            let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                bundle_hash,
+                observation_id: None,
+                detail,
+            });
+        }
+    }
+    let _ = completions.send(SnapshotExporterCompletionV1::Cycle {
+        bundle_hash,
+        failed: cycle_failed,
+    });
+}
+
+fn export_pending_discovery(
+    lane: &mut SnapshotExporterLaneV1,
+    pending: &PendingDiscoveryV1,
+    observability: &SnapshotExporterObservabilityServerV1,
+) -> Result<DiscoveryAckRefV1, Box<dyn std::error::Error>> {
+    let bundle_hash = pending.spec.summary.protocol_bundle_hash;
+    if lane.protocol_bundle.hash() != bundle_hash {
+        return Err(runtime_error(format!(
+            "discovery offer references unconfigured protocol bundle {bundle_hash}"
+        )));
+    }
+    let record = DiscoveryRecord {
+        generation: pending.reference.generation,
+        cursor: pending.spec.summary.cursor,
+        spec: pending.spec.clone(),
+    };
+    let job_id = record.spec.summary.job_id;
+    observability.exporting(bundle_hash.to_string(), job_id.to_string());
+    let receipt = lane
+        .exporter
+        .export_observing(&record, || observability.export_progress())?;
+    // put_ack persists the ACK record with file and directory fsync before it
+    // returns. Only that durable reference is eligible for ZeroMQ delivery.
+    let (acknowledgment, _) =
+        lane.spool
+            .put_ack(&pending.reference, &receipt, lane.protocol_bundle.bundle())?;
+    observability.committed();
+    eprintln!("OCOMP snapshot exporter committed finalized input for {job_id} using {bundle_hash}");
+    Ok(acknowledgment)
+}
+
+async fn run_discovery_offer_server(
+    address: SocketAddr,
+    chain_id: u64,
+    genesis_hash: B256,
+    mut lanes: BTreeMap<B256, SnapshotExporterLaneControlV1>,
+    mut completions: tokio::sync::mpsc::UnboundedReceiver<SnapshotExporterCompletionV1>,
+    observability: Arc<SnapshotExporterObservabilityServerV1>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut server = DiscoveryOfferServerV1::bind(address).await?;
+    let mut wake = tokio::time::interval(EXPORTER_RECONCILE_INTERVAL);
+    wake.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut waiting = BTreeMap::<B256, ReceivedDiscoveryOfferV1>::new();
+    let mut failing_lanes = BTreeSet::new();
+    loop {
+        tokio::select! {
+            _ = wake.tick() => {
+                observability.begin_reconcile();
+                for (bundle_hash, lane) in &lanes {
+                    match lane.trigger.try_send(()) {
+                        Ok(()) | Err(mpsc::TrySendError::Full(())) => {}
+                        Err(mpsc::TrySendError::Disconnected(())) => {
+                            return Err(runtime_error(format!(
+                                "snapshot exporter lane {bundle_hash} exited"
+                            )));
                         }
-                        Err(error) => {
-                            cycle_failed = true;
-                            pending_jobs = pending_jobs.saturating_add(1);
-                            observability.export_error(error.to_string());
-                            eprintln!(
-                                "OCOMP snapshot exporter public input retry for {bundle_hash}: {error}"
+                    }
+                }
+            }
+            received = server.receive_offer() => {
+                match received {
+                    Ok(received) => match serve_received_offer(
+                        &mut server,
+                        chain_id,
+                        genesis_hash,
+                        &mut lanes,
+                        &mut waiting,
+                        received,
+                    ).await {
+                        Ok(()) => {}
+                        Err(ServeReceivedOfferErrorV1::Observation(error)) => {
+                            observability.discovery_error(error.to_string());
+                            observability.reconcile_failed(
+                                pending_discovery_count(&lanes).unwrap_or(1),
                             );
+                        }
+                        Err(ServeReceivedOfferErrorV1::Fatal(error)) => return Err(error),
+                    },
+                    Err(error) => {
+                        observability.discovery_error(error.to_string());
+                        observability.reconcile_failed(pending_discovery_count(&lanes).unwrap_or(1));
+                    }
+                }
+            }
+            completion = completions.recv() => {
+                let completion = completion.ok_or_else(|| {
+                    runtime_error("all snapshot exporter lane workers exited")
+                })?;
+                match completion {
+                    SnapshotExporterCompletionV1::Ack {
+                        observation_id,
+                        acknowledgment,
+                    } => {
+                        if let Some(received) = waiting.remove(&observation_id) {
+                            server.send_ack(&received, &acknowledgment).await?;
+                        }
+                    }
+                    SnapshotExporterCompletionV1::Failed {
+                        bundle_hash,
+                        observation_id,
+                        detail,
+                    } => {
+                        observability.discovery_error(detail.clone());
+                        eprintln!(
+                            "OCOMP snapshot exporter lane {bundle_hash} failed for {observation_id:?}: {detail}"
+                        );
+                    }
+                    SnapshotExporterCompletionV1::Cycle { bundle_hash, failed } => {
+                        if failed {
+                            failing_lanes.insert(bundle_hash);
+                        } else {
+                            failing_lanes.remove(&bundle_hash);
+                        }
+                        let pending = pending_discovery_count(&lanes).unwrap_or(1);
+                        if failing_lanes.is_empty() {
+                            observability.reconcile_succeeded(pending);
+                        } else {
+                            observability.reconcile_failed(pending);
                         }
                     }
                 }
             }
         }
-        if cycle_failed {
-            observability.reconcile_failed(pending_jobs);
-        } else {
-            observability.reconcile_succeeded(pending_jobs);
-        }
-        std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
     }
+}
+
+async fn serve_received_offer(
+    server: &mut DiscoveryOfferServerV1,
+    chain_id: u64,
+    genesis_hash: B256,
+    lanes: &mut BTreeMap<B256, SnapshotExporterLaneControlV1>,
+    waiting: &mut BTreeMap<B256, ReceivedDiscoveryOfferV1>,
+    received: ReceivedDiscoveryOfferV1,
+) -> Result<(), ServeReceivedOfferErrorV1> {
+    let reference = received.reference().clone();
+    if reference.chain_id != chain_id || reference.genesis_hash != genesis_hash {
+        return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
+            "discovery offer belongs to a different chain or genesis",
+        )));
+    }
+    let mut selected_bundle = None;
+    let mut selected_pending = None;
+    for (bundle_hash, lane) in lanes.iter() {
+        if let Some(stored) = lane
+            .spool
+            .ack(&reference.observation_id)
+            .map_err(observation_offer_error)?
+        {
+            require_stored_ack_matches_offer(&stored, &reference)
+                .map_err(ServeReceivedOfferErrorV1::Observation)?;
+            server
+                .send_ack(&received, &stored.reference)
+                .await
+                .map_err(|error| ServeReceivedOfferErrorV1::Fatal(Box::new(error)))?;
+            return Ok(());
+        }
+        if let Some(pending) = lane
+            .spool
+            .pending(&reference.observation_id)
+            .map_err(observation_offer_error)?
+        {
+            if selected_pending.is_some() {
+                return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
+                    "discovery offer exists in more than one bundle spool",
+                )));
+            }
+            selected_bundle = Some(*bundle_hash);
+            selected_pending = Some(pending);
+        }
+    }
+    let pending = selected_pending.ok_or_else(|| {
+        ServeReceivedOfferErrorV1::Observation(runtime_error(
+            "discovery offer has no durable spool authority",
+        ))
+    })?;
+    if pending.reference != reference {
+        return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
+            "discovery offer conflicts with durable spool authority",
+        )));
+    }
+    let bundle_hash = selected_bundle.ok_or_else(|| {
+        ServeReceivedOfferErrorV1::Observation(runtime_error(
+            "discovery offer has no configured bundle lane",
+        ))
+    })?;
+    let lane = lanes.get(&bundle_hash).ok_or_else(|| {
+        ServeReceivedOfferErrorV1::Fatal(runtime_error("discovery bundle lane disappeared"))
+    })?;
+    waiting.insert(reference.observation_id, received);
+    match lane.trigger.try_send(()) {
+        Ok(()) | Err(mpsc::TrySendError::Full(())) => {}
+        Err(mpsc::TrySendError::Disconnected(())) => {
+            return Err(ServeReceivedOfferErrorV1::Fatal(runtime_error(format!(
+                "snapshot exporter lane {bundle_hash} exited"
+            ))));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+enum ServeReceivedOfferErrorV1 {
+    Observation(Box<dyn std::error::Error>),
+    Fatal(Box<dyn std::error::Error>),
+}
+
+fn observation_offer_error(error: impl std::error::Error + 'static) -> ServeReceivedOfferErrorV1 {
+    ServeReceivedOfferErrorV1::Observation(Box::new(error))
+}
+
+fn pending_discovery_count(
+    lanes: &BTreeMap<B256, SnapshotExporterLaneControlV1>,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let mut count = 0_u64;
+    for lane in lanes.values() {
+        count = count
+            .checked_add(lane.spool.pending_count()?)
+            .ok_or_else(|| runtime_error("discovery pending count overflow"))?;
+    }
+    Ok(count)
+}
+
+fn discovery_spool_path(root: &Path, protocol_bundle_hash: B256) -> PathBuf {
+    root.join(hex::encode(protocol_bundle_hash.as_slice()))
+}
+
+fn require_stored_ack_matches_offer(
+    stored: &StoredDiscoveryAckV1,
+    offered: &DiscoveryOfferRefV1,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if stored.reference.offer_ref() != *offered {
+        return Err(runtime_error(
+            "discovery ACK conflicts with redelivered offer",
+        ));
+    }
+    Ok(())
+}
+
+fn runtime_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    std::io::Error::other(message.into()).into()
 }
 
 fn required_protocol_bundle_hashes() -> Result<Vec<B256>, Box<dyn std::error::Error>> {
@@ -503,6 +838,20 @@ fn retry_snapshot_exporter_startup<T, E>(
     }
 }
 
+fn discovery_control_address_from_lookup(
+    mut lookup: impl FnMut(&str) -> Option<String>,
+) -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    let address = lookup(DISCOVERY_CONTROL_ADDRESS_ENV)
+        .ok_or("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS is required")?
+        .parse::<SocketAddr>()?;
+    if !address.ip().is_loopback() || address.port() == 0 {
+        return Err(
+            "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS must be a nonzero loopback endpoint".into(),
+        );
+    }
+    Ok(address)
+}
+
 fn required_env(name: &'static str) -> Result<String, Box<dyn std::error::Error>> {
     env::var(name).map_err(|_| format!("required environment variable {name} is missing").into())
 }
@@ -515,6 +864,7 @@ fn install_consensus_domain(chain_id: u64) -> Result<(), Box<dyn std::error::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_ocomp::discovery_transport::DiscoveryOfferClientV1;
 
     const HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
@@ -558,6 +908,19 @@ mod tests {
             Err(StartupError::Fatal)
         );
         assert_eq!(fatal_attempts, 1);
+    }
+
+    #[test]
+    fn discovery_control_endpoint_is_mandatory_nonzero_and_loopback() {
+        assert!(discovery_control_address_from_lookup(|_| None).is_err());
+        assert!(
+            discovery_control_address_from_lookup(|_| Some("0.0.0.0:30414".to_owned())).is_err()
+        );
+        assert!(discovery_control_address_from_lookup(|_| Some("127.0.0.1:0".to_owned())).is_err());
+        assert_eq!(
+            discovery_control_address_from_lookup(|_| Some("127.0.0.1:30414".to_owned())).unwrap(),
+            "127.0.0.1:30414".parse().unwrap()
+        );
     }
 
     #[test]
@@ -690,6 +1053,16 @@ mod tests {
             layout.snapshot_exporter_journal_root,
             domain.join("exporter-v1").join("discovery")
         );
+        assert_eq!(
+            discovery_spool_path(
+                &layout.snapshot_exporter_journal_root,
+                B256::repeat_byte(0xAB)
+            ),
+            domain
+                .join("exporter-v1")
+                .join("discovery")
+                .join("ab".repeat(32))
+        );
     }
 
     #[test]
@@ -715,5 +1088,96 @@ mod tests {
             outbe_consensus::config::outbe_app_namespace(),
             [b"outbe".as_slice(), ROLE_CHAIN_ID.to_be_bytes().as_slice()].concat()
         );
+    }
+
+    #[tokio::test]
+    async fn corrupt_observation_is_local_and_the_next_lane_remains_runnable() {
+        let chain_id = 42;
+        let genesis_hash = B256::repeat_byte(0x31);
+        let limits = poc_schema_limits();
+        let root = tempfile::tempdir().unwrap();
+        let corrupt_spool = DiscoverySpoolV1::open(
+            root.path().join("corrupt"),
+            chain_id,
+            genesis_hash,
+            limits.clone(),
+        )
+        .unwrap();
+        let healthy_spool = DiscoverySpoolV1::open(
+            root.path().join("healthy"),
+            chain_id,
+            genesis_hash,
+            limits.clone(),
+        )
+        .unwrap();
+        let corrupt_spec = test_support::finalized_job_spec(0x41, 100, chain_id, genesis_hash);
+        let healthy_spec = test_support::finalized_job_spec(0x51, 101, chain_id, genesis_hash);
+        let (corrupt_reference, _) = corrupt_spool.put_offer(7, &corrupt_spec).unwrap();
+        let (healthy_reference, _) = healthy_spool.put_offer(8, &healthy_spec).unwrap();
+        std::fs::write(
+            corrupt_spool.offer_path(&corrupt_reference.observation_id),
+            [0xFF],
+        )
+        .unwrap();
+
+        let (corrupt_tx, _corrupt_rx) = mpsc::sync_channel(1);
+        let (healthy_tx, healthy_rx) = mpsc::sync_channel(1);
+        let mut lanes = BTreeMap::from([
+            (
+                B256::ZERO,
+                SnapshotExporterLaneControlV1 {
+                    spool: corrupt_spool,
+                    trigger: corrupt_tx,
+                },
+            ),
+            (
+                healthy_spec.summary.protocol_bundle_hash,
+                SnapshotExporterLaneControlV1 {
+                    spool: healthy_spool,
+                    trigger: healthy_tx,
+                },
+            ),
+        ]);
+        let mut waiting = BTreeMap::new();
+        let mut server = DiscoveryOfferServerV1::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        let mut corrupt_client = DiscoveryOfferClientV1::connect(server.address())
+            .await
+            .unwrap();
+        corrupt_client.send_offer(&corrupt_reference).await.unwrap();
+        let received = server.receive_offer().await.unwrap();
+        assert!(matches!(
+            serve_received_offer(
+                &mut server,
+                chain_id,
+                genesis_hash,
+                &mut lanes,
+                &mut waiting,
+                received,
+            )
+            .await,
+            Err(ServeReceivedOfferErrorV1::Observation(_))
+        ));
+
+        let mut healthy_client = DiscoveryOfferClientV1::connect(server.address())
+            .await
+            .unwrap();
+        healthy_client.send_offer(&healthy_reference).await.unwrap();
+        let received = server.receive_offer().await.unwrap();
+        serve_received_offer(
+            &mut server,
+            chain_id,
+            genesis_hash,
+            &mut lanes,
+            &mut waiting,
+            received,
+        )
+        .await
+        .unwrap();
+        healthy_rx
+            .try_recv()
+            .expect("healthy lane must still be triggered after local corruption");
     }
 }

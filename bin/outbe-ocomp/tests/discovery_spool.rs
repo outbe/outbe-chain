@@ -267,6 +267,23 @@ fn pending_cursor_streams_without_collecting_the_spool() {
 }
 
 #[test]
+fn pending_cursor_releases_the_spool_lock_between_records() {
+    let temp = TempDir::new().expect("tempdir");
+    let spool = spool(&temp);
+    let job = spec(0x61, 1);
+    let (offer, _) = spool.put_offer(6, &job).expect("offer");
+    let mut cursor = spool.pending_cursor().expect("pending cursor");
+    let pending = cursor.next().expect("one pending record").expect("record");
+    assert_eq!(pending.reference, offer);
+
+    let receipt = verified_receipt(&job, 6, 0x62);
+    spool
+        .put_ack(&offer, &receipt, &support::protocol_bundle())
+        .expect("ACK can be fsynced while the startup cursor remains alive");
+    assert_eq!(spool.pending_count().expect("pending count"), 0);
+}
+
+#[test]
 fn substituted_spec_generation_and_identity_latch_quarantine() {
     for conflict in ["spec", "generation", "identity"] {
         let temp = TempDir::new().expect("tempdir");
@@ -318,14 +335,13 @@ fn ack_before_restart_and_ack_after_restart_are_durable() {
     drop(first);
 
     let reopened = spool(&temp);
-    assert_eq!(
-        reopened
-            .ack(&first_offer.observation_id)
-            .expect("read ack")
-            .expect("stored ack")
-            .reference,
-        first_ack
-    );
+    let stored = reopened
+        .ack(&first_offer.observation_id)
+        .expect("read ack")
+        .expect("stored ack");
+    assert_eq!(stored.reference, first_ack);
+    assert_eq!(stored.lease_generation, first_receipt.lease_generation());
+    assert_eq!(stored.manifest_hash, first_receipt.manifest_hash());
     assert_eq!(reopened.pending_count().expect("pending count"), 0);
 
     let second_job = spec(0x32, 2);
@@ -538,6 +554,34 @@ fn checkpoint_store_initializes_restarts_and_advances_contiguously() {
     drop(store);
     let reopened = ContiguousCheckpointStoreV1::open(&root, baseline).expect("restart");
     assert_eq!(reopened.current().expect("current"), next);
+}
+
+#[test]
+fn checkpoint_store_persists_a_sparse_advance_without_per_block_ram_state() {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path().join("sparse-checkpoint");
+    let baseline = checkpoint(100, 0x10);
+    let sparse = checkpoint(10_000, 0x20);
+    let store = ContiguousCheckpointStoreV1::open(&root, baseline).expect("checkpoint store");
+    assert_eq!(
+        store
+            .compare_and_advance_to(baseline, sparse)
+            .expect("sparse advance"),
+        CheckpointAdvanceOutcomeV1::Advanced
+    );
+    assert_eq!(
+        store
+            .compare_and_advance_to(baseline, sparse)
+            .expect("exact sparse replay"),
+        CheckpointAdvanceOutcomeV1::ExactReplay
+    );
+    drop(store);
+
+    let reopened = ContiguousCheckpointStoreV1::open(&root, baseline).expect("restart");
+    assert_eq!(reopened.current().expect("current"), sparse);
+    reopened
+        .compare_and_advance(sparse, checkpoint(10_001, 0x21))
+        .expect("contiguous progress resumes after sparse checkpoint");
 }
 
 #[test]

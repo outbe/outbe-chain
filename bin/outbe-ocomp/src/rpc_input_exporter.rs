@@ -1,9 +1,6 @@
 //! Builds one authenticated Lysis input manifest from finalized public RPC data.
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::{keccak256, B256};
 use outbe_common::WorldwideDay;
@@ -25,6 +22,11 @@ use outbe_ocomp_protocol::{
     profile::ProtocolBundleV1,
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
+use outbe_offchain_data::{ProjectionConfig, ProjectionState};
+use outbe_offchain_storage::{
+    MongoStorage, MongoStorageConfig, StorageError, StorageErrorKind, StorageReaderHandle,
+};
+use outbe_tribute::RetainedTributePin;
 use thiserror::Error;
 
 use crate::{
@@ -32,7 +34,9 @@ use crate::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     export_receipt::{
         ExportReceiptError, ExportReceiptPreparation, ExportReceiptReader, ExportReceiptStore,
+        VerifiedExportReceipt,
     },
+    exporter::FinalizedTributeSource,
     input_artifacts::{
         decode_fidelity_subject_key, decode_oracle_subject_key, poc_input_list_limits,
         validate_verified_input_manifest_semantics_observing, DurableInputArtifactPublisher,
@@ -47,7 +51,6 @@ use crate::{
         DurableOpeningStage, OpeningResolutionV1, OpeningStageError, OpeningStageSubjectV1,
     },
     public_rpc::PublicOcompRpcClientV1,
-    rpc_projection::{RpcFinalizedProjectionV1, RpcProjectionConfigV1, RpcProjectionErrorV1},
     supervisor::DiscoveryRecord,
 };
 
@@ -59,7 +62,9 @@ const EXPORT_PROGRESS_RECORD_HEARTBEAT: u64 = 256;
 pub struct RpcInputExporterConfigV1 {
     pub rpc_url: String,
     pub rpc_max_response_bytes: usize,
-    pub projection: RpcProjectionConfigV1,
+    pub mongo: MongoStorageConfig,
+    pub projection_start_block: u64,
+    pub tribute_page_limit: usize,
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub fork_id: B256,
@@ -75,25 +80,17 @@ pub struct RpcInputExporterConfigV1 {
 pub struct RpcInputExporterV1 {
     config: RpcInputExporterConfigV1,
     rpc: PublicOcompRpcClientV1,
-    projection: Arc<Mutex<RpcFinalizedProjectionV1>>,
+    tribute_source: FinalizedTributeSource,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
 }
 
 impl RpcInputExporterV1 {
     pub fn open(config: RpcInputExporterConfigV1) -> Result<Self, RpcInputExporterErrorV1> {
-        let projection = RpcFinalizedProjectionV1::open(config.projection.clone())
-            .map_err(projection_open_error)?;
-        Self::open_with_shared_projection(config, Arc::new(Mutex::new(projection)))
-    }
-
-    /// Opens one bundle-pinned exporter lane over the process-owned finalized
-    /// projection. Sharing this handle is what lets active and retiring bundle
-    /// lanes coexist without competing for the Mongo writer lease.
-    pub fn open_with_shared_projection(
-        config: RpcInputExporterConfigV1,
-        projection: Arc<Mutex<RpcFinalizedProjectionV1>>,
-    ) -> Result<Self, RpcInputExporterErrorV1> {
+        let storage = MongoStorage::connect(config.mongo.clone()).map_err(source_open_error)?;
+        let storage: StorageReaderHandle = Arc::new(storage);
+        let tribute_source = FinalizedTributeSource::new(storage, config.tribute_page_limit)
+            .map_err(|error| stage("open finalized Tribute source", error))?;
         let rpc =
             PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let cas = FilesystemCas::open(
@@ -107,7 +104,7 @@ impl RpcInputExporterV1 {
         Ok(Self {
             config,
             rpc,
-            projection,
+            tribute_source,
             cas,
             reader,
         })
@@ -116,7 +113,10 @@ impl RpcInputExporterV1 {
     /// Idempotently publishes the exact input manifest and its durable local
     /// receipt. Existing receipts are cold-reloaded and accepted only after the
     /// normal manifest validation succeeds.
-    pub fn export(&mut self, discovery: &DiscoveryRecord) -> Result<(), RpcInputExporterErrorV1> {
+    pub fn export(
+        &mut self,
+        discovery: &DiscoveryRecord,
+    ) -> Result<VerifiedExportReceipt, RpcInputExporterErrorV1> {
         self.export_observing(discovery, || {})
     }
 
@@ -124,7 +124,7 @@ impl RpcInputExporterV1 {
         &mut self,
         discovery: &DiscoveryRecord,
         on_progress: impl Fn(),
-    ) -> Result<(), RpcInputExporterErrorV1> {
+    ) -> Result<VerifiedExportReceipt, RpcInputExporterErrorV1> {
         on_progress();
         let job_id = discovery.spec.summary.job_id;
         let job_key = hex::encode(job_id.as_slice());
@@ -145,6 +145,7 @@ impl RpcInputExporterV1 {
         {
             match reader.load_exact(&self.reader) {
                 Ok(receipt) => {
+                    require_receipt_generation(&receipt, discovery.generation)?;
                     require_replayed_input_authority(
                         &expected_input,
                         receipt.checkpoint(),
@@ -180,7 +181,7 @@ impl RpcInputExporterV1 {
                         &on_progress,
                     )?;
                     on_progress();
-                    return Ok(());
+                    return Ok(receipt);
                 }
                 Err(
                     ExportReceiptError::MissingPreparation | ExportReceiptError::MissingReceipt,
@@ -192,21 +193,22 @@ impl RpcInputExporterV1 {
         if finalized.job_id != job_id {
             return Err(RpcInputExporterErrorV1::Authority("discovery JobId"));
         }
-        let (pin, tribute_source) = {
-            let mut projection = self
-                .projection
-                .lock()
-                .map_err(|_| RpcInputExporterErrorV1::Authority("projection lock"))?;
-            let pin = projection
-                .install_retention_pin(&finalized)
-                .map_err(|error| stage("install Tribute retention pin", error))?;
-            let projected = projection
-                .project_through_observing(finalized.request.block_number, |_| on_progress())
-                .map_err(|error| stage("project finalized receipts", error))?;
-            if projected < finalized.request.block_number {
-                return Err(RpcInputExporterErrorV1::Authority("projection checkpoint"));
-            }
-            (pin, projection.tribute_source().clone())
+        let projection_config = ProjectionConfig {
+            chain_id: self.config.chain_id,
+            genesis_hash: self.config.genesis_hash,
+            start_block: self.config.projection_start_block,
+        };
+        let projection_state = self
+            .tribute_source
+            .projection_state(projection_config)
+            .map_err(|error| stage("read finalized projection checkpoint", error))?;
+        require_projection_checkpoint(projection_state.as_ref(), &finalized.request)?;
+        let pin = RetainedTributePin {
+            input_lease_id: finalized
+                .intent
+                .input_lease_id()
+                .map_err(|error| stage("derive Tribute retention pin", error))?,
+            worldwide_day: WorldwideDay::new(finalized.intent.wwd),
         };
 
         let checkpoint = expected_input.checkpoint.clone();
@@ -236,7 +238,8 @@ impl RpcInputExporterV1 {
                     TributeInventoryWorkConfig::default(),
                 )
                 .map_err(|error| stage("create Tribute inventory", error))?;
-                let mut stream = tribute_source
+                let mut stream = self
+                    .tribute_source
                     .reconstruction_stream(
                         pin,
                         finalized.intent.authenticated_day_count,
@@ -417,7 +420,7 @@ impl RpcInputExporterV1 {
         let handoff = SnapshotHandoffV1 {
             job_id,
             input_lease_id: pin.input_lease_id,
-            pin_generation: 1,
+            pin_generation: discovery.generation,
             lease_generation: 1,
             checkpoint,
             canonical_lease_offer: BoundedBytes(local_publication_lease(job_id)),
@@ -438,7 +441,7 @@ impl RpcInputExporterV1 {
             .map_err(|error| stage("prepare input receipt", error))?;
         let committed = SnapshotExportCommittedV1 {
             job_id,
-            pin_generation: 2,
+            pin_generation: committed_pin_generation(discovery.generation)?,
             record_hash: keccak256(
                 [
                     b"OCOMP_RPC_INPUT_COMMIT_V1".as_slice(),
@@ -452,7 +455,14 @@ impl RpcInputExporterV1 {
             .record_committed(&self.cas, &self.reader, &prepared, &committed)
             .map_err(|error| stage("commit input receipt", error))?;
         on_progress();
-        Ok(())
+        drop(receipt_store);
+        let receipt =
+            ExportReceiptReader::open(&self.config.receipt_root, job_id, self.config.limits)
+                .map_err(|error| stage("reopen committed input receipt", error))?
+                .load_exact(&self.reader)
+                .map_err(|error| stage("reload committed input receipt", error))?;
+        require_receipt_generation(&receipt, discovery.generation)?;
+        Ok(receipt)
     }
 }
 
@@ -805,6 +815,49 @@ fn verified_discovery_intent(
     })
 }
 
+fn require_projection_checkpoint(
+    state: Option<&ProjectionState>,
+    request: &FinalizedRequestBindingV1,
+) -> Result<(), RpcInputExporterErrorV1> {
+    let checkpoint =
+        state
+            .and_then(|state| state.checkpoint)
+            .ok_or(RpcInputExporterErrorV1::Authority(
+                "projection checkpoint missing",
+            ))?;
+    if checkpoint.block_number < request.block_number
+        || (checkpoint.block_number == request.block_number
+            && checkpoint.block_hash != request.block_hash)
+    {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "projection checkpoint does not cover finalized request",
+        ));
+    }
+    Ok(())
+}
+
+fn committed_pin_generation(source_generation: u64) -> Result<u64, RpcInputExporterErrorV1> {
+    source_generation
+        .checked_add(1)
+        .ok_or(RpcInputExporterErrorV1::Authority(
+            "discovery generation overflow",
+        ))
+}
+
+fn require_receipt_generation(
+    receipt: &VerifiedExportReceipt,
+    source_generation: u64,
+) -> Result<(), RpcInputExporterErrorV1> {
+    if receipt.source_pin_generation() != source_generation
+        || receipt.committed().pin_generation != committed_pin_generation(source_generation)?
+    {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "export receipt discovery generation",
+        ));
+    }
+    Ok(())
+}
+
 fn is_lysis_opening_capacity_error(error: &impl std::fmt::Display) -> bool {
     error
         .to_string()
@@ -828,12 +881,12 @@ fn stage(stage: &'static str, error: impl std::fmt::Display) -> RpcInputExporter
     }
 }
 
-fn projection_open_error(error: RpcProjectionErrorV1) -> RpcInputExporterErrorV1 {
-    match error {
-        RpcProjectionErrorV1::StorageUnavailable => {
-            RpcInputExporterErrorV1::ProjectionStorageUnavailable
+fn source_open_error(error: StorageError) -> RpcInputExporterErrorV1 {
+    match error.kind() {
+        StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline => {
+            RpcInputExporterErrorV1::SourceStorageUnavailable
         }
-        error => stage("open finalized receipt projection", error),
+        _ => stage("open finalized Tribute source", error),
     }
 }
 
@@ -843,8 +896,8 @@ pub enum RpcInputExporterErrorV1 {
     Rpc(#[from] crate::public_rpc::PublicRpcError),
     #[error("OCOMP public input authority mismatch: {0}")]
     Authority(&'static str),
-    #[error("OCOMP finalized receipt projection storage is unavailable during startup")]
-    ProjectionStorageUnavailable,
+    #[error("OCOMP finalized Tribute source storage is unavailable during startup")]
+    SourceStorageUnavailable,
     #[error("OCOMP public input stage `{stage}` failed: {detail}")]
     Stage { stage: &'static str, detail: String },
 }
@@ -852,7 +905,7 @@ pub enum RpcInputExporterErrorV1 {
 impl RpcInputExporterErrorV1 {
     #[must_use]
     pub const fn is_retryable_startup(&self) -> bool {
-        matches!(self, Self::ProjectionStorageUnavailable)
+        matches!(self, Self::SourceStorageUnavailable)
     }
 }
 
@@ -861,21 +914,54 @@ mod tests {
     use alloy_primitives::{B256, U256};
     use outbe_node::ocomp::retention::RetentionError;
     use outbe_ocomp_protocol::input::{CheckpointIdentityV1, Compression, InputManifestV1};
-
-    use crate::rpc_projection::RpcProjectionErrorV1;
+    use outbe_offchain_data::ProjectionState;
+    use outbe_primitives::projection::ProjectionCheckpoint;
 
     use super::{
-        is_lysis_opening_capacity_error, projection_open_error, require_replayed_input_authority,
-        ExpectedInputAuthorityV1,
+        committed_pin_generation, is_lysis_opening_capacity_error, require_projection_checkpoint,
+        require_replayed_input_authority, ExpectedInputAuthorityV1,
     };
 
     #[test]
-    fn only_transient_projection_unavailability_is_retryable_at_startup() {
-        let unavailable = projection_open_error(RpcProjectionErrorV1::StorageUnavailable);
-        assert!(unavailable.is_retryable_startup());
+    fn reader_only_projection_checkpoint_must_cover_the_finalized_request() {
+        let request = super::FinalizedRequestBindingV1 {
+            block_number: 42,
+            block_hash: B256::repeat_byte(0x42),
+            state_root: B256::repeat_byte(0x24),
+        };
+        let state = |block_number, block_hash| ProjectionState {
+            chain_id: 7,
+            genesis_hash: B256::repeat_byte(0x77),
+            storage_schema_version: 1,
+            start_block: 1,
+            checkpoint: Some(ProjectionCheckpoint {
+                block_number,
+                block_hash,
+            }),
+        };
 
-        let invalid = projection_open_error(RpcProjectionErrorV1::InvalidConfig);
-        assert!(!invalid.is_retryable_startup());
+        assert!(require_projection_checkpoint(None, &request).is_err());
+        assert!(
+            require_projection_checkpoint(Some(&state(41, B256::repeat_byte(0x41))), &request)
+                .is_err()
+        );
+        assert!(
+            require_projection_checkpoint(Some(&state(42, B256::repeat_byte(0x99))), &request)
+                .is_err()
+        );
+        assert!(
+            require_projection_checkpoint(Some(&state(42, request.block_hash)), &request).is_ok()
+        );
+        assert!(
+            require_projection_checkpoint(Some(&state(43, B256::repeat_byte(0x43))), &request)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn committed_generation_is_the_offer_generation_successor() {
+        assert_eq!(committed_pin_generation(7).unwrap(), 8);
+        assert!(committed_pin_generation(u64::MAX).is_err());
     }
 
     #[test]

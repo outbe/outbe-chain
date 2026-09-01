@@ -1,11 +1,13 @@
-//! Dormant primitives for the single bounded finalized-data reader.
+//! Production primitives for the single bounded finalized-data reader.
 
 use std::{error::Error, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
+use alloy_rlp::{Decodable, Encodable};
 use eyre::{bail, Context};
 use reth_ethereum::{Block, Receipt};
+use reth_provider::{BlockHashReader, BlockReader, ProviderError, ReceiptProvider};
 
 /// Maximum number of finalized heights read during one scheduler turn.
 pub const MAX_FINALIZED_FRAMES_PER_TURN: u64 = 100;
@@ -64,13 +66,62 @@ impl FinalizedWalkPlan {
     }
 }
 
-/// Minimal provider boundary owned by the future unified finalized reader.
+/// Minimal provider boundary owned by the unified finalized reader.
 pub trait FinalizedFrameSource {
     type Error: Error + Send + Sync + 'static;
 
     fn canonical_hash(&self, height: u64) -> Result<Option<B256>, Self::Error>;
     fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, Self::Error>;
     fn receipts_by_hash(&self, hash: B256) -> Result<Option<Vec<Receipt>>, Self::Error>;
+}
+
+/// Production adapter from a Reth provider to the exact finalized-frame read boundary.
+///
+/// Keeping this wrapper explicit prevents unrelated provider reads from becoming part of the
+/// shared reader interface during the production cutover.
+#[derive(Clone, Debug)]
+pub struct RethFinalizedFrameSource<P> {
+    provider: P,
+}
+
+impl<P> RethFinalizedFrameSource<P> {
+    #[must_use]
+    pub const fn new(provider: P) -> Self {
+        Self { provider }
+    }
+}
+
+impl<P> FinalizedFrameSource for RethFinalizedFrameSource<P>
+where
+    P: BlockHashReader + BlockReader + ReceiptProvider<Receipt = Receipt>,
+{
+    type Error = ProviderError;
+
+    fn canonical_hash(&self, height: u64) -> Result<Option<B256>, Self::Error> {
+        self.provider.block_hash(height)
+    }
+
+    fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, Self::Error> {
+        let Some(block) = self.provider.block_by_hash(hash)? else {
+            return Ok(None);
+        };
+
+        // Outbe's production block uses an OutbeHeader wrapper whose RLP is deliberately
+        // byte-for-byte Ethereum-compatible. Normalize at this adapter boundary so callers stay
+        // independent of the generic node provider's associated block type.
+        let mut encoded = Vec::with_capacity(block.length());
+        block.encode(&mut encoded);
+        let mut input = encoded.as_slice();
+        let block = Block::decode(&mut input).map_err(ProviderError::Rlp)?;
+        if !input.is_empty() {
+            return Err(ProviderError::Rlp(alloy_rlp::Error::UnexpectedLength));
+        }
+        Ok(Some(block))
+    }
+
+    fn receipts_by_hash(&self, hash: B256) -> Result<Option<Vec<Receipt>>, Self::Error> {
+        self.provider.receipts_by_block(hash.into())
+    }
 }
 
 /// One canonical block and its receipts, loaded once and shared by every consumer.
@@ -84,6 +135,23 @@ pub struct FinalizedFrame {
 }
 
 impl FinalizedFrame {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        identity: BlockNumHash,
+        parent_hash: B256,
+        state_root: B256,
+        block: Block,
+        receipts: Vec<Receipt>,
+    ) -> Self {
+        Self {
+            identity,
+            parent_hash,
+            state_root,
+            block: Arc::new(block),
+            receipts: receipts.into(),
+        }
+    }
+
     #[must_use]
     pub const fn identity(&self) -> BlockNumHash {
         self.identity
@@ -215,12 +283,13 @@ mod tests {
 
     use super::{
         read_bounded_finalized_frames, FinalizedFrameSource, FinalizedWalkPlan,
-        MAX_FINALIZED_FRAMES_PER_TURN,
+        RethFinalizedFrameSource, MAX_FINALIZED_FRAMES_PER_TURN,
     };
-    use alloy_consensus::Header;
+    use alloy_consensus::{Header, Sealable};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use reth_ethereum::{Block, Receipt};
+    use reth_provider::test_utils::MockEthProvider;
 
     #[derive(Clone, Default)]
     struct ReadCounts {
@@ -331,5 +400,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("conflicts with finalized hash"));
+    }
+
+    #[test]
+    fn reth_provider_adapter_supplies_the_exact_block_and_receipts() {
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new();
+        let header = Header {
+            number: 1,
+            ..Default::default()
+        };
+        let hash = header.hash_slow();
+        provider.add_block(hash, Block::new(header, Default::default()));
+        provider.add_receipts(1, Vec::new());
+        let source = RethFinalizedFrameSource::new(provider);
+
+        let batch = read_bounded_finalized_frames(&source, 1, BlockNumHash::new(1, hash))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(batch.frames().len(), 1);
+        assert_eq!(batch.frames()[0].identity(), BlockNumHash::new(1, hash));
+        assert!(batch.frames()[0].receipts().is_empty());
+    }
+
+    #[test]
+    fn reth_provider_adapter_normalizes_the_production_outbe_block() {
+        let provider = MockEthProvider::<outbe_primitives::OutbePrimitives>::new();
+        let header = outbe_primitives::OutbeHeader::new(Header {
+            number: 1,
+            ..Default::default()
+        });
+        let hash = header.hash_slow();
+        provider.add_block(
+            hash,
+            outbe_primitives::OutbeBlock::new(header, Default::default()),
+        );
+        provider.add_receipts(1, Vec::new());
+        let source = RethFinalizedFrameSource::new(provider);
+
+        let batch = read_bounded_finalized_frames(&source, 1, BlockNumHash::new(1, hash))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(batch.frames().len(), 1);
+        assert_eq!(batch.frames()[0].identity(), BlockNumHash::new(1, hash));
+        assert_eq!(batch.frames()[0].block().header.number, 1);
+        assert!(batch.frames()[0].receipts().is_empty());
     }
 }
