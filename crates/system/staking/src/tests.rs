@@ -128,7 +128,7 @@ fn test_stake_with_six_decimal_coen_fixture() {
         let validators = ValidatorSet::new(storage);
         assert!(matches!(
             validators.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
     });
 }
