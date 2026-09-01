@@ -1199,9 +1199,9 @@ pub(crate) fn address_of(key: &str) -> Option<Address> {
     Some(signer.address())
 }
 
-/// `amount` whole COEN in the chain's six-decimal native units.
+/// `amount` whole COEN in the chain's 18-decimal native units.
 pub(crate) fn coen(amount: u64) -> U256 {
-    U256::from(amount) * U256::from(1_000_000u64)
+    U256::from(amount) * U256::from(1_000_000_000_000_000_000u64)
 }
 
 #[cfg(test)]
@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn coen_scales_to_base_units() {
-        assert_eq!(coen(1), U256::from(1_000_000u64));
+        assert_eq!(coen(1), U256::from(1_000_000_000_000_000_000u64));
         assert_eq!(coen(0), U256::ZERO);
     }
 

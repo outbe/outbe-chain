@@ -772,14 +772,17 @@ mod tests {
 
     #[test]
     fn jailed_partial_unstake_remainder_is_positive_and_below_the_minimum() {
-        let minimum = U256::from(1_000_000_000_u64);
+        let minimum = U256::from(1_000_000_000_000_000_000_000_u128);
         assert_eq!(
-            jailed_partial_unstake_remainder(U256::from(900_000_000_u64), minimum),
-            Some(U256::from(450_000_000_u64))
+            jailed_partial_unstake_remainder(U256::from(900_000_000_000_000_000_000_u128), minimum,),
+            Some(U256::from(450_000_000_000_000_000_000_u128))
         );
         assert_eq!(
-            jailed_partial_unstake_remainder(U256::from(2_000_000_000_u64), minimum),
-            Some(U256::from(500_000_000_u64))
+            jailed_partial_unstake_remainder(
+                U256::from(2_000_000_000_000_000_000_000_u128),
+                minimum,
+            ),
+            Some(U256::from(500_000_000_000_000_000_000_u128))
         );
         assert_eq!(jailed_partial_unstake_remainder(U256::ZERO, minimum), None);
     }
