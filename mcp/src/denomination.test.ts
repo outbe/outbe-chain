@@ -263,14 +263,14 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
   const account = privateKeyToAccount(
     "0x0000000000000000000000000000000000000000000000000000000000000001",
   );
-  const sent: { data: Hex }[] = [];
+  const sent: { data: Hex; value: bigint }[] = [];
   const ctx = {
     rpcUrl: "http://unused.invalid",
     chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
     publicClient: {} as PublicClient,
     account,
     walletClient: {
-      sendTransaction: async (transaction: { data: Hex }) => {
+      sendTransaction: async (transaction: { data: Hex; value: bigint }) => {
         sent.push(transaction);
         return `0x${"11".repeat(32)}` as Hex;
       },
@@ -284,18 +284,21 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
       contract: "staking",
       args: { validator: account.address, amount: "1.5", wait: false },
       amountIndex: 1,
+      value: 1_500_000_000_000_000_000n,
     },
     {
       tool: "staking_unstake",
       contract: "staking",
       args: { amount: "1.5", wait: false },
       amountIndex: 0,
+      value: 0n,
     },
     {
       tool: "agentreward_claim",
       contract: "agentreward",
       args: { amount: "1.5", wait: false },
       amountIndex: 0,
+      value: 0n,
     },
   ] as const;
 
@@ -308,6 +311,7 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     const entry = resolveContract(item.contract);
     const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
     assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
+    assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
   }
 });
 

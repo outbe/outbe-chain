@@ -32,9 +32,10 @@ async function submit(
   args: unknown[],
   gas: bigint,
   wait: boolean,
+  value = 0n,
 ) {
   const entry = resolveContract(contract);
-  const hash = await sendTx(ctx, entry, method, args, gas);
+  const hash = await sendTx(ctx, entry, method, args, gas, value);
   if (!wait) return ok({ txHash: hash, contract, method, status: "submitted" });
   const r = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: 180_000 });
   return ok({
@@ -151,16 +152,18 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "staking_stake",
     "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
     { validator: addr, amount: coen, wait: z.boolean().optional() },
-    handler(({ validator, amount, wait }) =>
-      submit(
+    handler(({ validator, amount, wait }) => {
+      const stake = parseNativeAmount(ctx.chain, amount);
+      return submit(
         ctx,
         "staking",
         "stake",
-        [validator, parseNativeAmount(ctx.chain, amount)],
+        [validator, stake],
         GAS_DEFAULT,
         wait ?? true,
-      ),
-    ),
+        stake,
+      );
+    }),
   );
 
   server.tool(

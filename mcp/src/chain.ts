@@ -146,6 +146,7 @@ export async function sendTx(
   method: string,
   rawArgs: unknown[],
   gas: bigint,
+  value = 0n,
 ): Promise<Hex> {
   if (!ctx.walletClient || !ctx.account) {
     throw new Error(
@@ -161,7 +162,7 @@ export async function sendTx(
     to: entry.address,
     data,
     gas,
-    value: 0n,
+    value,
   });
 }
 
