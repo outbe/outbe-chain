@@ -8,9 +8,8 @@ use std::collections::VecDeque;
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
-    body_commitment, decode_tribute_v1, tribute_partition_root_from_leaves,
-    AuthenticatedTributePartition, CanonicalBodyError, IdPageRequest, TributeBodyV1, WwdEntityId,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, decode_tribute_v1, AuthenticatedTributePartition, CanonicalBodyError,
+    IdPageRequest, TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_data::{
     read_projection_state, ProjectionConfig, ProjectionError, ProjectionState,
@@ -35,7 +34,7 @@ impl FinalizedTributeSource {
         storage: StorageReaderHandle,
         page_limit: usize,
     ) -> Result<Self, FinalizedTributeError> {
-        if !(1..=MAX_SCAN_ENTRIES).contains(&page_limit) {
+        if !(2..=MAX_SCAN_ENTRIES).contains(&page_limit) {
             return Err(FinalizedTributeError::InvalidPageLimit(page_limit));
         }
         Ok(Self {
@@ -64,199 +63,53 @@ impl FinalizedTributeSource {
         partition: &'view AuthenticatedTributePartition<'view>,
         expected_nominal_total: U256,
     ) -> Result<AuthenticatedTributeStream<'source, 'view>, FinalizedTributeError> {
+        let (current_limit, retained_limit) = split_page_budget(self.page_limit)?;
         Ok(AuthenticatedTributeStream {
-            current: CurrentPager::new(&self.current, pin.worldwide_day, self.page_limit)?,
-            retained: RetainedPager::new(&self.retained, pin, self.page_limit),
+            current: CurrentPager::new(&self.current, pin.worldwide_day, current_limit)?,
+            retained: RetainedPager::new(&self.retained, pin, retained_limit),
+            current_reader: &self.current,
             retained_reader: &self.retained,
             pin,
-            partition,
+            authority: TributeCommitmentAuthority::Authenticated(partition),
             expected_count: partition.exact_leaf_count,
             expected_nominal_total,
             previous_id: None,
             record_count: 0,
             nominal_total: U256::ZERO,
             exact_body_bytes: 0,
+            peak_source_records: 0,
             exhausted: false,
         })
     }
 
-    /// Reconstructs and authenticates one finalized WWD partition from the
-    /// service-owned receipt projection. Bodies remain transport data until
-    /// their canonical commitments close to the independently sealed root in
-    /// the finalized JobIntent.
-    pub fn reconstruct_partition(
+    /// Streams the exact current/retained union while recomputing each canonical
+    /// body commitment. The caller must close the resulting ordered leaves to
+    /// the finalized collection root before publishing an authoritative
+    /// manifest.
+    pub fn reconstruction_stream(
         &self,
         pin: RetainedTributePin,
-        expected_collection_root: B256,
         expected_count: u32,
         expected_nominal_total: U256,
-        max_items: usize,
-    ) -> Result<ReconstructedTributePartition, FinalizedTributeError> {
-        let expected_count_usize = usize::try_from(expected_count).map_err(|_| {
-            FinalizedTributeError::CountOutsideProfile {
-                count: expected_count,
-                limit: max_items,
-            }
-        })?;
-        if expected_count_usize > max_items {
-            return Err(FinalizedTributeError::CountOutsideProfile {
-                count: expected_count,
-                limit: max_items,
-            });
-        }
-        let mut current = CurrentPager::new(&self.current, pin.worldwide_day, self.page_limit)?;
-        let mut retained = RetainedPager::new(&self.retained, pin, self.page_limit);
-        let mut previous_id = None;
-        let mut records = Vec::with_capacity(expected_count_usize);
-        let mut leaves = Vec::with_capacity(expected_count_usize);
-        let mut nominal_total = U256::ZERO;
-        let mut exact_body_bytes = 0_u64;
-
-        loop {
-            let candidate = match (current.peek()?, retained.peek()?) {
-                (None, None) => break,
-                (Some(tribute_id), None) => {
-                    current.pop();
-                    BodyCandidate {
-                        tribute_id,
-                        retained_commitment: None,
-                    }
-                }
-                (None, Some(item)) => {
-                    retained.pop();
-                    BodyCandidate {
-                        tribute_id: item.tribute_id,
-                        retained_commitment: Some(item.body_commitment),
-                    }
-                }
-                (Some(tribute_id), Some(item)) if tribute_id < item.tribute_id => {
-                    current.pop();
-                    BodyCandidate {
-                        tribute_id,
-                        retained_commitment: None,
-                    }
-                }
-                (Some(tribute_id), Some(item)) if tribute_id > item.tribute_id => {
-                    retained.pop();
-                    BodyCandidate {
-                        tribute_id: item.tribute_id,
-                        retained_commitment: Some(item.body_commitment),
-                    }
-                }
-                (Some(tribute_id), Some(item)) => {
-                    current.pop();
-                    retained.pop();
-                    BodyCandidate {
-                        tribute_id,
-                        retained_commitment: Some(item.body_commitment),
-                    }
-                }
-            };
-            if previous_id.is_some_and(|previous| candidate.tribute_id <= previous) {
-                return Err(FinalizedTributeError::NonAscendingUnion);
-            }
-            previous_id = Some(candidate.tribute_id);
-            if records.len() >= expected_count_usize {
-                return Err(FinalizedTributeError::CountMismatch {
-                    expected: expected_count,
-                    actual: u32::try_from(records.len() + 1).unwrap_or(u32::MAX),
-                });
-            }
-            let stored = match candidate.retained_commitment {
-                Some(commitment) => {
-                    self.retained
-                        .get_current_or_retained(pin, candidate.tribute_id, commitment)?
-                }
-                None => self.current.get_stored_body(candidate.tribute_id)?,
-            }
-            .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
-            if stored.schema_version() != BODY_SCHEMA_V1 {
-                return Err(FinalizedTributeError::UnsupportedBodySchema {
-                    tribute_id: candidate.tribute_id,
-                    actual: stored.schema_version(),
-                });
-            }
-            let body = decode_tribute_v1(stored.payload())?;
-            if body.tribute_id != candidate.tribute_id || body.worldwide_day != pin.worldwide_day {
-                return Err(FinalizedTributeError::BodyIdentityMismatch(
-                    candidate.tribute_id,
-                ));
-            }
-            let commitment = body_commitment(
-                ACTIVE_COMMITMENT_SCHEME,
-                BODY_SCHEMA_V1,
-                candidate.tribute_id,
-                stored.payload(),
-            )?;
-            let commitment = B256::from(*commitment.as_bytes());
-            if candidate
-                .retained_commitment
-                .is_some_and(|retained| retained != commitment)
-            {
-                return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
-                    candidate.tribute_id,
-                ));
-            }
-            nominal_total = nominal_total
-                .checked_add(body.nominal_amount_minor)
-                .ok_or(FinalizedTributeError::NominalOverflow)?;
-            exact_body_bytes = exact_body_bytes
-                .checked_add(
-                    u64::try_from(stored.payload().len())
-                        .map_err(|_| FinalizedTributeError::BodyBytesOverflow)?,
-                )
-                .ok_or(FinalizedTributeError::BodyBytesOverflow)?;
-            let canonical_body = stored.payload().to_vec();
-            leaves.push((
-                candidate.tribute_id,
-                outbe_compressed_entities::Commitment::try_from(commitment.0)?,
-            ));
-            records.push(AuthenticatedTributeRecord {
-                tribute_id: candidate.tribute_id,
-                commitment,
-                canonical_body,
-                body,
-            });
-        }
-        let actual_count =
-            u32::try_from(records.len()).map_err(|_| FinalizedTributeError::CountOverflow)?;
-        if actual_count != expected_count {
-            return Err(FinalizedTributeError::CountMismatch {
-                expected: expected_count,
-                actual: actual_count,
-            });
-        }
-        if nominal_total != expected_nominal_total {
-            return Err(FinalizedTributeError::NominalMismatch {
-                expected: expected_nominal_total,
-                actual: nominal_total,
-            });
-        }
-        let collection_root = tribute_partition_root_from_leaves(pin.worldwide_day, leaves)
-            .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?;
-        if collection_root != expected_collection_root {
-            return Err(FinalizedTributeError::CollectionRootMismatch {
-                expected: expected_collection_root,
-                actual: collection_root,
-            });
-        }
-        Ok(ReconstructedTributePartition {
-            records,
-            summary: TributeStreamSummary {
-                record_count: actual_count,
-                nominal_total,
-                exact_body_bytes,
-            },
-            collection_root,
+    ) -> Result<AuthenticatedTributeStream<'_, '_>, FinalizedTributeError> {
+        let (current_limit, retained_limit) = split_page_budget(self.page_limit)?;
+        Ok(AuthenticatedTributeStream {
+            current: CurrentPager::new(&self.current, pin.worldwide_day, current_limit)?,
+            retained: RetainedPager::new(&self.retained, pin, retained_limit),
+            current_reader: &self.current,
+            retained_reader: &self.retained,
+            pin,
+            authority: TributeCommitmentAuthority::Reconstruct,
+            expected_count,
+            expected_nominal_total,
+            previous_id: None,
+            record_count: 0,
+            nominal_total: U256::ZERO,
+            exact_body_bytes: 0,
+            peak_source_records: 0,
+            exhausted: false,
         })
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReconstructedTributePartition {
-    pub records: Vec<AuthenticatedTributeRecord>,
-    pub summary: TributeStreamSummary,
-    pub collection_root: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -274,19 +127,36 @@ pub struct TributeStreamSummary {
     pub exact_body_bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributeSourceRetentionStatsV1 {
+    pub current_page_records: usize,
+    pub retained_page_records: usize,
+    pub peak_current_page_records: usize,
+    pub peak_retained_page_records: usize,
+    pub peak_combined_page_records: usize,
+    pub configured_combined_page_bound: usize,
+}
+
 pub struct AuthenticatedTributeStream<'source, 'view> {
     current: CurrentPager<'source>,
     retained: RetainedPager<'source>,
+    current_reader: &'source TributeRepositoryReader,
     retained_reader: &'source RetainedTributeReader,
     pin: RetainedTributePin,
-    partition: &'view AuthenticatedTributePartition<'view>,
+    authority: TributeCommitmentAuthority<'view>,
     expected_count: u32,
     expected_nominal_total: U256,
     previous_id: Option<WwdEntityId>,
     record_count: u32,
     nominal_total: U256,
     exact_body_bytes: u64,
+    peak_source_records: usize,
     exhausted: bool,
+}
+
+enum TributeCommitmentAuthority<'view> {
+    Authenticated(&'view AuthenticatedTributePartition<'view>),
+    Reconstruct,
 }
 
 impl AuthenticatedTributeStream<'_, '_> {
@@ -308,26 +178,42 @@ impl AuthenticatedTributeStream<'_, '_> {
         }
         self.previous_id = Some(candidate.tribute_id);
 
-        let commitment = self
-            .partition
-            .tribute_commitment(candidate.tribute_id)
-            .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?
-            .ok_or(FinalizedTributeError::UnauthenticatedCandidate(
-                candidate.tribute_id,
-            ))?;
-        let commitment = B256::from(*commitment.as_bytes());
-        if candidate
-            .retained_commitment
-            .is_some_and(|retained| retained != commitment)
-        {
-            return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
-                candidate.tribute_id,
-            ));
+        let authenticated_commitment = match self.authority {
+            TributeCommitmentAuthority::Authenticated(partition) => Some(B256::from(
+                *partition
+                    .tribute_commitment(candidate.tribute_id)
+                    .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?
+                    .ok_or(FinalizedTributeError::UnauthenticatedCandidate(
+                        candidate.tribute_id,
+                    ))?
+                    .as_bytes(),
+            )),
+            TributeCommitmentAuthority::Reconstruct => None,
+        };
+        if let Some(commitment) = authenticated_commitment {
+            if candidate
+                .retained_commitment
+                .is_some_and(|retained| retained != commitment)
+            {
+                return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
+                    candidate.tribute_id,
+                ));
+            }
         }
-        let stored = self
-            .retained_reader
-            .get_current_or_retained(self.pin, candidate.tribute_id, commitment)?
-            .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
+        let stored = match (authenticated_commitment, candidate.retained_commitment) {
+            (Some(commitment), _) => self.retained_reader.get_current_or_retained(
+                self.pin,
+                candidate.tribute_id,
+                commitment,
+            )?,
+            (None, Some(commitment)) => self.retained_reader.get_current_or_retained(
+                self.pin,
+                candidate.tribute_id,
+                commitment,
+            )?,
+            (None, None) => self.current_reader.get_stored_body(candidate.tribute_id)?,
+        }
+        .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
         if stored.schema_version() != BODY_SCHEMA_V1 {
             return Err(FinalizedTributeError::UnsupportedBodySchema {
                 tribute_id: candidate.tribute_id,
@@ -337,6 +223,24 @@ impl AuthenticatedTributeStream<'_, '_> {
         let body = decode_tribute_v1(stored.payload())?;
         if body.tribute_id != candidate.tribute_id || body.worldwide_day != self.pin.worldwide_day {
             return Err(FinalizedTributeError::BodyIdentityMismatch(
+                candidate.tribute_id,
+            ));
+        }
+        let recomputed = B256::from(
+            *body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                BODY_SCHEMA_V1,
+                candidate.tribute_id,
+                stored.payload(),
+            )?
+            .as_bytes(),
+        );
+        if authenticated_commitment.is_some_and(|commitment| commitment != recomputed)
+            || candidate
+                .retained_commitment
+                .is_some_and(|commitment| commitment != recomputed)
+        {
+            return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
                 candidate.tribute_id,
             ));
         }
@@ -370,7 +274,7 @@ impl AuthenticatedTributeStream<'_, '_> {
 
         Ok(Some(AuthenticatedTributeRecord {
             tribute_id: candidate.tribute_id,
-            commitment,
+            commitment: recomputed,
             canonical_body: stored.payload().to_vec(),
             body,
         }))
@@ -399,9 +303,29 @@ impl AuthenticatedTributeStream<'_, '_> {
         })
     }
 
+    #[must_use]
+    pub fn retention_stats(&self) -> TributeSourceRetentionStatsV1 {
+        TributeSourceRetentionStatsV1 {
+            current_page_records: self.current.buffered.len(),
+            retained_page_records: self.retained.buffered.len(),
+            peak_current_page_records: self.current.peak_buffered_records,
+            peak_retained_page_records: self.retained.peak_buffered_records,
+            peak_combined_page_records: self.peak_source_records,
+            configured_combined_page_bound: usize::try_from(self.current.limit)
+                .unwrap_or(usize::MAX)
+                .saturating_add(self.retained.limit),
+        }
+    }
+
     fn next_candidate(&mut self) -> Result<Option<BodyCandidate>, FinalizedTributeError> {
         let current = self.current.peek()?;
         let retained = self.retained.peek()?;
+        self.peak_source_records = self.peak_source_records.max(
+            self.current
+                .buffered
+                .len()
+                .saturating_add(self.retained.buffered.len()),
+        );
         match (current, retained) {
             (None, None) => Ok(None),
             (Some(tribute_id), None) => {
@@ -456,6 +380,7 @@ struct CurrentPager<'a> {
     limit: u32,
     cursor: Option<WwdEntityId>,
     buffered: VecDeque<WwdEntityId>,
+    peak_buffered_records: usize,
     complete: bool,
 }
 
@@ -472,6 +397,7 @@ impl<'a> CurrentPager<'a> {
                 .map_err(|_| FinalizedTributeError::InvalidPageLimit(page_limit))?,
             cursor: None,
             buffered: VecDeque::new(),
+            peak_buffered_records: 0,
             complete: false,
         })
     }
@@ -506,6 +432,7 @@ impl<'a> CurrentPager<'a> {
         self.cursor = page.next_after;
         self.complete = self.cursor.is_none();
         self.buffered = page.ids.into();
+        self.peak_buffered_records = self.peak_buffered_records.max(self.buffered.len());
         Ok(())
     }
 }
@@ -516,6 +443,7 @@ struct RetainedPager<'a> {
     limit: usize,
     cursor: Option<RetainedTributeCursor>,
     buffered: VecDeque<RetainedTributeRef>,
+    peak_buffered_records: usize,
     complete: bool,
 }
 
@@ -527,6 +455,7 @@ impl<'a> RetainedPager<'a> {
             limit,
             cursor: None,
             buffered: VecDeque::new(),
+            peak_buffered_records: 0,
             complete: false,
         }
     }
@@ -560,8 +489,20 @@ impl<'a> RetainedPager<'a> {
         self.cursor = page.next_after;
         self.complete = self.cursor.is_none();
         self.buffered = page.records.into();
+        self.peak_buffered_records = self.peak_buffered_records.max(self.buffered.len());
         Ok(())
     }
+}
+
+fn split_page_budget(page_limit: usize) -> Result<(usize, usize), FinalizedTributeError> {
+    if !(2..=MAX_SCAN_ENTRIES).contains(&page_limit) {
+        return Err(FinalizedTributeError::InvalidPageLimit(page_limit));
+    }
+    let retained = page_limit / 2;
+    let current = page_limit
+        .checked_sub(retained)
+        .ok_or(FinalizedTributeError::InvalidPageLimit(page_limit))?;
+    Ok((current, retained))
 }
 
 #[derive(Debug, Error)]
@@ -597,18 +538,33 @@ pub enum FinalizedTributeError {
     Ce(String),
     #[error("Tribute record count overflow")]
     CountOverflow,
-    #[error("Tribute count {count} exceeds profile limit {limit}")]
-    CountOutsideProfile { count: u32, limit: usize },
     #[error("Tribute nominal total overflow")]
     NominalOverflow,
     #[error("Tribute canonical body byte count overflow")]
     BodyBytesOverflow,
     #[error("Tribute count mismatch: expected {expected}, got {actual}")]
     CountMismatch { expected: u32, actual: u32 },
-    #[error("reconstructed Tribute collection root mismatch: expected {expected}, got {actual}")]
-    CollectionRootMismatch { expected: B256, actual: B256 },
     #[error("Tribute nominal mismatch: expected {expected}, got {actual}")]
     NominalMismatch { expected: U256, actual: U256 },
     #[error("authenticated Tribute stream must be exhausted before closure")]
     StreamNotExhausted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_page_budget, FinalizedTributeError, MAX_SCAN_ENTRIES};
+
+    #[test]
+    fn current_and_retained_pagers_share_one_source_page_budget() {
+        for page_limit in [2, 3, 100, MAX_SCAN_ENTRIES] {
+            let (current, retained) = split_page_budget(page_limit).unwrap();
+            assert!(current > 0);
+            assert!(retained > 0);
+            assert_eq!(current + retained, page_limit);
+        }
+        assert!(matches!(
+            split_page_budget(1),
+            Err(FinalizedTributeError::InvalidPageLimit(1))
+        ));
+    }
 }

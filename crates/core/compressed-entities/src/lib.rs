@@ -42,7 +42,8 @@ pub use collection::{
 };
 pub use collection_reconstruction::{
     BoundedTributePartitionVerifier, TributePartitionExpectationV1,
-    TributePartitionReconstructionError, TributePartitionWorkConfig, VerifiedTributePartition,
+    TributePartitionReconstructionError, TributePartitionRetentionStatsV1,
+    TributePartitionWorkConfig, VerifiedTributePartition,
 };
 pub use commitment::{
     body_commitment, derive_poseidon_digest, derive_poseidon_entity_id, identity_field, pbytes,

@@ -1,21 +1,28 @@
 //! Builds one authenticated Lysis input manifest from finalized public RPC data.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use alloy_primitives::{keccak256, B256};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
     control::{BuildLysisOpeningsV1, SNAPSHOT_LEASE_WIRE_BYTES},
-    input::{materialize_authenticated_openings, CheckpointIdentityV1},
+    input::{
+        materialize_authenticated_openings, AuthenticatedOpeningV1, CheckpointIdentityV1,
+        InputChunkKind, InputManifestV1,
+    },
     intent::{
         intent_storage_key, FinalizedRequestBindingV1, JobIntentV1, VerifiedFinalizedIntentV1,
     },
-    opening::{partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1},
+    opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
+    profile::ProtocolBundleV1,
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
 use thiserror::Error;
@@ -27,8 +34,17 @@ use crate::{
         ExportReceiptError, ExportReceiptPreparation, ExportReceiptReader, ExportReceiptStore,
     },
     input_artifacts::{
-        poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
-        InputArtifactIdentity,
+        decode_fidelity_subject_key, decode_oracle_subject_key, poc_input_list_limits,
+        validate_verified_input_manifest_semantics, DurableInputArtifactPublisher,
+        InputArtifactError, InputArtifactIdentity,
+    },
+    input_inventory::{
+        SealedTributeInventory, TributeInventoryBuilder, TributeInventoryError,
+        TributeInventoryRecordV1, TributeInventorySubjectV1, TributeInventoryWorkConfig,
+    },
+    input_ref_catalog::VerifiedInputChunkRefCatalog,
+    opening_stage::{
+        DurableOpeningStage, OpeningResolutionV1, OpeningStageError, OpeningStageSubjectV1,
     },
     public_rpc::PublicOcompRpcClientV1,
     rpc_projection::{RpcFinalizedProjectionV1, RpcProjectionConfigV1, RpcProjectionErrorV1},
@@ -98,16 +114,58 @@ impl RpcInputExporterV1 {
     /// normal manifest validation succeeds.
     pub fn export(&mut self, discovery: &DiscoveryRecord) -> Result<(), RpcInputExporterErrorV1> {
         let job_id = discovery.spec.summary.job_id;
+        let job_key = hex::encode(job_id.as_slice());
+        let input_ref_catalog_root = self.config.input_ref_root.join(&job_key);
+        let work_root = self.config.input_ref_root.join(".work").join(&job_key);
         // Revalidate the durable discovery binding before accepting even an
         // exact local export replay. A valid old receipt must not make a stale
         // or substituted discovery journal authoritative after restart.
         let finalized = verified_discovery_intent(discovery, &self.config)?;
+        let expected_input = ExpectedInputAuthorityV1::from_finalized(
+            &finalized,
+            self.config.protocol_bundle.bundle(),
+            &self.config.limits,
+        )?;
         if let Some(reader) =
             ExportReceiptReader::try_open(&self.config.receipt_root, job_id, self.config.limits)
                 .map_err(|error| stage("inspect input receipt", error))?
         {
             match reader.load_exact(&self.reader) {
-                Ok(_) => return Ok(()),
+                Ok(receipt) => {
+                    require_replayed_input_authority(
+                        &expected_input,
+                        receipt.checkpoint(),
+                        receipt.manifest(),
+                    )?;
+                    let catalog = VerifiedInputChunkRefCatalog::reopen(
+                        &input_ref_catalog_root,
+                        &self.reader,
+                        self.config.limits,
+                        poc_input_list_limits(),
+                    )
+                    .map_err(|error| stage("reload input-ref catalog", error))?;
+                    catalog
+                        .require_manifest_authority(&receipt.manifest_ref(), receipt.manifest())
+                        .map_err(|error| stage("bind input-ref catalog to receipt", error))?;
+                    validate_verified_input_manifest_semantics(
+                        &catalog,
+                        &self.reader,
+                        self.config.protocol_bundle.bundle(),
+                        receipt.manifest(),
+                        &self.config.limits,
+                    )
+                    .map_err(|error| stage("verify replayed input semantics", error))?;
+                    verify_replayed_finalized_inputs(
+                        &catalog,
+                        &self.reader,
+                        &work_root,
+                        &finalized,
+                        &expected_input,
+                        self.config.protocol_bundle.bundle(),
+                        &self.config.limits,
+                    )?;
+                    return Ok(());
+                }
                 Err(
                     ExportReceiptError::MissingPreparation | ExportReceiptError::MissingReceipt,
                 ) => {}
@@ -118,137 +176,196 @@ impl RpcInputExporterV1 {
         if finalized.job_id != job_id {
             return Err(RpcInputExporterErrorV1::Authority("discovery JobId"));
         }
-        let mut projection = self
-            .projection
-            .lock()
-            .map_err(|_| RpcInputExporterErrorV1::Authority("projection lock"))?;
-        let pin = projection
-            .install_retention_pin(&finalized)
-            .map_err(|error| stage("install Tribute retention pin", error))?;
-        let projected = projection
-            .project_through(finalized.request.block_number)
-            .map_err(|error| stage("project finalized receipts", error))?;
-        if projected < finalized.request.block_number {
-            return Err(RpcInputExporterErrorV1::Authority("projection checkpoint"));
-        }
-
-        let partition = projection
-            .tribute_source()
-            .reconstruct_partition(
-                pin,
-                finalized.intent.sealed_tribute_collection_root,
-                finalized.intent.authenticated_day_count,
-                finalized.intent.authenticated_day_nominal,
-                self.config.limits.max_collection_items,
-            )
-            .map_err(|error| stage("reconstruct sealed Tribute partition", error))?;
-        let mut owners = BTreeSet::new();
-        let mut isos = BTreeSet::from([840_u16]);
-        let canonical_tributes = partition
-            .records
-            .into_iter()
-            .map(|record| {
-                owners.insert(record.body.owner);
-                isos.insert(record.body.reference_currency);
-                record.canonical_body
-            })
-            .collect::<Vec<_>>();
-        let subjects = partition_lysis_opening_subjects(
-            &owners.into_iter().collect::<Vec<_>>(),
-            &isos.into_iter().collect::<Vec<_>>(),
-            &self.config.limits,
-        )
-        .map_err(|error| stage("partition Lysis opening subjects", error))?;
-        let mut fidelity_openings = Vec::new();
-        let mut oracle_opening = None;
-        let mut pending_subjects = VecDeque::from(subjects);
-        while let Some(subject_batch) = pending_subjects.pop_front() {
-            let canonical_request = BuildLysisOpeningsV1 {
-                job_id,
-                subjects: subject_batch.clone(),
+        let (pin, tribute_source) = {
+            let mut projection = self
+                .projection
+                .lock()
+                .map_err(|_| RpcInputExporterErrorV1::Authority("projection lock"))?;
+            let pin = projection
+                .install_retention_pin(&finalized)
+                .map_err(|error| stage("install Tribute retention pin", error))?;
+            let projected = projection
+                .project_through(finalized.request.block_number)
+                .map_err(|error| stage("project finalized receipts", error))?;
+            if projected < finalized.request.block_number {
+                return Err(RpcInputExporterErrorV1::Authority("projection checkpoint"));
             }
-            .encode_body(&self.config.limits)
-            .map_err(|error| stage("encode Lysis openings request", error))?;
-            let openings = match self
-                .rpc
-                .lysis_openings(finalized.intent_id, &canonical_request)
-                .and_then(|encoded| {
-                    LysisOpeningsProofV1::decode_body(&encoded, &self.config.limits).map_err(
-                        |error| crate::public_rpc::PublicRpcError::Malformed {
-                            method: "outbe_getOcompLysisOpeningsV1",
-                            detail: error.to_string(),
-                        },
-                    )
-                }) {
-                Ok(openings) => {
-                    verify_lysis_openings(
-                        &openings,
-                        &finalized,
-                        &subject_batch,
-                        &self.config.limits,
-                    )
-                    .map_err(|error| stage("verify node Lysis openings", error))?;
-                    openings
-                }
-                Err(error) if is_lysis_opening_capacity_error(&error) => {
-                    let Some((left, right)) = bisect_opening_subjects(subject_batch) else {
-                        return Err(stage("build public Lysis openings", error));
-                    };
-                    // Preserve the canonical owner order while processing the
-                    // left half first.
-                    pending_subjects.push_front(right);
-                    pending_subjects.push_front(left);
-                    continue;
-                }
-                Err(error) => return Err(stage("build public Lysis openings", error)),
-            };
-            let materialized = materialize_authenticated_openings(
-                &openings,
-                self.config.protocol_bundle.bundle(),
-                &self.config.limits,
-            )
-            .map_err(|error| stage("materialize Lysis openings", error))?;
-            fidelity_openings.push(materialized.fidelity);
-            match &oracle_opening {
-                None => oracle_opening = Some(materialized.oracle),
-                Some(existing) if existing == &materialized.oracle => {}
-                Some(_) => return Err(RpcInputExporterErrorV1::Authority("Oracle opening replay")),
-            }
-        }
-        let checkpoint = CheckpointIdentityV1 {
-            finalized_block_number: finalized.request.block_number,
-            finalized_block_hash: finalized.request.block_hash,
-            finalized_state_root: finalized.request.state_root,
-            finalized_ce_root: finalized.intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )
-            .map_err(|_| RpcInputExporterErrorV1::Authority("CE schema version"))?,
+            (pin, projection.tribute_source().clone())
         };
-        let published = publish_input_artifact_set(
+
+        let checkpoint = expected_input.checkpoint.clone();
+        let inventory_subject = TributeInventorySubjectV1 {
+            protocol_bundle_hash: self.config.protocol_bundle_hash,
+            job_id,
+            attempt: finalized.intent.attempt,
+            checkpoint: checkpoint.clone(),
+            worldwide_day: WorldwideDay::new(finalized.intent.wwd),
+            sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
+            expected_tribute_count: finalized.intent.authenticated_day_count,
+            expected_nominal_total: finalized.intent.authenticated_day_nominal,
+        };
+        let inventory_root = work_root.join("inventory");
+        let inventory =
+            match SealedTributeInventory::open(&inventory_root, inventory_subject.clone()) {
+                Ok(inventory) => inventory,
+                Err(TributeInventoryError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    let mut builder = TributeInventoryBuilder::create(
+                        &inventory_root,
+                        inventory_subject,
+                        TributeInventoryWorkConfig::default(),
+                    )
+                    .map_err(|error| stage("create Tribute inventory", error))?;
+                    let mut stream = tribute_source
+                        .reconstruction_stream(
+                            pin,
+                            finalized.intent.authenticated_day_count,
+                            finalized.intent.authenticated_day_nominal,
+                        )
+                        .map_err(|error| stage("open sealed Tribute stream", error))?;
+                    while let Some(record) = stream
+                        .next_record()
+                        .map_err(|error| stage("read sealed Tribute stream", error))?
+                    {
+                        builder
+                            .push(TributeInventoryRecordV1 {
+                                tribute_id: record.tribute_id,
+                                commitment: Commitment::try_from(record.commitment.0)
+                                    .map_err(|error| stage("decode Tribute commitment", error))?,
+                                owner: record.body.owner,
+                                reference_iso: record.body.reference_currency,
+                                nominal_amount_minor: record.body.nominal_amount_minor,
+                                canonical_body: record.canonical_body,
+                            })
+                            .map_err(|error| stage("spool Tribute inventory", error))?;
+                    }
+                    stream
+                        .finish()
+                        .map_err(|error| stage("close sealed Tribute stream", error))?;
+                    builder
+                        .finish()
+                        .map_err(|error| stage("seal Tribute inventory", error))?
+                }
+                Err(error) => return Err(stage("reopen Tribute inventory", error)),
+            };
+        let mut publisher = DurableInputArtifactPublisher::open(
             &self.cas,
-            self.config
-                .input_ref_root
-                .join(hex::encode(job_id.as_slice())),
+            &self.reader,
+            &input_ref_catalog_root,
             self.config.protocol_bundle.bundle(),
-            InputArtifactContents {
-                identity: InputArtifactIdentity {
-                    job_id,
-                    attempt: finalized.intent.attempt,
-                    checkpoint: checkpoint.clone(),
-                    wwd: finalized.intent.wwd,
-                    sealed_tribute_collection_key: finalized.intent.sealed_tribute_collection_key,
-                    sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
-                },
-                canonical_tributes,
-                fidelity_openings,
-                oracle_opening: oracle_opening
-                    .ok_or(RpcInputExporterErrorV1::Authority("Oracle opening"))?,
+            InputArtifactIdentity {
+                job_id,
+                attempt: finalized.intent.attempt,
+                checkpoint: checkpoint.clone(),
+                wwd: finalized.intent.wwd,
+                sealed_tribute_collection_key: finalized.intent.sealed_tribute_collection_key,
+                sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
             },
-            &self.config.limits,
+            self.config.limits,
             poc_input_list_limits(),
         )
-        .map_err(|error| stage("publish input artifacts", error))?;
+        .map_err(|error| stage("open durable input publisher", error))?;
+        let mut bodies = inventory
+            .tribute_bodies()
+            .map_err(|error| stage("open Tribute body spool", error))?;
+        while let Some(body) = bodies
+            .next_body(self.config.limits.max_bounded_bytes)
+            .map_err(|error| stage("read Tribute body spool", error))?
+        {
+            publisher
+                .publish_tribute(body)
+                .map_err(|error| stage("publish Tribute input chunk", error))?;
+        }
+        publisher
+            .finish_tributes()
+            .map_err(|error| stage("finish Tribute input chunks", error))?;
+
+        let mut opening_stage = DurableOpeningStage::open_or_resume(
+            work_root.join("openings"),
+            OpeningStageSubjectV1 {
+                protocol_bundle_hash: self.config.protocol_bundle_hash,
+                job_id,
+                attempt: finalized.intent.attempt,
+                checkpoint: checkpoint.clone(),
+                worldwide_day: finalized.intent.wwd,
+                inventory_authority_digest: inventory.authority_digest(),
+            },
+            self.config.limits,
+        )
+        .map_err(|error| stage("open durable opening stage", error))?;
+        let opening_report = opening_stage
+            .run(
+                &inventory,
+                |subjects| {
+                    let canonical_request = BuildLysisOpeningsV1 {
+                        job_id,
+                        subjects: subjects.clone(),
+                    }
+                    .encode_body(&self.config.limits)
+                    .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    let openings = match self
+                        .rpc
+                        .lysis_openings(finalized.intent_id, &canonical_request)
+                        .and_then(|encoded| {
+                            LysisOpeningsProofV1::decode_body(&encoded, &self.config.limits)
+                                .map_err(|error| crate::public_rpc::PublicRpcError::Malformed {
+                                    method: "outbe_getOcompLysisOpeningsV1",
+                                    detail: error.to_string(),
+                                })
+                        }) {
+                        Ok(openings) => openings,
+                        Err(error) if is_lysis_opening_capacity_error(&error) => {
+                            return Ok(OpeningResolutionV1::Split);
+                        }
+                        Err(error) => {
+                            return Err(OpeningStageError::Resolver(error.to_string()));
+                        }
+                    };
+                    verify_lysis_openings(&openings, &finalized, subjects, &self.config.limits)
+                        .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    let materialized = materialize_authenticated_openings(
+                        &openings,
+                        self.config.protocol_bundle.bundle(),
+                        &self.config.limits,
+                    )
+                    .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    Ok(OpeningResolutionV1::Complete(Box::new(materialized)))
+                },
+                |subjects, fidelity, oracle| {
+                    verify_durable_lysis_openings(
+                        fidelity,
+                        oracle,
+                        &finalized,
+                        subjects,
+                        self.config.protocol_bundle.bundle(),
+                        &self.config.limits,
+                    )
+                },
+                |opening| {
+                    publisher
+                        .publish_fidelity_opening(opening)
+                        .map_err(OpeningStageError::from)
+                },
+            )
+            .map_err(|error| stage("acquire and publish Lysis openings", error))?;
+        publisher
+            .publish_oracle_opening(opening_report.oracle)
+            .map_err(|error| stage("publish Oracle opening", error))?;
+        let mut fidelity_cursor =
+            opening_stage.fidelity_cursor(opening_report.fidelity_opening_count);
+        let published = publisher
+            .finish(
+                finalized.intent.authenticated_day_count,
+                finalized.intent.authenticated_day_nominal,
+                opening_report.fidelity_opening_count,
+                || {
+                    fidelity_cursor
+                        .next_opening()
+                        .map_err(|error| InputArtifactError::OpeningSource(error.to_string()))
+                },
+            )
+            .map_err(|error| stage("seal input artifacts", error))?;
         if published.tribute_count != finalized.intent.authenticated_day_count
             || published.tribute_nominal_total != finalized.intent.authenticated_day_nominal
         {
@@ -298,6 +415,302 @@ impl RpcInputExporterV1 {
             .map_err(|error| stage("commit input receipt", error))?;
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExpectedInputAuthorityV1 {
+    protocol_bundle_hash: B256,
+    job_id: B256,
+    attempt: u32,
+    checkpoint: CheckpointIdentityV1,
+    wwd: u32,
+    sealed_tribute_collection_key: B256,
+    sealed_tribute_collection_root: B256,
+    tribute_count: u32,
+    tribute_nominal_total: alloy_primitives::U256,
+    body_codec_id: B256,
+    opening_codec_registry_hash: B256,
+}
+
+impl ExpectedInputAuthorityV1 {
+    fn from_finalized(
+        finalized: &VerifiedFinalizedIntentV1,
+        bundle: &ProtocolBundleV1,
+        limits: &SchemaLimits,
+    ) -> Result<Self, RpcInputExporterErrorV1> {
+        let protocol_bundle_hash = bundle
+            .protocol_bundle_hash(limits)
+            .map_err(|error| stage("hash protocol bundle", error))?;
+        if protocol_bundle_hash != finalized.intent.protocol_bundle_hash {
+            return Err(RpcInputExporterErrorV1::Authority(
+                "finalized protocol bundle",
+            ));
+        }
+        Ok(Self {
+            protocol_bundle_hash,
+            job_id: finalized.job_id,
+            attempt: finalized.intent.attempt,
+            checkpoint: CheckpointIdentityV1 {
+                finalized_block_number: finalized.request.block_number,
+                finalized_block_hash: finalized.request.block_hash,
+                finalized_state_root: finalized.request.state_root,
+                finalized_ce_root: finalized.intent.ce_sealed_root,
+                ce_schema_version: u16::try_from(
+                    outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
+                )
+                .map_err(|_| RpcInputExporterErrorV1::Authority("CE schema version"))?,
+            },
+            wwd: finalized.intent.wwd,
+            sealed_tribute_collection_key: finalized.intent.sealed_tribute_collection_key,
+            sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
+            tribute_count: finalized.intent.authenticated_day_count,
+            tribute_nominal_total: finalized.intent.authenticated_day_nominal,
+            body_codec_id: bundle.tribute_body_codec_id,
+            opening_codec_registry_hash: bundle
+                .opening_codec_registry_hash()
+                .map_err(|error| stage("hash opening codec registry", error))?,
+        })
+    }
+}
+
+fn require_replayed_input_authority(
+    expected: &ExpectedInputAuthorityV1,
+    receipt_checkpoint: &CheckpointIdentityV1,
+    manifest: &InputManifestV1,
+) -> Result<(), RpcInputExporterErrorV1> {
+    if receipt_checkpoint != &expected.checkpoint
+        || manifest.protocol_bundle_hash != expected.protocol_bundle_hash
+        || manifest.job_id != expected.job_id
+        || manifest.attempt != expected.attempt
+        || manifest.checkpoint != expected.checkpoint
+        || manifest.wwd != expected.wwd
+        || manifest.sealed_tribute_collection_key != expected.sealed_tribute_collection_key
+        || manifest.sealed_tribute_collection_root != expected.sealed_tribute_collection_root
+        || manifest.tribute_count != expected.tribute_count
+        || manifest.tribute_nominal_total != expected.tribute_nominal_total
+        || manifest.body_codec_id != expected.body_codec_id
+        || manifest.opening_codec_registry_hash != expected.opening_codec_registry_hash
+    {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "replayed input manifest finalized binding",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_replayed_finalized_inputs(
+    catalog: &VerifiedInputChunkRefCatalog,
+    reader: &FilesystemCasReader,
+    work_root: &std::path::Path,
+    finalized: &VerifiedFinalizedIntentV1,
+    expected: &ExpectedInputAuthorityV1,
+    bundle: &ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<(), RpcInputExporterErrorV1> {
+    let subject = TributeInventorySubjectV1 {
+        protocol_bundle_hash: expected.protocol_bundle_hash,
+        job_id: expected.job_id,
+        attempt: expected.attempt,
+        checkpoint: expected.checkpoint.clone(),
+        worldwide_day: WorldwideDay::new(expected.wwd),
+        sealed_tribute_collection_root: expected.sealed_tribute_collection_root,
+        expected_tribute_count: expected.tribute_count,
+        expected_nominal_total: expected.tribute_nominal_total,
+    };
+    let inventory_root = work_root.join("inventory");
+    let inventory = match SealedTributeInventory::open(&inventory_root, subject.clone()) {
+        Ok(inventory) => inventory,
+        Err(TributeInventoryError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            let mut builder = TributeInventoryBuilder::create(
+                &inventory_root,
+                subject,
+                TributeInventoryWorkConfig::default(),
+            )
+            .map_err(|error| stage("create replay Tribute inventory", error))?;
+            for verified in catalog
+                .exact_verified_cursor(reader, bundle)
+                .map_err(|error| stage("open replay input catalog", error))?
+            {
+                let verified =
+                    verified.map_err(|error| stage("read replay input catalog", error))?;
+                if verified.reference.kind != InputChunkKind::Tribute {
+                    continue;
+                }
+                for canonical in verified.chunk.canonical_records_or_openings {
+                    let body = outbe_compressed_entities::decode_tribute_v1(&canonical.0)
+                        .map_err(|error| stage("decode replay Tribute", error))?;
+                    let commitment = body_commitment(
+                        ACTIVE_COMMITMENT_SCHEME,
+                        BODY_SCHEMA_V1,
+                        body.tribute_id,
+                        &canonical.0,
+                    )
+                    .map_err(|error| stage("commit replay Tribute", error))?;
+                    builder
+                        .push(TributeInventoryRecordV1 {
+                            tribute_id: body.tribute_id,
+                            commitment,
+                            owner: body.owner,
+                            reference_iso: body.reference_currency,
+                            nominal_amount_minor: body.nominal_amount_minor,
+                            canonical_body: canonical.0,
+                        })
+                        .map_err(|error| stage("spool replay Tribute inventory", error))?;
+                }
+            }
+            builder
+                .finish()
+                .map_err(|error| stage("seal replay Tribute inventory", error))?
+        }
+        Err(error) => return Err(stage("reopen replay Tribute inventory", error)),
+    };
+
+    let reference_isos = inventory.reference_isos();
+    let mut oracle = None;
+    for verified in catalog
+        .exact_verified_cursor(reader, bundle)
+        .map_err(|error| stage("open replay Oracle catalog", error))?
+    {
+        let verified = verified.map_err(|error| stage("read replay Oracle catalog", error))?;
+        if verified.reference.kind != InputChunkKind::Oracle {
+            continue;
+        }
+        let canonical = verified
+            .chunk
+            .canonical_records_or_openings
+            .into_iter()
+            .next()
+            .ok_or(RpcInputExporterErrorV1::Authority(
+                "replayed Oracle opening",
+            ))?;
+        if oracle.is_some() {
+            return Err(RpcInputExporterErrorV1::Authority(
+                "replayed Oracle cardinality",
+            ));
+        }
+        oracle = Some(
+            AuthenticatedOpeningV1::decode_canonical_record(&canonical.0, limits)
+                .map_err(|error| stage("decode replay Oracle opening", error))?,
+        );
+    }
+    let oracle = oracle.ok_or(RpcInputExporterErrorV1::Authority(
+        "replayed Oracle opening",
+    ))?;
+    let (oracle_wwd, oracle_isos) = decode_oracle_subject_key(&oracle.canonical_subject_key.0)
+        .map_err(|error| stage("decode replay Oracle subject", error))?;
+    if oracle_wwd != expected.wwd || oracle_isos != reference_isos {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "replayed Oracle subject",
+        ));
+    }
+
+    let mut owner_reader = inventory
+        .owner_batches()
+        .map_err(|error| stage("open replay owner inventory", error))?;
+    let mut expected_owners = Vec::new();
+    let mut expected_owner_index = 0_usize;
+    for verified in catalog
+        .exact_verified_cursor(reader, bundle)
+        .map_err(|error| stage("open replay Fidelity catalog", error))?
+    {
+        let verified = verified.map_err(|error| stage("read replay Fidelity catalog", error))?;
+        if verified.reference.kind != InputChunkKind::Fidelity {
+            continue;
+        }
+        let canonical = verified
+            .chunk
+            .canonical_records_or_openings
+            .into_iter()
+            .next()
+            .ok_or(RpcInputExporterErrorV1::Authority(
+                "replayed Fidelity opening",
+            ))?;
+        let fidelity = AuthenticatedOpeningV1::decode_canonical_record(&canonical.0, limits)
+            .map_err(|error| stage("decode replay Fidelity opening", error))?;
+        let owners = decode_fidelity_subject_key(&fidelity.canonical_subject_key.0)
+            .map_err(|error| stage("decode replay Fidelity subject", error))?;
+        for owner in &owners {
+            if expected_owner_index == expected_owners.len() {
+                expected_owners = owner_reader
+                    .next_batch(outbe_ocomp_protocol::opening::MAX_FIDELITY_OWNERS_PER_OPENING)
+                    .map_err(|error| stage("read replay owner inventory", error))?
+                    .ok_or(RpcInputExporterErrorV1::Authority(
+                        "replayed Fidelity owner overflow",
+                    ))?;
+                expected_owner_index = 0;
+            }
+            if expected_owners.get(expected_owner_index) != Some(owner) {
+                return Err(RpcInputExporterErrorV1::Authority(
+                    "replayed Fidelity owner coverage",
+                ));
+            }
+            expected_owner_index += 1;
+        }
+        verify_durable_lysis_openings(
+            &fidelity,
+            &oracle,
+            finalized,
+            &OpeningSubjectsV1 {
+                owners,
+                reference_isos: reference_isos.clone(),
+            },
+            bundle,
+            limits,
+        )
+        .map_err(|error| stage("verify replayed finalized openings", error))?;
+    }
+    if expected_owner_index != expected_owners.len()
+        || owner_reader
+            .next_batch(outbe_ocomp_protocol::opening::MAX_FIDELITY_OWNERS_PER_OPENING)
+            .map_err(|error| stage("close replay owner inventory", error))?
+            .is_some()
+    {
+        return Err(RpcInputExporterErrorV1::Authority(
+            "replayed Fidelity owner coverage",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_durable_lysis_openings(
+    fidelity: &AuthenticatedOpeningV1,
+    oracle: &AuthenticatedOpeningV1,
+    finalized: &VerifiedFinalizedIntentV1,
+    subjects: &OpeningSubjectsV1,
+    bundle: &ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<(), OpeningStageError> {
+    fidelity
+        .validate_against_bundle(bundle, limits)
+        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+    oracle
+        .validate_against_bundle(bundle, limits)
+        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+    let fidelity = fidelity
+        .decode_and_validate_raw_opening(finalized.request.state_root, limits)
+        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+    let oracle = oracle
+        .decode_and_validate_raw_opening(finalized.request.state_root, limits)
+        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+    verify_lysis_openings(
+        &LysisOpeningsProofV1 {
+            protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
+            job_id: finalized.job_id,
+            finalized_block_hash: finalized.request.block_hash,
+            finalized_state_root: finalized.request.state_root,
+            wwd: finalized.intent.wwd,
+            subjects: subjects.clone(),
+            fidelity,
+            oracle,
+        },
+        finalized,
+        subjects,
+        limits,
+    )
+    .map_err(|error| OpeningStageError::Verification(error.to_string()))
 }
 
 fn verified_discovery_intent(
@@ -351,21 +764,6 @@ fn is_lysis_opening_capacity_error(error: &impl std::fmt::Display) -> bool {
         .contains("Lysis opening bytes exceeds cap: ")
 }
 
-fn bisect_opening_subjects(
-    mut subjects: OpeningSubjectsV1,
-) -> Option<(OpeningSubjectsV1, OpeningSubjectsV1)> {
-    let midpoint = subjects.owners.len() / 2;
-    if midpoint == 0 {
-        return None;
-    }
-    let right_owners = subjects.owners.split_off(midpoint);
-    let right = OpeningSubjectsV1 {
-        owners: right_owners,
-        reference_isos: subjects.reference_isos.clone(),
-    };
-    Some((subjects, right))
-}
-
 fn local_publication_lease(job_id: B256) -> Vec<u8> {
     let digest = keccak256([b"OCOMP_RPC_INPUT_V1".as_slice(), job_id.as_slice()].concat());
     let mut lease = Vec::with_capacity(SNAPSHOT_LEASE_WIRE_BYTES);
@@ -413,13 +811,16 @@ impl RpcInputExporterErrorV1 {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use alloy_primitives::{B256, U256};
     use outbe_node::ocomp::retention::RetentionError;
-    use outbe_ocomp_protocol::opening::OpeningSubjectsV1;
+    use outbe_ocomp_protocol::input::{CheckpointIdentityV1, Compression, InputManifestV1};
 
     use crate::rpc_projection::RpcProjectionErrorV1;
 
-    use super::{bisect_opening_subjects, is_lysis_opening_capacity_error, projection_open_error};
+    use super::{
+        is_lysis_opening_capacity_error, projection_open_error, require_replayed_input_authority,
+        ExpectedInputAuthorityV1,
+    };
 
     #[test]
     fn only_transient_projection_unavailability_is_retryable_at_startup() {
@@ -428,28 +829,6 @@ mod tests {
 
         let invalid = projection_open_error(RpcProjectionErrorV1::InvalidConfig);
         assert!(!invalid.is_retryable_startup());
-    }
-
-    #[test]
-    fn oversized_opening_subjects_are_bisected_in_canonical_order() {
-        let subjects = OpeningSubjectsV1 {
-            owners: (1_u8..=5).map(Address::with_last_byte).collect(),
-            reference_isos: vec![840, 978],
-        };
-        let (left, right) = bisect_opening_subjects(subjects.clone()).expect("splittable");
-
-        assert_eq!(left.owners, subjects.owners[..2]);
-        assert_eq!(right.owners, subjects.owners[2..]);
-        assert_eq!(left.reference_isos, subjects.reference_isos);
-        assert_eq!(right.reference_isos, subjects.reference_isos);
-        assert!(left.owners.len() < subjects.owners.len());
-        assert!(right.owners.len() < subjects.owners.len());
-
-        let singleton = OpeningSubjectsV1 {
-            owners: vec![Address::with_last_byte(1)],
-            reference_isos: vec![840],
-        };
-        assert!(bisect_opening_subjects(singleton).is_none());
     }
 
     #[test]
@@ -463,5 +842,112 @@ mod tests {
         assert!(!is_lysis_opening_capacity_error(
             &RetentionError::RetainedTributeStorageUnavailable,
         ));
+    }
+
+    #[test]
+    fn replayed_manifest_requires_every_finalized_authority_field() {
+        let expected = expected_input_authority();
+        let manifest = matching_manifest(&expected);
+        assert!(
+            require_replayed_input_authority(&expected, &expected.checkpoint, &manifest,).is_ok()
+        );
+
+        let mut substitutions = Vec::new();
+        let mut changed = manifest.clone();
+        changed.protocol_bundle_hash = B256::repeat_byte(21);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.job_id = B256::repeat_byte(22);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.attempt += 1;
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.checkpoint.finalized_block_hash = B256::repeat_byte(23);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.wwd += 1;
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.sealed_tribute_collection_key = B256::repeat_byte(24);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.sealed_tribute_collection_root = B256::repeat_byte(25);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.tribute_count += 1;
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.tribute_nominal_total += U256::from(1);
+        substitutions.push(changed);
+        let mut changed = manifest.clone();
+        changed.body_codec_id = B256::repeat_byte(26);
+        substitutions.push(changed);
+        let mut changed = manifest;
+        changed.opening_codec_registry_hash = B256::repeat_byte(27);
+        substitutions.push(changed);
+
+        for substituted in substitutions {
+            assert!(require_replayed_input_authority(
+                &expected,
+                &expected.checkpoint,
+                &substituted,
+            )
+            .is_err());
+        }
+
+        let mut receipt_checkpoint = expected.checkpoint.clone();
+        receipt_checkpoint.finalized_block_number += 1;
+        assert!(require_replayed_input_authority(
+            &expected,
+            &receipt_checkpoint,
+            &matching_manifest(&expected),
+        )
+        .is_err());
+    }
+
+    fn expected_input_authority() -> ExpectedInputAuthorityV1 {
+        ExpectedInputAuthorityV1 {
+            protocol_bundle_hash: B256::repeat_byte(1),
+            job_id: B256::repeat_byte(2),
+            attempt: 3,
+            checkpoint: CheckpointIdentityV1 {
+                finalized_block_number: 4,
+                finalized_block_hash: B256::repeat_byte(5),
+                finalized_state_root: B256::repeat_byte(6),
+                finalized_ce_root: B256::repeat_byte(7),
+                ce_schema_version: 8,
+            },
+            wwd: 20_260_901,
+            sealed_tribute_collection_key: B256::repeat_byte(9),
+            sealed_tribute_collection_root: B256::repeat_byte(10),
+            tribute_count: 11,
+            tribute_nominal_total: U256::from(12),
+            body_codec_id: B256::repeat_byte(13),
+            opening_codec_registry_hash: B256::repeat_byte(14),
+        }
+    }
+
+    fn matching_manifest(expected: &ExpectedInputAuthorityV1) -> InputManifestV1 {
+        InputManifestV1 {
+            protocol_bundle_hash: expected.protocol_bundle_hash,
+            job_id: expected.job_id,
+            attempt: expected.attempt,
+            checkpoint: expected.checkpoint.clone(),
+            wwd: expected.wwd,
+            sealed_tribute_collection_key: expected.sealed_tribute_collection_key,
+            sealed_tribute_collection_root: expected.sealed_tribute_collection_root,
+            tribute_count: expected.tribute_count,
+            tribute_nominal_total: expected.tribute_nominal_total,
+            input_chunk_count: 1,
+            input_chunk_list_root: B256::repeat_byte(15),
+            fidelity_opening_root: B256::repeat_byte(16),
+            oracle_opening_root: B256::repeat_byte(17),
+            exact_encoded_bytes: 18,
+            exact_record_count: 19,
+            body_codec_id: expected.body_codec_id,
+            opening_codec_registry_hash: expected.opening_codec_registry_hash,
+            compression: Compression::None,
+        }
     }
 }

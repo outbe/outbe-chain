@@ -54,11 +54,19 @@ pub struct VerifiedTributePartition {
     pub exact_leaf_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributePartitionRetentionStatsV1 {
+    pub current_buffered_records: usize,
+    pub peak_buffered_records: usize,
+    pub configured_record_bound: usize,
+}
+
 pub struct BoundedTributePartitionVerifier {
     scratch_root: PathBuf,
     expectation: TributePartitionExpectationV1,
     work: TributePartitionWorkConfig,
     buffered: Vec<RunRecord>,
+    peak_buffered_records: usize,
     pushed_count: u32,
     run_count: u64,
 }
@@ -109,6 +117,7 @@ impl BoundedTributePartitionVerifier {
             expectation,
             work,
             buffered: Vec::with_capacity(work.records_per_run),
+            peak_buffered_records: 0,
             pushed_count: 0,
             run_count: 0,
         })
@@ -143,11 +152,21 @@ impl BoundedTributePartitionVerifier {
         let leaf = TreeLeaf::from_be_bytes(*commitment.as_bytes())
             .map_err(|error| TributePartitionReconstructionError::Tree(error.to_string()))?;
         self.buffered.push(RunRecord { shard, key, leaf });
+        self.peak_buffered_records = self.peak_buffered_records.max(self.buffered.len());
         self.pushed_count = actual;
         if self.buffered.len() == self.work.records_per_run {
             self.flush_run()?;
         }
         Ok(())
+    }
+
+    #[must_use]
+    pub fn retention_stats(&self) -> TributePartitionRetentionStatsV1 {
+        TributePartitionRetentionStatsV1 {
+            current_buffered_records: self.buffered.len(),
+            peak_buffered_records: self.peak_buffered_records,
+            configured_record_bound: self.work.records_per_run,
+        }
     }
 
     pub fn finish(
