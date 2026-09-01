@@ -207,12 +207,30 @@ pub fn validate_verified_input_manifest_semantics(
     manifest: &InputManifestV1,
     limits: &SchemaLimits,
 ) -> Result<(), InputArtifactError> {
+    validate_verified_input_manifest_semantics_observing(
+        catalog,
+        reader,
+        bundle,
+        manifest,
+        limits,
+        || {},
+    )
+}
+
+pub fn validate_verified_input_manifest_semantics_observing(
+    catalog: &VerifiedInputChunkRefCatalog,
+    reader: &FilesystemCasReader,
+    bundle: &ProtocolBundleV1,
+    manifest: &InputManifestV1,
+    limits: &SchemaLimits,
+    on_progress: impl Fn(),
+) -> Result<(), InputArtifactError> {
     manifest.validate_against_bundle(bundle, limits)?;
     let mut tribute_count = 0_u32;
     let mut tribute_nominal_total = U256::ZERO;
     let mut fidelity_count = 0_u32;
     let mut oracle_count = 0_u32;
-    for verified in catalog.exact_verified_cursor(reader, bundle)? {
+    for verified in catalog.exact_verified_cursor_observing(reader, bundle, &on_progress)? {
         let verified = verified?;
         if verified.reference.kind != InputChunkKind::Tribute
             && verified.chunk.canonical_records_or_openings.len() != 1
@@ -269,6 +287,7 @@ pub fn validate_verified_input_manifest_semantics(
                     }
                 }
             }
+            on_progress();
         }
     }
     require(
@@ -285,7 +304,7 @@ pub fn validate_verified_input_manifest_semantics(
     let mut fidelity_root =
         StreamingOrderedListRoot::new(ListKind::FidelityOpenings, fidelity_count)?;
     let mut oracle_root = StreamingOrderedListRoot::new(ListKind::OracleOpenings, oracle_count)?;
-    for verified in catalog.exact_verified_cursor(reader, bundle)? {
+    for verified in catalog.exact_verified_cursor_observing(reader, bundle, &on_progress)? {
         let verified = verified?;
         let root = match verified.reference.kind {
             InputChunkKind::Tribute => continue,
@@ -294,6 +313,7 @@ pub fn validate_verified_input_manifest_semantics(
         };
         for record in &verified.chunk.canonical_records_or_openings {
             root.push(&record.0, limits.max_bounded_bytes)?;
+            on_progress();
         }
     }
     require(
@@ -446,6 +466,23 @@ impl<'a> DurableInputArtifactPublisher<'a> {
     }
 
     pub fn finish(
+        self,
+        expected_tribute_count: u32,
+        expected_tribute_nominal_total: U256,
+        expected_fidelity_openings: u32,
+        next_fidelity_opening: impl FnMut()
+            -> Result<Option<AuthenticatedOpeningV1>, InputArtifactError>,
+    ) -> Result<PublishedStreamingInputArtifacts, InputArtifactError> {
+        self.finish_observing(
+            expected_tribute_count,
+            expected_tribute_nominal_total,
+            expected_fidelity_openings,
+            next_fidelity_opening,
+            || {},
+        )
+    }
+
+    pub fn finish_observing(
         mut self,
         expected_tribute_count: u32,
         expected_tribute_nominal_total: U256,
@@ -454,6 +491,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             Option<AuthenticatedOpeningV1>,
             InputArtifactError,
         >,
+        on_progress: impl Fn(),
     ) -> Result<PublishedStreamingInputArtifacts, InputArtifactError> {
         require(self.tributes_finished, "Tribute publication closed")?;
         require(self.oracle_published, "Oracle opening published")?;
@@ -487,6 +525,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             rooted_fidelity_count = rooted_fidelity_count
                 .checked_add(1)
                 .ok_or(InputArtifactError::CountOverflow)?;
+            on_progress();
         }
         require(
             rooted_fidelity_count == expected_fidelity_openings,
@@ -502,7 +541,8 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             .refs
             .take()
             .expect("input-ref publisher exists until finish")
-            .prepare(self.reader, self.bundle)?;
+            .prepare_observing(self.reader, self.bundle, &on_progress)?;
+        on_progress();
         let summary = prepared.summary();
         if summary.tribute_count != self.tribute_count {
             return Err(InputArtifactError::TributeCountMismatch {
@@ -536,6 +576,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             .publish_bytes(&manifest.encode_canonical(&self.limits)?)?;
         manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
         drop(prepared.seal(self.cas, &manifest_ref, self.bundle)?);
+        on_progress();
         Ok(PublishedStreamingInputArtifacts {
             manifest_ref,
             manifest_hash,

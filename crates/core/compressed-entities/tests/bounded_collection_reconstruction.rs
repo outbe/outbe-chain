@@ -5,6 +5,7 @@ use outbe_compressed_entities::{
     Commitment, TributePartitionExpectationV1, TributePartitionReconstructionError,
     TributePartitionWorkConfig,
 };
+use std::cell::Cell;
 use std::io::Write;
 
 fn commitment(value: u64) -> Commitment {
@@ -92,6 +93,25 @@ fn tiny_runs_and_fan_in_reconstruct_the_existing_root_in_any_input_order() {
         assert_eq!(verified.collection_root, expected_root);
         assert_eq!(verified.exact_leaf_count, 17);
     }
+}
+
+#[test]
+fn multipass_reconstruction_reports_progress_without_changing_its_result() {
+    let day = WorldwideDay::new(20_260_901);
+    let leaves = leaves(day, 17);
+    let directory = tempfile::tempdir().unwrap();
+    let mut verifier = verifier(&directory.path().join("observed"), day, &leaves, 2, 2);
+    for (entity_id, commitment) in &leaves {
+        verifier.push(*entity_id, *commitment).unwrap();
+    }
+    let progress = Cell::new(0_u64);
+
+    let verified = verifier
+        .finish_observing(|| progress.set(progress.get() + 1))
+        .unwrap();
+
+    assert_eq!(verified.collection_root, expected_root(day, &leaves));
+    assert!(progress.get() > u64::try_from(leaves.len()).unwrap());
 }
 
 #[test]

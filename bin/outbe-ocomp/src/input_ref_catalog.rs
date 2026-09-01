@@ -257,11 +257,21 @@ impl InputRefCatalogPublisher {
         reader: &FilesystemCasReader,
         bundle: &ProtocolBundleV1,
     ) -> Result<PreparedInputRefCatalogPublisher, InputRefCatalogError> {
+        self.prepare_observing(reader, bundle, || {})
+    }
+
+    pub fn prepare_observing(
+        self,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+        on_progress: impl Fn(),
+    ) -> Result<PreparedInputRefCatalogPublisher, InputRefCatalogError> {
         self.require_active()?;
         if bundle.protocol_bundle_hash(&self.limits)? != self.subject.protocol_bundle_hash {
             return Err(InputRefCatalogError::AuthorityMismatch);
         }
-        let (entry_count, _) = scan_staged_entries(&self.root, &self.limits)?;
+        let (entry_count, _) =
+            scan_staged_entries_observing(&self.root, &self.limits, &on_progress)?;
         if entry_count != self.next_ordinal {
             return Err(InputRefCatalogError::MissingReference {
                 ordinal: entry_count.min(self.next_ordinal),
@@ -301,6 +311,7 @@ impl InputRefCatalogPublisher {
                 )?;
             }
             verify_staged_reference(&reference, self.subject, reader, bundle, &self.limits)?;
+            on_progress();
         }
         let summary = InputRefCatalogSummaryV1 {
             input_chunk_count: self.next_ordinal,
@@ -519,9 +530,17 @@ impl VerifiedInputChunkRefCatalog {
     }
 
     pub fn exact_cursor(&self) -> Result<InputRefCursor<'_>, InputRefCatalogError> {
+        self.exact_cursor_observing(|| {})
+    }
+
+    pub fn exact_cursor_observing(
+        &self,
+        on_progress: impl Fn(),
+    ) -> Result<InputRefCursor<'_>, InputRefCatalogError> {
         self.require_active()?;
         for step in self.bounded_closure_cursor()? {
             let _ = step?;
+            on_progress();
         }
         Ok(InputRefCursor {
             catalog: self,
@@ -555,8 +574,17 @@ impl VerifiedInputChunkRefCatalog {
         reader: &'a FilesystemCasReader,
         bundle: &'a ProtocolBundleV1,
     ) -> Result<VerifiedInputRefCursor<'a>, InputRefCatalogError> {
+        self.exact_verified_cursor_observing(reader, bundle, || {})
+    }
+
+    pub fn exact_verified_cursor_observing<'a>(
+        &'a self,
+        reader: &'a FilesystemCasReader,
+        bundle: &'a ProtocolBundleV1,
+        on_progress: impl Fn(),
+    ) -> Result<VerifiedInputRefCursor<'a>, InputRefCatalogError> {
         Ok(VerifiedInputRefCursor {
-            inner: self.exact_cursor()?,
+            inner: self.exact_cursor_observing(on_progress)?,
             reader,
             bundle,
         })
@@ -972,6 +1000,14 @@ fn scan_staged_entries(
     root: &Path,
     limits: &SchemaLimits,
 ) -> Result<(u32, Option<InputChunkKind>), InputRefCatalogError> {
+    scan_staged_entries_observing(root, limits, &|| {})
+}
+
+fn scan_staged_entries_observing(
+    root: &Path,
+    limits: &SchemaLimits,
+    on_progress: &impl Fn(),
+) -> Result<(u32, Option<InputChunkKind>), InputRefCatalogError> {
     let entries =
         fs::read_dir(root).map_err(|source| io_error("list catalog directory", root, source))?;
     let mut count = 0_u32;
@@ -1004,6 +1040,7 @@ fn scan_staged_entries(
         count = count.checked_add(1).ok_or(ProtocolError::IntegerOverflow {
             what: "staged input-ref entry count",
         })?;
+        on_progress();
     }
     let mut previous_kind = None;
     for ordinal in 0..count {
@@ -1012,6 +1049,7 @@ fn scan_staged_entries(
             return Err(InputRefCatalogError::KindOrder { ordinal });
         }
         previous_kind = Some(reference.kind);
+        on_progress();
     }
     Ok((count, previous_kind))
 }

@@ -9059,6 +9059,7 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "metrics",
+ "metrics-exporter-prometheus",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",

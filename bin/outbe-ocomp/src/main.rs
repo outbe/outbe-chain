@@ -22,6 +22,7 @@ use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporter
 use outbe_ocomp::rpc_projection::RpcFinalizedProjectionV1;
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
+use outbe_ocomp::worker_observability::SnapshotExporterObservabilityServerV1;
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
@@ -297,6 +298,19 @@ fn worker_observability_address(
     Ok(SocketAddr::new(supervisor_address.ip(), port))
 }
 
+fn snapshot_exporter_observability_address(
+    supervisor_address: SocketAddr,
+) -> Result<SocketAddr, &'static str> {
+    // Two six-port Supervisor/transport/Worker lane windows are reserved for
+    // the active and staged-successor protocol bundles.
+    let offset = 12_u16;
+    let port = supervisor_address
+        .port()
+        .checked_add(offset)
+        .ok_or("snapshot exporter observability port overflow")?;
+    Ok(SocketAddr::new(supervisor_address.ip(), port))
+}
+
 fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
     let signer = OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.owner_uid)?;
@@ -306,6 +320,9 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
 
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
+    let observability = SnapshotExporterObservabilityServerV1::start(
+        snapshot_exporter_observability_address(runtime.supervisor_address)?,
+    )?;
     let limits = poc_schema_limits();
     let chain_id = required_env("OCOMP_CHAIN_ID")?.parse()?;
     let genesis_hash = required_env("OCOMP_GENESIS_HASH")?.parse()?;
@@ -334,6 +351,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
             )
         },
         |error| {
+            observability.startup_error(error.to_string());
             eprintln!("OCOMP snapshot exporter startup retry: {error}");
             std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
         },
@@ -391,26 +409,43 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         lanes.push((protocol_bundle_hash, discovery, exporter, None));
     }
     loop {
+        observability.begin_reconcile();
+        let mut cycle_failed = false;
+        let mut pending_jobs = 0_u64;
         for (bundle_hash, discovery, exporter, exported_job_id) in &mut lanes {
             if let Err(error) = discovery.reconcile_once() {
+                cycle_failed = true;
+                observability.discovery_error(error.to_string());
                 eprintln!("OCOMP snapshot exporter discovery retry for {bundle_hash}: {error}");
             }
             if let Some(record) = discovery.current_record() {
                 let job_id = record.spec.summary.job_id;
                 if *exported_job_id != Some(job_id) {
-                    match exporter.export(&record) {
+                    observability.exporting(bundle_hash.to_string(), job_id.to_string());
+                    match exporter.export_observing(&record, || observability.export_progress()) {
                         Ok(()) => {
                             eprintln!(
                                 "OCOMP snapshot exporter published finalized input for {job_id} using {bundle_hash}"
                             );
                             *exported_job_id = Some(job_id);
+                            observability.committed();
                         }
-                        Err(error) => eprintln!(
-                            "OCOMP snapshot exporter public input retry for {bundle_hash}: {error}"
-                        ),
+                        Err(error) => {
+                            cycle_failed = true;
+                            pending_jobs = pending_jobs.saturating_add(1);
+                            observability.export_error(error.to_string());
+                            eprintln!(
+                                "OCOMP snapshot exporter public input retry for {bundle_hash}: {error}"
+                            );
+                        }
                     }
                 }
             }
+        }
+        if cycle_failed {
+            observability.reconcile_failed(pending_jobs);
+        } else {
+            observability.reconcile_succeeded(pending_jobs);
         }
         std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
     }
@@ -623,6 +658,10 @@ mod tests {
             "127.0.0.1:30406".parse().unwrap()
         );
         assert!(worker_observability_address(supervisor, 4).is_err());
+        assert_eq!(
+            snapshot_exporter_observability_address(supervisor).unwrap(),
+            "127.0.0.1:30413".parse().unwrap()
+        );
     }
 
     #[test]

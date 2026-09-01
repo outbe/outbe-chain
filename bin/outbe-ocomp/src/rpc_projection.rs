@@ -120,6 +120,14 @@ impl RpcFinalizedProjectionV1 {
     }
 
     pub fn project_through(&mut self, finalized_height: u64) -> Result<u64, RpcProjectionErrorV1> {
+        self.project_through_observing(finalized_height, |_| {})
+    }
+
+    pub fn project_through_observing(
+        &mut self,
+        finalized_height: u64,
+        mut on_durable_block: impl FnMut(u64),
+    ) -> Result<u64, RpcProjectionErrorV1> {
         let mut next = match self.projection.state().checkpoint {
             Some(checkpoint) => checkpoint
                 .block_number
@@ -136,6 +144,7 @@ impl RpcFinalizedProjectionV1 {
             {
                 ProjectionOutcome::Applied { .. } | ProjectionOutcome::AlreadyApplied(_) => {}
             }
+            on_durable_block(next);
             next = next
                 .checked_add(1)
                 .ok_or(RpcProjectionErrorV1::HeightOverflow)?;

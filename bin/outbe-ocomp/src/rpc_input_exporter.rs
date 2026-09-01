@@ -35,7 +35,7 @@ use crate::{
     },
     input_artifacts::{
         decode_fidelity_subject_key, decode_oracle_subject_key, poc_input_list_limits,
-        validate_verified_input_manifest_semantics, DurableInputArtifactPublisher,
+        validate_verified_input_manifest_semantics_observing, DurableInputArtifactPublisher,
         InputArtifactError, InputArtifactIdentity,
     },
     input_inventory::{
@@ -50,6 +50,10 @@ use crate::{
     rpc_projection::{RpcFinalizedProjectionV1, RpcProjectionConfigV1, RpcProjectionErrorV1},
     supervisor::DiscoveryRecord,
 };
+
+// A progress heartbeat, not a capacity limit. The exporter still consumes all
+// records and keeps only its existing bounded publisher window in memory.
+const EXPORT_PROGRESS_RECORD_HEARTBEAT: u64 = 256;
 
 #[derive(Clone, Debug)]
 pub struct RpcInputExporterConfigV1 {
@@ -113,6 +117,15 @@ impl RpcInputExporterV1 {
     /// receipt. Existing receipts are cold-reloaded and accepted only after the
     /// normal manifest validation succeeds.
     pub fn export(&mut self, discovery: &DiscoveryRecord) -> Result<(), RpcInputExporterErrorV1> {
+        self.export_observing(discovery, || {})
+    }
+
+    pub fn export_observing(
+        &mut self,
+        discovery: &DiscoveryRecord,
+        on_progress: impl Fn(),
+    ) -> Result<(), RpcInputExporterErrorV1> {
+        on_progress();
         let job_id = discovery.spec.summary.job_id;
         let job_key = hex::encode(job_id.as_slice());
         let input_ref_catalog_root = self.config.input_ref_root.join(&job_key);
@@ -147,12 +160,13 @@ impl RpcInputExporterV1 {
                     catalog
                         .require_manifest_authority(&receipt.manifest_ref(), receipt.manifest())
                         .map_err(|error| stage("bind input-ref catalog to receipt", error))?;
-                    validate_verified_input_manifest_semantics(
+                    validate_verified_input_manifest_semantics_observing(
                         &catalog,
                         &self.reader,
                         self.config.protocol_bundle.bundle(),
                         receipt.manifest(),
                         &self.config.limits,
+                        &on_progress,
                     )
                     .map_err(|error| stage("verify replayed input semantics", error))?;
                     verify_replayed_finalized_inputs(
@@ -163,7 +177,9 @@ impl RpcInputExporterV1 {
                         &expected_input,
                         self.config.protocol_bundle.bundle(),
                         &self.config.limits,
+                        &on_progress,
                     )?;
+                    on_progress();
                     return Ok(());
                 }
                 Err(
@@ -185,7 +201,7 @@ impl RpcInputExporterV1 {
                 .install_retention_pin(&finalized)
                 .map_err(|error| stage("install Tribute retention pin", error))?;
             let projected = projection
-                .project_through(finalized.request.block_number)
+                .project_through_observing(finalized.request.block_number, |_| on_progress())
                 .map_err(|error| stage("project finalized receipts", error))?;
             if projected < finalized.request.block_number {
                 return Err(RpcInputExporterErrorV1::Authority("projection checkpoint"));
@@ -205,50 +221,60 @@ impl RpcInputExporterV1 {
             expected_nominal_total: finalized.intent.authenticated_day_nominal,
         };
         let inventory_root = work_root.join("inventory");
-        let inventory =
-            match SealedTributeInventory::open(&inventory_root, inventory_subject.clone()) {
-                Ok(inventory) => inventory,
-                Err(TributeInventoryError::Io { source, .. })
-                    if source.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    let mut builder = TributeInventoryBuilder::create(
-                        &inventory_root,
-                        inventory_subject,
-                        TributeInventoryWorkConfig::default(),
+        let inventory = match SealedTributeInventory::open_observing(
+            &inventory_root,
+            inventory_subject.clone(),
+            &on_progress,
+        ) {
+            Ok(inventory) => inventory,
+            Err(TributeInventoryError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                let mut builder = TributeInventoryBuilder::create(
+                    &inventory_root,
+                    inventory_subject,
+                    TributeInventoryWorkConfig::default(),
+                )
+                .map_err(|error| stage("create Tribute inventory", error))?;
+                let mut stream = tribute_source
+                    .reconstruction_stream(
+                        pin,
+                        finalized.intent.authenticated_day_count,
+                        finalized.intent.authenticated_day_nominal,
                     )
-                    .map_err(|error| stage("create Tribute inventory", error))?;
-                    let mut stream = tribute_source
-                        .reconstruction_stream(
-                            pin,
-                            finalized.intent.authenticated_day_count,
-                            finalized.intent.authenticated_day_nominal,
-                        )
-                        .map_err(|error| stage("open sealed Tribute stream", error))?;
-                    while let Some(record) = stream
-                        .next_record()
-                        .map_err(|error| stage("read sealed Tribute stream", error))?
-                    {
-                        builder
-                            .push(TributeInventoryRecordV1 {
-                                tribute_id: record.tribute_id,
-                                commitment: Commitment::try_from(record.commitment.0)
-                                    .map_err(|error| stage("decode Tribute commitment", error))?,
-                                owner: record.body.owner,
-                                reference_iso: record.body.reference_currency,
-                                nominal_amount_minor: record.body.nominal_amount_minor,
-                                canonical_body: record.canonical_body,
-                            })
-                            .map_err(|error| stage("spool Tribute inventory", error))?;
-                    }
-                    stream
-                        .finish()
-                        .map_err(|error| stage("close sealed Tribute stream", error))?;
+                    .map_err(|error| stage("open sealed Tribute stream", error))?;
+                let mut records_since_progress = 0_u64;
+                while let Some(record) = stream
+                    .next_record()
+                    .map_err(|error| stage("read sealed Tribute stream", error))?
+                {
                     builder
-                        .finish()
-                        .map_err(|error| stage("seal Tribute inventory", error))?
+                        .push(TributeInventoryRecordV1 {
+                            tribute_id: record.tribute_id,
+                            commitment: Commitment::try_from(record.commitment.0)
+                                .map_err(|error| stage("decode Tribute commitment", error))?,
+                            owner: record.body.owner,
+                            reference_iso: record.body.reference_currency,
+                            nominal_amount_minor: record.body.nominal_amount_minor,
+                            canonical_body: record.canonical_body,
+                        })
+                        .map_err(|error| stage("spool Tribute inventory", error))?;
+                    records_since_progress = records_since_progress.saturating_add(1);
+                    if records_since_progress == EXPORT_PROGRESS_RECORD_HEARTBEAT {
+                        on_progress();
+                        records_since_progress = 0;
+                    }
                 }
-                Err(error) => return Err(stage("reopen Tribute inventory", error)),
-            };
+                stream
+                    .finish()
+                    .map_err(|error| stage("close sealed Tribute stream", error))?;
+                builder
+                    .finish_observing(&on_progress)
+                    .map_err(|error| stage("seal Tribute inventory", error))?
+            }
+            Err(error) => return Err(stage("reopen Tribute inventory", error)),
+        };
+        on_progress();
         let mut publisher = DurableInputArtifactPublisher::open(
             &self.cas,
             &self.reader,
@@ -269,6 +295,7 @@ impl RpcInputExporterV1 {
         let mut bodies = inventory
             .tribute_bodies()
             .map_err(|error| stage("open Tribute body spool", error))?;
+        let mut bodies_since_progress = 0_u64;
         while let Some(body) = bodies
             .next_body(self.config.limits.max_bounded_bytes)
             .map_err(|error| stage("read Tribute body spool", error))?
@@ -276,6 +303,11 @@ impl RpcInputExporterV1 {
             publisher
                 .publish_tribute(body)
                 .map_err(|error| stage("publish Tribute input chunk", error))?;
+            bodies_since_progress = bodies_since_progress.saturating_add(1);
+            if bodies_since_progress == EXPORT_PROGRESS_RECORD_HEARTBEAT {
+                on_progress();
+                bodies_since_progress = 0;
+            }
         }
         publisher
             .finish_tributes()
@@ -298,6 +330,7 @@ impl RpcInputExporterV1 {
             .run(
                 &inventory,
                 |subjects| {
+                    on_progress();
                     let canonical_request = BuildLysisOpeningsV1 {
                         job_id,
                         subjects: subjects.clone(),
@@ -324,6 +357,7 @@ impl RpcInputExporterV1 {
                     };
                     verify_lysis_openings(&openings, &finalized, subjects, &self.config.limits)
                         .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    on_progress();
                     let materialized = materialize_authenticated_openings(
                         &openings,
                         self.config.protocol_bundle.bundle(),
@@ -333,6 +367,7 @@ impl RpcInputExporterV1 {
                     Ok(OpeningResolutionV1::Complete(Box::new(materialized)))
                 },
                 |subjects, fidelity, oracle| {
+                    on_progress();
                     verify_durable_lysis_openings(
                         fidelity,
                         oracle,
@@ -343,19 +378,21 @@ impl RpcInputExporterV1 {
                     )
                 },
                 |opening| {
+                    on_progress();
                     publisher
                         .publish_fidelity_opening(opening)
                         .map_err(OpeningStageError::from)
                 },
             )
             .map_err(|error| stage("acquire and publish Lysis openings", error))?;
+        on_progress();
         publisher
             .publish_oracle_opening(opening_report.oracle)
             .map_err(|error| stage("publish Oracle opening", error))?;
         let mut fidelity_cursor =
             opening_stage.fidelity_cursor(opening_report.fidelity_opening_count);
         let published = publisher
-            .finish(
+            .finish_observing(
                 finalized.intent.authenticated_day_count,
                 finalized.intent.authenticated_day_nominal,
                 opening_report.fidelity_opening_count,
@@ -364,6 +401,7 @@ impl RpcInputExporterV1 {
                         .next_opening()
                         .map_err(|error| InputArtifactError::OpeningSource(error.to_string()))
                 },
+                &on_progress,
             )
             .map_err(|error| stage("seal input artifacts", error))?;
         if published.tribute_count != finalized.intent.authenticated_day_count
@@ -413,6 +451,7 @@ impl RpcInputExporterV1 {
         receipt_store
             .record_committed(&self.cas, &self.reader, &prepared, &committed)
             .map_err(|error| stage("commit input receipt", error))?;
+        on_progress();
         Ok(())
     }
 }
@@ -507,6 +546,7 @@ fn verify_replayed_finalized_inputs(
     expected: &ExpectedInputAuthorityV1,
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
+    on_progress: &impl Fn(),
 ) -> Result<(), RpcInputExporterErrorV1> {
     let subject = TributeInventorySubjectV1 {
         protocol_bundle_hash: expected.protocol_bundle_hash,
@@ -519,62 +559,67 @@ fn verify_replayed_finalized_inputs(
         expected_nominal_total: expected.tribute_nominal_total,
     };
     let inventory_root = work_root.join("inventory");
-    let inventory = match SealedTributeInventory::open(&inventory_root, subject.clone()) {
-        Ok(inventory) => inventory,
-        Err(TributeInventoryError::Io { source, .. })
-            if source.kind() == std::io::ErrorKind::NotFound =>
+    let inventory =
+        match SealedTributeInventory::open_observing(&inventory_root, subject.clone(), on_progress)
         {
-            let mut builder = TributeInventoryBuilder::create(
-                &inventory_root,
-                subject,
-                TributeInventoryWorkConfig::default(),
-            )
-            .map_err(|error| stage("create replay Tribute inventory", error))?;
-            for verified in catalog
-                .exact_verified_cursor(reader, bundle)
-                .map_err(|error| stage("open replay input catalog", error))?
+            Ok(inventory) => inventory,
+            Err(TributeInventoryError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
             {
-                let verified =
-                    verified.map_err(|error| stage("read replay input catalog", error))?;
-                if verified.reference.kind != InputChunkKind::Tribute {
-                    continue;
+                let mut builder = TributeInventoryBuilder::create(
+                    &inventory_root,
+                    subject,
+                    TributeInventoryWorkConfig::default(),
+                )
+                .map_err(|error| stage("create replay Tribute inventory", error))?;
+                for verified in catalog
+                    .exact_verified_cursor_observing(reader, bundle, on_progress)
+                    .map_err(|error| stage("open replay input catalog", error))?
+                {
+                    let verified =
+                        verified.map_err(|error| stage("read replay input catalog", error))?;
+                    on_progress();
+                    if verified.reference.kind != InputChunkKind::Tribute {
+                        continue;
+                    }
+                    for canonical in verified.chunk.canonical_records_or_openings {
+                        let body = outbe_compressed_entities::decode_tribute_v1(&canonical.0)
+                            .map_err(|error| stage("decode replay Tribute", error))?;
+                        let commitment = body_commitment(
+                            ACTIVE_COMMITMENT_SCHEME,
+                            BODY_SCHEMA_V1,
+                            body.tribute_id,
+                            &canonical.0,
+                        )
+                        .map_err(|error| stage("commit replay Tribute", error))?;
+                        builder
+                            .push(TributeInventoryRecordV1 {
+                                tribute_id: body.tribute_id,
+                                commitment,
+                                owner: body.owner,
+                                reference_iso: body.reference_currency,
+                                nominal_amount_minor: body.nominal_amount_minor,
+                                canonical_body: canonical.0,
+                            })
+                            .map_err(|error| stage("spool replay Tribute inventory", error))?;
+                        on_progress();
+                    }
                 }
-                for canonical in verified.chunk.canonical_records_or_openings {
-                    let body = outbe_compressed_entities::decode_tribute_v1(&canonical.0)
-                        .map_err(|error| stage("decode replay Tribute", error))?;
-                    let commitment = body_commitment(
-                        ACTIVE_COMMITMENT_SCHEME,
-                        BODY_SCHEMA_V1,
-                        body.tribute_id,
-                        &canonical.0,
-                    )
-                    .map_err(|error| stage("commit replay Tribute", error))?;
-                    builder
-                        .push(TributeInventoryRecordV1 {
-                            tribute_id: body.tribute_id,
-                            commitment,
-                            owner: body.owner,
-                            reference_iso: body.reference_currency,
-                            nominal_amount_minor: body.nominal_amount_minor,
-                            canonical_body: canonical.0,
-                        })
-                        .map_err(|error| stage("spool replay Tribute inventory", error))?;
-                }
+                builder
+                    .finish_observing(on_progress)
+                    .map_err(|error| stage("seal replay Tribute inventory", error))?
             }
-            builder
-                .finish()
-                .map_err(|error| stage("seal replay Tribute inventory", error))?
-        }
-        Err(error) => return Err(stage("reopen replay Tribute inventory", error)),
-    };
+            Err(error) => return Err(stage("reopen replay Tribute inventory", error)),
+        };
 
     let reference_isos = inventory.reference_isos();
     let mut oracle = None;
     for verified in catalog
-        .exact_verified_cursor(reader, bundle)
+        .exact_verified_cursor_observing(reader, bundle, on_progress)
         .map_err(|error| stage("open replay Oracle catalog", error))?
     {
         let verified = verified.map_err(|error| stage("read replay Oracle catalog", error))?;
+        on_progress();
         if verified.reference.kind != InputChunkKind::Oracle {
             continue;
         }
@@ -613,10 +658,11 @@ fn verify_replayed_finalized_inputs(
     let mut expected_owners = Vec::new();
     let mut expected_owner_index = 0_usize;
     for verified in catalog
-        .exact_verified_cursor(reader, bundle)
+        .exact_verified_cursor_observing(reader, bundle, on_progress)
         .map_err(|error| stage("open replay Fidelity catalog", error))?
     {
         let verified = verified.map_err(|error| stage("read replay Fidelity catalog", error))?;
+        on_progress();
         if verified.reference.kind != InputChunkKind::Fidelity {
             continue;
         }
@@ -648,6 +694,7 @@ fn verify_replayed_finalized_inputs(
                 ));
             }
             expected_owner_index += 1;
+            on_progress();
         }
         verify_durable_lysis_openings(
             &fidelity,

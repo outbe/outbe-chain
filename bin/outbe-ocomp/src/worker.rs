@@ -375,12 +375,14 @@ async fn run_registered_message_channel(
                             registry_generation: registration.registry_generation,
                         },
                     ).await?;
+                    observability.cancelled();
                     observability.idle(
                         registration.worker_id.clone(),
                         registration.registry_generation,
                     );
                     continue;
                 }
+                let finished_status = result.finished.status;
                 let finished_body = result.finished.encode_body(&limits)?;
                 send_worker_event(
                     &mut sender,
@@ -394,6 +396,7 @@ async fn run_registered_message_channel(
                         registry_generation: registration.registry_generation,
                     },
                 ).await?;
+                observability.completed(finished_status);
                 observability.idle(
                     registration.worker_id.clone(),
                     registration.registry_generation,
@@ -411,6 +414,7 @@ async fn run_registered_message_channel(
                     },
                 };
                 send_worker_event(&mut sender, &event).await?;
+                observability.touch();
             }
         }
     }

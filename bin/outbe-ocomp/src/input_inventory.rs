@@ -42,6 +42,8 @@ const OWNER_BYTES: usize = 20;
 const ISO_BITMAP_BYTES: usize = 8_192;
 const RUN_HEADER_BYTES: u64 = 16;
 const BODY_HEADER_BYTES: u64 = 20;
+// Work heartbeat cadence only; it does not cap the inventory population.
+const INVENTORY_PROGRESS_RECORD_HEARTBEAT: u64 = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeInventorySubjectV1 {
@@ -267,7 +269,14 @@ impl TributeInventoryBuilder {
         }
     }
 
-    pub fn finish(mut self) -> Result<SealedTributeInventory, TributeInventoryError> {
+    pub fn finish(self) -> Result<SealedTributeInventory, TributeInventoryError> {
+        self.finish_observing(|| {})
+    }
+
+    pub fn finish_observing(
+        mut self,
+        on_progress: impl Fn(),
+    ) -> Result<SealedTributeInventory, TributeInventoryError> {
         if self.tribute_count != self.subject.expected_tribute_count {
             return Err(TributeInventoryError::CountMismatch {
                 expected: self.subject.expected_tribute_count,
@@ -296,21 +305,23 @@ impl TributeInventoryBuilder {
         self.root_verifier
             .take()
             .expect("root verifier exists until inventory finish")
-            .finish()?;
+            .finish_observing(&on_progress)?;
         let body_summary = self
             .body_writer
             .take()
             .expect("body writer exists until inventory finish")
             .finish()?;
         self.flush_owner_run()?;
-        let final_run = self.merge_owner_runs()?;
+        on_progress();
+        let final_run = self.merge_owner_runs(&on_progress)?;
         let owners_tmp = self.root.join(format!("{OWNERS_FILE}.tmp"));
-        let unique_owner_count = install_owner_file(final_run.as_deref(), &owners_tmp)?;
-        let owner_file_digest = digest_file(&owners_tmp)?;
+        let unique_owner_count =
+            install_owner_file(final_run.as_deref(), &owners_tmp, &on_progress)?;
+        let owner_file_digest = digest_file_observing(&owners_tmp, &on_progress)?;
         let bodies_tmp = self.root.join(format!("{BODIES_FILE}.tmp"));
         fs::rename(self.build_root.join(BODIES_FILE), &bodies_tmp)
             .map_err(|source| io_error("stage Tribute body spool", &bodies_tmp, source))?;
-        let body_file_digest = digest_file(&bodies_tmp)?;
+        let body_file_digest = digest_file_observing(&bodies_tmp, &on_progress)?;
         let isos_tmp = self.root.join(format!("{ISOS_FILE}.tmp"));
         persist_new(&isos_tmp, &self.iso_bitmap[..])?;
         let iso_bitmap_digest = B256::from_slice(&Keccak256::digest(&self.iso_bitmap[..]));
@@ -336,6 +347,7 @@ impl TributeInventoryBuilder {
         )?;
         remove_owned_build_directory(&self.build_root)?;
         sync_directory(&self.root)?;
+        on_progress();
         Ok(SealedTributeInventory {
             root: self.root,
             header,
@@ -364,7 +376,10 @@ impl TributeInventoryBuilder {
         Ok(())
     }
 
-    fn merge_owner_runs(&self) -> Result<Option<PathBuf>, TributeInventoryError> {
+    fn merge_owner_runs(
+        &self,
+        on_progress: &impl Fn(),
+    ) -> Result<Option<PathBuf>, TributeInventoryError> {
         if self.run_count == 0 {
             return Ok(None);
         }
@@ -395,6 +410,7 @@ impl TributeInventoryBuilder {
                     end,
                     output_pass,
                     output_index,
+                    on_progress,
                 )?;
             }
             for index in 0..run_count {
@@ -403,6 +419,7 @@ impl TributeInventoryBuilder {
                     .map_err(|source| io_error("remove merged owner run", &path, source))?;
             }
             sync_directory(&self.build_root)?;
+            on_progress();
             pass = output_pass;
             run_count = next_count;
         }
@@ -415,6 +432,14 @@ impl SealedTributeInventory {
         root: impl AsRef<Path>,
         expected_subject: TributeInventorySubjectV1,
     ) -> Result<Self, TributeInventoryError> {
+        Self::open_observing(root, expected_subject, || {})
+    }
+
+    pub fn open_observing(
+        root: impl AsRef<Path>,
+        expected_subject: TributeInventorySubjectV1,
+        on_progress: impl Fn(),
+    ) -> Result<Self, TributeInventoryError> {
         let root = root.as_ref().to_path_buf();
         inspect_private_directory(&root)?;
         let lock = InventoryLock::acquire(&root)?;
@@ -422,18 +447,24 @@ impl SealedTributeInventory {
         if header.subject != expected_subject {
             return Err(TributeInventoryError::Authority("inventory subject"));
         }
-        let owner_digest = digest_file(&root.join(OWNERS_FILE))?;
+        let owner_digest = digest_file_observing(&root.join(OWNERS_FILE), &on_progress)?;
         if owner_digest != header.owner_file_digest {
             return Err(TributeInventoryError::Corrupt("owner inventory digest"));
         }
-        verify_owner_file(&root.join(OWNERS_FILE), header.unique_owner_count)?;
-        if digest_file(&root.join(BODIES_FILE))? != header.body_file_digest {
+        verify_owner_file(
+            &root.join(OWNERS_FILE),
+            header.unique_owner_count,
+            &on_progress,
+        )?;
+        if digest_file_observing(&root.join(BODIES_FILE), &on_progress)? != header.body_file_digest
+        {
             return Err(TributeInventoryError::Corrupt("Tribute body spool digest"));
         }
         verify_body_spool(
             &root.join(BODIES_FILE),
             expected_subject.expected_tribute_count,
             header.exact_body_bytes,
+            &on_progress,
         )?;
         let iso_bytes = read_exact_file(&root.join(ISOS_FILE), ISO_BITMAP_BYTES)?;
         let mut isos = Box::new([0_u8; ISO_BITMAP_BYTES]);
@@ -740,6 +771,7 @@ fn merge_run_group(
     end: u64,
     output_pass: u32,
     output_index: u64,
+    on_progress: &impl Fn(),
 ) -> Result<(), TributeInventoryError> {
     let mut readers = Vec::with_capacity(
         usize::try_from(end - start).map_err(|_| TributeInventoryError::IntegerOverflow)?,
@@ -758,6 +790,7 @@ fn merge_run_group(
     }
     let mut writer = OwnerRunWriter::create(run_path(root, output_pass, output_index))?;
     let mut previous = None;
+    let mut records_since_progress = 0_u64;
     while let Some(Reverse(item)) = heap.pop() {
         if previous != Some(item.owner) {
             writer.write(item.owner)?;
@@ -769,6 +802,11 @@ fn merge_run_group(
                 reader_index: item.reader_index,
             }));
         }
+        records_since_progress = records_since_progress.saturating_add(1);
+        if records_since_progress == INVENTORY_PROGRESS_RECORD_HEARTBEAT {
+            on_progress();
+            records_since_progress = 0;
+        }
     }
     writer.finish()?;
     Ok(())
@@ -777,6 +815,7 @@ fn merge_run_group(
 fn install_owner_file(
     final_run: Option<&Path>,
     destination: &Path,
+    on_progress: &impl Fn(),
 ) -> Result<u64, TributeInventoryError> {
     if let Some(source) = final_run {
         let mut input = open_regular_readonly(source)?;
@@ -791,8 +830,19 @@ fn install_owner_file(
             .write_all(&RUN_MAGIC)
             .and_then(|()| output.write_all(&count.to_be_bytes()))
             .map_err(|source| io_error("write owner inventory header", destination, source))?;
-        std::io::copy(&mut input, &mut output)
-            .map_err(|source| io_error("copy owner inventory", destination, source))?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = input
+                .read(&mut buffer)
+                .map_err(|source| io_error("read owner inventory", destination, source))?;
+            if read == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..read])
+                .map_err(|source| io_error("copy owner inventory", destination, source))?;
+            on_progress();
+        }
         output
             .sync_all()
             .map_err(|source| io_error("fsync owner inventory", destination, source))?;
@@ -802,10 +852,15 @@ fn install_owner_file(
     }
 }
 
-fn verify_owner_file(path: &Path, expected_count: u64) -> Result<(), TributeInventoryError> {
+fn verify_owner_file(
+    path: &Path,
+    expected_count: u64,
+    on_progress: &impl Fn(),
+) -> Result<(), TributeInventoryError> {
     let mut reader = OwnerRunReader::open(path.to_path_buf())?;
     let mut count = 0_u64;
     let mut previous = None;
+    let mut records_since_progress = 0_u64;
     while let Some(owner) = reader.next()? {
         if previous.is_some_and(|candidate| candidate >= owner) {
             return Err(TributeInventoryError::Corrupt("owner inventory order"));
@@ -814,6 +869,11 @@ fn verify_owner_file(path: &Path, expected_count: u64) -> Result<(), TributeInve
         count = count
             .checked_add(1)
             .ok_or(TributeInventoryError::IntegerOverflow)?;
+        records_since_progress = records_since_progress.saturating_add(1);
+        if records_since_progress == INVENTORY_PROGRESS_RECORD_HEARTBEAT {
+            on_progress();
+            records_since_progress = 0;
+        }
     }
     if count != expected_count {
         return Err(TributeInventoryError::Corrupt("owner inventory count"));
@@ -965,6 +1025,7 @@ fn verify_body_spool(
     path: &Path,
     expected_count: u32,
     expected_body_bytes: u64,
+    on_progress: &impl Fn(),
 ) -> Result<(), TributeInventoryError> {
     let mut file = open_regular_readonly(path)?;
     let (count, exact_body_bytes) = read_body_header(&mut file, path)?;
@@ -972,7 +1033,7 @@ fn verify_body_spool(
         return Err(TributeInventoryError::Corrupt("Tribute body spool header"));
     }
     let mut observed_body_bytes = 0_u64;
-    for _ in 0..count {
+    for index in 0..count {
         let mut length = [0_u8; 4];
         file.read_exact(&mut length)
             .map_err(|source| io_error("read Tribute body length", path, source))?;
@@ -985,6 +1046,9 @@ fn verify_body_spool(
             .ok_or(TributeInventoryError::IntegerOverflow)?;
         file.seek(SeekFrom::Current(i64::from(length)))
             .map_err(|source| io_error("scan Tribute body spool", path, source))?;
+        if u64::from(index + 1) % INVENTORY_PROGRESS_RECORD_HEARTBEAT == 0 {
+            on_progress();
+        }
     }
     let position = file
         .stream_position()
@@ -1006,7 +1070,10 @@ fn read_owner(file: &mut File) -> Result<Address, TributeInventoryError> {
     Ok(Address::from(bytes))
 }
 
-fn digest_file(path: &Path) -> Result<B256, TributeInventoryError> {
+fn digest_file_observing(
+    path: &Path,
+    on_progress: &impl Fn(),
+) -> Result<B256, TributeInventoryError> {
     let mut file = open_regular_readonly(path)?;
     let mut hasher = Keccak256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -1018,6 +1085,7 @@ fn digest_file(path: &Path) -> Result<B256, TributeInventoryError> {
             break;
         }
         hasher.update(&buffer[..read]);
+        on_progress();
     }
     Ok(B256::from_slice(&hasher.finalize()))
 }

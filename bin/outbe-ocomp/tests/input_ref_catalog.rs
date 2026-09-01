@@ -1,5 +1,6 @@
 mod support;
 
+use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
@@ -281,14 +282,16 @@ fn exact_input_refs_survive_cold_restart_under_the_manifest_authority() {
         fixture.list_limits,
     )
     .unwrap();
+    let progress = Cell::new(0_u64);
     assert_eq!(
         catalog
-            .exact_cursor()
+            .exact_cursor_observing(|| progress.set(progress.get() + 1))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap(),
         fixture.references
     );
+    assert!(progress.get() > 0);
 }
 
 #[test]

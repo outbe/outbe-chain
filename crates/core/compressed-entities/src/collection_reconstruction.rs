@@ -169,8 +169,13 @@ impl BoundedTributePartitionVerifier {
         }
     }
 
-    pub fn finish(
+    pub fn finish(self) -> Result<VerifiedTributePartition, TributePartitionReconstructionError> {
+        self.finish_observing(|| {})
+    }
+
+    pub fn finish_observing(
         mut self,
+        on_progress: impl Fn(),
     ) -> Result<VerifiedTributePartition, TributePartitionReconstructionError> {
         if self.pushed_count != self.expectation.exact_leaf_count {
             return Err(TributePartitionReconstructionError::CountMismatch {
@@ -179,8 +184,9 @@ impl BoundedTributePartitionVerifier {
             });
         }
         self.flush_run()?;
-        let final_run = self.merge_runs()?;
-        let root = self.reduce_sorted_run(final_run.as_deref())?;
+        on_progress();
+        let final_run = self.merge_runs(&on_progress)?;
+        let root = self.reduce_sorted_run(final_run.as_deref(), &on_progress)?;
         if root != self.expectation.expected_collection_root {
             return Err(TributePartitionReconstructionError::RootMismatch {
                 expected: self.expectation.expected_collection_root,
@@ -221,7 +227,10 @@ impl BoundedTributePartitionVerifier {
         Ok(())
     }
 
-    fn merge_runs(&self) -> Result<Option<PathBuf>, TributePartitionReconstructionError> {
+    fn merge_runs(
+        &self,
+        on_progress: &impl Fn(),
+    ) -> Result<Option<PathBuf>, TributePartitionReconstructionError> {
         if self.run_count == 0 {
             return Ok(None);
         }
@@ -245,7 +254,7 @@ impl BoundedTributePartitionVerifier {
                     .checked_add(fan_in)
                     .ok_or(TributePartitionReconstructionError::IntegerOverflow)?
                     .min(run_count);
-                self.merge_run_group(pass, start, end, output_pass, output_index)?;
+                self.merge_run_group(pass, start, end, output_pass, output_index, on_progress)?;
             }
             for input_index in 0..run_count {
                 let path = run_path(&self.scratch_root, pass, input_index);
@@ -253,6 +262,7 @@ impl BoundedTributePartitionVerifier {
                     .map_err(|source| io_error("remove merged run", &path, source))?;
             }
             sync_directory(&self.scratch_root)?;
+            on_progress();
             pass = output_pass;
             run_count = next_count;
         }
@@ -266,6 +276,7 @@ impl BoundedTributePartitionVerifier {
         end: u64,
         output_pass: u32,
         output_index: u64,
+        on_progress: &impl Fn(),
     ) -> Result<(), TributePartitionReconstructionError> {
         let reader_count = usize::try_from(end - start)
             .map_err(|_| TributePartitionReconstructionError::IntegerOverflow)?;
@@ -291,6 +302,7 @@ impl BoundedTributePartitionVerifier {
         }
         while let Some(item) = heap.pop() {
             writer.write(item.record)?;
+            on_progress();
             if let Some(record) = readers[item.reader_index].next_record()? {
                 heap.push(HeapItem {
                     record,
@@ -307,6 +319,7 @@ impl BoundedTributePartitionVerifier {
     fn reduce_sorted_run(
         &self,
         run: Option<&Path>,
+        on_progress: &impl Fn(),
     ) -> Result<B256, TributePartitionReconstructionError> {
         let mut roots = vec![B256::ZERO; CeDomain::Tribute.shard_count() as usize];
         if let Some(path) = run {
@@ -342,6 +355,7 @@ impl BoundedTributePartitionVerifier {
                         map_tree(error)
                     }
                 })?;
+                on_progress();
             }
             if let Some(shard) = current_shard {
                 roots[usize::try_from(shard)
