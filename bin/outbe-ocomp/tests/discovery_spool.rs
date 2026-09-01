@@ -315,6 +315,184 @@ fn acknowledged_history_is_absent_from_the_durable_pending_index() {
 }
 
 #[test]
+fn retirement_waits_for_the_durable_closure_checkpoint_then_removes_history() {
+    let temp = TempDir::new().expect("tempdir");
+    let spool = spool(&temp);
+    let job = spec(0x45, 7);
+    let (offer, _) = spool.put_offer(7, &job).expect("offer");
+    let receipt = verified_receipt(&job, 7, 0x85);
+    spool
+        .put_ack(&offer, &receipt, &support::protocol_bundle())
+        .expect("ack");
+
+    assert_eq!(
+        spool
+            .prepare_retirement(&offer, 10)
+            .expect("prepare retirement"),
+        PutOutcomeV1::Inserted
+    );
+    assert_eq!(
+        spool
+            .prepare_retirement(&offer, 12)
+            .expect("duplicate retirement"),
+        PutOutcomeV1::ExactDuplicate
+    );
+    let waiting = spool
+        .complete_retirements_through(9)
+        .expect("checkpoint before authority");
+    assert_eq!(waiting.waiting_for_checkpoint, 1);
+    assert!(spool
+        .ack(&offer.observation_id)
+        .expect("ack remains before closure")
+        .is_some());
+
+    let completed = spool
+        .complete_retirements_through(10)
+        .expect("authorized retirement");
+    assert_eq!(completed.completed, 1);
+    for directory in ["offers", "acks", "pending", "retirements"] {
+        assert_eq!(
+            fs::read_dir(temp.path().join("discovery").join(directory))
+                .expect("retirement directory")
+                .count(),
+            0,
+            "{directory} retains closed discovery history"
+        );
+    }
+    assert!(spool
+        .ack(&offer.observation_id)
+        .expect("retired ACK lookup")
+        .is_none());
+}
+
+#[test]
+fn prepared_retirement_survives_restart_and_late_ack() {
+    let temp = TempDir::new().expect("tempdir");
+    let job = spec(0x46, 8);
+    let first = spool(&temp);
+    let (offer, _) = first.put_offer(8, &job).expect("offer");
+    first
+        .prepare_retirement(&offer, 20)
+        .expect("prepare before checkpoint");
+    drop(first);
+
+    let reopened = spool(&temp);
+    let waiting = reopened
+        .complete_retirements_through(19)
+        .expect("restart before checkpoint");
+    assert_eq!(waiting.waiting_for_checkpoint, 1);
+    assert!(reopened
+        .pending(&offer.observation_id)
+        .expect("offer remains pending")
+        .is_some());
+
+    let receipt = verified_receipt(&job, 8, 0x86);
+    reopened
+        .put_ack(&offer, &receipt, &support::protocol_bundle())
+        .expect("late ACK before checkpoint advance");
+    let completed = reopened
+        .complete_retirements_through(20)
+        .expect("restart completion");
+    assert_eq!(completed.completed, 1);
+    assert_eq!(completed.waiting_for_checkpoint, 0);
+}
+
+#[test]
+fn retirement_recovers_after_each_unlink_crash_cut() {
+    for cut in ["after_ack", "after_offer"] {
+        let temp = TempDir::new().expect("tempdir");
+        let first = spool(&temp);
+        let job = spec(0x47, 9);
+        let (offer, _) = first.put_offer(9, &job).expect("offer");
+        let receipt = verified_receipt(&job, 9, 0x87);
+        first
+            .put_ack(&offer, &receipt, &support::protocol_bundle())
+            .expect("ack");
+        first
+            .prepare_retirement(&offer, 30)
+            .expect("prepare retirement");
+        let encoded = hex::encode(offer.observation_id.as_slice());
+        fs::remove_file(
+            temp.path()
+                .join("discovery/acks")
+                .join(format!("{encoded}.ack")),
+        )
+        .expect("simulate crash after ACK unlink");
+        if cut == "after_offer" {
+            fs::remove_file(
+                temp.path()
+                    .join("discovery/offers")
+                    .join(format!("{encoded}.offer")),
+            )
+            .expect("simulate crash after offer unlink");
+        }
+        drop(first);
+
+        let reopened = spool(&temp);
+        let completed = reopened
+            .complete_retirements_through(30)
+            .expect("complete partial retirement");
+        assert_eq!(completed.completed, 1, "crash cut {cut}");
+        assert_eq!(
+            fs::read_dir(temp.path().join("discovery/retirements"))
+                .expect("retirement directory")
+                .count(),
+            0,
+            "crash cut {cut} retained its intent"
+        );
+    }
+}
+
+#[test]
+fn closed_unacknowledged_offer_and_pending_marker_are_retired_together() {
+    let temp = TempDir::new().expect("tempdir");
+    let spool = spool(&temp);
+    let job = spec(0x48, 10);
+    let (offer, _) = spool.put_offer(10, &job).expect("offer");
+    spool
+        .prepare_retirement(&offer, 40)
+        .expect("prepare retirement");
+    let completed = spool
+        .complete_retirements_through(40)
+        .expect("retire unacknowledged offer");
+    assert_eq!(completed.completed, 1);
+    assert_eq!(spool.pending_count().expect("pending count"), 0);
+    assert!(!spool.offer_path(&offer.observation_id).exists());
+}
+
+#[test]
+fn unacknowledged_retirement_recovers_after_pending_unlink() {
+    let temp = TempDir::new().expect("tempdir");
+    let first = spool(&temp);
+    let job = spec(0x49, 11);
+    let (offer, _) = first.put_offer(11, &job).expect("offer");
+    first
+        .prepare_retirement(&offer, 41)
+        .expect("prepare retirement");
+    let encoded = hex::encode(offer.observation_id.as_slice());
+    fs::remove_file(
+        temp.path()
+            .join("discovery/pending")
+            .join(format!("{encoded}.pending")),
+    )
+    .expect("simulate crash after pending unlink");
+    drop(first);
+
+    let reopened = spool(&temp);
+    let completed = reopened
+        .complete_retirements_through(41)
+        .expect("complete partial unacknowledged retirement");
+    assert_eq!(completed.completed, 1);
+    assert!(!reopened.offer_path(&offer.observation_id).exists());
+    assert_eq!(
+        fs::read_dir(temp.path().join("discovery/retirements"))
+            .expect("retirement directory")
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn substituted_spec_generation_and_identity_latch_quarantine() {
     for conflict in ["spec", "generation", "identity"] {
         let temp = TempDir::new().expect("tempdir");

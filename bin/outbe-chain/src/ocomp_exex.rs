@@ -37,7 +37,7 @@ use outbe_ocomp::payout_submitter::PayoutTickOutcomeV1;
 use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
     discovery_control::DiscoveryOfferRefV1,
-    discovery_spool::{ContiguousCheckpointStoreV1, DiscoverySpoolV1},
+    discovery_spool::{ContiguousCheckpointStoreV1, DiscoverySpoolV1, RetirementReportV1},
     discovery_transport::DiscoveryOfferClientV1,
     embedded::{
         EmbeddedJobActionV1, EmbeddedJobEventV1, EmbeddedJobGenerationV1, EmbeddedJobStateV1,
@@ -297,6 +297,14 @@ fn pending_offer_notifications(
     pending.values().cloned().collect()
 }
 
+fn record_discovery_retirement_report(report: RetirementReportV1) {
+    if report.completed != 0 {
+        counter!("outbe_ocomp_discovery_spool_retired_total").increment(report.completed);
+    }
+    gauge!("outbe_ocomp_discovery_spool_retirement_intents")
+        .set(report.waiting_for_checkpoint as f64);
+}
+
 struct EmbeddedOcompExExV1<P> {
     provider: P,
     policy: EmbeddedNodePolicyV1,
@@ -450,6 +458,17 @@ where
             bail!("unified OCOMP closure exists before the durable projection checkpoint");
         }
     }
+    let mut startup_retirements = RetirementReportV1::default();
+    for spool in discovery_spools.values() {
+        let report = spool.complete_retirements_through(closed.block_number)?;
+        startup_retirements.completed = startup_retirements
+            .completed
+            .saturating_add(report.completed);
+        startup_retirements.waiting_for_checkpoint = startup_retirements
+            .waiting_for_checkpoint
+            .saturating_add(report.waiting_for_checkpoint);
+    }
+    record_discovery_retirement_report(startup_retirements);
     let frame_source = RethFinalizedFrameSource::new(provider.clone());
     let mode = match config.policy {
         EmbeddedNodePolicyV1::Validator => EmbeddedOcompModeV1::Validator,
@@ -1241,13 +1260,58 @@ where
                 locator.before_request
             });
         if target.block_number <= current.block_number {
+            self.prepare_closed_discovery_retirements(current.block_number)?;
+            self.complete_discovery_retirements(current.block_number)?;
             self.prune_closed_requests_through(current.block_number);
             return Ok(None);
         }
+        self.prepare_closed_discovery_retirements(target.block_number)?;
+        self.complete_discovery_retirements(current.block_number)?;
         self.closure_checkpoint
             .compare_and_advance_to(current, target)?;
+        self.complete_discovery_retirements(target.block_number)?;
         self.prune_closed_requests_through(target.block_number);
         Ok(Some(target))
+    }
+
+    fn prepare_closed_discovery_retirements(&self, closed_height: u64) -> eyre::Result<()> {
+        for (intent_id, locator) in &self.requests {
+            if locator.block_number > closed_height || !self.request_is_closed(*intent_id) {
+                continue;
+            }
+            let Some(job_id) = self.intent_jobs.get(intent_id) else {
+                continue;
+            };
+            let job = self.jobs.get(job_id).ok_or_else(|| {
+                eyre::eyre!("closed OCOMP job disappeared before spool retirement")
+            })?;
+            let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
+            let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
+                eyre::eyre!("closed OCOMP job references an unknown discovery spool")
+            })?;
+            let reference = DiscoveryOfferRefV1::from_spec(
+                self.chain_id,
+                self.genesis_hash,
+                job.record.generation,
+                &job.record.spec,
+                &poc_schema_limits(),
+            )?;
+            spool.prepare_retirement(&reference, closed_height)?;
+        }
+        Ok(())
+    }
+
+    fn complete_discovery_retirements(&self, closed_height: u64) -> eyre::Result<()> {
+        let mut aggregate = RetirementReportV1::default();
+        for spool in self.discovery_spools.values() {
+            let report = spool.complete_retirements_through(closed_height)?;
+            aggregate.completed = aggregate.completed.saturating_add(report.completed);
+            aggregate.waiting_for_checkpoint = aggregate
+                .waiting_for_checkpoint
+                .saturating_add(report.waiting_for_checkpoint);
+        }
+        record_discovery_retirement_report(aggregate);
+        Ok(())
     }
 
     fn prune_closed_requests_through(&mut self, closed_height: u64) {

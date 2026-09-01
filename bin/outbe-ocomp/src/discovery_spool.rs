@@ -33,16 +33,19 @@ const OFFER_SUFFIX: &str = ".offer";
 const ACK_SUFFIX: &str = ".ack";
 const PENDING_SUFFIX: &str = ".pending";
 const QUARANTINE_SUFFIX: &str = ".quarantine";
+const RETIREMENT_SUFFIX: &str = ".retirement";
 const OFFER_RECORD_MAGIC: [u8; 8] = *b"OUTBDSO1";
 const ACK_RECORD_MAGIC: [u8; 8] = *b"OUTBDSA2";
 const PENDING_RECORD_MAGIC: [u8; 8] = *b"OUTBDSP1";
 const QUARANTINE_MAGIC: [u8; 8] = *b"OUTBDSQ1";
+const RETIREMENT_MAGIC: [u8; 8] = *b"OUTBDSR1";
 const CHECKPOINT_MAGIC: [u8; 8] = *b"OUTBDCP1";
 const RECORD_VERSION: u16 = 1;
 const CHECKPOINT_FILE: &str = "checkpoint.v1";
 const CHECKPOINT_TEMP: &str = "checkpoint.v1.tmp";
 const CHECKPOINT_LOCK: &str = ".lock";
 const CHECKPOINT_FIXED_BYTES: usize = 8 + 2 + (8 + 32) * 3 + 32;
+const RETIREMENT_FIXED_BYTES: usize = 8 + 2 + 8 + DiscoveryOfferRefV1::FIXED_BYTES + 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PutOutcomeV1 {
@@ -64,6 +67,18 @@ pub struct StoredDiscoveryAckV1 {
     pub manifest_hash: B256,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetirementReportV1 {
+    pub completed: u64,
+    pub waiting_for_checkpoint: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RetirementIntentV1 {
+    closed_through: u64,
+    reference: DiscoveryOfferRefV1,
+}
+
 #[derive(Clone)]
 pub struct DiscoverySpoolV1 {
     root: PathBuf,
@@ -71,6 +86,7 @@ pub struct DiscoverySpoolV1 {
     acks: PathBuf,
     pending: PathBuf,
     quarantine: PathBuf,
+    retirements: PathBuf,
     chain_id: u64,
     genesis_hash: B256,
     limits: SchemaLimits,
@@ -92,16 +108,19 @@ impl DiscoverySpoolV1 {
         let acks = root.join("acks");
         let pending = root.join("pending");
         let quarantine = root.join("quarantine");
+        let retirements = root.join("retirements");
         create_private_directory(&offers)?;
         create_private_directory(&acks)?;
         create_private_directory(&pending)?;
         create_private_directory(&quarantine)?;
+        create_private_directory(&retirements)?;
         let spool = Self {
             root,
             offers,
             acks,
             pending,
             quarantine,
+            retirements,
             chain_id,
             genesis_hash,
             limits,
@@ -111,6 +130,7 @@ impl DiscoverySpoolV1 {
         recover_crash_temps(&spool.acks)?;
         recover_crash_temps(&spool.pending)?;
         recover_crash_temps(&spool.quarantine)?;
+        recover_crash_temps(&spool.retirements)?;
         Ok(spool)
     }
 
@@ -302,6 +322,150 @@ impl DiscoverySpoolV1 {
         regular_file_exists(&self.quarantine_path(observation))
     }
 
+    /// Durably records that one discovery record may be removed after the
+    /// closure checkpoint reaches `closed_through`. The intent is written
+    /// before the checkpoint advances, so every crash cut has enough authority
+    /// to either retain the record or finish removing it after restart.
+    pub fn prepare_retirement(
+        &self,
+        reference: &DiscoveryOfferRefV1,
+        closed_through: u64,
+    ) -> Result<PutOutcomeV1, DiscoverySpoolError> {
+        if closed_through == 0
+            || reference.chain_id != self.chain_id
+            || reference.genesis_hash != self.genesis_hash
+        {
+            return Err(DiscoverySpoolError::InvalidRetirement);
+        }
+        reference.validate()?;
+        let _lock = FileLock::acquire(&self.root, LOCK_FILE)?;
+        self.require_not_quarantined(reference.observation_id)?;
+        let intent_path = self.retirement_path(&reference.observation_id);
+        if regular_file_exists(&intent_path)? {
+            let stored = self.read_retirement_at(&intent_path)?;
+            if stored.reference == *reference {
+                return Ok(PutOutcomeV1::ExactDuplicate);
+            }
+            return self.latch_conflict(reference.observation_id, "retirement replay");
+        }
+
+        let offer_path = self.offer_path(&reference.observation_id);
+        if !regular_file_exists(&offer_path)? {
+            if regular_file_exists(&self.ack_path(&reference.observation_id))?
+                || regular_file_exists(&self.pending_path(&reference.observation_id))?
+            {
+                return Err(DiscoverySpoolError::MissingOffer(reference.observation_id));
+            }
+            return Ok(PutOutcomeV1::ExactDuplicate);
+        }
+        let offer = self.read_offer_at(&offer_path)?;
+        if offer.reference != *reference {
+            return self.latch_conflict(reference.observation_id, "retirement authority");
+        }
+        let ack_path = self.ack_path(&reference.observation_id);
+        if regular_file_exists(&ack_path)? {
+            self.read_ack_for_offer(&ack_path, &offer)?;
+        }
+        let encoded = encode_retirement_intent(&RetirementIntentV1 {
+            closed_through,
+            reference: reference.clone(),
+        });
+        persist_immutable_atomic(&self.retirements, &intent_path, &encoded)?;
+        Ok(PutOutcomeV1::Inserted)
+    }
+
+    /// Completes every prepared retirement authorized by the durable closure
+    /// checkpoint. Records prepared for a later checkpoint remain untouched.
+    pub fn complete_retirements_through(
+        &self,
+        closed_height: u64,
+    ) -> Result<RetirementReportV1, DiscoverySpoolError> {
+        let _lock = FileLock::acquire(&self.root, LOCK_FILE)?;
+        let entries = fs::read_dir(&self.retirements).map_err(|source| {
+            io_error(
+                "list discovery retirement intents",
+                &self.retirements,
+                source,
+            )
+        })?;
+        let mut report = RetirementReportV1::default();
+        for entry in entries {
+            let entry = entry.map_err(|source| {
+                io_error(
+                    "read discovery retirement intent",
+                    &self.retirements,
+                    source,
+                )
+            })?;
+            let path = entry.path();
+            let Some(observation) = parse_record_name(&path, RETIREMENT_SUFFIX) else {
+                return Err(DiscoverySpoolError::UnexpectedEntry(path));
+            };
+            let intent = self.read_retirement_at(&path)?;
+            if intent.reference.observation_id != observation {
+                return Err(DiscoverySpoolError::CorruptRecord { path });
+            }
+            if intent.closed_through > closed_height {
+                report.waiting_for_checkpoint = report
+                    .waiting_for_checkpoint
+                    .checked_add(1)
+                    .ok_or(DiscoverySpoolError::Overflow)?;
+                continue;
+            }
+            self.require_not_quarantined(observation)?;
+            let offer_path = self.offer_path(&observation);
+            let ack_path = self.ack_path(&observation);
+            let pending_path = self.pending_path(&observation);
+            let offer = if regular_file_exists(&offer_path)? {
+                let offer = self.read_offer_at(&offer_path)?;
+                if offer.reference != intent.reference {
+                    return self.latch_conflict(observation, "retirement completion authority");
+                }
+                Some(offer)
+            } else {
+                None
+            };
+
+            if regular_file_exists(&ack_path)? {
+                let offer = offer
+                    .as_ref()
+                    .ok_or(DiscoverySpoolError::MissingOffer(observation))?;
+                self.read_ack_for_offer(&ack_path, offer)?;
+            }
+            if regular_file_exists(&pending_path)? {
+                let encoded = read_bounded_private_file(
+                    &pending_path,
+                    PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes(),
+                )?;
+                if encoded != encode_pending_marker(observation) {
+                    return Err(DiscoverySpoolError::CorruptRecord { path: pending_path });
+                }
+            }
+            if offer.is_none() && regular_file_exists(&pending_path)? {
+                return Err(DiscoverySpoolError::MissingOffer(observation));
+            }
+
+            remove_private_file_if_present(&self.acks, &ack_path, "remove retired ACK")?;
+            remove_private_file_if_present(
+                &self.pending,
+                &pending_path,
+                "remove retired pending marker",
+            )?;
+            remove_private_file_if_present(&self.offers, &offer_path, "remove retired offer")?;
+            remove_private_file_if_present(
+                &self.retirements,
+                &path,
+                "remove completed retirement intent",
+            )?;
+
+            report.completed = report
+                .completed
+                .checked_add(1)
+                .ok_or(DiscoverySpoolError::Overflow)?;
+        }
+        Ok(report)
+    }
+
     #[must_use]
     pub fn offer_path(&self, observation: &B256) -> PathBuf {
         self.offers
@@ -326,6 +490,25 @@ impl DiscoverySpoolV1 {
     fn pending_path(&self, observation: &B256) -> PathBuf {
         self.pending
             .join(format!("{}{PENDING_SUFFIX}", hex_id(observation)))
+    }
+
+    fn retirement_path(&self, observation: &B256) -> PathBuf {
+        self.retirements
+            .join(format!("{}{RETIREMENT_SUFFIX}", hex_id(observation)))
+    }
+
+    fn read_retirement_at(&self, path: &Path) -> Result<RetirementIntentV1, DiscoverySpoolError> {
+        let intent =
+            decode_retirement_intent(&read_bounded_private_file(path, RETIREMENT_FIXED_BYTES)?)?;
+        if intent.reference.chain_id != self.chain_id
+            || intent.reference.genesis_hash != self.genesis_hash
+            || intent.closed_through == 0
+        {
+            return Err(DiscoverySpoolError::CorruptRecord {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(intent)
     }
 
     fn pending_unlocked(
@@ -525,6 +708,37 @@ fn verified_receipt_matches_offer(
         && manifest.tribute_nominal_total == intent.authenticated_day_nominal
         && manifest.body_codec_id == bundle.tribute_body_codec_id
         && manifest.opening_codec_registry_hash == bundle.opening_codec_registry_hash()?)
+}
+
+fn encode_retirement_intent(intent: &RetirementIntentV1) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(RETIREMENT_FIXED_BYTES);
+    encoded.extend_from_slice(&RETIREMENT_MAGIC);
+    encoded.extend_from_slice(&RECORD_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&intent.closed_through.to_be_bytes());
+    encoded.extend_from_slice(&intent.reference.encode_fixed());
+    let checksum = keccak256(&encoded);
+    encoded.extend_from_slice(checksum.as_slice());
+    encoded
+}
+
+fn decode_retirement_intent(encoded: &[u8]) -> Result<RetirementIntentV1, DiscoverySpoolError> {
+    if encoded.len() != RETIREMENT_FIXED_BYTES || encoded[..8] != RETIREMENT_MAGIC {
+        return Err(DiscoverySpoolError::MalformedRecord {
+            path: PathBuf::new(),
+        });
+    }
+    if read_u16(encoded, 8)? != RECORD_VERSION {
+        return Err(DiscoverySpoolError::MalformedRecord {
+            path: PathBuf::new(),
+        });
+    }
+    verify_record_checksum(encoded)?;
+    Ok(RetirementIntentV1 {
+        closed_through: read_u64(encoded, 10)?,
+        reference: DiscoveryOfferRefV1::decode_fixed(
+            &encoded[18..18 + DiscoveryOfferRefV1::FIXED_BYTES],
+        )?,
+    })
 }
 
 pub struct DiscoveryPendingCursorV1 {
@@ -1036,6 +1250,18 @@ fn regular_file_exists(path: &Path) -> Result<bool, DiscoverySpoolError> {
     }
 }
 
+fn remove_private_file_if_present(
+    root: &Path,
+    path: &Path,
+    operation: &'static str,
+) -> Result<(), DiscoverySpoolError> {
+    if !regular_file_exists(path)? {
+        return Ok(());
+    }
+    fs::remove_file(path).map_err(|source| io_error(operation, path, source))?;
+    sync_directory(root)
+}
+
 fn inspect_private_file(path: &Path) -> Result<(), DiscoverySpoolError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|source| io_error("inspect private file", path, source))?;
@@ -1217,6 +1443,8 @@ pub enum DiscoverySpoolError {
     MissingOffer(B256),
     #[error("integer overflow")]
     Overflow,
+    #[error("invalid discovery retirement authority")]
+    InvalidRetirement,
     #[error("invalid projection checkpoint")]
     InvalidCheckpoint,
     #[error("malformed projection checkpoint")]
