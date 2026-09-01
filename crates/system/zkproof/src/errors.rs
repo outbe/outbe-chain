@@ -1,4 +1,5 @@
 use outbe_primitives::error::PrecompileError;
+use outbe_protocol::protocol::zkproof::ProofMarshalingError;
 
 use crate::constants::MAX_INPUTS;
 
@@ -32,12 +33,39 @@ pub enum ZkProofError {
     InvalidEmitChainId,
     #[error("zk_verify: emit owner word exceeds the 160-bit address bound")]
     InvalidEmitOwnerField,
-    #[error("zk_verify: emit mint units word is not a right-aligned uint128")]
-    InvalidEmitMintUnits,
+    #[error("zk_verify: emit mint limb {0} is outside its canonical range")]
+    InvalidEmitMintLimb(usize),
     #[error("zk verifier CRS initialization failed: {0}")]
     CrsInitialization(String),
     #[error("zk verification backend failed: {0}")]
     VerificationBackend(String),
+}
+
+impl From<ProofMarshalingError> for ZkProofError {
+    fn from(error: ProofMarshalingError) -> Self {
+        match error {
+            ProofMarshalingError::InputTooShort(actual) => Self::InputTooShort(actual),
+            ProofMarshalingError::MalformedAbi(message) => Self::MalformedAbi(message),
+            ProofMarshalingError::CombinedProofTooShort(actual) => {
+                Self::CombinedProofTooShort(actual)
+            }
+            ProofMarshalingError::WrongPublicInputCount { expected, actual } => {
+                Self::WrongPublicInputCount { expected, actual }
+            }
+            ProofMarshalingError::TruncatedPublicInputs { expected, actual } => {
+                Self::TruncatedPublicInputs { expected, actual }
+            }
+            ProofMarshalingError::NonCanonicalPublicInput(index) => {
+                Self::NonCanonicalPublicInput(index)
+            }
+            ProofMarshalingError::WrongCombinedProofLength { expected, actual } => {
+                Self::WrongCombinedProofLength { expected, actual }
+            }
+            ProofMarshalingError::InvalidEmitChainId => Self::InvalidEmitChainId,
+            ProofMarshalingError::InvalidEmitOwner => Self::InvalidEmitOwnerField,
+            ProofMarshalingError::InvalidEmitMintLimb(index) => Self::InvalidEmitMintLimb(index),
+        }
+    }
 }
 
 impl From<ZkProofError> for PrecompileError {

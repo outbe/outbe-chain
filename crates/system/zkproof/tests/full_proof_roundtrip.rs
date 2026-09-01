@@ -3,14 +3,12 @@ use ark_ff::UniformRand;
 use outbe_protocol::error::Error;
 use outbe_protocol::primitive::signature::SignatureScheme;
 use outbe_protocol::protocol::entity::{Entity, Owned};
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
+use outbe_tee::zk_claim::tribute_binding;
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
 
 struct TestTributeDraft {
@@ -52,18 +50,16 @@ fn generated_pinned_full_proof_verifies_through_chain_seam() {
     let (secret, public_key) = <OutbeV1 as Suite>::Signature::keypair(&mut rng);
     let nonce = Fr::rand(&mut rng);
     let owner = OutbeV1::derive_owner(&public_key, nonce).unwrap();
-    let binding = OutbeV1::binding(&[1; 20], &[2; 32], 19_280_501).unwrap();
+    let binding = tribute_binding(&[1; 20], &[2; 32], 19_280_501).unwrap();
     let draft = TestTributeDraft {
         id: Fr::from(11u64),
         owner,
         fields: vec![Fr::from(20_250_115u64), Fr::from(840u64), Fr::from(100u64)],
     };
     let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-    let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
-    let path = tree.empty_inclusion_path(0);
-    let (witness, public) = draft
-        .derive_full_witness(&mut rng, &signer, binding, &path)
-        .unwrap();
+    let (witness, public) =
+        outbe_zkproof::derive_single_leaf_full_proof_witness(&draft, &mut rng, &signer, binding)
+            .unwrap();
     let proof =
         ProofGenerator::<OutbeV1, FullProof>::generate(&Barretenberg::default(), &witness, &public)
             .unwrap();

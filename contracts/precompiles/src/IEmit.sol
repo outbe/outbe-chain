@@ -8,8 +8,8 @@ interface IEmit {
     /// Burn native COEN into a private note. The commitment is derived from
     /// the runtime chain ID, `noteSn`, and the caller-supplied value; the note
     /// itself (owner, spend key) is chosen off-chain and proven later at mint.
-    /// `msg.value` must be a positive amount fitting `uint128` (native base
-    /// units, 1:1 with circuit units). Initializes the tree on the first call.
+    /// `msg.value` must be positive. Native base units map 1:1 to the
+    /// circuit's full-width uint256 amount.
     function burn(bytes32 noteSn) external payable;
 
     /// Redeem a private note: prove membership under an accepted root,
@@ -19,7 +19,7 @@ interface IEmit {
     /// embedded proof statement must equal the explicit calldata fields, and
     /// `chainId` must equal the runtime chain ID. `proof` is the combined
     /// UltraHonkKeccak wire for the frozen Emit mint circuit
-    /// (`outbe.emit.mint`, version 1.4.1), enforced at its exact frozen
+    /// (`outbe.emit.mint`, version 1.5.0), enforced at its exact frozen
     /// length.
     function mint(
         address payoutRecipient,
@@ -27,7 +27,7 @@ interface IEmit {
         bytes32 root,
         bytes32 nullifier,
         address noteOwner,
-        uint128 mintUnits,
+        uint256 mintUnits,
         bytes32 changeCommitment,
         bytes calldata proof
     ) external;
@@ -38,7 +38,7 @@ interface IEmit {
     /// @param rootAfter Tree root after the append.
     /// @param noteAmount Burned public amount; `0` is the sentinel for a
     ///        partial mint's change note, whose remaining value is private.
-    event NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint128 noteAmount);
+    event NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 noteAmount);
 
     /// @notice A note was spent via mint.
     /// @param noteOwner Owner proven by the mint proof (indexed).
@@ -46,6 +46,6 @@ interface IEmit {
     /// @param nullifier The spent nullifier (indexed).
     /// @param mintAmount Credited native base units.
     event NoteUsed(
-        address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint128 mintAmount
+        address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint256 mintAmount
     );
 }

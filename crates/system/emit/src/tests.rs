@@ -16,6 +16,7 @@ use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+use outbe_zk_canonical::u256;
 
 use crate::hash::{
     address_field, change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
@@ -71,7 +72,7 @@ fn selectors_and_gas_are_pinned() {
     );
     assert_eq!(
         alloy_primitives::hex::encode(IEmit::mintCall::SELECTOR),
-        "4b58fae4"
+        "1ef9010d"
     );
     assert_eq!(PAYABLE_SELECTORS, &[IEmit::burnCall::SELECTOR]);
     assert_eq!(
@@ -85,7 +86,7 @@ fn selectors_and_gas_are_pinned() {
         root: B256::ZERO,
         nullifier: B256::ZERO,
         noteOwner: BOB,
-        mintUnits: 1,
+        mintUnits: U256::ONE,
         changeCommitment: B256::ZERO,
         proof: Bytes::new(),
     }
@@ -101,11 +102,11 @@ fn formulas_match_pinned_circuit_vector() {
     let owner = [0x22u8; 20];
     let key = Field::from(17u64);
     let serial = derive_note_sn(owner, key);
-    let commitment = note_commitment(chain_id, serial, 100);
+    let commitment = note_commitment(chain_id, serial, U256::from(100));
     let n = derive_nullifier(commitment, key);
     let next_key = change_key(key, n);
     let next_serial = derive_note_sn(owner, next_key);
-    let change = note_commitment(chain_id, next_serial, 60);
+    let change = note_commitment(chain_id, next_serial, U256::from(60));
     let next_n = derive_nullifier(change, next_key);
 
     let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH);
@@ -121,31 +122,31 @@ fn formulas_match_pinned_circuit_vector() {
         ),
         (
             commitment,
-            "0x05385d6c092d5782cbb10feccf6df7640cc939fd3038b1c520b2ff333b83e253",
+            "0x2908a2b4b3d801f4937fa62a77cfdb2c1653fc95f3ccdde6f2c25303241556a6",
         ),
         (
             n,
-            "0x0313e99f04e2379d755effaf8779c759ab95f7eaecaef242d9848910f6ac0341",
+            "0x1c291f2dda40b80a655cfa18702cf9518993df0c27e864e2ad81809b1d395a33",
         ),
         (
             next_key,
-            "0x13a21f3e5b2f165925e2e45c7c99f1d6b1234b1a05977a17d3fa3400f07b089d",
+            "0x1cfd27606ce2303a242c5ab395c981e3efad9658384972c98082ad08ae4d6df6",
         ),
         (
             next_serial,
-            "0x0412d75e9e1db9af5a0b448f2cb18e6ee775d4a1fa4913997c3df4f4284d33f1",
+            "0x2632987ca79080b3430ba9f04e4b14032473c0871494e9689a32da0679d94143",
         ),
         (
             change,
-            "0x079ee35ff7fc49b9b94fe998b5364dc4ada312e6bf8366bf02e99b7804a1fff5",
+            "0x077056529800880c562feca3846bbb34831a16e781aeffce294ec183558efb64",
         ),
         (
             next_n,
-            "0x28932366274f124353ec30f7f417645c4ce2577a265460a6c54aa4c71346ccdd",
+            "0x197a0b51419905416c762add627f880dcce358fe120682112f1fca2c6a30f8b1",
         ),
         (
             root,
-            "0x088f9b2d8926e4e2516c0ffe30953a1b83009f66b4e7fdf8ba6582ea7e2c51db",
+            "0x286ae1be8815c6c04b6b33e7aafefd79b28f5d5642128242129dfb8aab3fc3a6",
         ),
     ];
     for (actual, expected) in cases {
@@ -242,33 +243,53 @@ fn prove_mint(
     root_leaf_count: usize,
     mint_units: u128,
 ) -> Vec<u8> {
+    prove_mint_u256(
+        tree,
+        owner,
+        key,
+        U256::from(note_amount),
+        leaf_index,
+        root_leaf_count,
+        U256::from(mint_units),
+    )
+}
+
+fn prove_mint_u256(
+    tree: &ReferenceTree,
+    owner: Address,
+    key: Field,
+    note_amount: U256,
+    leaf_index: u32,
+    root_leaf_count: usize,
+    mint_units: U256,
+) -> Vec<u8> {
     let serial = derive_note_sn(owner.into(), key);
     let commitment = note_commitment(CHAIN_ID, serial, note_amount);
     let nullifier = derive_nullifier(commitment, key);
-    let remaining = note_amount - mint_units;
-    let change = if remaining > 0 {
+    let remaining = note_amount.checked_sub(mint_units).expect("mint fits note");
+    let change = if remaining.is_zero() {
+        Field::from(0u64)
+    } else {
         let next_key = change_key(key, nullifier);
         note_commitment(CHAIN_ID, derive_note_sn(owner.into(), next_key), remaining)
-    } else {
-        Field::from(0u64)
     };
     let public = PublicInputs {
         chain_id: CHAIN_ID,
         root: tree.root_at(root_leaf_count),
         nullifier,
         note_owner: address_field(owner.into()),
-        mint_units,
+        mint_units: u256::to_limbs(mint_units),
         change_commitment: change,
     };
     let witness = Witness {
-        note_amount,
+        note_amount: u256::to_limbs(note_amount),
         note_spend_key: key,
         leaf_index,
         auth_path: tree.path_at(leaf_index),
     };
-    let backend = Barretenberg::default();
-    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
-        .expect("emit mint proof generation");
+    let proof =
+        ProofGenerator::<OutbeV1, EmitMint>::generate(&Barretenberg::default(), &witness, &public)
+            .expect("emit mint proof generation");
     combined_from(&public, &proof.proof)
 }
 
@@ -284,17 +305,17 @@ fn fabricated_statement(
     change: B256,
 ) -> Vec<u8> {
     let mut combined = Vec::with_capacity(outbe_zkproof::EMIT_MINT_COMBINED_LEN);
-    combined.extend_from_slice(&6u32.to_be_bytes());
+    combined.extend_from_slice(&8u32.to_be_bytes());
     combined.extend_from_slice(&u64_word(chain_id));
     for word in [root, nullifier] {
         combined.extend_from_slice(word.as_slice());
     }
-    // The owner word is one field: the 20 address bytes, big-endian, in the
-    // low 160 bits.
     let mut owner_word = [0u8; 32];
     owner_word[12..].copy_from_slice(owner.0.as_slice());
     combined.extend_from_slice(&owner_word);
-    combined.extend_from_slice(&u128_word(units));
+    for limb in u256::to_limbs(U256::from(units)) {
+        combined.extend_from_slice(&u128_word(limb));
+    }
     combined.extend_from_slice(change.as_slice());
     // Pad the proof tail to the frozen circuit's exact combined length so
     // the blob passes decoder framing and the guard under test is what fires.
@@ -317,6 +338,29 @@ fn mint_calldata(
     nullifier: B256,
     owner: Address,
     units: u128,
+    change: B256,
+    proof: &[u8],
+) -> Vec<u8> {
+    mint_calldata_u256(
+        payout,
+        chain_id,
+        root,
+        nullifier,
+        owner,
+        U256::from(units),
+        change,
+        proof,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mint_calldata_u256(
+    payout: Address,
+    chain_id: u64,
+    root: B256,
+    nullifier: B256,
+    owner: Address,
+    units: U256,
     change: B256,
     proof: &[u8],
 ) -> Vec<u8> {
@@ -346,10 +390,19 @@ fn run_burn(
     value: u128,
     note_sn: B256,
 ) -> Result<(), PrecompileError> {
+    run_burn_u256(provider, caller, U256::from(value), note_sn)
+}
+
+fn run_burn_u256(
+    provider: &mut HashMapStorageProvider,
+    caller: Address,
+    value: U256,
+    note_sn: B256,
+) -> Result<(), PrecompileError> {
     provider.enter(|storage| {
-        storage.increase_balance(EMIT_ADDRESS, U256::from(value))?;
+        storage.increase_balance(EMIT_ADDRESS, value)?;
         let data = burn_calldata(note_sn);
-        dispatch(storage, &data, caller, U256::from(value)).map(|_| ())
+        dispatch(storage, &data, caller, value).map(|_| ())
     })
 }
 
@@ -381,7 +434,7 @@ fn dispatch_mint(
 fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
-    let commitment = note_commitment(CHAIN_ID, serial, 100);
+    let commitment = note_commitment(CHAIN_ID, serial, U256::from(100));
     let mut reference = ReferenceTree::new(CHAIN_ID);
     reference.append(commitment);
 
@@ -406,23 +459,27 @@ fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
 }
 
 #[test]
+fn burn_accepts_full_width_u256_amount() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let serial = scenario_serial();
+    let amount = (U256::from(1) << 200) + U256::from(7);
+    let commitment = note_commitment(CHAIN_ID, serial, amount);
+
+    run_burn_u256(&mut provider, ALICE, amount, b256(serial)).unwrap();
+
+    let note = IEmit::NewNote::decode_log_data(&provider.get_events(EMIT_ADDRESS)[0]).unwrap();
+    assert_eq!(note.commitment, b256(commitment));
+    assert_eq!(note.noteAmount, amount);
+    assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
+}
+
+#[test]
 fn burn_guards_revert_with_frozen_texts() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enter(|storage| {
         let data = burn_calldata(b256(scenario_serial()));
         let result = dispatch(storage, &data, ALICE, U256::ZERO).map(|_| ());
         assert_revert(result, "Emit burn value must be non-zero");
-    });
-    provider.enter(|storage| {
-        let data = burn_calldata(b256(scenario_serial()));
-        let result = dispatch(
-            storage,
-            &data,
-            ALICE,
-            U256::from(u128::MAX) + U256::from(1u64),
-        )
-        .map(|_| ());
-        assert_revert(result, "Emit burn value exceeds uint128");
     });
     let modulus = B256::new(alloy_primitives::hex!(
         "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
@@ -575,7 +632,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(CHAIN_ID);
-    let leaf = tree.append(note_commitment(CHAIN_ID, serial, 100));
+    let leaf = tree.append(note_commitment(CHAIN_ID, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
 
     // Every pre-verification guard passes on this real proof — the statement
@@ -584,14 +641,14 @@ fn malformed_proof_tail_reverts_never_fatal() {
     // modulus. The backend rejects it with an Err, which must surface as a
     // user revert, never a fatal verifier error (an attacker controls every
     // byte of this tail).
-    let nullifier = derive_nullifier(note_commitment(CHAIN_ID, serial, 100), key);
+    let nullifier = derive_nullifier(note_commitment(CHAIN_ID, serial, U256::from(100)), key);
     let change = note_commitment(
         CHAIN_ID,
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
-        60,
+        U256::from(60),
     );
     let mut proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
-    let tail = &mut proof[4 + 6 * 32..];
+    let tail = &mut proof[4 + 8 * 32..];
     tail[..32].copy_from_slice(&alloy_primitives::hex!(
         "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
     ));
@@ -850,15 +907,15 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     // Burn.
     let serial = scenario_serial();
     let mut tree = ReferenceTree::new(pool);
-    let note_leaf = tree.append(note_commitment(pool, serial, 100));
+    let note_leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
     let root_after_burn = tree.root_at(1);
 
     // Partial mint of 40 to Carol.
     let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let next_key = change_key(key, nullifier);
-    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), 60);
+    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), U256::from(60));
     let change_leaf = tree.append(change);
     let root_after_change = tree.root_at(2);
 
@@ -952,32 +1009,29 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     });
 }
 
-/// The u128 amount cutover end to end: a note above the u64 range burns,
-/// partially mints an above-u64 payout, and fully mints the remainder —
-/// through the real dispatch, decoder, and 1.4.1 proofs.
+/// Full uint256 cutover end to end: burn, partially mint, append change, and
+/// fully mint the remainder with values above the old uint128 ceiling.
 #[test]
-fn amounts_above_the_u64_range_mint_end_to_end() {
+fn amounts_above_the_u128_range_mint_end_to_end() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let note = (1u128 << 80) + 100;
-    let minted = (1u128 << 80) + 40;
-    let remainder = 60u128;
+    let note = (U256::from(1) << 200) + U256::from(100);
+    let minted = (U256::from(1) << 199) + U256::from(40);
+    let remainder = note - minted;
 
-    // Burn the full above-u64 note.
     let mut tree = ReferenceTree::new(CHAIN_ID);
     let note_leaf = tree.append(note_commitment(CHAIN_ID, serial, note));
-    run_burn(&mut provider, ALICE, note, b256(serial)).unwrap();
+    run_burn_u256(&mut provider, ALICE, note, b256(serial)).unwrap();
     let root_after_burn = tree.root_at(1);
 
-    // Partial mint of an above-u64 payout to Carol.
     let commitment = note_commitment(CHAIN_ID, serial, note);
     let nullifier = derive_nullifier(commitment, key);
     let next_key = change_key(key, nullifier);
     let change = note_commitment(CHAIN_ID, derive_note_sn(BOB.into(), next_key), remainder);
-    let partial = prove_mint(&tree, BOB, key, note, note_leaf, 1, minted);
-    let data = mint_calldata(
+    let partial = prove_mint_u256(&tree, BOB, key, note, note_leaf, 1, minted);
+    let data = mint_calldata_u256(
         CAROL,
         CHAIN_ID,
         b256(root_after_burn),
@@ -988,13 +1042,12 @@ fn amounts_above_the_u64_range_mint_end_to_end() {
         &partial,
     );
     dispatch_mint(&mut provider, BOB, &data).unwrap();
-    assert_eq!(provider.get_balance(CAROL), U256::from(minted));
+    assert_eq!(provider.get_balance(CAROL), minted);
 
-    // Full mint of the u64-sized remainder from the change note.
     let change_leaf = tree.append(change);
     let next_nullifier = derive_nullifier(change, next_key);
-    let full = prove_mint(&tree, BOB, next_key, remainder, change_leaf, 2, remainder);
-    let data = mint_calldata(
+    let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, 2, remainder);
+    let data = mint_calldata_u256(
         DAVE,
         CHAIN_ID,
         b256(tree.root_at(2)),
@@ -1006,10 +1059,10 @@ fn amounts_above_the_u64_range_mint_end_to_end() {
     );
     dispatch_mint(&mut provider, BOB, &data).unwrap();
 
-    assert_eq!(provider.get_balance(DAVE), U256::from(remainder));
+    assert_eq!(provider.get_balance(DAVE), remainder);
     assert_eq!(
         provider.get_balance(CAROL) + provider.get_balance(DAVE),
-        U256::from(note)
+        note
     );
     assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
 }
@@ -1022,18 +1075,21 @@ fn stale_root_past_the_32_window_is_rejected() {
     let mut tree = ReferenceTree::new(pool);
 
     let serial = scenario_serial();
-    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
     let old_root = tree.root_at(1);
     let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), Field::from(17u64));
+    let nullifier = derive_nullifier(
+        note_commitment(pool, serial, U256::from(100)),
+        Field::from(17u64),
+    );
     let next_key = change_key(Field::from(17u64), nullifier);
-    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), 60);
+    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), U256::from(60));
 
     // 32 further appends evict the burn root from the window.
     for index in 0..32u64 {
         let sn = Field::from(1_000u64 + index);
-        tree.append(note_commitment(pool, sn, 1));
+        tree.append(note_commitment(pool, sn, U256::from(1)));
         run_burn(&mut provider, ALICE, 1, b256(sn)).unwrap();
     }
     provider.enter(|storage| {
@@ -1067,14 +1123,14 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
-    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
     let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
-        60,
+        U256::from(60),
     );
 
     provider.set_balance(CAROL, U256::MAX);
@@ -1119,13 +1175,16 @@ fn full_tree_rejects_burns_and_partial_mints() {
     // real proof because the capacity guard for change runs after
     // verification.
     let mut tree = ReferenceTree::new(pool);
-    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), Field::from(17u64));
+    let nullifier = derive_nullifier(
+        note_commitment(pool, serial, U256::from(100)),
+        Field::from(17u64),
+    );
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(Field::from(17u64), nullifier)),
-        60,
+        U256::from(60),
     );
     let data = mint_calldata(
         CAROL,
@@ -1155,12 +1214,12 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
 
-    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let next_key = change_key(key, nullifier);
     let next_serial = derive_note_sn(BOB.into(), next_key);
-    let change = note_commitment(pool, next_serial, 60);
+    let change = note_commitment(pool, next_serial, U256::from(60));
 
     // Anyone pre-creates the deterministic change commitment by burning the
     // successor serial with the matching amount.
@@ -1196,8 +1255,8 @@ fn chains_derive_separate_commitments_and_roots_without_stored_configuration() {
     let chain_id_b = OTHER_CHAIN_ID;
 
     let serial = scenario_serial();
-    let commitment_a = note_commitment(chain_id_a, serial, 100);
-    let commitment_b = note_commitment(chain_id_b, serial, 100);
+    let commitment_a = note_commitment(chain_id_a, serial, U256::from(100));
+    let commitment_b = note_commitment(chain_id_b, serial, U256::from(100));
     assert_ne!(commitment_a, commitment_b);
 
     let mut provider_a = HashMapStorageProvider::new(CHAIN_ID);
@@ -1256,15 +1315,15 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
-    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
 
     let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
-        60,
+        U256::from(60),
     );
     let data = mint_calldata(
         CAROL,
@@ -1299,7 +1358,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
 
     // The leaf commitment itself is stored only inside the commitments map
     // (slot 5), never as a tree node slot.
-    let leaf_word = b256(note_commitment(pool, serial, 100));
+    let leaf_word = b256(note_commitment(pool, serial, U256::from(100)));
     for ((address, slot), value) in provider.storage.iter() {
         if *address != EMIT_ADDRESS {
             continue;
@@ -1408,12 +1467,12 @@ fn mint_rolls_back_fully_under_fault_injection() {
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
-    let leaf = tree.append(note_commitment(pool, serial, 100));
-    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
+    let leaf = tree.append(note_commitment(pool, serial, U256::from(100)));
+    let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
-        60,
+        U256::from(60),
     );
 
     let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);

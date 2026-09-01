@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-primitives.workspace = true
+outbe-protocol.workspace = true
 alloy-primitives.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -14,6 +15,7 @@ thiserror.workspace = true
 # Poseidon-BN254 hash (same Circom parameter set as wallets/CLI).
 outbe-poseidon.workspace = true
 ark-bn254.workspace = true
+rand.workspace = true
 ark-ff.workspace = true
 
 # ZK proof verification (UltraHonkKeccak via vendored Barretenberg FFI).
@@ -25,8 +27,7 @@ outbe-zk-canonical.workspace = true
 outbe-zk-backend.workspace = true
 
 [dev-dependencies]
-outbe-protocol.workspace = true
-rand.workspace = true
+outbe-tee.workspace = true
 
 [lints]
 workspace = true

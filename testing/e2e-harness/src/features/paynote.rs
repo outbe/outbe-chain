@@ -19,6 +19,7 @@ use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
+use outbe_zk_canonical::u256;
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
@@ -28,7 +29,7 @@ use crate::world::World;
 pub(crate) struct Note {
     chain_id: u64,
     asset: Address,
-    amount: u128,
+    amount: U256,
     spend_key: Field,
     serial: Field,
     commitment: Field,
@@ -38,7 +39,7 @@ impl Note {
     /// Derives a note for `amount` of `asset` under a fixed spend key. The key
     /// is a constant because the scenario is single-shot and deterministic
     /// evidence beats an unreproducible random draw.
-    pub(crate) fn new(chain_id: u64, asset: Address, amount: u128) -> Self {
+    pub(crate) fn new(chain_id: u64, asset: Address, amount: U256) -> Self {
         let spend_key = Field::from(0x005e_771e_u64);
         let serial = note_sn(spend_key).expect("note serial");
         let commitment =
@@ -71,16 +72,20 @@ pub(crate) fn deposit_and_prove(
     payer_key: &str,
     payer: Address,
     asset: Address,
-    cost_minor: u128,
+    cost_minor: U256,
 ) -> Vec<u8> {
-    let amount = cost_minor.max(1);
+    let amount = if cost_minor.is_zero() {
+        U256::ONE
+    } else {
+        cost_minor
+    };
     crate::features::settlement::fund_and_approve(
         world,
         asset,
         payer_key,
         payer,
         addresses::PAYNOTE_ADDR,
-        U256::from(amount),
+        amount,
     );
     let chain_id = world
         .rpc
@@ -132,13 +137,13 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
         asset: address_field(note.asset.into()),
         spender: address_field(spender.into()),
-        spend_amount: note.amount,
+        spend_amount: u256::to_limbs(note.amount),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
         change_commitment: Field::from(0_u64),
     };
     let witness = Witness {
-        note_amount: note.amount,
+        note_amount: u256::to_limbs(note.amount),
         note_spend_key: note.spend_key,
         leaf_index,
         auth_path: tree.path_at(leaf_index),
@@ -153,7 +158,7 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
 fn deposited_leaves(world: &World, port: u16) -> Vec<(u32, Field)> {
     let url = world.rpc.url(port);
     let head = eth::block_number(&url).expect("head block for paynote log scan");
-    let topic0 = keccak256(b"NewNote(bytes32,uint32,bytes32,address,uint128)");
+    let topic0 = keccak256(b"NewNote(bytes32,uint32,bytes32,address,uint256)");
     let logs = eth::raw_json_with_params(
         &url,
         "eth_getLogs",
@@ -177,7 +182,7 @@ fn deposited_leaves(world: &World, port: u16) -> Vec<(u32, Field)> {
 }
 
 /// `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter,
-/// address indexed asset, uint128 noteAmount)` — the commitment is topic 1 and
+/// address indexed asset, uint256 noteAmount)` — the commitment is topic 1 and
 /// `leafIndex` is the first data word.
 fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
     let topics = log.get("topics")?.as_array()?;

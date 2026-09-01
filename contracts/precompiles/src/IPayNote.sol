@@ -11,7 +11,7 @@ pragma solidity ^0.8.0;
 ///         Merkle membership attests both the asset and the amount.
 ///
 ///         Spending is deliberately **not** on this interface. It consumes a
-///         frozen `outbe.paynote`, version 1.0.0, UltraHonkKeccak proof and is exposed
+///         frozen `outbe.paynote`, version 1.1.0, UltraHonkKeccak proof and is exposed
 ///         only as the in-process Rust API `outbe_paynote::api::consume`, for
 ///         integration by other precompile modules.
 interface IPayNote {
@@ -34,7 +34,7 @@ interface IPayNote {
     /// @param amount Units to pull from the caller.
     /// @param noteSn Caller-supplied note serial. Must be a non-zero canonical
     ///        BN254 field word.
-    function deposit(address asset, uint128 amount, bytes32 noteSn) external;
+    function deposit(address asset, uint256 amount, bytes32 noteSn) external;
 
     /// @notice Latest commitment-tree root.
     function currentRoot() external view returns (bytes32 root);
@@ -61,7 +61,7 @@ interface IPayNote {
     /// @param noteAmount Deposited public amount; `0` is the sentinel for a
     ///        spend's change note, whose remaining value is private.
     event NewNote(
-        bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint128 noteAmount
+        bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint256 noteAmount
     );
 
     /// @notice A note was spent through the Rust `consume` API.
@@ -69,5 +69,5 @@ interface IPayNote {
     /// @param spender Recipient bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
     /// @param spendAmount Units released by the spend.
-    event NoteUsed(address indexed asset, address indexed spender, bytes32 indexed nullifier, uint128 spendAmount);
+    event NoteUsed(address indexed asset, address indexed spender, bytes32 indexed nullifier, uint256 spendAmount);
 }

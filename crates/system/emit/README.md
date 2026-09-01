@@ -39,7 +39,7 @@ cast send "$EMIT_ADDR" 'burn(bytes32)' "$NOTE_SN" \
 
 # Redeem: prove membership + ownership; credit the payout recipient.
 cast send "$EMIT_ADDR" \
-  'mint(address,uint64,bytes32,bytes32,address,uint128,bytes32,bytes)' \
+  'mint(address,uint64,bytes32,bytes32,address,uint256,bytes32,bytes)' \
   "$PAYOUT" "$CHAIN_ID" "$ROOT" "$NULLIFIER" "$NOTE_OWNER" "$MINT_UNITS" \
   "$CHANGE_COMMITMENT" "$PROOF" \
   --private-key "$RECIPIENT_KEY" --rpc-url "$RPC_URL"
@@ -50,27 +50,27 @@ Methods:
 - `burn(bytes32 noteSn) external payable` — derives the commitment from the
   runtime chain ID, `noteSn`, and `msg.value`; initializes the tree on the
   first call.
-- `mint(address payoutRecipient, uint64 chainId, bytes32 root, bytes32 nullifier, address noteOwner, uint128 mintUnits, bytes32 changeCommitment, bytes proof) external` —
+- `mint(address payoutRecipient, uint64 chainId, bytes32 root, bytes32 nullifier, address noteOwner, uint256 mintUnits, bytes32 changeCommitment, bytes proof) external` —
   proves membership under an accepted root, nullifies, credits `mintUnits`,
   and appends the deterministic change commitment on partial mints.
 
 Rules:
 
-- `msg.value` on `burn`: positive and fits `uint128` (native base units, 1:1
-  with circuit units).
+- `msg.value` on `burn`: any positive `uint256` native-base-unit value, mapped
+  1:1 to circuit units.
 - `mint` requires an initialized tree; caller must be `noteOwner`; calldata
   statement fields must equal the proof's embedded statement; `chainId` must
   equal the runtime chain ID.
 - `root` must be inside the 32-root window; each nullifier is single-use.
 - `proof` is the combined UltraHonkKeccak wire for the frozen
-  `outbe.emit.mint@1.4.1` circuit, enforced at its exact frozen length.
+  `outbe.emit.mint@1.5.0` circuit, enforced at its exact frozen length.
 - `NewNote.noteAmount == 0` is the sentinel for a partial mint's private
   change note.
 
 Events:
 
-- `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint128 noteAmount)`
-- `NoteUsed(address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint128 mintAmount)`
+- `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint256 noteAmount)`
+- `NoteUsed(address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint256 mintAmount)`
 
 Infrastructure failures (`UnderfundedBurn`, `VerifierUnavailable`) map to
 fatal block aborts, not reverts.
@@ -113,8 +113,8 @@ C_change, root_after)                     NoteUsed(noteOwner, payoutRecipient, n
                                           mintAmount) event, then an optional NewNote for
                                           the change commitment (noteAmount = 0 sentinel)
 "Validate amount, balance, supply,
-note_sn, duplicate C and tree capacity"   burn guards in order: value non-zero, fits
-                                          uint128, noteSn canonical and non-zero, tree
+note_sn, duplicate C and tree capacity"   burn guards in order: value non-zero,
+                                          noteSn canonical and non-zero, tree
                                           capacity, derived commitment non-zero, no
                                           duplicate commitment
 ```

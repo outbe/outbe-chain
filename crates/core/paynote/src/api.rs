@@ -17,7 +17,7 @@ use crate::schema::PayNoteContract;
 
 pub use crate::runtime::PayNoteClaim;
 
-/// Verify a `outbe.paynote@1.0.0` spend proof, nullify the note, append any
+/// Verify a `outbe.paynote@1.1.0` spend proof, nullify the note, append any
 /// change commitment, and return the validated claim.
 ///
 /// **Moves no tokens.** PayNote owns the tree, the nullifier set and the root

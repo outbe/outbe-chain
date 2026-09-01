@@ -221,7 +221,7 @@ fn mine_gratis_inner(
             nodId: nod_id.to_u256(),
             asset: paid.asset,
             nullifier: paid.nullifier,
-            amountCovered: U256::from(paid.spend_amount),
+            amountCovered: paid.spend_amount,
         },
     )?;
 
@@ -243,7 +243,7 @@ fn mine_gratis_inner(
 struct PaidCost {
     asset: Address,
     nullifier: B256,
-    spend_amount: u128,
+    spend_amount: U256,
 }
 
 /// Discharges `item`'s cost by spending one PayNote.
@@ -261,9 +261,6 @@ fn discharge_cost(
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
     let cost = nod_api::cost_amount_minor(entry_price_minor, item.gratis_load_minor)?;
-    // todo remove this check and add support for u256 in the circuit.
-    let cost_minor =
-        u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
 
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
@@ -278,10 +275,10 @@ fn discharge_cost(
         .into());
     }
     check_settlement_asset(storage, item.reference_currency, claim.asset)?;
-    if claim.spend_amount < cost_minor {
+    if claim.spend_amount < cost {
         return Err(NodFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
-            required: cost_minor,
+            required: cost,
         }
         .into());
     }

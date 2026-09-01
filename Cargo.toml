@@ -362,6 +362,12 @@ debug = 0
 [patch.crates-io]
 alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }
 
+# Development binding to the unreleased Emit/PayNote U256 circuits.
+[patch."https://github.com/outbe/outbe-circuits.git"]
+outbe-zk-canonical = { path = "../outbe-circuits/crates/outbe-zk-canonical" }
+outbe-zk-backend = { path = "../outbe-circuits/crates/outbe-zk-backend" }
+outbe-protocol = { path = "../outbe-circuits/crates/outbe-protocol" }
+outbe-protocol-derive = { path = "../outbe-circuits/crates/outbe-protocol-derive" }
 
 [patch."https://github.com/commonwarexyz/monorepo"]
 commonware-consensus = { path = "vendor/commonware-consensus" }

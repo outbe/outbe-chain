@@ -245,7 +245,7 @@ pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000
 /// incremental commitment tree seeded lazily by the first `burn`, permanent
 /// commitment/nullifier sets, and a 32-root acceptance window. `burn` is the
 /// only payable selector; `mint` consumes the frozen
-/// `outbe.emit.mint@1.4.1` UltraHonkKeccak proof. See `outbe-emit`.
+/// `outbe.emit.mint@1.5.0` UltraHonkKeccak proof. See `outbe-emit`.
 pub const EMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE13");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.

@@ -4,7 +4,7 @@
 //! (see `contracts/precompiles/src/IEmit.sol`). Burn is a runtime-only
 //! native-COEN transition that derives a chain-ID- and amount-bound note
 //! commitment from a caller-supplied serial and the credited value; mint
-//! consumes the frozen `outbe.emit.mint@1.4.1` UltraHonkKeccak proof to
+//! consumes the frozen `outbe.emit.mint@1.5.0` UltraHonkKeccak proof to
 //! nullify a note, credit a payout, and append the circuit-derived
 //! deterministic change commitment.
 //!

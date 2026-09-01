@@ -11,6 +11,7 @@ outbe-zkproof.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-macros.workspace = true
 outbe-poseidon.workspace = true
+outbe-protocol.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ark-bn254.workspace = true
@@ -21,14 +22,13 @@ thiserror.workspace = true
 # stay out of production builds entirely.
 outbe-zk-backend = { workspace = true, optional = true }
 outbe-zk-canonical = { workspace = true, optional = true }
-outbe-protocol = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-paynote = { path = ".", features = ["test-utils"] }
 
 [features]
 default = []
-test-utils = ["dep:outbe-zk-backend", "dep:outbe-zk-canonical", "dep:outbe-protocol"]
+test-utils = ["dep:outbe-zk-backend", "dep:outbe-zk-canonical"]
 
 [lints]
 workspace = true

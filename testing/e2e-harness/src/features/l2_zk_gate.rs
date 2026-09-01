@@ -3,7 +3,7 @@
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
 //! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real `outbe.full_proof@1.1.0` whose root is signed with the registered key
+//! a real external `outbe.full_proof@1.0.0` whose root is signed with the registered key
 //! must pass the full gate and issue the canonical Tribute through the normal
 //! enclave path.
 
@@ -19,15 +19,14 @@ use commonware_cryptography::bls12381::primitives::{
 };
 use cucumber::{then, when};
 use outbe_protocol::primitive::signature::SignatureScheme;
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
+use outbe_tee::zk_claim::tribute_binding;
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
 use outbe_zk_canonical::noir::full_proof::FullProof;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zkproof::derive_single_leaf_full_proof_witness;
 use rand::{rngs::StdRng, SeedableRng};
 use std::thread::sleep;
 use std::time::Duration;
@@ -106,13 +105,10 @@ fn generate_zk_offer_fixture(
             su_ids: vec![su_hash],
         };
         let binding =
-            OutbeV1::binding(&l1_owner.into_array(), &tribute_draft_id.0, chain_id).unwrap();
+            tribute_binding(&l1_owner.into_array(), &tribute_draft_id.0, chain_id).unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
-        let path = tree.empty_inclusion_path(0);
-        let (witness, public) = draft
-            .derive_full_witness(&mut rng, &signer, binding, &path)
-            .unwrap();
+        let (witness, public) =
+            derive_single_leaf_full_proof_witness(&draft, &mut rng, &signer, binding).unwrap();
         let proof = ProofGenerator::<OutbeV1, FullProof>::generate(
             &Barretenberg::default(),
             &witness,

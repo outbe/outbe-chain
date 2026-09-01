@@ -13,6 +13,7 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_zkproof::{decode_emit_mint_public_inputs, verify_emit_mint, ZkProofError};
 
 use crate::errors::EmitError;
@@ -27,7 +28,7 @@ pub(crate) struct MintStatement {
     pub root: B256,
     pub nullifier: B256,
     pub note_owner: Address,
-    pub mint_units: u128,
+    pub mint_units: U256,
     pub change_commitment: B256,
 }
 
@@ -80,12 +81,7 @@ pub(crate) fn burn(
     if value.is_zero() {
         return Err(EmitError::BurnValueZero.into());
     }
-    // The circuit's note amounts are u128; the burn bound matches so a note
-    // can hold any burnable value.
-    if value > U256::from(u128::MAX) {
-        return Err(EmitError::BurnValueExceedsUint128.into());
-    }
-    let amount = u128::try_from(value).expect("value fits u128 after the bound check");
+    // Native value is already a canonical U256, matching the circuit amount.
     let serial = field_from_be_bytes(&note_sn.0)
         .ok_or(EmitError::NonCanonicalField("noteSn"))
         .map_err(PrecompileError::from)?;
@@ -101,7 +97,7 @@ pub(crate) fn burn(
 
     // The commitment is always derived — never caller-supplied — so the
     // hidden note value is bound to the burned supply and runtime chain ID.
-    let commitment = note_commitment(chain_id, serial, amount);
+    let commitment = note_commitment(chain_id, serial, value);
     if commitment.is_zero() {
         return Err(EmitError::MustBeNonZero("commitment").into());
     }
@@ -142,14 +138,14 @@ pub(crate) fn burn(
                 commitment: commitment_word,
                 leafIndex: index,
                 rootAfter: B256::new(field_to_be_bytes(root_after)),
-                noteAmount: amount,
+                noteAmount: value,
             }),
         )?;
         Ok(())
     })
 }
 
-/// `mint(...)` — consume a frozen `outbe.emit.mint@1.4.1` proof.
+/// `mint(...)` — consume a frozen `outbe.emit.mint@1.5.0` proof.
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -171,8 +167,7 @@ pub(crate) fn mint(
     }
 
     // Statement field elements must be canonical before they are compared or
-    // hashed. `chain_id` and `mint_units` are already exact ABI-decoded
-    // integers (u64 and u128).
+    // hashed. `chain_id` and `mint_units` are exact ABI-decoded integers.
     let root = field_from_be_bytes(&statement.root.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
     let nullifier = field_from_be_bytes(&statement.nullifier.0)
@@ -185,8 +180,8 @@ pub(crate) fn mint(
     let statement_matches = embedded.chain_id == statement.chain_id
         && embedded.root == statement.root.0
         && embedded.nullifier == statement.nullifier.0
-        && embedded.note_owner == statement.note_owner
-        && embedded.mint_units == statement.mint_units
+        && embedded.note_owner == statement.note_owner.into_array()
+        && embedded.mint_units == u256_limbs_be(&statement.mint_units.to_be_bytes::<32>())
         && embedded.change_commitment == statement.change_commitment.0;
     if !statement_matches {
         return Err(EmitError::StatementMismatch.into());
@@ -203,7 +198,7 @@ pub(crate) fn mint(
     if payout_recipient.is_zero() {
         return Err(EmitError::RecipientZero.into());
     }
-    if statement.mint_units == 0 {
+    if statement.mint_units.is_zero() {
         return Err(EmitError::MintUnitsZero.into());
     }
     if nullifier.is_zero() {
@@ -242,7 +237,7 @@ pub(crate) fn mint(
     }
 
     // Recipient credit overflow is a user guard, not corruption.
-    let units = U256::from(statement.mint_units);
+    let units = statement.mint_units;
     let recipient_balance = storage.balance(payout_recipient)?;
     if recipient_balance.checked_add(units).is_none() {
         return Err(EmitError::PayoutOverflow.into());
@@ -292,7 +287,7 @@ pub(crate) fn mint(
                     commitment: change_word,
                     leafIndex: index,
                     rootAfter: B256::new(field_to_be_bytes(root_after)),
-                    noteAmount: 0,
+                    noteAmount: U256::ZERO,
                 }),
             )?;
         }

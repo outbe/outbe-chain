@@ -17,9 +17,11 @@
 //! - Merkle inner nodes are `h3(EMIT_DOMAIN, left, right)` where
 //!   `EMIT_DOMAIN` is the big-endian ASCII `OUTBE_EMIT`.
 
+use alloy_primitives::U256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon2, PoseidonHasher};
+use outbe_protocol::codec::u256_limbs_be;
 
 /// The proving field — BN254 scalar field, matching the noir circuits.
 pub type Field = Fr;
@@ -112,13 +114,21 @@ pub fn note_sn(note_owner: [u8; 20], note_spend_key: Field) -> Field {
     p(tag_note_sn(), &[address_field(note_owner), note_spend_key])
 }
 
-/// `C = P(EMIT_COMMITMENT, [chain_id, note_sn, note_amount])` — the only
-/// commitment form the runtime ever appends; opaque caller-supplied
-/// commitments are prohibited.
-pub fn note_commitment(chain_id: u64, note_sn: Field, note_amount: u128) -> Field {
+/// `C = P(EMIT_COMMITMENT, [chain_id, note_sn, amount_limb_0,
+/// amount_limb_1, amount_limb_2])` — the only commitment form the runtime ever
+/// appends. Hashing every canonical radix-2^120 limb keeps the full uint256
+/// amount injective across the BN254 field boundary.
+pub fn note_commitment(chain_id: u64, note_sn: Field, note_amount: U256) -> Field {
+    let limbs = u256_limbs_be(&note_amount.to_be_bytes::<32>());
     p(
         tag_commitment(),
-        &[Field::from(chain_id), note_sn, Field::from(note_amount)],
+        &[
+            Field::from(chain_id),
+            note_sn,
+            Field::from(limbs[0]),
+            Field::from(limbs[1]),
+            Field::from(limbs[2]),
+        ],
     )
 }
 
