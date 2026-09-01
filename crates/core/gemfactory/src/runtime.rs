@@ -586,7 +586,7 @@ fn compute_params(
         // Genesis: validator gem during the genesis window - born Qualified
         // (no maturity wait), but validators pay like every other agent
         // class: cost = entry x load, floor = rate x 1.08. settleGem moves
-        // `cost_amount` into the Reserve vault just like Wallet/Cca/Sra.
+        // the cost into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
             (derived_floor(coen_rate)?, GemState::Qualified)
