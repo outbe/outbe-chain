@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type Hex, bytesToHex, parseUnits, toBytes } from "viem";
+import { type Hex, bytesToHex, toBytes } from "viem";
 import { z } from "zod";
-import { type Ctx, sendTx } from "../chain.js";
+import { type Ctx, parseNativeAmount, sendTx } from "../chain.js";
 import { buildPayload, canonicalAmountBase, encryptOffer } from "../crypto.js";
 import { CONTRACTS, resolveContract } from "../registry.js";
 import { handler, ok, view } from "./util.js";
@@ -152,7 +152,14 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
     { validator: addr, amount: coen, wait: z.boolean().optional() },
     handler(({ validator, amount, wait }) =>
-      submit(ctx, "staking", "stake", [validator, parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+      submit(
+        ctx,
+        "staking",
+        "stake",
+        [validator, parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 
@@ -161,7 +168,14 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Unstake COEN (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(ctx, "staking", "unstake", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+      submit(
+        ctx,
+        "staking",
+        "unstake",
+        [parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 
@@ -182,7 +196,14 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(ctx, "agentreward", "claimReward", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+      submit(
+        ctx,
+        "agentreward",
+        "claimReward",
+        [parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 

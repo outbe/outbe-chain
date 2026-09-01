@@ -2,6 +2,7 @@ use alloy_primitives::{address, Address, B256, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_whole_coen_to_native;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::ValidatorLifecycle;
 
@@ -10,7 +11,6 @@ use crate::hooks;
 
 const CHAIN_ID: u64 = 1;
 const MIN_STAKE: u64 = 1_000;
-const COEN_UNIT: u64 = 1_000_000;
 
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
@@ -85,10 +85,13 @@ fn stake_registered(
 /// Seeds STAKING_ADDRESS with balance (simulating EVM-level msg.value transfer).
 /// stake() no longer transfers; in production EVM does it.
 fn seed_staking_balance(storage: StorageHandle, amount: u64) {
+    seed_staking_balance_u256(storage, U256::from(amount));
+}
+
+fn seed_staking_balance_u256(storage: StorageHandle, amount: U256) {
     let ctx = storage.clone();
     let current = ctx.balance(STAKING_ADDRESS).unwrap();
-    ctx.set_balance(STAKING_ADDRESS, current + U256::from(amount))
-        .unwrap();
+    ctx.set_balance(STAKING_ADDRESS, current + amount).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -113,22 +116,22 @@ fn test_stake() {
 }
 
 #[test]
-fn test_stake_with_six_decimal_coen_fixture() {
+fn test_stake_with_eighteen_decimal_native_coen_fixture() {
     with_staking(|storage, s| {
         let validator = address!("0x1212121212121212121212121212121212121212");
-        let amount = 100_000u64 * COEN_UNIT;
+        let amount = checked_whole_coen_to_native(U256::from(100_000u64)).unwrap();
 
         register_validator(storage.clone(), validator);
-        s.config_min_stake.write(U256::from(amount)).unwrap();
-        seed_staking_balance(storage.clone(), amount);
-        s.stake(validator, validator, U256::from(amount)).unwrap();
+        s.config_min_stake.write(amount).unwrap();
+        seed_staking_balance_u256(storage.clone(), amount);
+        s.stake(validator, validator, amount).unwrap();
 
-        assert_eq!(s.get_stake(validator).unwrap(), U256::from(amount));
-        assert_eq!(s.get_total_staked().unwrap(), U256::from(amount));
+        assert_eq!(s.get_stake(validator).unwrap(), amount);
+        assert_eq!(s.get_total_staked().unwrap(), amount);
         let validators = ValidatorSet::new(storage);
         assert!(matches!(
             validators.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
     });
 }

@@ -1,6 +1,6 @@
-import { humanizeReturn, toJson } from "../format.js";
+import { humanizeReturn, type ReturnFormatContext, toJson } from "../format.js";
 import { type Ctx, readView } from "../chain.js";
-import { resolveContract } from "../registry.js";
+import { CONTRACTS, resolveContract } from "../registry.js";
 import { knownMarkets, scaleOf } from "../oracle/markets.js";
 
 /** MCP text-content result. */
@@ -38,13 +38,14 @@ export async function view(
   const entry = resolveContract(contract);
   const { fn, result } = await readView(ctx, entry, method, args);
   const oracle = resolveContract("oracle");
-  let formatContext;
+  const contractName = Object.entries(CONTRACTS).find(
+    ([, candidate]) => candidate.address === entry.address,
+  )?.[0];
+  const formatContext: ReturnFormatContext = { contractName };
   if (entry.address === oracle.address) {
     const markets = knownMarkets(ctx.chain.id);
-    formatContext = {
-      oracleArgs: args,
-      scaleFor: (base: unknown, quote: unknown) => scaleOf(markets, base, quote),
-    };
+    formatContext.oracleArgs = args;
+    formatContext.scaleFor = (base: unknown, quote: unknown) => scaleOf(markets, base, quote);
   }
   return humanizeReturn(fn, result, formatContext);
 }

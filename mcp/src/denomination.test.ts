@@ -54,10 +54,10 @@ async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promi
   }
 }
 
-test("Outbe chain metadata declares six native decimals", async () => {
+test("Outbe chain metadata declares eighteen native decimals", async () => {
   await withChainIdRpc(54_322_345, async (rpcUrl) => {
     const ctx = await createCtx(rpcUrl);
-    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 6 });
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 18 });
   });
 });
 
@@ -76,19 +76,23 @@ test("unknown external EVM chain metadata retains eighteen native decimals", asy
 });
 
 test("network-native parsing and formatting follows chain metadata", () => {
-  const outbe = { nativeCurrency: { decimals: 6 } } as Chain;
+  const outbe = { nativeCurrency: { decimals: 18 } } as Chain;
   const bsc = { nativeCurrency: { decimals: 18 } } as Chain;
 
-  assert.equal(parseNativeAmount(outbe, "1.5"), 1_500_000n);
-  assert.equal(formatNativeAmount(outbe, 1_500_000n), "1.5");
+  assert.equal(parseNativeAmount(outbe, "1.5"), 1_500_000_000_000_000_000n);
+  assert.equal(formatNativeAmount(outbe, 1_500_000_000_000_000_000n), "1.5");
   assert.equal(parseNativeAmount(bsc, "1.5"), 1_500_000_000_000_000_000n);
   assert.equal(formatNativeAmount(bsc, 1_500_000_000_000_000_000n), "1.5");
 });
 
-test("MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone", () => {
+test("MCP formats native monetary fields at scale18 and leaves dimensionless FP18 alone", () => {
   assert.deepEqual(
-    formatParam({ name: "balance", type: "uint256" } as AbiParameter, 1_500_000n),
-    { raw: "1500000", value: "1.5" },
+    formatParam(
+      { name: "balance", type: "uint256" } as AbiParameter,
+      1_500_000_000_000_000_000n,
+      { contractName: "agentreward", functionName: "getClaimableBalance" },
+    ),
+    { raw: "1500000000000000000", value: "1.5" },
   );
   assert.deepEqual(
     formatParam(
@@ -243,7 +247,7 @@ test("MCP Oracle aggregate views format each market row independently", async ()
   assert.deepEqual(scurve.peakPrices, [{ raw: "1234567", value: "1.234567" }]);
 });
 
-test("MCP signed COEN inputs convert whole amounts to six-decimal units", async () => {
+test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", async () => {
   type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
   const handlers = new Map<string, ToolHandler>();
   const server = {
@@ -257,7 +261,7 @@ test("MCP signed COEN inputs convert whole amounts to six-decimal units", async 
   const sent: { data: Hex }[] = [];
   const ctx = {
     rpcUrl: "http://unused.invalid",
-    chain: { id: 1 } as Chain,
+    chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
     publicClient: {} as PublicClient,
     account,
     walletClient: {
@@ -298,7 +302,7 @@ test("MCP signed COEN inputs convert whole amounts to six-decimal units", async 
     assert(transaction, `${item.tool} submitted a transaction`);
     const entry = resolveContract(item.contract);
     const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
-    assert.equal(decoded.args?.[item.amountIndex], 1_500_000n, item.tool);
+    assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
   }
 });
 
