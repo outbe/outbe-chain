@@ -2,12 +2,6 @@
 //! at durable key possession and node startup; validator-set activation belongs
 //! to the independent lifecycle suite.
 
-use std::{
-    fs,
-    thread::sleep,
-    time::{Duration, Instant},
-};
-
 use cucumber::{then, when};
 
 use crate::world::World;
@@ -157,6 +151,21 @@ fn full_node_reopens_exact_key(world: &mut World) {
 fn enter_renewal_window(world: &mut World) {
     let validator = world.validators.joiner_index();
     let full_node = validator + 1;
+    let validator_deadline = world
+        .localnet
+        .node_renewal_status(validator)
+        .expect("Validator finalized lease before renewal")
+        .valid_until;
+    let full_node_deadline = world
+        .localnet
+        .node_renewal_status(full_node)
+        .expect("FullNode finalized lease before renewal")
+        .valid_until;
+    let renewal_timestamp = validator_deadline
+        .max(full_node_deadline)
+        .checked_sub(7 * 24 * 60 * 60)
+        .and_then(|timestamp| timestamp.checked_add(2))
+        .expect("manual renewal window timestamp");
     world
         .localnet
         .stop_joiner(validator)
@@ -167,7 +176,7 @@ fn enter_renewal_window(world: &mut World) {
         .expect("stop FullNode while its upstream committee restarts");
     world
         .localnet
-        .restart_committee_at_unix_time_offset(5_000)
+        .restart_committee_at_consensus_timestamp(renewal_timestamp)
         .expect("restart complete committee at a controlled testnet timestamp");
     let head = world.rpc.head(world.validators.primary_port()).unwrap_or(1);
     assert!(
@@ -187,10 +196,8 @@ fn enter_renewal_window(world: &mut World) {
         .expect("restart FullNode after its upstream committee is available");
 }
 
-#[then(
-    "automatic renewal finalizes for the Validator and FullNode without changing their offer key"
-)]
-fn automatic_renewal_finalizes_for_both_roles(world: &mut World) {
+#[then("manual renewal finalizes for the Validator and FullNode without changing their offer key")]
+fn manual_renewal_finalizes_for_both_roles(world: &mut World) {
     let validator = world.validators.joiner_index();
     let full_node = validator + 1;
     let validator_offer = world
@@ -201,51 +208,14 @@ fn automatic_renewal_finalizes_for_both_roles(world: &mut World) {
         .localnet
         .node_offer_public(full_node)
         .expect("FullNode offer key before renewal");
-    let deadline = Instant::now() + Duration::from_secs(180);
-    while Instant::now() < deadline {
-        if world
-            .localnet
-            .log_has(validator, "automatic DCAP renewal finalized")
-            && world
-                .localnet
-                .log_has(full_node, "automatic DCAP renewal finalized")
-        {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-    }
-    assert!(
-        world
-            .localnet
-            .log_has(validator, "automatic DCAP renewal finalized"),
-        "Validator automatic renewal did not finalize"
-    );
-    assert!(
-        world
-            .localnet
-            .log_has(full_node, "automatic DCAP renewal finalized"),
-        "FullNode automatic renewal did not finalize"
-    );
     for index in [validator, full_node] {
-        let journal_path = world
-            .validators
-            .data_dir(index)
-            .join("tee-renewal-v1/journal.json");
-        let journal: serde_json::Value = serde_json::from_slice(
-            &fs::read(&journal_path)
-                .unwrap_or_else(|error| panic!("read {}: {error}", journal_path.display())),
-        )
-        .expect("decode renewal journal");
+        let observation = world
+            .localnet
+            .renew_node_enclave_until_finalized(index)
+            .unwrap_or_else(|error| panic!("manually renew node {index}: {error:#}"));
         assert_eq!(
-            journal.pointer("/lifecycle/state").and_then(|v| v.as_str()),
-            Some("finalized")
-        );
-        assert_eq!(
-            journal
-                .pointer("/lifecycle/finalized_binding/renewalNonce")
-                .and_then(|value| value.as_u64()),
-            Some(1),
-            "first finalized renewal must advance the exact nonce once"
+            observation.renewal_nonce, 1,
+            "first finalized manual renewal must advance the exact nonce once"
         );
     }
     assert_eq!(

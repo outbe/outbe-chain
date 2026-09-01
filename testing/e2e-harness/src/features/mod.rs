@@ -38,6 +38,7 @@ pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
 pub mod target_chain;
+pub mod tee_lease;
 pub mod tee_observability;
 pub mod tribute_projection;
 pub mod txpool_eviction;

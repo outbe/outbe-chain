@@ -132,6 +132,12 @@ pub struct Localnet {
     /// with a different immutable fork install cannot join the canonical
     /// consensus namespace. All ordinary validators use `genesis.json`.
     validator_chain_manifests: HashMap<usize, PathBuf>,
+    /// Exact last-launched argv for each validator. Recovery derives its
+    /// authority-free follower argv from this snapshot and later restores it.
+    validator_argv: HashMap<usize, Vec<String>>,
+    /// Validator argv retained across one or more interrupted recovery-follower
+    /// runs until the original validator role is relaunched.
+    validator_recovery_original_argv: HashMap<usize, Vec<String>>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
 }
@@ -147,6 +153,8 @@ impl Localnet {
             enclaves: HashMap::new(),
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
+            validator_argv: HashMap::new(),
+            validator_recovery_original_argv: HashMap::new(),
             start_opts: StartOpts::default(),
         }
     }
@@ -240,11 +248,13 @@ impl Localnet {
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
-    /// per-request deadlines; keep the harness outside its ten-minute
-    /// co-located-EPC allowance so it observes the node's verdict.
+    /// per-request deadlines. A host with 187.5 MiB EPC needed more than ten
+    /// minutes while all enclave calls still made progress, so keep the harness
+    /// outside its thirty-minute co-located-EPC allowance and let it observe the
+    /// node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            132
+            372
         } else {
             18
         }
@@ -264,7 +274,7 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "600"]);
+            args.extend(args!["--tee-bootstrap-timeout-secs", "1800"]);
         }
     }
 
@@ -359,7 +369,22 @@ impl Localnet {
     /// already attached to `<node_dir>/node.log` by the caller (via
     /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
+        self.spawn_node_with_projection_identity(label, label, node_dir, cmd)
+    }
+
+    fn spawn_node_with_projection_identity(
+        &self,
+        label: &str,
+        projection_identity: &str,
+        node_dir: &Path,
+        mut cmd: Command,
+    ) -> Result<ChildGuard> {
+        let node_args = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
         cmd.env(
             "OUTBE_PROJECTION_MONGODB_URI",
@@ -367,10 +392,7 @@ impl Localnet {
         )
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
-            format!(
-                "{}_scenario_{}_{}",
-                self.cfg.projection_database_prefix, self.cfg.scenario, label
-            ),
+            self.projection_database_name(projection_identity),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -387,6 +409,13 @@ impl Localnet {
             eprintln!("[localnet] {label} pid {}", guard.pid());
         }
         Ok(guard)
+    }
+
+    fn projection_database_name(&self, identity: &str) -> String {
+        format!(
+            "{}_scenario_{}_{}",
+            self.cfg.projection_database_prefix, self.cfg.scenario, identity
+        )
     }
 
     // ---- teardown ------------------------------------------------------------
@@ -466,6 +495,17 @@ impl Localnet {
         self.shutdown();
         Ok(())
     }
+}
+
+fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
+    if let Some(option) = args.iter().find(|arg| {
+        arg.as_str() == "--node-evm-key"
+            || arg.starts_with("--node-evm-key=")
+            || arg.starts_with("--tee-renewal.")
+    }) {
+        bail!("generated node command contains removed TEE renewal option {option}");
+    }
+    Ok(())
 }
 
 /// Co-located real enclaves share one physical EPC. A request can therefore
@@ -595,12 +635,12 @@ mod tests {
             .expect("allocate deterministic scenario ports");
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
 
-        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 132);
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 372);
         let mut args = Vec::new();
         localnet.extend_real_sgx_startup_timeout(&mut args);
         assert_eq!(
             args,
-            ["--tee-bootstrap-timeout-secs", "600"],
+            ["--tee-bootstrap-timeout-secs", "1800"],
             "the node deadline must stay inside the harness observation envelope"
         );
     }
@@ -649,6 +689,27 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--color" && pair[1] == "never"));
+    }
+
+    #[test]
+    fn generated_node_commands_reject_removed_tee_renewal_key_options() {
+        let ordinary = vec!["node".to_owned(), "--validator".to_owned()];
+        assert!(ensure_manual_tee_lease_node_args(&ordinary).is_ok());
+
+        for removed in [
+            "--node-evm-key",
+            "--node-evm-key=/tmp/evm-key.hex",
+            "--tee-renewal.relay-key",
+            "--tee-renewal.rpc-url=http://127.0.0.1:8545",
+            "--tee-renewal.poll-secs",
+            "--tee-renewal.warning-blocks",
+            "--tee-renewal.critical-blocks",
+        ] {
+            assert!(
+                ensure_manual_tee_lease_node_args(&[removed.to_owned()]).is_err(),
+                "removed option still accepted: {removed}"
+            );
+        }
     }
 
     /// Both layouts, and nothing else - in particular not `validator-*/data`.

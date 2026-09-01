@@ -61,9 +61,9 @@ import launch_bundle  # noqa: E402  (sibling module, path set just above)
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
-# A `gramine-direct-dev` enclave is unattested, so it is confined to non-Mainnet
-# development use; `dcap-required` is confined to Testnet or Mainnet. Mixing them would
-# put an unattested enclave on an attested network, or the reverse.
+# Devnet and Testnet may select either `gramine-direct-dev` or `dcap-required`.
+# Mainnet requires `dcap-required`. The selected mode is bound into the genesis policy
+# and cannot change through successor-policy activation.
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
 MAINNET_CHAIN_ID = 676
@@ -134,7 +134,6 @@ TOP_LEVEL_KEYS = {
     "enclave_runner",
     "enclave_sgx",
     "signed_enclave_dir",
-    "allow_unattested_chain_id",
     "allow_stale_timestamp",
     "node_binary",
     "ocomp_binary",
@@ -387,8 +386,6 @@ def validate_config(config: dict[str, Any]) -> None:
     if network == "mainnet":
         if mode != "dcap-required":
             raise ValueError("Mainnet requires tee.mode dcap-required")
-        if config.get("allow_unattested_chain_id"):
-            raise ValueError("Mainnet forbids allow_unattested_chain_id")
         if "protocol_constants" in config:
             raise ValueError(
                 "Mainnet forbids protocol_constants overrides and uses canonical production defaults"
@@ -401,22 +398,18 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("Mainnet requires explicit production price feed endpoints")
         if any("testnet" in endpoint.lower() for endpoint in endpoints):
             raise ValueError("Mainnet may not use a testnet price endpoint")
-    if (
-        mode == "gramine-direct-dev"
-        and chain_id != DEVNET_CHAIN_ID
-        and not config.get("allow_unattested_chain_id")
+    if mode == "gramine-direct-dev" and chain_id not in (
+        DEVNET_CHAIN_ID,
+        TESTNET_CHAIN_ID,
     ):
         raise ValueError(
-            f"tee.mode gramine-direct-dev is unattested and is allowed only on the "
-            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}. A deliberate "
-            f"non-devnet network on a real SGX enclave without Intel collateral "
-            f"must say so with `allow_unattested_chain_id: true`"
+            f"tee.mode gramine-direct-dev requires the devnet or testnet chain id "
+            f"({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID}), not {chain_id}"
         )
     if mode == "dcap-required":
-        if chain_id not in (TESTNET_CHAIN_ID, MAINNET_CHAIN_ID):
+        if chain_id not in (DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID):
             raise ValueError(
-                f"tee.mode dcap-required requires the testnet or mainnet chain id "
-                f"({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID}), not {chain_id}"
+                f"tee.mode dcap-required requires a canonical Outbe chain id, not {chain_id}"
             )
         image = str(config.get("enclave_image", ""))
         if re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) is None:

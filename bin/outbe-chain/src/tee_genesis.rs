@@ -419,7 +419,7 @@ mod tests {
 
         let dcap_input = root.path().join("dcap-base.json");
         let dcap_output = root.path().join("dcap-output.json");
-        write_base_genesis(&dcap_input, DEVNET_CHAIN_ID);
+        write_base_genesis(&dcap_input, TESTNET_CHAIN_ID + 1);
         let mut dcap = args(
             dcap_input,
             dcap_output.clone(),
@@ -433,7 +433,7 @@ mod tests {
         assert!(generate_genesis(&dcap)
             .unwrap_err()
             .to_string()
-            .contains("may not use reserved"));
+            .contains("devnet, testnet, or mainnet"));
         assert!(!dcap_output.exists());
     }
 
