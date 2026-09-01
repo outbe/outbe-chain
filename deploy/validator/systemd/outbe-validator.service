@@ -43,7 +43,6 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --metrics 127.0.0.1:9101 \
   --ipcpath /opt/outbe-chain/validator-0/data/reth.ipc \
   --log.file.directory /opt/outbe-chain/validator-0/logs \
-  $OUTBE_TEE_RENEWAL_ARGS \
   --validator \
   --consensus.signing-key /opt/outbe-chain/keys/signing-key.hex \
   --validator.evm-key /opt/outbe-chain/keys/evm-key.hex \
