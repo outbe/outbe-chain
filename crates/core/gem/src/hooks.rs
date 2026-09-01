@@ -204,6 +204,13 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             break;
         }
         let iso_code = currencies[at];
+        // Peek the trie before pricing the currency: a drained one costs three
+        // reads here instead of a whole VWAP window.
+        let cursor = gem.call_scan_cursor.read(&iso_code)?;
+        if tree_math::find_first_left_inclusive(&QualifiedBins(&gem, iso_code), cursor)?.is_none() {
+            gem.call_scan_cursor.write(&iso_code, 0)?;
+            continue;
+        }
         let index = window_for(&oracle, &mut windows, iso_code, pinned_day)?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
