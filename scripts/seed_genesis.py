@@ -169,6 +169,10 @@ GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
 # liquidity source/target registry (see `seed_vault_router`). Mirrors the Rust
 # constant `outbe_primitives::addresses::VAULT_ROUTER_ADDRESS`.
 VAULT_ROUTER_ADDRESS = "0000000000000000000000000000000000001017"
+# PayNote shielded ERC20 note pool. Registered as a VaultRouter liquidity
+# source so `deposit` can route pulled ERC20 into the asset's reserve vault.
+# Mirrors the Rust constant `outbe_primitives::addresses::PAYNOTE_ADDRESS`.
+PAYNOTE_ADDRESS = "0000000000000000000000000000000000001019"
 # Gem NFT token precompile. Genesis can seed Settled gems (see `seed_gems`) so a
 # demo account has a mineable gem to convert Gem -> Promis -> Gratis; Gratis and
 # Promis are TEE-encrypted and can no longer be plaintext-seeded at genesis.
@@ -1023,14 +1027,18 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
 # VaultRouter default liquidity registry seeded at genesis. The discriminant
 # values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
 # (see contracts/precompiles/src/IVaultRouter.sol).
-#   StablesSource: Unknown=0 NodCostAmount=1 IntexCostAmount=2
-#                  CredisCostAmount=3 GemCostAmount=4
+#   StablesSource: Unknown=0 IntexCostAmount=1 CredisCostAmount=2
+#                  GemCostAmount=3 PayNoteDeposit=4
 #   StablesTarget: Unknown=0 Credis=1
+#
+# NodFactory is deliberately absent: a Nod's cost is discharged by spending a
+# PayNote at mine time, and the underlying assets reached the vault through
+# PAYNOTE_ADDRESS when the note was deposited.
 VAULT_ROUTER_LIQUIDITY_SOURCES = [
-    (NOD_FACTORY_ADDRESS, 1),     # NodCostAmount
-    (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
-    (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
-    (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
+    (INTEX_FACTORY_ADDRESS, 1),   # IntexCostAmount
+    (CREDIS_FACTORY_ADDRESS, 2),  # CredisCostAmount
+    (GEM_FACTORY_ADDRESS, 3),     # GemCostAmount
+    (PAYNOTE_ADDRESS, 4),         # PayNoteDeposit
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis

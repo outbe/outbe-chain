@@ -174,11 +174,6 @@
             "internalType": "bool"
           },
           {
-            "name": "isSettled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
@@ -499,12 +494,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "isQualified",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
       },
       {
         "name": "referenceCurrency",

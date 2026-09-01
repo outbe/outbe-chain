@@ -8,6 +8,8 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
+pub use crate::runtime::MineGratisRequest;
+
 pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
 pub use crate::materialization::NodMaterializationOutcomeV1;
 
@@ -20,26 +22,13 @@ pub fn issue_nod(
     runtime::issue_nod(storage, scope, parent, params)
 }
 
-pub fn settle_nod(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    payer: Address,
-    nod_id: WwdEntityId,
-) -> Result<U256> {
-    runtime::settle_nod(storage, scope, parent, payer, nod_id)
-}
-
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    nod_id: WwdEntityId,
-    nonce: u64,
-    auth: outbe_gratisfactory::api::ModifyAuth,
+    request: MineGratisRequest<'_>,
 ) -> Result<U256> {
-    runtime::mine_gratis(storage, scope, parent, caller, nod_id, nonce, auth)
+    runtime::mine_gratis(storage, scope, parent, request)
 }
 
 /// Authorizes and atomically applies one canonical certified-NOD batch.

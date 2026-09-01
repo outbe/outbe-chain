@@ -24,13 +24,10 @@ interface INod {
 
     event NodBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
 
-    /// `floorPriceMinor` is denominated in `referenceCurrency` (ISO 4217
-    /// numeric), which is also part of the `bucketKey` preimage.
     event NodBucketQualified(
         bytes32 indexed bucketKey,
         uint256 worldwideDay,
         uint256 floorPriceMinor,
-        bool isQualified,
         uint16 referenceCurrency
     );
 
@@ -54,7 +51,6 @@ interface INod {
         uint256 costOfGratisMinor;
         uint256 costAmountMinor;
         bool isQualified;
-        bool isSettled;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;

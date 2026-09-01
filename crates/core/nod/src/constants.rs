@@ -15,9 +15,9 @@ pub const BIN_STEP_BP: u16 = 25;
 /// and is resumed deterministically in the next block.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
-/// Call price as a percent OF the entry price: `call = entry x CALL_RATE_PCT / 100`
-/// (256 => 2.56x entry). This is a multiple, not a markup - gem's `CALL_RATE` is
-/// added to 100 before dividing, so the two constants are not interchangeable.
+/// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
+/// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
+/// gem/intex's 128, one rung up the same ladder.
 pub const CALL_RATE_PCT: u64 = 256;
 
 /// Trailing window the daily call scan inspects, in whole UTC days.

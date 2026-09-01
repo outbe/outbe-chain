@@ -47,6 +47,7 @@ members = [
     "crates/core/intex",
     "crates/core/intexfactory",
     "crates/core/desis",
+    "crates/core/paynote",
     "crates/core/vaultrouter",
     "crates/core/lysis",
     "crates/core/agentreward",
@@ -158,6 +159,7 @@ outbe-intex = { path = "crates/core/intex" }
 outbe-intexfactory = { path = "crates/core/intexfactory" }
 outbe-desis = { path = "crates/core/desis" }
 outbe-vaultrouter = { path = "crates/core/vaultrouter" }
+outbe-paynote = { path = "crates/core/paynote" }
 outbe-lysis = { path = "crates/core/lysis" }
 outbe-agentreward = { path = "crates/core/agentreward" }
 outbe-cca = { path = "crates/core/cca" }
@@ -272,10 +274,10 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.11.0" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0", features = ["alloy"] }
+outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

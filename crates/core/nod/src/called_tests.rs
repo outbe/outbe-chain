@@ -38,20 +38,20 @@ const START: u64 = 1_800_000_000;
 const WWD: u32 = 20_270_115;
 
 /// Entry price every bucket here is issued at: 2.0 at scale 1e6. The call price
-/// is therefore `2.0 x 2.56 = 5.12`.
+/// is therefore `2.0 x 3.56 = 7.12`.
 fn entry_price() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// Exactly the call price (5.12). The breach test is strict `>`, so a day at
+/// Exactly the call price (7.12). The breach test is strict `>`, so a day at
 /// this value must NOT count.
 fn at_call() -> U256 {
-    U256::from(5_120_000u64)
+    U256::from(7_120_000u64)
 }
 
 /// A day above the call price.
 fn above_call() -> U256 {
-    U256::from(5_200_000u64)
+    U256::from(7_200_000u64)
 }
 
 /// A day below the call price.
@@ -92,11 +92,9 @@ fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemStat
         league_id: 4,
         floor_price_minor,
         bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, iso),
-        cost_amount_minor: U256::from(17),
         issuance_currency: iso,
         reference_currency: iso,
         issued_at: START,
-        is_settled: false,
     }
 }
 
@@ -215,9 +213,9 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
             .unwrap();
         assert_eq!(
             stored,
-            entry_price() * U256::from(CALL_RATE_PCT) / U256::from(100)
+            entry_price() * U256::from(100 + CALL_RATE_PCT) / U256::from(100)
         );
-        assert_eq!(stored, at_call(), "2.0 x 256% == 5.12");
+        assert_eq!(stored, at_call(), "2.0 x 3.56 == 7.12");
     });
 }
 

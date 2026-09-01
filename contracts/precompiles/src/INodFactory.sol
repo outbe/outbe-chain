@@ -27,7 +27,10 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    event NodSettled(address indexed owner, address indexed payer, uint256 nodId, address asset, uint256 amountPaid);
+    /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
+    ///         Names the spent nullifier instead of a payer address: the note
+    ///         is what pays, and it is deliberately not linkable to a payer.
+    event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
     ///         There is deliberately no matching public installation selector.
@@ -48,24 +51,30 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Pay a Nod's `costAmountMinor` into the reserve vault and mark it
-    ///         settled. Callable by anyone, for any Nod, at any point in its
-    ///         life; the payer does not have to be the owner. The payment asset
-    ///         is not caller-selected: it is the first asset the VaultRouter has
-    ///         registered under the Nod's `referenceCurrency`, and settlement
-    ///         reverts if that currency has none. The caller MUST grant this
-    ///         precompile an ERC20 allowance of at least `costAmountMinor` in
-    ///         that asset beforehand; the `NodSettled` log names it. A zero-cost
-    ///         Nod is settled without any transfer and resolves no asset.
-    /// @return The amount paid.
-    function settleNod(uint256 nodId) external returns (uint256);
-
-    /// @notice Burn the caller-owned, settled Nod and mint its gratis load to
-    ///         the caller. Authorized by the caller's Gratis modify key: `mac =
-    ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
-    ///         caller's current on-chain gratis op-nonce. The Nod owner is the
-    ///         gratis recipient, so they can always supply this authorization.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
+    ///
+    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
+    ///      and so can always supply the mint authorization.
+    ///
+    ///      The Nod's cost is discharged here, by spending a PayNote.
+    ///      The underlying value already reached the reserve vault when the note
+    ///      was deposited, so this call moves no tokens: it books the note's nullifier,
+    ///      appends any change note to the pool, and logs `NodPaid` event.
+    ///
+    /// @param nodId        Identifier of a Nod owned by the caller.
+    /// @param nonce        Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
+    ///                     MUST have the protocol's required leading zero bytes.
+    /// @param mac          Gratis mint authorization, `HMAC(modifyKey,
+    ///                     op-preimage)` under the caller's Gratis modify key.
+    /// @param opNonce      MUST equal the caller's current on-chain gratis
+    ///                     op-nonce; binds `mac` to exactly this mint.
+    /// @param payNoteProof `outbe.paynote` spend proof, carrying one of the assets the
+    ///                     VaultRouter registers under the Nod's `referenceCurrency`,
+    ///                     and covering at least `costAmountMinor`.
+    /// @return Gratis minor units minted to the caller.
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
+        external
+        returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     ///         proof-backed OCOMP batch.

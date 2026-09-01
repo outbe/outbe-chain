@@ -270,11 +270,9 @@ fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
         league_id: 3,
         floor_price_minor: U256::from(4),
         bucket_key: B256::repeat_byte(5),
-        cost_amount_minor: U256::from(6),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 7,
-        is_settled: false,
     }
 }
 
@@ -676,7 +674,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         )
         .unwrap()
         .unwrap();
-        item.cost_amount_minor = U256::from(99);
+        item.gratis_load_minor = U256::from(99);
         bucket.is_qualified = true;
         update(storage.clone(), &scope, old_item, BodyInput::NodItem(&item)).unwrap();
         update(
@@ -738,7 +736,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
 
     let nod_original = nod_item(entity(8, 0x32), owner);
     let mut nod_updated = nod_original.clone();
-    nod_updated.cost_amount_minor = U256::from(99);
+    nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
         bucket_key: B256::repeat_byte(0x33),
@@ -1749,7 +1747,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
     let nod_original = nod_item(entity(14, 0x8b), owner);
     let mut nod_updated = nod_original.clone();
     nod_updated.owner = moved_owner;
-    nod_updated.cost_amount_minor = U256::from(99);
+    nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
         bucket_key: B256::repeat_byte(0x8c),
@@ -2165,34 +2163,36 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         league_id: u16::MAX,
         floor_price_minor: U256::MAX,
         bucket_key: B256::repeat_byte(0xff),
-        cost_amount_minor: U256::MAX,
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
-        is_settled: true,
-    };
-    let shorter = NodItemBodyV1 {
-        nod_id: id,
-        owner: Address::ZERO,
-        gratis_load_minor: U256::ZERO,
-        worldwide_day: day,
-        league_id: 0,
-        floor_price_minor: U256::ZERO,
-        bucket_key: B256::ZERO,
-        cost_amount_minor: U256::ZERO,
-        issuance_currency: 0,
-        reference_currency: 0,
-        issued_at: 0,
-        is_settled: false,
     };
     let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
         .unwrap()
         .encode();
-    let shorter_stored = StoredBody::new_v1(encode_nod_item_v1(&shorter).unwrap())
-        .unwrap()
-        .encode();
     assert_eq!(maximum_stored.len(), MAX_STORED_BODY_BYTES_V1);
-    assert!(shorter_stored.len().div_ceil(32) < maximum_stored.len().div_ceil(32));
+
+    // The reserve only covers the tail it prepays for, so the Nod item has to
+    // stay the largest of the three v1 bodies.
+    let widest_tribute = TributeBodyV1 {
+        tribute_id: id,
+        owner: Address::repeat_byte(0xff),
+        worldwide_day: day,
+        issuance_amount_minor: U256::MAX,
+        issuance_currency: u16::MAX,
+        nominal_amount_minor: U256::MAX,
+        reference_currency: u16::MAX,
+        tribute_price_minor: U256::MAX,
+        exclude_from_intex_issuance: true,
+    };
+    assert!(stored_tribute(&widest_tribute).encode().len() <= MAX_STORED_BODY_BYTES_V1);
+    assert!(
+        StoredBody::new_v1(encode_nod_bucket_v1(&widest_bucket(day)).unwrap())
+            .unwrap()
+            .encode()
+            .len()
+            <= MAX_STORED_BODY_BYTES_V1
+    );
 
     let scope = ExecutionScope::new();
     let parent = MemoryParent::default();
@@ -2223,17 +2223,6 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         let cap = read(storage.clone(), &scope, &parent, EntityRef::NodItem(id))
             .unwrap()
             .unwrap();
-        update(storage.clone(), &scope, cap, BodyInput::NodItem(&shorter)).unwrap();
-        for slot in shorter_stored.len().div_ceil(32)..maximum_slots {
-            assert!(storage
-                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
-                .unwrap()
-                .is_zero());
-        }
-
-        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodItem(id))
-            .unwrap()
-            .unwrap();
         delete(storage.clone(), &scope, cap).unwrap();
         for slot in 0..maximum_slots {
             assert!(storage
@@ -2257,13 +2246,81 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     });
 }
 
+fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
+    NodBucketBodyV1 {
+        bucket_key: B256::repeat_byte(0xff),
+        worldwide_day: day,
+        floor_price_minor: U256::MAX,
+        is_qualified: true,
+        total_nods: u64::MAX,
+        entry_price_minor: U256::MAX,
+        reference_currency: u16::MAX,
+    }
+}
+
+/// A shrinking body must zero the slots it frees. The bucket carries this: it
+/// is the one v1 body whose widest and narrowest forms differ by a whole slot,
+/// so a stale tail would survive here and nowhere else.
+#[test]
+fn shrinking_a_body_zeroes_the_storage_tail_it_frees() {
+    let day = WorldwideDay::new(u32::MAX);
+    let widest = widest_bucket(day);
+    let narrowest = NodBucketBodyV1 {
+        bucket_key: widest.bucket_key,
+        worldwide_day: day,
+        floor_price_minor: U256::ZERO,
+        is_qualified: false,
+        total_nods: 1,
+        entry_price_minor: U256::ZERO,
+        reference_currency: 0,
+    };
+    let stored = |body: &NodBucketBodyV1| {
+        StoredBody::new_v1(encode_nod_bucket_v1(body).unwrap())
+            .unwrap()
+            .encode()
+            .len()
+            .div_ceil(32)
+    };
+    let widest_slots = stored(&widest);
+    let narrowest_slots = stored(&narrowest);
+    assert!(narrowest_slots < widest_slots);
+
+    let id = widest.entity_id();
+    let scope = ExecutionScope::new();
+    let parent = MemoryParent::default();
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::NodBucket(&widest)).unwrap();
+        let locator = body_locator(Collection::NodBucket, id).unwrap();
+        let base = locator.mapping_slot(U256::from(5));
+        let data_start = U256::from_be_bytes(keccak256(base.to_be_bytes::<32>()).0);
+        let cap = read(storage.clone(), &scope, &parent, EntityRef::NodBucket(id))
+            .unwrap()
+            .unwrap();
+        update(
+            storage.clone(),
+            &scope,
+            cap,
+            BodyInput::NodBucket(&narrowest),
+        )
+        .unwrap();
+        for slot in narrowest_slots..widest_slots {
+            assert!(storage
+                .sload(COMPRESSED_ENTITIES_ADDRESS, data_start + U256::from(slot))
+                .unwrap()
+                .is_zero());
+        }
+    });
+}
+
 #[test]
 fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
     assert_eq!(READ_FIXED_GAS, 200);
     assert_eq!(READ_GAS_PER_CANONICAL_BYTE, 8);
     assert_eq!(INDEX_RECORD_SCAN_GAS, 300);
     assert_eq!(PARENT_ID_GAS, 120);
-    assert_eq!(FIRST_BODY_TOUCH_CLEANUP_GAS, 65_000);
+    assert_eq!(FIRST_BODY_TOUCH_CLEANUP_GAS, 55_000);
     assert_eq!(BODY_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);
     assert_eq!(FIRST_INDEX_TOUCH_CLEANUP_GAS, 25_000);
     assert_eq!(INDEX_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);
@@ -2293,7 +2350,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
                 + BODY_TOUCHED_LENGTH_CLEANUP_GAS
                 + 2 * FIRST_INDEX_TOUCH_CLEANUP_GAS
                 + INDEX_TOUCHED_LENGTH_CLEANUP_GAS,
-            "70k body + 5k first body-list length + 2*25k indexes + 5k first index-list length"
+            "60k body + 5k first body-list length + 2*25k indexes + 5k first index-list length"
         );
 
         let overlay_read = scope.explicit_gas_checkpoint();

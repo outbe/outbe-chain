@@ -5,7 +5,6 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::CALL_RATE_PCT;
 use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
 use crate::runtime::{calc_call_price, settlement_deadline, OpenPositionParams};

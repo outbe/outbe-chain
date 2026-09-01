@@ -138,6 +138,8 @@ sol!("../../contracts/precompiles/src/IGem.sol");
 sol!("../../contracts/precompiles/src/IGemFactory.sol");
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IVaultRouter.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IPayNote.sol");
 sol!("../../contracts/precompiles/src/IMetadosis.sol");
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
 sol!("../../contracts/precompiles/src/IDesis.sol");
