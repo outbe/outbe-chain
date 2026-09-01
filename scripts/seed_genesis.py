@@ -728,10 +728,10 @@ def address_pair(base: str, quote: str) -> bytes:
 
 # Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
 # genesis-seeded - `add_gem` parks Issued gems in a bin-tree index this seeder
-# does not reproduce, and `mineGemPromis` requires state == Settled.
+# does not reproduce, and `minePromis` requires state == Settled.
 GEM_STATE_SETTLED = 3
 # Default gem type when unspecified (GemTypes::Wallet). Not validated by
-# `mineGemPromis`, so any agent class works.
+# `minePromis`, so any agent class works.
 GEM_TYPE_WALLET = 3
 
 
@@ -756,7 +756,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
     """Seed Settled gems into the flat `GemContract` storage at GEM_ADDRESS.
 
     Reproduces exactly what `GemContract::add_gem` writes for a Settled gem, so a
-    seeded gem is fully mineable (`mineGemPromis` -> confidential Promis) and
+    seeded gem is fully mineable (`minePromis` -> confidential Promis) and
     burns cleanly. Layout pinned by the `gem_storage_layout_matches_genesis_seeder`
     test in `crates/core/gem/src/tests.rs`:
 
@@ -773,9 +773,9 @@ def seed_gems(storage: StorageBuilder, gems: list):
       slot 21:     all_gem_ids      List<U256>  (len @ slot 21, data @ keccak(21)+i)
       slot 22:     gem_index        Map<U256, u32>
 
-    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+) nor
-    the callable-gem index, so those slots are intentionally left empty (add_gem
-    only indexes Issued gems; the callable index only holds Qualified/Called).
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 23+), the
+    qualified one, or the called queue, so those slots are intentionally left empty
+    (add_gem indexes Issued gems by floor price and Qualified ones by call price).
     """
     owner_counts: dict[str, int] = {}
     for i, gem in enumerate(gems):

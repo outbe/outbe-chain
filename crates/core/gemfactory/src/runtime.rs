@@ -14,7 +14,7 @@ use outbe_common::pow;
 
 use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
@@ -148,6 +148,8 @@ pub fn mint_gem_position(
         parked_at,
     })?;
 
+    factory.push_live_position(position_id)?;
+
     let prev_parked = factory.total_intex_parked.read()?;
     let new_parked = prev_parked
         .checked_add(capacity)
@@ -193,7 +195,7 @@ pub fn mint_merchant_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    let factory = GemFactoryContract::new(storage.clone());
+    let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
         .positions
         .get(position_id)?
@@ -240,6 +242,10 @@ pub fn mint_merchant_gem(
 
     record.remaining_capacity = remaining;
     factory.positions.update(&record)?;
+    // Nothing left to return: it leaves the queue instead of sitting at the head.
+    if remaining.is_zero() {
+        factory.remove_live_position(position_id)?;
+    }
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -515,7 +521,7 @@ pub fn position_data(
     })
 }
 
-pub fn mine_gem_promis(
+pub fn mine_promis(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
@@ -541,7 +547,7 @@ pub fn mine_gem_promis(
 
     emit_event(
         storage,
-        GemBurned {
+        GemMined {
             gemId: gem_id,
             owner: caller,
             gemLoad: item.gem_load_minor,
@@ -636,11 +642,11 @@ fn derived_call_price(entry_price: U256) -> Result<U256> {
     Ok(acc / U256::from(100u64))
 }
 
-fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
+pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// PoW gate for `mine_gem_promis`, delegating to the shared
+/// PoW gate for `mine_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
 pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())

@@ -44,5 +44,5 @@ interface IGem {
     /// @notice Qualified gem force-called by the daily Call scan.
     event GemCalled(uint256 indexed gemId, uint64 calledAt);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
+    event GemExpired(uint256 indexed gemId, address owner, uint256 gemLoad);
 }
