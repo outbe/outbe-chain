@@ -88,10 +88,13 @@ builds:
 # Creates archives for each target.
 archives:
   - formats: [tar.gz]
-    # Shared deployment assets shipped alongside the binaries.
     files:
-      - src: deploy/systemd/*
-        dst: deploy/systemd
+      - src: deploy/validator/*.sh
+        dst: deploy/validator
+      - src: deploy/validator/*.py
+        dst: deploy/validator
+      - src: deploy/validator/systemd/*
+        dst: deploy/validator/systemd
     # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
       {{ .ProjectName }}_
