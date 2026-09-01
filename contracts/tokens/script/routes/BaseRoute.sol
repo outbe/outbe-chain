@@ -207,43 +207,47 @@ abstract contract BaseRoute is Script {
         bytes32 tokenSalt = _saltHash(spec.tokenLabel, salt, _deployer());
         bytes32 bridgeSalt = _saltHash(string.concat(spec.tokenLabel, "Bridge"), salt, _deployer());
 
-        // Both addresses are known before either contract exists, so the bridge's immutable `token_` and the token's
-        // `setTokenBridge` no longer impose a deploy order - only a code-existence one.
-        token = CreateX(createX).computeCreate3Address(tokenSalt);
+        // The two candidates for the token address, resolved independently:
+        //   - `configured`: it already exists and is not ours to place - the issuer's USDT on a real network, or a
+        //     factory-issued stablecoin on Outbe. Its address is then whatever the operator says.
+        //   - `predicted`: where CREATE3 will put it if this script places it.
+        address configured = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
+        address predicted = CreateX(createX).computeCreate3Address(tokenSalt);
+
+        if (configured != address(0)) {
+            token = configured;
+            _requireCode(token);
+        } else if (!canonical && spec.syntheticSource == SyntheticSource.TokenFactory) {
+            // Issued by governance, never by this script, so it must be named or nothing.
+            revert SyntheticTokenNotSet(spec.syntheticTokenEnv);
+        } else {
+            token = predicted;
+            if (token.code.length == 0) CreateX(createX).deployCreate3(tokenSalt, tokenInitCode);
+        }
+
+        // Known before the bridge exists, and unaffected by which branch above ran: the token only enters the
+        // constructor args, and CREATE3 ignores those.
         tokenBridge = CreateX(createX).computeCreate3Address(bridgeSalt);
 
-        // Either side may already exist and not be ours to place - the issuer's USDT on a real network, or a
-        // factory-issued stablecoin on Outbe. Its address is then whatever it is, but the bridge address stays
-        // deterministic: the token only enters the bridge's constructor args, and CREATE3 ignores those.
-        address existing = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
-        // A TokenFactory synthetic is issued by governance, never by this script, so it must be named or nothing.
-        if (existing == address(0) && !canonical && spec.syntheticSource == SyntheticSource.TokenFactory) {
-            revert SyntheticTokenNotSet(spec.syntheticTokenEnv);
-        }
-
-        if (existing != address(0)) {
-            token = existing;
-            _requireCode(token);
-        } else if (token.code.length == 0) {
-            CreateX(createX).deployCreate3(tokenSalt, tokenInitCode);
-        }
-
         if (tokenBridge.code.length == 0) {
-            ERC7786TokenBridge.TokenBridgeMode mode = canonical
-                ? ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-                : spec.syntheticSource == SyntheticSource.Erc7802
-                    ? ERC7786TokenBridge.TokenBridgeMode.BurnMint
-                    : ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint;
-            CreateX(createX)
-                .deployCreate3(
-                    bridgeSalt,
-                    abi.encodePacked(type(ERC7786TokenBridge).creationCode, abi.encode(token, hub, owner, mode))
-                );
+            bytes memory args = abi.encode(token, hub, owner, _bridgeMode(spec, canonical));
+            CreateX(createX).deployCreate3(bridgeSalt, abi.encodePacked(type(ERC7786TokenBridge).creationCode, args));
         }
         _requireBridgeOwnerOnGuardedChain(tokenBridge);
 
         // Only the ERC-7802 side has a token->bridge link, and it must be set after the bridge exists.
-        if (existing == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
+        if (configured == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
+    }
+
+    /// @dev The canonical side always takes custody; the synthetic side follows how its token is issued.
+    function _bridgeMode(RouteSpec memory spec, bool canonical)
+        internal
+        pure
+        returns (ERC7786TokenBridge.TokenBridgeMode)
+    {
+        if (canonical) return ERC7786TokenBridge.TokenBridgeMode.LockUnlock;
+        if (spec.syntheticSource == SyntheticSource.Erc7802) return ERC7786TokenBridge.TokenBridgeMode.BurnMint;
+        return ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint;
     }
 
     function _setTokenBridge(address token, address tokenBridge, string memory label) internal {
