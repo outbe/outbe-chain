@@ -93,3 +93,6 @@ Feature: Intex from auction to Promis
     Then no issued units remain and every unit is settled
     When the holder mines Promis against their settled units
     Then the settled units are burned and Promis is minted
+    When the call notice runs out on the series nobody settled
+    Then the unsettled series reads Expired on both chains
+    And the forfeited load returns to the unallocated pool

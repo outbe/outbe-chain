@@ -702,6 +702,27 @@ pub(crate) fn series_state(
         .map(|data| data.state)
 }
 
+/// When the series was Called, as both chains recorded it.
+pub(crate) fn series_called_at(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u32> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.calledAt)
+}
+
+/// When the notice a Called series was given runs out. Expiry is derived against
+/// this, never stored, so a scenario has to wait past it rather than watch a flag.
+pub(crate) fn series_call_deadline(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u64> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
+}
+
 /// The prices the engine derived at issuance: entry, floor, and call.
 pub(crate) fn series_prices(
     url: &str,
