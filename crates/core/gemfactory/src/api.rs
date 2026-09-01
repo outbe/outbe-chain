@@ -6,7 +6,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::GemTypes;
 
-pub fn mint_gem(
+pub fn issue_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
@@ -15,7 +15,7 @@ pub fn mint_gem(
     reference_currency: u16,
     entry_price: U256,
 ) -> Result<U256> {
-    runtime::mint_gem(
+    runtime::issue_gem(
         storage,
         owner,
         gem_type,
@@ -26,23 +26,23 @@ pub fn mint_gem(
     )
 }
 
-pub fn mint_gem_position(
+pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
-    runtime::mint_gem_position(storage, caller, source_intex_id, amount)
+    runtime::issue_gem_position(storage, caller, source_intex_id, amount)
 }
 
-pub fn mint_merchant_gem(
+pub fn issue_merchant_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     position_id: U256,
     owner: Address,
     promis_load: U256,
 ) -> Result<U256> {
-    runtime::mint_merchant_gem(storage, caller, position_id, owner, promis_load)
+    runtime::issue_merchant_gem(storage, caller, position_id, owner, promis_load)
 }
 
 pub fn settle_gem(

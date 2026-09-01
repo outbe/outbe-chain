@@ -5,10 +5,10 @@ interface IGemFactory {
     /// @notice Park the caller's Intex series `sourceIntexId` (burning `amount`
     ///         units via IntexNFT1155) and mint a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
-    function mintGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
+    function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
-    function mintMerchantGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
+    function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
     /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
     ///         settlement stablecoin supplied by the caller).

@@ -476,7 +476,10 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
         contract
             .claim_reward(RewardPool::Waa, alice, taken)
             .unwrap();
-        assert_eq!(gem_of(&storage, alice).promis_load_minor, U256::from(200u64));
+        assert_eq!(
+            gem_of(&storage, alice).promis_load_minor,
+            U256::from(200u64)
+        );
         // The rest stays a balance, which cannot be Called and cannot be forfeited.
         assert_eq!(
             contract.get_claimable_reward(alice).unwrap(),
@@ -535,7 +538,10 @@ fn a_sub_unit_remainder_stays_claimable() {
             .unwrap();
         // The Gem carries the convertible part; what is below one protocol unit
         // keeps accumulating and its backing is not burned.
-        assert_eq!(gem_of(&storage, alice).promis_load_minor, U256::from(500u64));
+        assert_eq!(
+            gem_of(&storage, alice).promis_load_minor,
+            U256::from(500u64)
+        );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), remainder);
         assert_eq!(
             storage

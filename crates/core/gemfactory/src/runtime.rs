@@ -21,7 +21,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 /// Mints one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
-pub fn mint_gem(
+pub fn issue_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
@@ -97,7 +97,7 @@ pub fn mint_gem(
 /// merchant's entire Issued holding on IntexNFT1155 (`parkIntex`, GEM_ROLE)
 /// and records the position with a snapshot of the source entry/floor and the
 /// resulting Promis capacity. Returns the minted `position_id`.
-pub fn mint_gem_position(
+pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_intex_id: SeriesId,
@@ -181,7 +181,7 @@ fn burn_parked_intex(
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.
-pub fn mint_merchant_gem(
+pub fn issue_merchant_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     position_id: U256,
@@ -607,7 +607,7 @@ fn compute_params(
             compute_cost(coen_rate, promis_load, 100)?;
             (derived_floor(coen_rate)?, GemState::Issued)
         }
-        // Merchant gems are minted via `mint_merchant_gem` against a GemPosition,
+        // Merchant gems are minted via `issue_merchant_gem` against a GemPosition,
         // not through this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };

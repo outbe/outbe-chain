@@ -134,7 +134,7 @@ impl AgentRewardContract<'_> {
             RewardPool::Waa => GemTypes::Wallet,
             RewardPool::Sra => GemTypes::Sra,
         };
-        let gem_id = outbe_gemfactory::api::mint_gem(
+        let gem_id = outbe_gemfactory::api::issue_gem(
             &self.storage,
             address,
             gem_type,

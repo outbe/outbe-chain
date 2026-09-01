@@ -275,7 +275,7 @@ fn mint_cca_no_discount() {
 }
 
 #[test]
-fn mint_gem_rejects_merchant_type() {
+fn issue_gem_rejects_merchant_type() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let res = mint_at_live_rate(
@@ -425,7 +425,7 @@ fn mint_at_live_rate(
     reference_currency: u16,
 ) -> outbe_primitives::error::Result<U256> {
     let price = outbe_oracle::api::fresh_coen_rate_for(storage.clone(), reference_currency)?;
-    runtime::mint_gem(
+    runtime::issue_gem(
         storage,
         owner,
         gem_type,
@@ -712,7 +712,7 @@ fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
         )
         .unwrap();
         let res =
-            runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
+            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
         assert!(err_msg(res).contains("reference currency"));
     });
 }
@@ -1006,11 +1006,11 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         },
     )
     .unwrap();
-    runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS)).unwrap()
+    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS)).unwrap()
 }
 
 #[test]
-fn mint_gem_position_burns_parks_and_mints_nft() {
+fn issue_gem_position_burns_parks_and_issues_nft() {
     with_storage(None, |storage| {
         let id = seed_and_park(
             storage,
@@ -1090,7 +1090,7 @@ fn a_drained_position_leaves_the_queue() {
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        runtime::mint_merchant_gem(storage, ALICE, id, BOB, parked_capacity(six_decimal_u128()))
+        runtime::issue_merchant_gem(storage, ALICE, id, BOB, parked_capacity(six_decimal_u128()))
             .unwrap();
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -1113,10 +1113,10 @@ fn unallocated(storage: &StorageHandle) -> U256 {
 }
 
 #[test]
-fn mint_gem_position_unknown_source_rejects() {
+fn issue_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
         let r =
-            runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
+            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
         assert!(err_msg(r).contains("source intex"));
     });
 }
@@ -1135,7 +1135,7 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         let capacity = parked_capacity(six_decimal_u128());
 
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = runtime::mint_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
+        let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.owner, BOB);
@@ -1172,7 +1172,7 @@ fn mint_merchant_gem_anchors_entry_and_floor_to_source() {
         let id = seed_and_park(storage, source_entry, source_floor, six_decimal_u128());
 
         let gem_id =
-            runtime::mint_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
+            runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         assert_eq!(item.entry_price_minor, source_entry);
         assert_eq!(item.floor_price_minor, source_floor);
@@ -1190,7 +1190,7 @@ fn mint_merchant_gem_rejects_non_merchant() {
             six_decimal_u128(),
         );
         // BOB is not the position's merchant (ALICE) - must reject.
-        let r = runtime::mint_merchant_gem(storage, BOB, id, BOB, six_decimal_unit());
+        let r = runtime::issue_merchant_gem(storage, BOB, id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("position owner"));
     });
 }
@@ -1206,7 +1206,7 @@ fn mint_merchant_gem_over_capacity_rejects() {
             six_decimal_u128(),
         );
         let over = parked_capacity(six_decimal_u128()) + U256::from(1u64);
-        let r = runtime::mint_merchant_gem(storage, ALICE, id, BOB, over);
+        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, over);
         assert!(err_msg(r).contains("capacity"));
     });
 }
@@ -1232,7 +1232,7 @@ fn mint_merchant_gem_after_expiry_rejects() {
             })
             .unwrap();
 
-        let r = runtime::mint_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
+        let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
         assert!(err_msg(r).contains("expired"));
     });
 }
