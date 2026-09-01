@@ -700,7 +700,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
                 &mut budget
             )
             .unwrap(),
-            1
+            (1, false)
         );
         assert_eq!(
             api::get_gem(storage, high_id).unwrap().unwrap().state,
@@ -717,11 +717,62 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
                 &mut budget
             )
             .unwrap(),
-            1
+            (1, true)
         );
         assert_eq!(
             api::get_gem(storage, high_id).unwrap().unwrap().state,
             GemState::Called as u8
+        );
+    });
+}
+
+/// The daily trigger opens a sweep and closes it once nothing is left to walk;
+/// with none open, a block costs nothing and calls nobody.
+#[test]
+fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
+    with_storage(|storage| {
+        let mut first = sample_params(ALICE);
+        first.issued_at = T_NOW - 100 * 86_400;
+        first.call_price_minor = U256::from(100_000u64);
+        let first_id = api::add_gem(storage, first).unwrap();
+        api::set_state(storage, first_id, GemState::Qualified).unwrap();
+
+        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let mut day = last_closed_day;
+        for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair, U256::from(300_000u64))
+                .unwrap();
+            day = previous_date_key(day);
+        }
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        let ctx = block_ctx(storage);
+        crate::hooks::run_call_daily(&ctx).unwrap();
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(
+            api::get_gem(storage, first_id).unwrap().unwrap().state,
+            GemState::Called as u8
+        );
+        assert_eq!(gem.call_sweep_day.read().unwrap(), 0);
+
+        // A gem that breaches just as hard is left alone: no sweep is open.
+        let mut second = sample_params(BOB);
+        second.issued_at = T_NOW - 100 * 86_400;
+        second.call_price_minor = U256::from(100_000u64);
+        let second_id = api::add_gem(storage, second).unwrap();
+        api::set_state(storage, second_id, GemState::Qualified).unwrap();
+        assert_eq!(crate::hooks::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(
+            api::get_gem(storage, second_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
         );
     });
 }
@@ -772,7 +823,7 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
                 &mut budget
             )
             .unwrap(),
-            2
+            (2, false)
         );
         for id in ids {
             assert_eq!(

@@ -12,7 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_GEM_CALLS_PER_RUN, MAX_GEM_FORFEITS_PER_RUN, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_WINDOW, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN,
+    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -25,6 +26,9 @@ impl BlockLifecycle for GemLifecycle {
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         scan_and_qualify(ctx)?;
+        // A call sweep the daily trigger could not finish in one go carries on
+        // here, block by block, rather than waiting a day for the next trigger.
+        run_call_slice(ctx)?;
         Ok(())
     }
 
@@ -142,69 +146,101 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Force-call breached Qualified gems and forfeit-burn expired Called gems.
-/// Only visits the `callable_gems` index (gems in Qualified/Called state);
-/// breach counts are recomputed from the oracle VWAP history each run. Returns
-/// the number of gems mutated (called or burned).
+/// Cycle daily-trigger entry: open a Called sweep over the day the Oracle has
+/// just finalized and run its first slice.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same block;
-    // a lagging watermark means the ordering broke - skip loudly instead of
-    // misreading an unfinalized day as empty.
     let finalized = oracle.utc_day_vwap_last_finalized.read()?;
     if finalized < last_closed_day {
         tracing::warn!(target: "outbe::gem", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
         return Ok(0);
     }
 
-    let currencies = get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
+    let gem = GemContract::new(ctx.storage.clone());
+    gem.call_sweep_day.write(last_closed_day)?;
+    // A sweep in flight is superseded: its mid-range cursors would let the new one
+    // call itself done over bins it never walked.
+    gem.call_currency_cursor.write(0)?;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        gem.call_scan_cursor.write(&iso_code, 0)?;
+    }
+    run_call_slice(ctx)
+}
+
+/// Advance an open sweep by one slice, pinned to the day it opened on so blocks
+/// of it decide against the same prices. Returns how many gems were called.
+pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let gem = GemContract::new(ctx.storage.clone());
+    let pinned_day = gem.call_sweep_day.read()?;
+    if pinned_day == 0 {
         return Ok(0);
     }
-    let gem = GemContract::new(ctx.storage.clone());
+    let currencies = get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        gem.call_sweep_day.write(0)?;
+        return Ok(0);
+    }
+    let oracle = OracleContract::new(ctx.storage.clone());
     let start = gem.call_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = MAX_GEM_CALLS_PER_RUN;
+    let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
-    let mut mutated: u32 = 0;
+    let mut called: u32 = 0;
+    // The first currency left unfinished, so the next slice picks up where this
+    // one gave out rather than re-walking the ones already closed behind it.
     let mut resume_at = start;
+    let mut resumed = false;
+    let mut swept = true;
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget == 0 {
-            resume_at = at;
+            if !resumed {
+                resume_at = at;
+            }
+            swept = false;
             break;
         }
         let iso_code = currencies[at];
-        let index = window_for(&oracle, &mut windows, iso_code, last_closed_day)?;
+        let index = window_for(&oracle, &mut windows, iso_code, pinned_day)?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
             continue;
         };
         let ceiling = GemContract::price_to_bin(high)?;
-        mutated =
-            mutated.saturating_add(call_currency(ctx, iso_code, window, ceiling, &mut budget)?);
+        let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, &mut budget)?;
+        called = called.saturating_add(calls);
+        if !finished && !resumed {
+            resume_at = at;
+            resumed = true;
+        }
+        swept &= finished;
     }
     gem.call_currency_cursor.write(resume_at as u32)?;
-    Ok(mutated)
+    if swept {
+        // Nothing left to walk: the next daily trigger opens a fresh sweep.
+        gem.call_sweep_day.write(0)?;
+    }
+    Ok(called)
 }
 
 /// Walk one currency's qualified bins up to `ceiling`, resuming where it gave out.
+/// Returns the calls made and whether the eligible range was walked to the end.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
     window: &[(u32, Option<U256>)],
     ceiling: u32,
     budget: &mut u32,
-) -> Result<u32> {
+) -> Result<(u32, bool)> {
     let mut gem = GemContract::new(ctx.storage.clone());
     let now = ctx.block.timestamp;
     let mut called: u32 = 0;
     let mut cursor = gem.call_scan_cursor.read(&iso_code)?;
+    let mut finished = false;
     loop {
         if *budget == 0 {
             gem.call_scan_cursor.write(&iso_code, cursor)?;
@@ -215,6 +251,7 @@ pub(crate) fn call_currency(
                 Some(bin) if bin <= ceiling => bin,
                 _ => {
                     gem.call_scan_cursor.write(&iso_code, 0)?;
+                    finished = true;
                     break;
                 }
             };
@@ -239,11 +276,12 @@ pub(crate) fn call_currency(
             Some(c) if c <= MAX_BIN_ID => c,
             _ => {
                 gem.call_scan_cursor.write(&iso_code, 0)?;
+                finished = true;
                 break;
             }
         };
     }
-    Ok(called)
+    Ok((called, finished))
 }
 
 /// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
