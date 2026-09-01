@@ -5,15 +5,9 @@ pragma solidity ^0.8.30;
 /// @notice Read-only projection of the active OCOMP protocol policy.
 interface IOcompRegistry {
     event OcompProtocolAuthorityInstalled(
-        bytes32 indexed protocolBundleHash,
-        bytes32 indexed installHash,
-        uint64 activationHeight
+        bytes32 indexed protocolBundleHash, bytes32 indexed installHash, uint64 activationHeight
     );
-    event OcompSuccessorStaged(
-        uint256 indexed proposalId,
-        bytes32 indexed protocolBundleHash,
-        uint64 activationHeight
-    );
+    event OcompSuccessorStaged(uint256 indexed proposalId, bytes32 indexed protocolBundleHash, uint64 activationHeight);
     event OcompSuccessorActivated(
         uint256 indexed proposalId,
         bytes32 indexed predecessorProtocolBundleHash,

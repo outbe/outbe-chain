@@ -19,7 +19,8 @@ import {
  *
  * Formatting sources:
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
- *  - scoped monetary amounts at 1e6 ..... crates/blockchain/primitives/src/units.rs
+ *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
+ *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
  *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
  *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
@@ -33,7 +34,7 @@ const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nom
 /// Gem prices and loads are six-decimal like every other Gem amount. Scoped to
 /// Gem's own structs: the same field names on other instruments are 1e18.
 const GEM_SIX_DECIMAL_RE =
-  /^(entryPrice|floorPrice|callPrice|sourceEntryPrice|sourceFloorPrice|gemLoad|remainingCapacity)$/;
+  /^(entryPrice|floorPrice|callPrice|sourceEntryPrice|sourceFloorPrice|promisLoad|remainingCapacity)$/;
 const GEM_STRUCT_RE = /^struct IGem(Factory)?\./;
 const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
 
@@ -68,8 +69,10 @@ function coenIsoMarketDecimals(base: unknown, quote: unknown): 6 | undefined {
 type DecimalScale = number | (number | undefined)[];
 
 export interface ReturnFormatContext {
+  /** Canonical registry key of the precompile whose result is being formatted. */
+  contractName?: string;
   /** Raw ABI arguments for a call resolved to the Oracle precompile. */
-  oracleArgs: readonly unknown[];
+  oracleArgs?: readonly unknown[];
   /** The registry's own answer for a market; the local rule is the fallback. */
   scaleFor?: (base: unknown, quote: unknown) => number | undefined;
 }
@@ -90,7 +93,7 @@ function oraclePresentationScale(
 
   const inputs = fn.inputs ?? [];
   if (inputs[0]?.name === "base" && inputs[1]?.name === "quote") {
-    return scaleFor(context.oracleArgs[0], context.oracleArgs[1]);
+    return scaleFor(context.oracleArgs?.[0], context.oracleArgs?.[1]);
   }
 
   const outputs = fn.outputs ?? [];
@@ -151,9 +154,28 @@ function isUint(type: string, bits?: number): boolean {
  * uses its own enum - so the enclosing struct disambiguates them.
  */
 interface ScalarFormatContext {
+  contractName?: string;
   functionName?: string;
   enclosingTupleType?: string;
   marketDecimals?: number;
+}
+
+function isNativeCoenAmount(name: string, context: ScalarFormatContext): boolean {
+  const contract = context.contractName;
+  const fn = context.functionName;
+  if (contract === "staking" && (fn === "getStake" || fn === "getTotalStaked")) return true;
+  // `claimReward` is not here: it returns a Gem id, not an amount.
+  if (
+    contract === "agentreward" &&
+    (fn === "getClaimableBalance" || fn === "getPoolClaimableBalance")
+  ) {
+    return true;
+  }
+  return (
+    contract === "validatorset" &&
+    (fn === "validatorByAddress" || fn === "validatorByIndex") &&
+    name === "stake"
+  );
 }
 
 function formatScalar(
@@ -187,6 +209,10 @@ function formatScalar(
     return currencyLabel(Number(value));
   }
   if (type === "uint256" && DIMENSIONLESS_FP18_RE.test(n)) {
+    const v = value as bigint;
+    return { raw: v.toString(), value: formatUnits(v, 18) };
+  }
+  if (type === "uint256" && isNativeCoenAmount(n, context)) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 18) };
   }
@@ -227,6 +253,7 @@ function formatScalar(
 }
 
 interface ParamFormatContext {
+  contractName?: string;
   functionName?: string;
   enclosingTupleType?: string;
   marketDecimals?: DecimalScale;
@@ -285,6 +312,7 @@ export function formatParam(
   }
 
   return formatScalar(param.name ?? "", type, value, {
+    contractName: context.contractName,
     functionName: context.functionName,
     enclosingTupleType: context.enclosingTupleType,
     marketDecimals: Array.isArray(context.marketDecimals)
@@ -309,6 +337,7 @@ export function humanizeReturn(
   if (outputs.length === 1) {
     const p = outputs[0];
     const formatted = formatParam(p, result, {
+      contractName: context?.contractName,
       functionName: fn.name,
       marketDecimals,
     });
@@ -318,6 +347,7 @@ export function humanizeReturn(
   const out: Record<string, unknown> = {};
   outputs.forEach((p, i) => {
     out[p.name || String(i)] = formatParam(p, arr[i], {
+      contractName: context?.contractName,
       functionName: fn.name,
       marketDecimals,
     });

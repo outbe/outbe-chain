@@ -1,7 +1,6 @@
 //! State-level tests: pair registry, rates, votes, snapshots, layout parity.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::units::Units;
 
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -825,7 +824,7 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         let rate = fixed18(50);
         let volume = fixed18(1000);
 
@@ -864,7 +863,7 @@ fn submit_vote_rejects_a_duplicated_pair() {
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // Two tuples naming the same pair: within the pair-count bound, so the
@@ -896,7 +895,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // A submission that is both untargeted and duplicated reports the
@@ -1019,7 +1018,7 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
             .unwrap();
 
         let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
         let rate1 = fixed18(50);
         let rate2 = fixed18(3000);
         let vol1 = fixed18(100);
@@ -1093,7 +1092,7 @@ fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
 
         let validator = Address::new([0x11; 20]);
         let feeder = Address::new([0x22; 20]);
-        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        register_validator(storage.clone(), validator, native_coen(100));
 
         // Delegate
         oracle.delegate_feeder(validator, feeder).unwrap();
@@ -1472,6 +1471,45 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
         assert!(
             msg.contains("no policy rate for iso_code 978"),
             "unexpected error: {msg}"
+        );
+    });
+}
+
+/// The soft read used by block hooks that walk the whole reference-currency
+/// registry: currencies are listed independently of whether their COEN pair
+/// has been registered and priced, so "not priceable yet" must be reportable
+/// without reverting and halting the block.
+#[test]
+fn coen_rate_for_opt_reports_unpriceable_currencies_instead_of_reverting() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+
+        // Never registered.
+        assert_eq!(
+            crate::api::coen_rate_for_opt(storage.clone(), 978).unwrap(),
+            None
+        );
+
+        // Registered, but no rate published yet.
+        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+        assert_eq!(
+            crate::api::coen_rate_for_opt(storage.clone(), 978).unwrap(),
+            None
+        );
+
+        // Priced.
+        crate::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            AddressPair::new_coen_to(978),
+            U256::from(1234u64),
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::api::coen_rate_for_opt(storage, 978).unwrap(),
+            Some(U256::from(1234u64))
         );
     });
 }

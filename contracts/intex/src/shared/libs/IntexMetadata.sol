@@ -21,12 +21,6 @@ library IntexMetadata {
     /// @dev Shared numeric scale carried by six-decimal monetary fields.
     uint256 private constant SCALE_1E6 = 1e6;
 
-    /// @dev Cost of one Intex in the reference currency, on the same 1e6 scale as the prices;
-    ///      `promisLoadMinor` carries its own scale, which the divisor removes.
-    function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
-        return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / SCALE_1E6;
-    }
-
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id, with its effective state - the
     ///        caller derives `Expired`, so this library never re-derives it.
@@ -107,9 +101,6 @@ library IntexMetadata {
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
             Strings.toString(data.promisLoadMinor / SCALE_1E6),
-            ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Cost Amount\",\"value\":",
-            _amountPlain(_costAmountMinor(data), PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"}"
         );
 

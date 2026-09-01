@@ -1,5 +1,4 @@
-//! - Phase 1 atomicity, cursor semantics, and soft-receipt
-//! narrowing.
+//! Phase 1 atomicity, cursor semantics, and soft-receipt narrowing.
 //!
 //! cursor is the sole phase-routing driver, cursor is
 //! the only driver after Phase 1 reorder, Phase 1 failure produces
@@ -15,7 +14,7 @@ use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
 
-/// - block 1 body-index map starts at CycleTick (no Phase 1), then
+/// Block 1 body-index map starts at CycleTick (no Phase 1), then
 /// RewardsGemDelivery, optional BoundaryOutcome (mandatory at block 1 under
 /// V2), then Oracle.
 #[test]

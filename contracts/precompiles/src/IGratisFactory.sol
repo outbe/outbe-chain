@@ -3,7 +3,8 @@ pragma solidity ^0.8.30;
 
 /// @title IGratisFactory - Gratis orchestration entry point.
 interface IGratisFactory {
-    /// @notice Emitted when `sender` converts gratis to native COEN.
+    /// @notice Emitted when `sender` converts protocol-6 gratis to native-18 COEN.
+    /// @param amount Native COEN atomic units minted to `sender`.
     event CoenMined(address indexed sender, uint256 amount);
 
     /// @notice Emitted when a user pledges gratis as credis collateral.
@@ -47,20 +48,11 @@ interface IGratisFactory {
     // todo remove amountStables
     function unpledgeGratis(uint256 amountStables, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce) external;
 
-    /// @notice Convert `amount` gratis to native COEN at 1:1 (burns gratis).
-    ///         Authorized by the caller's modify key.
+    /// @notice Convert `amount` protocol-6 gratis to the same whole-token amount of
+    ///         native-18 COEN (burns gratis). The return value and
+    ///         `CoenMined.amount` are native COEN atomic units. Authorized by the
+    ///         caller's modify key.
     function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
-
-    /// @notice Convert `amount` promis to confidential Gratis at 1:1 (burns the
-    ///         caller's confidential promis, mints gratis). Both tokens are
-    ///         enclave-confidential, so the caller supplies TWO modify
-    ///         authorizations, each binding `amount` to that ledger's own current
-    ///         op-nonce: `(mac, opNonce)` is the Gratis modify auth for the mint and
-    ///         `(promisMac, promisOpNonce)` is the Promis modify auth for the burn.
-    ///         Fetch each via `outbe_deriveKeys(<ledger>, ...)` + `opNonceOf`.
-    function mineFromPromis(uint256 amount, bytes32 mac, uint64 opNonce, bytes32 promisMac, uint64 promisOpNonce)
-        external
-        returns (uint256);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

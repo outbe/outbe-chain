@@ -10,7 +10,10 @@ use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
 use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+
 use crate::constants::POSITION_VALIDITY_SECONDS;
+use crate::expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
@@ -168,7 +171,7 @@ fn mint_genesis_pays_like_agents_but_born_qualified() {
         // floor = rate x 1.08. It only keeps the born-Qualified fast path
         // (no maturity wait) - settle still moves cost into the Reserve.
         assert_eq!(
-            item.cost_amount_minor,
+            runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
         );
         assert_eq!(item.entry_price_minor, rate);
@@ -195,7 +198,7 @@ fn mint_validator_post_genesis_behaves_like_wallet() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // Same as WALLET: cost = entry x load, floor with 8% markup, Issued.
         assert_eq!(
-            item.cost_amount_minor,
+            runtime::gem_cost_minor(&item).unwrap(),
             U256::from(10u64) * six_decimal_unit()
         );
         assert_eq!(
@@ -218,7 +221,7 @@ fn mint_wallet_cost_and_floor_markup_state_issued() {
         // entry = coen_rate = 2; cost = entry * load / six_decimal_unit() = 2 * 5 = 10
         assert_eq!(item.entry_price_minor, rate);
         assert_eq!(
-            item.cost_amount_minor,
+            runtime::gem_cost_minor(&item).unwrap(),
             U256::from(10u64) * six_decimal_unit()
         );
         // floor = rate * 108 / 100 = 2 * 1.08 = 2.16
@@ -251,7 +254,7 @@ fn mint_sra_applies_64_percent_discount() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 10 * 64 / 100 = 12.8 (six-decimal)
         let expected = rate * load * U256::from(64u64) / U256::from(100u64) / six_decimal_unit();
-        assert_eq!(item.cost_amount_minor, expected);
+        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), expected);
     });
 }
 
@@ -265,7 +268,7 @@ fn mint_cca_no_discount() {
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 7 = 14
         assert_eq!(
-            item.cost_amount_minor,
+            runtime::gem_cost_minor(&item).unwrap(),
             U256::from(14u64) * six_decimal_unit()
         );
     });
@@ -417,7 +420,7 @@ fn mint_at_live_rate(
     storage: &StorageHandle<'_>,
     owner: Address,
     gem_type: GemTypes,
-    gem_load: U256,
+    promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
 ) -> outbe_primitives::error::Result<U256> {
@@ -426,7 +429,7 @@ fn mint_at_live_rate(
         storage,
         owner,
         gem_type,
-        gem_load,
+        promis_load,
         issuance_currency,
         reference_currency,
         price,
@@ -473,10 +476,8 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        let cost = gem_api::get_gem(&storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .cost_amount_minor;
+        let cost =
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // Paying with the EUR asset picks the issuance rail.
         runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR).unwrap();
         cost
@@ -500,10 +501,7 @@ fn the_issuance_rail_rounds_up_exactly_once() {
             mint_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         assert_eq!(
-            gem_api::get_gem(&storage, gem_id)
-                .unwrap()
-                .unwrap()
-                .cost_amount_minor,
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
             U256::from(7u64)
         );
         runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR).unwrap();
@@ -553,10 +551,8 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        let cost = gem_api::get_gem(&storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .cost_amount_minor;
+        let cost =
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         runtime::settle_gem(&storage, ALICE, gem_id, STABLE).unwrap();
         cost
     });
@@ -607,10 +603,8 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        let cost = gem_api::get_gem(&storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .cost_amount_minor;
+        let cost =
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         // An eighteen-decimal asset was a hard revert before; now it scales.
         runtime::settle_gem(&storage, ALICE, gem_id, STABLE_18).unwrap();
         cost
@@ -666,10 +660,8 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         )
         .unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
-        let cost = gem_api::get_gem(&storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .cost_amount_minor;
+        let cost =
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap();
         runtime::settle_gem(&storage, ALICE, gem_id, STABLE).unwrap();
         cost
     });
@@ -886,7 +878,7 @@ fn settle_rejects_non_qualified_state() {
 }
 
 #[test]
-fn mine_gem_promis_full_genesis_flow() {
+fn mine_promis_full_genesis_flow() {
     outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -901,7 +893,7 @@ fn mine_gem_promis_full_genesis_flow() {
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
         let minted =
-            runtime::mine_gem_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
+            runtime::mine_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
                 .unwrap();
         assert_eq!(minted, load);
 
@@ -925,7 +917,7 @@ fn mine_gem_promis_full_genesis_flow() {
 // covered on localnet with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
 
 #[test]
-fn mine_gem_promis_rejects_non_settled() {
+fn mine_promis_rejects_non_settled() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -938,13 +930,13 @@ fn mine_gem_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled - mine should reject before PoW.
-        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, 0, no_auth());
+        let res = runtime::mine_promis(storage, ALICE, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
 
 #[test]
-fn mine_gem_promis_rejects_non_owner() {
+fn mine_promis_rejects_non_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let gem_id = mint_at_live_rate(
@@ -956,8 +948,8 @@ fn mine_gem_promis_rejects_non_owner() {
             840,
         )
         .unwrap();
-        // mine_gem_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_gem_promis(storage, BOB, gem_id, 0, no_auth());
+        // mine_promis checks ownership before state, so no settle needed.
+        let res = runtime::mine_promis(storage, BOB, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("not gem owner"));
     });
 }
@@ -1061,6 +1053,65 @@ fn parking_marks_the_units_realized_on_the_source_series() {
     });
 }
 
+/// The position stays visible afterwards, as the spent object it is.
+#[test]
+fn an_expired_position_returns_its_remainder() {
+    with_storage(None, |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let capacity = parked_capacity(six_decimal_u128());
+
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(unallocated(storage), U256::ZERO);
+
+        // At the instant issuing starts reverting, the sweep takes it.
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 1);
+        assert_eq!(unallocated(storage), capacity);
+
+        let factory = GemFactoryContract::new(storage.clone());
+        let record = factory.positions.get(id).unwrap().unwrap();
+        assert_eq!(record.remaining_capacity, U256::ZERO);
+        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
+    });
+}
+
+#[test]
+fn a_drained_position_leaves_the_queue() {
+    with_storage(Some(six_decimal_unit()), |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        runtime::mint_merchant_gem(storage, ALICE, id, BOB, parked_capacity(six_decimal_u128()))
+            .unwrap();
+
+        let factory = GemFactoryContract::new(storage.clone());
+        assert!(factory.live_queue_slot(0).unwrap().is_none());
+
+        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(unallocated(storage), U256::ZERO);
+    });
+}
+
+fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'a> {
+    BlockRuntimeContext::new(BlockContext::empty_for_tests(1, now, 1), storage.clone())
+}
+
+fn unallocated(storage: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
+}
+
 #[test]
 fn mint_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
@@ -1092,7 +1143,7 @@ fn mint_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.state, GemState::Issued as u8);
         assert_eq!(item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
-            item.cost_amount_minor,
+            runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
         ); // entry * load
         assert_eq!(

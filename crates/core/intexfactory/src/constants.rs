@@ -6,7 +6,7 @@
 //! "outbe-intex:<Name>:v3.0.0") - stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
-use outbe_primitives::units::SCALE_1E6_U128;
+use outbe_primitives::units::SCALE_1E18_U128;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v3.0.0". Canonical definition
@@ -46,16 +46,13 @@ pub const DIST_CHUNK_LIMIT: u32 = 200;
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Time a series must age past `issued_at` before it can become Qualified.
-pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
-
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
 /// series with its index move and notice. Budgeted apart because they differ in cost.
-pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
-pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
+pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
+pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
 /// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
 /// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
@@ -78,9 +75,9 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Commit-entry bond on the target-chain auction: 100M in wire units, which the
-/// adapter's six-decimal pin makes equal to the payment token's minor units.
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
+/// Commit-entry bond on the target-chain auction: 100M WCOEN in native
+/// 18-decimal payment-token units.
+pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E18_U128;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;

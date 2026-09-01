@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type Hex, bytesToHex, parseUnits, toBytes } from "viem";
+import { type Hex, bytesToHex, toBytes } from "viem";
 import { z } from "zod";
-import { type Ctx, sendTx } from "../chain.js";
+import { type Ctx, parseNativeAmount, sendTx } from "../chain.js";
 import { buildPayload, canonicalAmountBase, encryptOffer } from "../crypto.js";
 import { CONTRACTS, resolveContract } from "../registry.js";
 import { handler, ok, view } from "./util.js";
@@ -32,9 +32,10 @@ async function submit(
   args: unknown[],
   gas: bigint,
   wait: boolean,
+  value = 0n,
 ) {
   const entry = resolveContract(contract);
-  const hash = await sendTx(ctx, entry, method, args, gas);
+  const hash = await sendTx(ctx, entry, method, args, gas, value);
   if (!wait) return ok({ txHash: hash, contract, method, status: "submitted" });
   const r = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: 180_000 });
   return ok({
@@ -151,9 +152,18 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "staking_stake",
     "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
     { validator: addr, amount: coen, wait: z.boolean().optional() },
-    handler(({ validator, amount, wait }) =>
-      submit(ctx, "staking", "stake", [validator, parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
-    ),
+    handler(({ validator, amount, wait }) => {
+      const stake = parseNativeAmount(ctx.chain, amount);
+      return submit(
+        ctx,
+        "staking",
+        "stake",
+        [validator, stake],
+        GAS_DEFAULT,
+        wait ?? true,
+        stake,
+      );
+    }),
   );
 
   server.tool(
@@ -161,7 +171,14 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Unstake COEN (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(ctx, "staking", "unstake", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+      submit(
+        ctx,
+        "staking",
+        "unstake",
+        [parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 
@@ -179,10 +196,21 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   // emission is paid in gems (crates/system/rewards/src/precompile.rs).
   server.tool(
     "agentreward_claim",
-    "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",
-    { amount: coen, wait: z.boolean().optional() },
-    handler(({ amount, wait }) =>
-      submit(ctx, "agentreward", "claimReward", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
+    "Claim AgentReward from one pool (0 = WAA, 1 = SRA) as a Gem. Omit amount to claim the whole pool balance. Requires OUTBE_PRIVATE_KEY.",
+    {
+      pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA"),
+      amount: coen.optional().describe("amount to claim; omit for the whole balance"),
+      wait: z.boolean().optional(),
+    },
+    handler(({ pool, amount, wait }) =>
+      submit(
+        ctx,
+        "agentreward",
+        "claimReward",
+        [pool, amount === undefined ? 0n : parseNativeAmount(ctx.chain, amount)],
+        GAS_DEFAULT,
+        wait ?? true,
+      ),
     ),
   );
 

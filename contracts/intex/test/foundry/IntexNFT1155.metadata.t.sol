@@ -82,6 +82,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Issued Intex Count"), "cap is a series parameter, not a trait");
         assertFalse(json.contains("Issued At"), "worldwide day carries the date semantics");
         assertFalse(json.contains("Series ID"), "composite id lives in the name");
+        assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
     }
 
     function test_uri_Qualified_ReflectsState() public {

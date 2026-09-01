@@ -16,7 +16,7 @@ export async function getTokenDecimals(
   provider: Provider
 ): Promise<number> {
   // Native decimals are not discoverable over RPC and are not the same on every
-  // chain - COEN is six-decimal - so they come from the chain config.
+  // chain, so they come from the chain config rather than token metadata.
   if (isNativeToken(tokenAddress)) {
     const { chainId } = await provider.getNetwork();
     const decimals = nativeDecimalsByChainId[Number(chainId)];

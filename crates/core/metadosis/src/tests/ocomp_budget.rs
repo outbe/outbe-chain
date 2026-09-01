@@ -350,3 +350,41 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
         );
     });
 }
+
+#[test]
+fn an_unpriced_day_commits_and_replays_against_the_same_empty_table() {
+    with_storage(|storage| {
+        let request = RequestBudgetEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_109,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(100),
+            lysis_budget: U256::from(40),
+            nominal_total: U256::from(100),
+            auction_entry_prices: Vec::new(),
+            logical_anchor: 1_699_920_005,
+        };
+
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+            .expect("an unpriced day still commits its budget split");
+        assert!(receipt.auction_entry_prices.is_empty());
+        // The brief hash writes the table length first, so an empty table commits as
+        // length zero rather than as a special case.
+        assert_eq!(
+            receipt.desis_brief_hash,
+            Some(
+                desis_request_brief_hash(
+                    request.protocol_bundle_hash,
+                    request.wwd,
+                    receipt.auction_base,
+                    &[],
+                    request.logical_anchor,
+                )
+                .unwrap()
+            )
+        );
+        validate_replayed_request_budget_effect(request, &receipt)
+            .expect("the empty table round-trips through the receipt");
+    });
+}

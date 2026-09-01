@@ -7,9 +7,11 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent as _};
 use cucumber::{given, then, when};
 use outbe_primitives::storage::types::StorageKey as _;
+use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
 use crate::env::environment;
+use crate::features::paynote;
 use crate::internal::{addresses, eth};
 use crate::world::forge::{self, address_from, DEPLOYER_KEY};
 use crate::world::World;
@@ -43,9 +45,9 @@ sol! {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct SettlementFixture {
-    asset: Address,
-    vault: Address,
+pub(crate) struct SettlementFixture {
+    pub(crate) asset: Address,
+    pub(crate) vault: Address,
 }
 
 #[given("the committee has reached a usable finalized height")]
@@ -74,16 +76,19 @@ fn validator_receives_reward_gem(world: &mut World) {
         gem.gemType
     );
     assert_eq!(gem.state, 1, "reward Gem must be Qualified for settlement");
-    assert!(!gem.gemLoad.is_zero(), "reward Gem load must be non-zero");
     assert!(
-        !gem.costAmount.is_zero(),
-        "reward Gem cost must be non-zero"
+        !gem.promisLoad.is_zero(),
+        "reward Gem load must be non-zero"
+    );
+    assert!(
+        !gem.entryPrice.is_zero(),
+        "reward Gem entry price must be non-zero"
     );
     let delivery_block_number = find_canonical_reward_gem_delivery_block_number(world, gem_id)
         .expect("reward Gem must be emitted by canonical CycleTick -> RewardsGemDelivery");
     eprintln!(
-        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} cost={} delivery_block_number={delivery_block_number}",
-        gem.gemLoad, gem.costAmount,
+        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} entry={} delivery_block_number={delivery_block_number}",
+        gem.promisLoad, gem.entryPrice,
     );
 }
 
@@ -307,16 +312,27 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let payer = eth::address_of(&payer_key).expect("validator 1 payer address");
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
+    let url = world.rpc.url(world.validators.primary_port());
+    // The cost is derived, so what to fund is the factory's own quote — already in
+    // the settlement asset's units, which the reference amount never was.
+    let payable = eth::read_call(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::quoteSettlementCall {
+            gemId: gem_id,
+            asset: fixture.asset,
+        },
+    )
+    .expect("quote settling the reward Gem")
+    .payableUnits;
     fund_and_approve(
         world,
         fixture.asset,
         &key,
         owner,
         addresses::GEM_FACTORY_ADDR,
-        gem.costAmount,
+        payable,
     );
-
-    let url = world.rpc.url(world.validators.primary_port());
     let keys =
         eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
 
@@ -379,7 +395,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(gem.costAmount),
+        Some(payable),
         "reserve vault did not receive exact Gem cost"
     );
 
@@ -395,7 +411,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Mint,
-        gem.gemLoad,
+        gem.promisLoad,
         promis_nonce,
         chain_id,
     );
@@ -404,7 +420,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::mineGemPromisCall {
+        &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
             mac: B256::from(mint_mac),
@@ -416,7 +432,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
     assert_eq!(
         promis_balance(&url, owner, &keys.view),
-        promis_before + gem.gemLoad,
+        promis_before + gem.promisLoad,
         "Gem load was not minted exactly into validator Promis"
     );
 
@@ -430,7 +446,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &keys.modify,
         owner,
         PromisOp::Burn,
-        gem.gemLoad,
+        gem.promisLoad,
         burn_nonce,
         chain_id,
     );
@@ -439,7 +455,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &key,
         addresses::PROMIS_FACTORY_ADDR,
         &eth::IPromisFactory::mineCoenCall {
-            amount: gem.gemLoad,
+            amount: gem.promisLoad,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
@@ -453,7 +469,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let native_after = eth::balance(&url, owner).expect("native balance after Promis burn");
     assert_eq!(promis_balance(&url, owner, &keys.view), promis_before);
     assert_eq!(
-        native_after, gem.gemLoad,
+        native_after,
+        checked_protocol_to_native(gem.promisLoad).expect("Gem load fits native COEN"),
         "three sponsored calls must charge no native fee to the validator"
     );
     let counter_after = eth::read_call(
@@ -464,11 +481,11 @@ fn validator_redeems_reward_gem(world: &mut World) {
     .expect("ZeroFee counter after Gem redemption");
     assert_eq!(
         counter_after.count, 3,
-        "settleGem, mineGemPromis, and mineCoen must consume three of eight sponsored slots"
+        "settleGem, minePromis, and mineCoen must consume three of eight sponsored slots"
     );
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
-        fixture.asset, fixture.vault, gem.gemLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
+        fixture.asset, fixture.vault, gem.promisLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
     );
 }
 
@@ -490,7 +507,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let (nod_id, mut body) = wait_for_materialized_nod(world, port, owner);
     assert!(
         !body.costAmountMinor.is_zero(),
-        "settlement E2E requires a paid Nod"
+        "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
 
@@ -502,43 +519,16 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         crate::features::price_oracle::publish_controlled_quote(world, qualifying_rate);
         body = wait_for_qualified_materialized_nod(world, port, owner, &nod_id);
     }
-    assert!(body.isQualified, "settled Nod must be mineable");
+    assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
     let fixture = deploy_settlement_fixture(world);
-    let payer = world.validators.get(0);
-    let payer_key = payer.evm_key().expect("validator payer key");
-    let payer_address = world
-        .rpc
-        .address_of(&payer_key)
-        .expect("validator payer address")
-        .parse::<Address>()
-        .expect("canonical validator payer");
-    fund_and_approve(
-        world,
-        fixture.asset,
-        &payer_key,
-        payer_address,
-        addresses::NOD_FACTORY_ADDR,
-        body.costAmountMinor,
-    );
-    let settle = eth::send_call_outcome(
-        &url,
-        addresses::NOD_FACTORY_ADDR,
-        &payer_key,
-        &eth::INodFactory::settleNodCall {
-            nodId: U256::from_be_slice(&nod_id),
-        },
-        None,
-    )
-    .expect("settle materialized Nod");
-    assert_mined_success(&settle, "settle materialized Nod");
-    let settled = world
-        .rpc
-        .materialized_nod_for_owner(port, owner)
-        .expect("settled Nod lookup")
-        .expect("settled owner Nod")
-        .1;
-    assert!(settled.isSettled, "Nod did not persist settled state");
+    // The cost is paid by depositing a note and then spending it. The value
+    // reaches the reserve vault at deposit time, so the owner funds and
+    // approves the PayNote pool rather than the NodFactory.
+    let cost_minor =
+        u128::try_from(body.costAmountMinor).expect("Nod cost fits a PayNote spend amount");
+    let paynote_proof =
+        paynote::deposit_and_prove(world, port, &key, owner, fixture.asset, cost_minor);
     assert_eq!(
         eth::read_call(
             &url,
@@ -548,7 +538,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             },
         ),
         Some(body.costAmountMinor),
-        "reserve vault did not receive exact Nod cost"
+        "reserve vault did not receive exact Nod cost at deposit time"
     );
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
@@ -579,11 +569,15 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
+            payNoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis from settled Nod");
-    assert_mined_success(&mine_gratis, "mine Gratis from settled Nod");
+    .expect("mine Gratis by spending the deposited PayNote");
+    assert_mined_success(
+        &mine_gratis,
+        "mine Gratis by spending the deposited PayNote",
+    );
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + body.gratisLoadMinor,
@@ -626,9 +620,14 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         crate::world::rpc::Rpc::receipt_gas_cost(&mine_coen.receipt).expect("Gratis burn gas cost");
     let native_after = eth::balance(&url, owner).expect("native balance after Gratis burn");
     assert_eq!(gratis_balance(&url, owner, &keys.view), gratis_before);
-    assert_eq!(native_after + fee, native_before + body.gratisLoadMinor);
+    assert_eq!(
+        native_after + fee,
+        native_before
+            + checked_protocol_to_native(body.gratisLoadMinor)
+                .expect("Gratis load fits native COEN")
+    );
     eprintln!(
-        "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} payer={payer_address:#x} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
+        "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
         hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,
         body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
     );
@@ -671,11 +670,10 @@ fn wait_for_qualified_materialized_nod(
         let (candidate, observation) = match world.rpc.materialized_nod_for_owner(port, owner) {
             Ok(Some((nod_id, body))) => {
                 let observation = format!(
-                    "nod_id=0x{} qualified={} floor={} settled={}",
+                    "nod_id=0x{} qualified={} floor={}",
                     hex::encode(&nod_id),
                     body.isQualified,
                     body.floorPriceMinor,
-                    body.isSettled,
                 );
                 (Some((nod_id, body)), observation)
             }
@@ -701,7 +699,7 @@ fn wait_for_qualified_materialized_nod(
     }
 }
 
-fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
+pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let funder = world.validators.get(0);
@@ -781,7 +779,7 @@ fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
     SettlementFixture { asset, vault }
 }
 
-fn fund_and_approve(
+pub(crate) fn fund_and_approve(
     world: &World,
     asset: Address,
     owner_key: &str,
@@ -1119,7 +1117,7 @@ fn assert_success(url: &str, tx: &str, label: &str) {
     let _ = successful_receipt(url, tx, label);
 }
 
-fn assert_mined_success(outcome: &eth::MinedCallOutcome, label: &str) {
+pub(crate) fn assert_mined_success(outcome: &eth::MinedCallOutcome, label: &str) {
     assert!(outcome.success, "{label} reverted: {}", outcome.receipt);
 }
 

@@ -44,7 +44,7 @@ fn format_oracle_market_quantity(
 ) -> String {
     match (AssetType::from(base), AssetType::from(quote)) {
         (AssetType::Native, AssetType::IsoCurrency(_))
-        | (AssetType::IsoCurrency(_), AssetType::Native) => super::format_coen_amount(value),
+        | (AssetType::IsoCurrency(_), AssetType::Native) => super::format_protocol_amount(value),
         _ => super::format_generic_fp18(value),
     }
 }

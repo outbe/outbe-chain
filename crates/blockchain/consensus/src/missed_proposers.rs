@@ -3,8 +3,8 @@
 //! Both the proposer side (`reporter::detect_missed_proposers`, which feeds the
 //! Phase 1 system transaction) and the verify side
 //! (`finalization::attestation::canonical_missed_proposers`, which recomputes and
-//! validates that metadata) must elect the *same* leader for every skipped view
-//! - otherwise a proposer's `missed_proposers` list would be rejected by
+//! validates that metadata) must elect the *same* leader for every skipped
+//! view - otherwise a proposer's `missed_proposers` list would be rejected by
 //! validators and consensus would diverge. This module is the single source of
 //! truth for that election sequence; callers keep their own guards, index ->
 //! address mapping, out-of-bounds policy, logging, and metrics.

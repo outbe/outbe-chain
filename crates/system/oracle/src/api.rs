@@ -25,6 +25,7 @@ use outbe_primitives::{
 #[repr(u8)]
 pub enum OcompAuctionEntryPriceSource {
     LastClosedDayVwap = 1,
+    /// No longer produced; the discriminant is part of a hashed wire enum.
     CurrentVwapFallback = 2,
 }
 
@@ -133,8 +134,6 @@ pub fn currency_cross_rate(
 /// of reverting and halting the block. Storage faults still propagate.
 pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    // `COEN_ASSET` is the zero address, so `new_coen_to` is always canonical
-    // and the stored rate needs no reciprocal inversion.
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     if index == 0 {
         return Ok(None);
@@ -307,41 +306,36 @@ pub fn get_worldwide_day_vwap_for_pair(
 
 /// Selects the already-stored auction entry prices and the authenticated collection counts;
 /// never invokes calculation. One price per reference currency, so the read walks the
-/// registry; only the day-type currency keeps the current-VWAP fallback.
+/// registry; a currency the last closed UTC day carries no price for is omitted, the
+/// day-type currency included.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    current_vwap: U256,
     block_timestamp: u64,
 ) -> Result<OcompOraclePreAdmissionProjection> {
     let oracle = OracleContract::new(storage);
     let profile_ready = oracle.ocomp_profile_ready.read()?;
     let current_utc_day = timestamp_to_date_key(block_timestamp);
     let last_closed_day = previous_date_key(current_utc_day);
-    let last_closed_vwap = profile_ready
-        .then(|| oracle.ocomp_day_type_vwap_by_utc_day.read(&last_closed_day))
-        .transpose()?
-        .filter(|value| !value.is_zero());
-    let (day_type_price, day_type_source, day_type_source_day) =
-        if let Some(vwap) = last_closed_vwap {
-            (
-                vwap,
-                OcompAuctionEntryPriceSource::LastClosedDayVwap,
-                last_closed_day,
-            )
-        } else {
-            (
-                current_vwap,
-                OcompAuctionEntryPriceSource::CurrentVwapFallback,
-                worldwide_day.value(),
-            )
-        };
-    let mut auction_entry_prices = vec![OcompReferenceEntryPrice {
-        reference_currency: DAY_TYPE_ISO,
-        entry_price_minor: day_type_price,
-        source: day_type_source,
-        source_day: day_type_source_day,
-    }];
+    // The day-type currency is priced from the same per-pair day VWAP as every
+    // other currency; the OCOMP mirror of it is a copy, written only once the
+    // profile is installed, and is not the price source.
+    let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
+    let last_closed_vwap = if day_type_index == 0 {
+        None
+    } else {
+        oracle
+            .get_utc_day_vwap_for_pair(last_closed_day, day_type_index)?
+            .filter(|value| !value.is_zero())
+    };
+    let mut auction_entry_prices = Vec::new();
+    if let Some(vwap) = last_closed_vwap {
+        auction_entry_prices.push(OcompReferenceEntryPrice {
+            reference_currency: DAY_TYPE_ISO,
+            entry_price_minor: vwap,
+            source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
+            source_day: last_closed_day,
+        });
+    }
     for iso_code in oracle.reference_currencies.read_all()? {
         if iso_code == DAY_TYPE_ISO {
             continue;

@@ -57,8 +57,8 @@ Feature: Off-chain computation and Metadosis
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
     When the offer execution UTC day reaches its next ProtocolCycle settlement
     Then every validator observes the same nonzero WAA and SRA AgentReward
-    When both beneficiaries claim their complete AgentReward with paid transactions
-    Then the paid claims clear both claimables and debit the AgentReward escrow exactly
+    When both beneficiaries claim their complete AgentReward as Gems with paid transactions
+    Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches

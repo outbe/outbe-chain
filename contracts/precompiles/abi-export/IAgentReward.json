@@ -4,6 +4,11 @@
     "name": "claimReward",
     "inputs": [
       {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
@@ -11,7 +16,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "gemId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -26,6 +31,30 @@
         "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPoolClaimableBalance",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [

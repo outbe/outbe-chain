@@ -20,7 +20,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
@@ -88,6 +88,11 @@ pub fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
 
+/// Native COEN stake matching [`pledge_cost`] GRATIS one for one by value.
+pub fn pledge_stake() -> U256 {
+    checked_protocol_to_native(pledge_cost()).expect("pledge fixture fits native U256")
+}
+
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
 /// return the resulting handle. The gratis it costs is derived from the seeded rate.
 pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
@@ -113,9 +118,10 @@ pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let handle = pledge(storage, who, nonce);
     let spend = credis_spend_auth(who, handle, who);
-    fund_stake(storage, pledge_cost());
+    fund_stake(storage, pledge_stake());
     let (position_id, _) =
-        runtime::request_credis(storage.clone(), cca(), who, handle, spend, pledge_cost()).unwrap();
+        runtime::request_credis(storage.clone(), cca(), who, handle, spend, pledge_stake())
+            .unwrap();
     position_id
 }
 

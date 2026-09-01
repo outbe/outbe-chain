@@ -1090,11 +1090,9 @@ mod tests {
             league_id: 7,
             floor_price_minor: U256::from(2),
             bucket_key: B256::repeat_byte(0x43),
-            cost_amount_minor: U256::from(3),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 123,
-            is_settled: false,
         };
         let (bucket_id, bucket_bytes, bucket_leaf) = bucket_body(0x33);
         let cases = [
@@ -1218,10 +1216,10 @@ mod tests {
                     "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
                 ),
                 alloy_primitives::b256!(
-                    "3d60818e4678f87ee55d08cb90aeaa516c7f6f8337f8958611380351530cf0c6"
+                    "37fc86dbe097723b0bda2d83b6558bc4c059f54cf181d2d9ab257416c3c3bc49"
                 ),
                 alloy_primitives::b256!(
-                    "626c8169b55c634a03fcd7abb71b5ec97d386b8cdc4b1fe6f4fa6a8dd2b18a36"
+                    "75f42cf8413503971fe749902ab06d199bcad96e39e49ba68ec24c8f5a1666fd"
                 ),
                 alloy_primitives::b256!(
                     "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"

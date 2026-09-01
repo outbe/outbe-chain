@@ -186,8 +186,6 @@ fn build_and_commit_request(
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
     let oracle = outbe_oracle::api::ocomp_pre_admission_projection(
         ctx.storage.clone(),
-        wwd,
-        current_vwap,
         ctx.block.timestamp,
     )?;
     // The per-owner league snapshot and its root were committed during the
@@ -236,8 +234,6 @@ fn build_and_commit_request(
             fidelity_league_snapshot_root: snapshot_root,
             oracle: outbe_oracle::api::ocomp_pre_admission_projection(
                 ctx.storage.clone(),
-                wwd,
-                current_vwap,
                 ctx.block.timestamp,
             )?,
         },

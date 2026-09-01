@@ -460,7 +460,7 @@ fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
 
-        // NodCostAmount == 1.
+        // IntexCostAmount == 1.
         runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
 
         let out = dispatch(
@@ -752,7 +752,7 @@ fn deposit_happy_path_and_rejects_unknown_source() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::NodCostAmount,
+            IVaultRouter::StablesSource::IntexCostAmount,
         )
         .unwrap();
         assert_eq!(got, shares);
@@ -770,7 +770,7 @@ fn deposit_reverts_when_no_vault_configured() {
             source_account(),
             asset(),
             U256::from(10),
-            IVaultRouter::StablesSource::NodCostAmount,
+            IVaultRouter::StablesSource::IntexCostAmount,
         )
         .unwrap_err();
         assert!(

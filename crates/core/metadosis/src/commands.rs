@@ -404,14 +404,9 @@ mod tests {
                     .profile_ready
             );
             assert!(
-                outbe_oracle::api::ocomp_pre_admission_projection(
-                    storage,
-                    WorldwideDay::new(2026_0101),
-                    U256::ZERO,
-                    0,
-                )
-                .unwrap()
-                .profile_ready
+                outbe_oracle::api::ocomp_pre_admission_projection(storage, 0)
+                    .unwrap()
+                    .profile_ready
             );
         });
     }

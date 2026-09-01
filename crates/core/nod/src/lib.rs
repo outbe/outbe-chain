@@ -25,3 +25,5 @@ mod adr006_tests;
 
 #[cfg(test)]
 mod called_tests;
+#[cfg(test)]
+mod tests;

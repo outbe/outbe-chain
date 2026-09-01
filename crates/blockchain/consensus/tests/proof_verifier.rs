@@ -26,8 +26,8 @@ use outbe_primitives::consensus_metadata::{
 
 /// Build a fixed-size committee snapshot of `n` deterministic entries.
 /// Each entry has a stable address + 48 zero bytes for the consensus pubkey
-/// (sufficient for the binding tests that don't exercise BLS verification
-/// - those use either the inner bitmap/structural rules or assert
+/// (sufficient for the binding tests that don't exercise BLS verification -
+/// those use either the inner bitmap/structural rules or assert
 /// pre-BLS failure variants).
 fn fixture_snapshot(n: usize) -> CommitteeSnapshot {
     let committee: Vec<CommitteeEntry> = (0..n)

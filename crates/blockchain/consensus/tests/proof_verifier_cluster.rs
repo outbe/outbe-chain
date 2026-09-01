@@ -1,5 +1,5 @@
-//! - full-DKG failure-class tests for the metadata-bound
-//! `verify_v2_proof` entry (audit-001 closure).
+//! Full-DKG failure-class tests for the metadata-bound `verify_v2_proof` entry
+//! (audit-001 closure).
 //!
 //! Each test builds a real DKG fixture, constructs a real BLS-signed
 //! `HybridCertificate` against the bytes the metadata-bound verifier

@@ -82,7 +82,7 @@ tee:
 # epoch_length_blocks: 300
 # dkg_prepare_window_blocks: 30
 # dkg_activation_grace_blocks: 30
-# prefund_coen_units: 10000000000     # start balance of every validator
+# prefund_coen_units: 10000000000000000000000 # 10000 COEN per validator
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: scripts/contracts    # code files for the `contracts` section
@@ -125,8 +125,8 @@ tee:
 # whole, mappings merge key by key.
 
 # staking:
-#   min_stake: "100000000000"
-#   genesis_validator_stake: "100000000000"
+#   min_stake: "100000000000000000000000"
+#   genesis_validator_stake: "100000000000000000000000"
 #   unbonding_period: 1814400
 #   slashed_withdrawal_delay: 3628800
 #   max_stake_percent: 33
@@ -174,11 +174,11 @@ tee:
 #   owner: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
 
 # balance:                            # extra native-token balances
-#   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000"
+#   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
 
 # gems:
 #   - owner: "0x64CCA861d30714593cB690e0a550C8a9b8b3b058"
-#     gem_load: "1000000000"
+#     promis_load: "1000000000"
 #     issuance_currency: "840"
 
 # tributes: []

@@ -41,7 +41,7 @@ pub const INTEX_ADDRESS: Address = address!("0x000000000000000000000000000000000
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
 /// Gem factory precompile address (orchestrator: `mint_gem` via cross-module
-/// API, `settleGem` / `mineGemPromis` on the ABI). Per-Gem state lives at
+/// API, `settleGem` / `minePromis` on the ABI). Per-Gem state lives at
 /// [`GEM_ADDRESS`]; GemFactory carries module-stats storage.
 pub const GEM_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002013");
 
@@ -328,6 +328,9 @@ pub const VAULT_ROUTER_ADDRESS: Address = address!("0x00000000000000000000000000
 /// texts, submit/read/update proposals, drive the proposal status model, and
 /// diff a proposal against the canon/meta-canon.
 pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
+
+/// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
+pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
 
 /// IntexNFT1155 on Outbe: the local ERC-1155 balance ledger for Intex series
 /// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range

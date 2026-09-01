@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-oracle = { path = "../../system/oracle" }
+outbe-promislimit.workspace = true
 tracing.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
