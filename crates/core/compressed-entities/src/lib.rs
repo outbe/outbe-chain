@@ -6,6 +6,7 @@
 
 mod api;
 mod collection;
+mod collection_reconstruction;
 mod commitment;
 mod errors;
 mod export_view;
@@ -38,6 +39,11 @@ pub use api::{
 pub use collection::{
     collection_key, collection_root, partition_collection_key, sealed_root,
     tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
+};
+pub use collection_reconstruction::{
+    BoundedTributePartitionVerifier, TributePartitionExpectationV1,
+    TributePartitionReconstructionError, TributePartitionRetentionStatsV1,
+    TributePartitionWorkConfig, VerifiedTributePartition,
 };
 pub use commitment::{
     body_commitment, derive_poseidon_digest, derive_poseidon_entity_id, identity_field, pbytes,

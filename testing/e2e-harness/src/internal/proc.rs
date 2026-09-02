@@ -264,6 +264,8 @@ pub(crate) struct EnclaveSpec {
     /// the Gramine test image. Reused across restarts to preserve MRSIGNER.
     /// Unused by [`EnclaveLaunch::NativeHost`], which signs no manifest.
     pub signing_key: PathBuf,
+    /// Seeded-genesis authority measured into every real-DCAP test enclave.
+    pub network_descriptor: Option<PathBuf>,
     /// Which execution profile runs this enclave.
     pub launch: EnclaveLaunch,
     pub sudo: bool,
@@ -296,6 +298,7 @@ pub(crate) fn inspect_test_sgx_measurement(
     repo: &Path,
     enclave_bin: &Path,
     signing_key: &Path,
+    network_descriptor: &Path,
     image_id: &DockerImageId,
     sudo: bool,
 ) -> Result<TestSgxMeasurement> {
@@ -305,6 +308,9 @@ pub(crate) fn inspect_test_sgx_measurement(
     let signing_key = signing_key
         .canonicalize()
         .wrap_err("resolve scenario test SGX signing key")?;
+    let network_descriptor = network_descriptor
+        .canonicalize()
+        .wrap_err("resolve seeded network descriptor")?;
     let inspector = repo
         .join("bin/outbe-tee-enclave/gramine/inspect-test-measurement.sh")
         .canonicalize()
@@ -315,6 +321,13 @@ pub(crate) fn inspect_test_sgx_measurement(
         .args([
             "-v",
             &format!("{}:/app/outbe-tee-enclave:ro", enclave_bin.display()),
+        ])
+        .args([
+            "-v",
+            &format!(
+                "{}:/opt/outbe/sgx/network-descriptor-v1.bin:ro",
+                network_descriptor.display()
+            ),
         ])
         .args([
             "-v",
@@ -533,6 +546,18 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
         .signing_key
         .canonicalize()
         .wrap_err("resolve scenario test SGX signing key")?;
+    if let Some(descriptor) = &spec.network_descriptor {
+        let descriptor = descriptor
+            .canonicalize()
+            .wrap_err("resolve seeded network descriptor")?;
+        cmd.args([
+            "-v",
+            &format!(
+                "{}:/opt/outbe/sgx/network-descriptor-v1.bin:ro",
+                descriptor.display()
+            ),
+        ]);
+    }
     cmd.args([
         "-v",
         &format!("{}:/app/outbe-tee-enclave:ro", bin.display()),
@@ -881,6 +906,7 @@ mod tests {
             tee_port: 19500,
             enclave_bin,
             signing_key,
+            network_descriptor: None,
             launch: EnclaveLaunch::Gramine {
                 image_id: image_id.clone(),
             },
@@ -924,6 +950,7 @@ mod tests {
             tee_port: 19501,
             enclave_bin: enclave_bin.clone(),
             signing_key: root.path().join("unused-signing-key.pem"),
+            network_descriptor: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -969,6 +996,7 @@ mod tests {
             tee_port: 19502,
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
+            network_descriptor: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -1002,6 +1030,7 @@ mod tests {
             tee_port: port,
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
+            network_descriptor: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: false,
             pass_sgx_devices: false,

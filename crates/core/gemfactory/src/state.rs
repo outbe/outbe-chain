@@ -1,4 +1,4 @@
-//! GemPosition NFT bookkeeping: mint (create record + owner index) and the
+//! GemPosition NFT bookkeeping: issue (create record + owner index) and the
 //! ERC-721-style read views. Positions are single-owner and non-transferable,
 //! mirroring the `gem` crate's NFT ledger.
 
@@ -18,7 +18,7 @@ impl GemFactoryContract<'_> {
         keccak256(buf)
     }
 
-    /// Mint a position NFT: create the record and append it to the merchant's
+    /// Issue a position NFT: create the record and append it to the merchant's
     /// owner index. Rejects a duplicate `position_id`.
     pub(crate) fn add_position(&mut self, pos: &GemPosition) -> Result<()> {
         if self.positions.exists(pos.position_id)? {

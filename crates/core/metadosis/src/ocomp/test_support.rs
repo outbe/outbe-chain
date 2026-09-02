@@ -58,6 +58,8 @@ use outbe_ocomp_protocol::{
     vote::ResultVoteV1,
     SchemaLimits,
 };
+#[cfg(test)]
+use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     error::{PrecompileError, Result as PrecompileResult},
@@ -1242,6 +1244,33 @@ impl ActivationFixture {
         Self::new_with_initial_votes(current_height, current_time, seed_targets, member_count, 0)
     }
 
+    /// Seeds the Staking-owned bonded balances used by recovery-policy tests.
+    #[cfg(test)]
+    pub fn seed_ocomp_recovery_stake_for_test(&mut self) {
+        StorageHandle::enter(&mut self.provider, |storage| {
+            let validators = ValidatorSet::new(storage.clone())
+                .registered_validator_addresses()
+                .unwrap();
+            let bonded = U256::from(1_000u64);
+            let staking = outbe_staking::contract::Staking::new(storage.clone());
+            staking.config_min_stake.write(bonded).unwrap();
+            staking
+                .total_staked
+                .write(bonded * U256::from(validators.len()))
+                .unwrap();
+            storage
+                .set_balance(STAKING_ADDRESS, bonded * U256::from(validators.len()))
+                .unwrap();
+            let mut validator_set = ValidatorSet::new(storage.clone());
+            for validator in validators {
+                staking.stake_amount.write(&validator, bonded).unwrap();
+                validator_set
+                    .record_stake_increase(validator, bonded, bonded)
+                    .unwrap();
+            }
+        });
+    }
+
     /// Adds the next validator through registration, OCOMP readiness and the
     /// certified-boundary test hook, returning the newly persisted snapshot.
     #[cfg(test)]
@@ -1392,7 +1421,7 @@ impl ActivationFixture {
                 tribute.day_pre_admission.create(&admission).unwrap();
             }
 
-            let mut contract = MetadosisContract::new(storage);
+            let mut contract = MetadosisContract::new(storage.clone());
             if seed_targets {
                 contract.initialize_ocomp_pre_admission(TEST_WWD).unwrap();
             }

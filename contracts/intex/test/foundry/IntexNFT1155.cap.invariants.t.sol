@@ -26,7 +26,7 @@ contract NFT1155CapHandler is Test {
     function mint(uint256 bidderSeed, uint256 qtySeed) external {
         address to = bidders[bound(bidderSeed, 0, bidders.length - 1)];
         uint256 qty = bound(qtySeed, 1, 1_000);
-        try intex.mint(to, qty, seriesId) {} catch {}
+        try intex.issue(to, qty, seriesId) {} catch {}
     }
 
     /// @dev Burning Issued frees cap room: totalSupply must drop and the cap stays reusable.

@@ -167,10 +167,12 @@ fn qualification_scan_skips_a_stale_rate_without_halting_the_block() {
             U256::from(EXPECTED_FLOOR + 1),
         );
         list_reference(&oracle);
-        let mature_ts = ISSUED_AT as u64 + QUALIFICATION_PERIOD as u64 + 1;
-        s.set_block_timestamp(U256::from(mature_ts)).unwrap();
+        // A day after the rate was published, which is well past the oracle's
+        // six-hour freshness bound: the scan must skip the currency, not halt.
+        let stale_ts = ISSUED_AT as u64 + 24 * 3600;
+        s.set_block_timestamp(U256::from(stale_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, stale_ts, CHAIN_ID),
             s.clone(),
         );
 
@@ -263,7 +265,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
         // Bogus ids (no series record) are per-series skipped but still count toward the cap.
-        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP;
+        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK;
         let f1 = U256::from(EXPECTED_FLOOR);
         let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
         {
@@ -353,16 +355,8 @@ fn qualify_survives_router_failure() {
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
-        let mature = ISSUED_AT as u64 + 21 * DAY + 1;
         assert_eq!(
-            qualify_day(
-                &s,
-                &mut f,
-                7,
-                QUALIFICATION_PERIOD,
-                mature,
-                U256::from(EXPECTED_FLOOR) + U256::from(1)
-            ),
+            qualify_day(&s, &mut f, 7, U256::from(EXPECTED_FLOOR) + U256::from(1)),
             1
         );
         assert_eq!(
@@ -531,7 +525,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
         // record are skipped per series but still count against it.
         {
             let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
+            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
                 factory
                     .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                     .unwrap();

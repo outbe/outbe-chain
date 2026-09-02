@@ -68,6 +68,7 @@ tee:
 # price_feed_websocket: prc.testnet.outbe.net
 
 # Ports. Founders sit on separate machines, so they share one layout.
+ocomp_discovery_control_port: 30414
 # consensus_p2p_port: 30400
 # reth_p2p_port: 30303
 # reth_discv5_port: 31303
@@ -91,7 +92,7 @@ tee:
 # epoch_length_blocks: 300
 # dkg_prepare_window_blocks: 30
 # dkg_activation_grace_blocks: 30
-# prefund_coen_units: 10000000000     # start balance of every validator
+# prefund_coen_units: 10000000000000000000000 # 10000 COEN per validator
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: scripts/contracts
@@ -121,8 +122,8 @@ tee:
 
 # Staking: stake floor, unbonding and slashing timers.
 staking:
-  min_stake: "100000000000"
-  genesis_validator_stake: "100000000000"
+  min_stake: "100000000000000000000000"
+  genesis_validator_stake: "100000000000000000000000"
   unbonding_period: 1814400
   slashed_withdrawal_delay: 3628800
   max_stake_percent: 33
@@ -185,13 +186,13 @@ vault_router:
 
 # Native-token balances seeded on top of the validator prefund.
 balance:
-  "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000"
-  "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000"
+  "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
+  "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000000000000000"
 
 # Settled gems so a demo account can mine Gem -> Promis -> Gratis.
 gems:
   - owner: 0x64CCA861d30714593cB690e0a550C8a9b8b3b058
-    gem_load: "1000000000"
+    promis_load: "1000000000"
     issuance_currency: 840
     reference_currency: 840
 

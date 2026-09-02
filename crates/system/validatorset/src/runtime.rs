@@ -53,6 +53,75 @@ pub mod status {
 /// register validators directly beyond it.
 pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
 
+/// Canonical committee/codec bound shared by every validator-registry scan.
+/// This is not a configurable product capacity.
+pub const CONSENSUS_VALIDATOR_BOUND: u32 = outbe_consensus::bls::MAX_VALIDATORS;
+
+/// One day at the protocol's two-second block target. This is a recovery
+/// deadline, not a polling interval: the recovery sweep runs every block.
+pub const OCOMP_RECOVERY_WINDOW_BLOCKS: u64 = 43_200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OcompMissRecord {
+    Opened {
+        miss_count: u64,
+        recovery_deadline: u64,
+    },
+    Repeated {
+        miss_count: u64,
+        recovery_deadline: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OcompRecoveryWindow {
+    pub miss_count: u64,
+    pub recovery_deadline: u64,
+}
+
+/// Non-transactional observability produced by a committed punitive validator
+/// transition. Callers that wrap the transition in a wider checkpoint defer
+/// this report until that outer checkpoint commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredValidatorPunishment {
+    addr: Address,
+    target: u8,
+    target_label: &'static str,
+    jailed: bool,
+    block_number: u64,
+}
+
+impl DeferredValidatorPunishment {
+    pub fn record(self) {
+        crate::metrics::record_validator_status(self.addr, self.target);
+        crate::metrics::record_validator_force_exit(self.addr);
+        crate::metrics::record_pending_set_change(true);
+        journal_record(JournalRecord::ValidatorForcedExit {
+            wall_clock: iso8601_now(),
+            block_number: self.block_number,
+            validator: format!("{:?}", self.addr),
+            status_before: "ACTIVE".into(),
+            status_after: self.target_label.into(),
+        });
+        warn!(
+            target: "outbe::validatorset",
+            event = if self.jailed { "validator_jailed" } else { "validator_force_exit" },
+            validator = %self.addr,
+            status_after = self.target_label,
+            block_number = self.block_number,
+            "validator punished from ACTIVE (force-exit/jail)",
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum OcompRecoveryOutcome {
+    Restored = 1,
+    Jailed = 2,
+    NonActive = 3,
+}
+
 /// Legacy flat read/ABI projection.
 ///
 /// Lifecycle decisions must use [`ValidatorState`] or [`ValidatorLifecycle`].
@@ -80,10 +149,10 @@ impl ValidatorSet<'_> {
     /// consensus codec/committee bound. OCOMP reads this consensus limit and
     /// does not define a second participant ceiling.
     pub fn set_config_max_validators(&mut self, max_validators: u32) -> Result<()> {
-        if max_validators > outbe_consensus::bls::MAX_VALIDATORS {
+        if max_validators > CONSENSUS_VALIDATOR_BOUND {
             return Err(PrecompileError::Revert(format!(
                 "max validators exceeds consensus bound: {max_validators} > {}",
-                outbe_consensus::bls::MAX_VALIDATORS
+                CONSENSUS_VALIDATOR_BOUND
             )));
         }
         self.config_max_validators.write(max_validators)
@@ -873,6 +942,11 @@ impl ValidatorSet<'_> {
                 block_number,
             )?);
             let after = existing_state.clone().with_lifecycle(lifecycle)?;
+            if self.val_ocomp_recovery_deadline.read(&validator_addr)? != 0 {
+                return Err(PrecompileError::Revert(
+                    "cannot re-register while an OCOMP recovery window is open".into(),
+                ));
+            }
 
             let guard = self.storage.checkpoint_guard();
             self.consensus_pubkey_hash_to_address
@@ -890,7 +964,6 @@ impl ValidatorSet<'_> {
             crate::metrics::record_validator_status(validator_addr, status::REGISTERED);
             crate::metrics::record_validator_register(validator_addr, true);
             crate::metrics::record_pending_set_change(true);
-
             journal_record(JournalRecord::ValidatorReregistered {
                 wall_clock: iso8601_now(),
                 block_number,
@@ -1160,6 +1233,114 @@ impl ValidatorSet<'_> {
         if set_change {
             crate::metrics::record_pending_set_change(true);
         }
+        Ok(())
+    }
+
+    /// Records one missing OCOMP result vote. The first miss opens a fixed
+    /// recovery window; later misses count accountability but neither extend
+    /// the deadline nor authorize another bonded slash.
+    pub fn record_ocomp_miss(&mut self, addr: Address) -> Result<OcompMissRecord> {
+        let state = self.validator_state(addr)?;
+        if !matches!(state.lifecycle(), ValidatorLifecycle::Active(_)) {
+            return Err(PrecompileError::Revert(
+                "OCOMP miss requires an active validator".into(),
+            ));
+        }
+
+        let miss_count = self
+            .val_ocomp_miss_count
+            .read(&addr)?
+            .checked_add(1)
+            .ok_or_else(|| PrecompileError::Fatal("OCOMP miss count overflow".into()))?;
+        let existing_deadline = self.val_ocomp_recovery_deadline.read(&addr)?;
+        let guard = self.storage.checkpoint_guard();
+        self.val_ocomp_miss_count.write(&addr, miss_count)?;
+        let outcome = if existing_deadline == 0 {
+            let recovery_deadline = self
+                .storage
+                .block_number()?
+                .checked_add(OCOMP_RECOVERY_WINDOW_BLOCKS)
+                .ok_or_else(|| PrecompileError::Fatal("OCOMP recovery deadline overflow".into()))?;
+            self.val_ocomp_recovery_deadline
+                .write(&addr, recovery_deadline)?;
+            OcompMissRecord::Opened {
+                miss_count,
+                recovery_deadline,
+            }
+        } else {
+            OcompMissRecord::Repeated {
+                miss_count,
+                recovery_deadline: existing_deadline,
+            }
+        };
+        guard.commit();
+        Ok(outcome)
+    }
+
+    /// Mirrors the authoritative bonded stake after the one OCOMP recovery
+    /// slash. This path is intentionally narrow: it requires an open recovery
+    /// window and preserves ACTIVE even when the new bonded amount is below the
+    /// ordinary minimum-stake threshold.
+    pub fn record_ocomp_bonded_slash(&mut self, addr: Address, bonded: U256) -> Result<()> {
+        if self.val_ocomp_recovery_deadline.read(&addr)? == 0 {
+            return Err(PrecompileError::Revert(
+                "OCOMP bonded slash requires an open recovery window".into(),
+            ));
+        }
+        let before = self.validator_state(addr)?;
+        if !matches!(before.lifecycle(), ValidatorLifecycle::Active(_)) {
+            return Err(PrecompileError::Revert(
+                "OCOMP bonded slash requires an active validator".into(),
+            ));
+        }
+        let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
+        let lifecycle = state_machine::with_stake(before.lifecycle().clone(), stake)?;
+        let after = before.clone().with_lifecycle(lifecycle)?;
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        guard.commit();
+        Ok(())
+    }
+
+    /// Returns the durable OCOMP recovery state for one validator.
+    pub fn ocomp_recovery_window(&self, addr: Address) -> Result<Option<OcompRecoveryWindow>> {
+        let recovery_deadline = self.val_ocomp_recovery_deadline.read(&addr)?;
+        if recovery_deadline == 0 {
+            return Ok(None);
+        }
+        Ok(Some(OcompRecoveryWindow {
+            miss_count: self.val_ocomp_miss_count.read(&addr)?,
+            recovery_deadline,
+        }))
+    }
+
+    /// Closes one recovery window while preserving cumulative accountability.
+    pub fn close_ocomp_recovery_window(&mut self, addr: Address) -> Result<()> {
+        self.val_ocomp_recovery_deadline.write(&addr, 0)
+    }
+
+    /// Closes one due window and emits its consensus-visible resolution.
+    pub fn resolve_ocomp_recovery_window(
+        &mut self,
+        addr: Address,
+        recovery_deadline: u64,
+        bonded_stake: U256,
+        outcome: OcompRecoveryOutcome,
+    ) -> Result<()> {
+        if self.val_ocomp_recovery_deadline.read(&addr)? != recovery_deadline {
+            return Err(PrecompileError::Fatal(
+                "OCOMP recovery resolution deadline mismatch".into(),
+            ));
+        }
+        let guard = self.storage.checkpoint_guard();
+        self.close_ocomp_recovery_window(addr)?;
+        self.emit(IValidatorSet::OcompRecoveryResolved {
+            validator: addr,
+            recoveryDeadline: recovery_deadline,
+            bondedStake: bonded_stake,
+            outcome: outcome as u8,
+        })?;
+        guard.commit();
         Ok(())
     }
 
@@ -1541,7 +1722,10 @@ impl ValidatorSet<'_> {
     /// successful reshare. Stake withdrawal is handled by Staking after the
     /// validator reaches UNBONDING.
     pub fn force_exit_validator(&mut self, addr: Address) -> Result<()> {
-        self.punish_validator(addr, false)
+        if let Some(observability) = self.punish_validator(addr, false)? {
+            observability.record();
+        }
+        Ok(())
     }
 
     /// Jails a validator for a severe consensus/oracle fault (felony). Unlike
@@ -1555,6 +1739,18 @@ impl ValidatorSet<'_> {
     /// Increments `slash_count` once. Repeated punishment of the same lifecycle
     /// is a no-op even if a caller bypasses SlashIndicator's replay guard.
     pub fn jail_validator(&mut self, addr: Address) -> Result<()> {
+        if let Some(observability) = self.punish_validator(addr, true)? {
+            observability.record();
+        }
+        Ok(())
+    }
+
+    /// Applies the jail transition but leaves metrics, journal and tracing to
+    /// the caller so a wider atomic transition cannot publish rolled-back state.
+    pub fn jail_validator_deferred(
+        &mut self,
+        addr: Address,
+    ) -> Result<Option<DeferredValidatorPunishment>> {
         self.punish_validator(addr, true)
     }
 
@@ -1612,7 +1808,11 @@ impl ValidatorSet<'_> {
     /// and [`Self::jail_validator`] (`jail = true` -> ACTIVE->JAILED, the validator
     /// is frozen in the registry). Both signal a reshare and bump `slash_count`
     /// exactly once.
-    fn punish_validator(&mut self, addr: Address, jail: bool) -> Result<()> {
+    fn punish_validator(
+        &mut self,
+        addr: Address,
+        jail: bool,
+    ) -> Result<Option<DeferredValidatorPunishment>> {
         let before = self.validator_state(addr)?;
         let lifecycle = before.lifecycle().clone();
         if matches!(lifecycle, ValidatorLifecycle::Absent) {
@@ -1632,11 +1832,11 @@ impl ValidatorSet<'_> {
         let active = match lifecycle {
             ValidatorLifecycle::Active(active) => active,
             ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_) if jail => {
-                return Ok(())
+                return Ok(None)
             }
             ValidatorLifecycle::Exiting(_)
             | ValidatorLifecycle::Unbonding(_)
-            | ValidatorLifecycle::Inactive(_) => return Ok(()),
+            | ValidatorLifecycle::Inactive(_) => return Ok(None),
             _ => {
                 return Err(PrecompileError::Revert(format!(
                     "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
@@ -1687,26 +1887,13 @@ impl ValidatorSet<'_> {
         }
         guard.commit();
 
-        crate::metrics::record_validator_status(addr, target);
-        crate::metrics::record_validator_force_exit(addr);
-        crate::metrics::record_pending_set_change(true);
-        journal_record(JournalRecord::ValidatorForcedExit {
-            wall_clock: iso8601_now(),
+        Ok(Some(DeferredValidatorPunishment {
+            addr,
+            target,
+            target_label,
+            jailed: jail,
             block_number,
-            validator: format!("{addr:?}"),
-            status_before: "ACTIVE".into(),
-            status_after: target_label.into(),
-        });
-        warn!(
-            target: "outbe::validatorset",
-            event = if jail { "validator_jailed" } else { "validator_force_exit" },
-            validator = %addr,
-            status_after = target_label,
-            block_number,
-            "validator punished from ACTIVE (force-exit/jail)",
-        );
-
-        Ok(())
+        }))
     }
 
     /// Unjails a JAILED validator back to PENDING. Called by Staking's
@@ -2321,8 +2508,11 @@ impl ValidatorSet<'_> {
                 continue;
             }
 
+            if self.val_ocomp_recovery_deadline.read(&addr)? != 0 {
+                i += 1;
+                continue;
+            }
             debug_assert_eq!(state_machine::cleanup(inactive), ValidatorLifecycle::Absent);
-
             // Clear all per-validator storage
             self.clear_validator_storage(&addr)?;
 
@@ -2379,6 +2569,8 @@ impl ValidatorSet<'_> {
         // key_epoch=1 has no rotation, loss, or recovery path.
         self.val_join_confirmed.write(addr, false)?;
         self.val_jailed_at_height.write(addr, 0)?;
+        self.val_ocomp_miss_count.write(addr, 0)?;
+        self.val_ocomp_recovery_deadline.write(addr, 0)?;
         Ok(())
     }
 

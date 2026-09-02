@@ -14,9 +14,9 @@ struct PendingBidsRelay {
     bool done;
 }
 
-/// @notice An issuance mint parked because a recipient's ERC-1155 receiver hook reverted; retried via
-///         `flushPendingIssuanceMint`.
-struct PendingIssuanceMint {
+/// @notice An issuance parked because a recipient's ERC-1155 receiver hook reverted; retried via
+///         `flushPendingIssuance`.
+struct PendingIssuance {
     bytes14 seriesId;
     address recipient;
     uint256 quantity;
@@ -40,10 +40,10 @@ struct TargetRouterStorage {
     ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
     ///      relay cannot double-count demand.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
-    /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
-    /// @dev Next index to assign in `pendingIssuanceMints`; also the count ever enqueued.
-    uint256 nextPendingIssuanceMintIdx;
+    /// @dev Parked issuances awaiting permissionless retry, keyed by enqueue index.
+    mapping(uint256 idx => PendingIssuance) pendingIssuances;
+    /// @dev Next index to assign in `pendingIssuances`; also the count ever enqueued.
+    uint256 nextPendingIssuanceIdx;
     /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
     IERC7786TokenBridge tokenBridge;
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
@@ -79,7 +79,7 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint16 total) issuanceTotalChunks;
     /// @dev How many of the day's issuance chunks have been applied.
     mapping(uint32 worldwideDay => uint16 seen) issuanceChunksSeen;
-    /// @dev Issuance chunks already applied, so a repeat neither mints nor counts.
+    /// @dev Issuance chunks already applied, so a repeat neither issues nor counts.
     mapping(uint32 worldwideDay => mapping(uint16 chunkIndex => bool applied)) issuanceChunkApplied;
 }
 

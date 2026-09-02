@@ -73,7 +73,7 @@ fn wire_intex_venue(world: &mut World) {
         .expect("wire the intex venue");
 }
 
-#[then("the target router may mint on the venue")]
+#[then("the target router may issue on the venue")]
 fn router_may_mint(world: &mut World) {
     let contracts = world
         .state

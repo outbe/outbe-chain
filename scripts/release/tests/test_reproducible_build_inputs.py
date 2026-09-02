@@ -91,7 +91,7 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
             "release/project-toolchain-v1.json",
         )
 
-    def test_production_enclave_has_exact_native_dcap_feature(self) -> None:
+    def test_production_enclave_has_exact_production_dcap_release_feature(self) -> None:
         loaded = build_inputs.load_and_validate_build_spec(BUILD_SPEC_PATH)
         enclave = next(
             artifact
@@ -99,7 +99,7 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
             if artifact["role"] == "tee-enclave"
         )
 
-        self.assertEqual(enclave["features"], ["native-dcap"])
+        self.assertEqual(enclave["features"], ["production-dcap-release"])
 
     def test_feature_matrix_rejects_missing_extra_or_non_enclave_features(self) -> None:
         base = json.loads(BUILD_SPEC_PATH.read_text(encoding="utf-8"))
@@ -108,8 +108,8 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
         )
         cases = (
             (enclave, []),
-            (enclave, ["native-dcap", "dcap-fixture-capture"]),
-            (base["artifacts"][0], ["native-dcap"]),
+            (enclave, ["production-dcap-release", "dcap-fixture-capture"]),
+            (base["artifacts"][0], ["production-dcap-release"]),
         )
         for artifact, features in cases:
             changed = json.loads(json.dumps(base))
@@ -185,7 +185,7 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
                 "--bin",
                 "outbe-tee-enclave",
                 "--features",
-                "native-dcap",
+                "production-dcap-release",
             ],
         )
         for command in plan:

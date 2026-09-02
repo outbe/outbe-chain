@@ -10,7 +10,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
-    units::SCALE_1E6_U256,
+    units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -28,6 +28,8 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const CREATED_AT: u64 = 1_700_000_000;
 const BLOCK_NUMBER: u64 = 42;
 const ISSUANCE_ISO: u16 = 840;
+/// Threshold anchor elected by the benchmarked `requestCredis`.
+const REFERENCE_ISO: u16 = ISSUANCE_ISO;
 const ALICE: Address = Address::repeat_byte(0xaa);
 const CCA: Address = Address::repeat_byte(0xcc);
 const ASSET: Address = Address::new([
@@ -55,6 +57,10 @@ fn pledge_stables() -> U256 {
 
 fn pledge_cost() -> U256 {
     SCALE_1E6_U256
+}
+
+fn native_stake() -> U256 {
+    checked_protocol_to_native(pledge_cost()).expect("benchmark stake fits native COEN")
 }
 
 fn oracle_rate() -> U256 {
@@ -110,6 +116,13 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         .policy_rate
         .write(&ISSUANCE_ISO, U256::from(43_000))
         .map_err(|error| error.to_string())?;
+    // The elected threshold anchor must be a registered reference currency. This
+    // scenario anchors to the issuance currency, whose COEN pair is already seeded
+    // above, so the measured path stays one origination without extra oracle setup.
+    OracleContract::new(storage.clone())
+        .reference_currencies
+        .push(REFERENCE_ISO)
+        .map_err(|error| error.to_string())?;
     storage
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
         .map_err(|error| error.to_string())?;
@@ -127,7 +140,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         return Err("Credis benchmark pledge price drifted".to_owned());
     }
     storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, pledge_cost())
+        .increase_balance(CREDIS_FACTORY_ADDRESS, native_stake())
         .map_err(|error| error.to_string())?;
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .map_err(|error| error.to_string())?;
@@ -175,12 +188,13 @@ impl BenchmarkScenario for CredisScenario {
             smartAccount: ALICE,
             pledgeHandle: prepared.pledge_handle,
             spendAuth: B256::from(prepared.spend_auth),
+            referenceCurrency: REFERENCE_ISO,
         }
         .abi_encode();
 
         let started = Instant::now();
         let output = StorageHandle::enter(&mut provider, |storage| {
-            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, pledge_cost())
+            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, native_stake())
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);

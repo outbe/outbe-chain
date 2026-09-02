@@ -187,7 +187,7 @@ pub fn dispatch(
                                 "preflight NodeHost binding signature mismatch".into(),
                             )
                         })?;
-                    let (node_id_hash, recipient_x25519) =
+                    let (node_id_hash, _recipient_x25519) =
                         registration_onboarding_target(preflight.evidence)?;
                     let outcome = if policy.attestation_mode == AttestationMode::DcapRequired {
                         let onboarding = registry.register_enclave_with_onboarding_v1(
@@ -203,25 +203,9 @@ pub fn dispatch(
                         registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
                         onboarding.registration
                     } else {
-                        // The separate GramineDirectDev chain keeps its existing
-                        // development-only transport. It is not a production
-                        // fallback and never enters the DcapRequired capability.
-                        let outcome = registry.register_enclave_with_active_policy_v1(
-                            caller,
-                            preflight.evidence,
-                            &node_signature,
-                            &enclave_signature,
-                            &binding,
-                            &validator_signature,
-                            &node_binding_signature,
-                            policy,
-                        )?;
-                        registry.emit_offer_key_sealed_for_registry_v1(
-                            outcome,
-                            node_id_hash,
-                            recipient_x25519,
-                        )?;
-                        outcome
+                        return Err(PrecompileError::Revert(
+                            "post-bootstrap enclave registration requires DcapRequired".into(),
+                        ));
                     };
                     Ok(Bytes::from(
                         ITeeRegistryV1::registerEnclaveCall::abi_encode_returns(&matches!(
@@ -553,8 +537,8 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
     )
 }
 
-/// Hardware-free coverage of the public registration path after the typed
-/// post-verifier boundary, including mandatory one-time enclave onboarding.
+/// Hardware-free coverage of registration followed by emission of the exact
+/// purpose-bound artifact returned by the verifier enclave.
 #[cfg(test)]
 pub(crate) fn dispatch_register_with_onboarding_after_verifier_for_test<F>(
     storage: StorageHandle<'_>,
@@ -562,7 +546,7 @@ pub(crate) fn dispatch_register_with_onboarding_after_verifier_for_test<F>(
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
-    seal: F,
+    artifact_for_recipient: F,
 ) -> Result<V1RegistrationOutcome>
 where
     F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
@@ -573,13 +557,29 @@ where
     let node_id_hash = intent.node_id.node_id_hash().map_err(|error| {
         PrecompileError::Revert(format!("registration node identity is invalid: {error}"))
     })?;
-    TeeRegistry::new(onboarding_storage)
-        .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
-            outcome,
-            node_id_hash,
-            intent.recipient_x25519,
-            seal,
-        )?;
+    let artifact = if outcome == V1RegistrationOutcome::Created {
+        artifact_for_recipient(intent.recipient_x25519)
+            .map_err(PrecompileError::Fatal)?
+            .map(|bytes| {
+                outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&bytes)
+                    .map_err(|code| {
+                        PrecompileError::Fatal(format!(
+                            "test verifier returned a non-canonical onboarding artifact: {:#06x}",
+                            code.code()
+                        ))
+                    })
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    TeeRegistry::new(onboarding_storage).emit_verified_onboarding_artifact_v1(
+        &crate::v1::V1OnboardingOutcome {
+            registration: outcome,
+            artifact,
+        },
+        node_id_hash,
+    )?;
     Ok(outcome)
 }
 

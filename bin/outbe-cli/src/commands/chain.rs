@@ -338,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_balance_returns_value() {
-        let one_coen = U256::from(1_000_000u64);
+        let one_coen = U256::from(1_000_000_000_000_000_000u64);
         let mock = MockRpc {
             balance: Ok(one_coen),
             ..Default::default()

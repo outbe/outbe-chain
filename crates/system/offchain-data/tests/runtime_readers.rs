@@ -84,11 +84,9 @@ fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
         league_id: 7,
         floor_price_minor: U256::from(8),
         bucket_key,
-        cost_amount_minor: U256::from(13),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
-        is_settled: false,
     }
 }
 
@@ -478,8 +476,8 @@ fn operation_timeout_is_mongo_unavailability_and_not_a_request_deadline() {
             "operation timeout".to_owned(),
         ),
     );
-    assert_eq!(
+    assert!(matches!(
         failure_rx.borrow().clone(),
-        Some(outbe_offchain_data::RuntimeBodyFailure::Unavailable)
-    );
+        Some(outbe_offchain_data::RuntimeBodyFailure::Unavailable { .. })
+    ));
 }

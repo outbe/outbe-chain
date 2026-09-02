@@ -10,8 +10,6 @@ pub enum CredisFactoryError {
     InvalidSmartAccount,
     #[error("settlement amount is zero")]
     InvalidAmount,
-    #[error("owner has an unresolved called position")]
-    OwnerHasCalledPosition,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
     #[error("caller is not a CCA in active standing")]

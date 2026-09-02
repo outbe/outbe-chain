@@ -282,7 +282,7 @@ contract ERC7786TokenBridgeTest is Test {
 
     function _setUpWcoenRoute() internal {
         outbeWcoen = new NativeWCOEN();
-        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 6, address(this));
+        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, address(this));
 
         outbeWcoenBridge = new ERC7786TokenBridge(
             address(outbeWcoen), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock

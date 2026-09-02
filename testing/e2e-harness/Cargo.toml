@@ -34,12 +34,13 @@ ocomp-integration = [
     "dep:outbe-nodfactory",
     "dep:outbe-offchain-data",
     "dep:outbe-offchain-storage",
+    "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
     "dep:reth-ethereum",
     "dep:reth-provider",
 ]
-dcap-lifecycle-sgx = ["dep:k256", "dep:outbe-operator"]
+release-sgx-e2e = []
 
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
 # code behind them drives the `world/` handles. Chain reads/sends are native
@@ -84,8 +85,9 @@ outbe-fidelity = { workspace = true, optional = true }
 outbe-metadosis = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }
+# Note construction and proving for the Nod cost-discharge scenario.
+outbe-paynote = { workspace = true, features = ["test-utils"], optional = true }
 outbe-node = { workspace = true, optional = true }
-outbe-operator = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
@@ -141,15 +143,11 @@ path = "src/main.rs"
 [[bin]]
 name = "outbe-release-sgx-e2e"
 path = "src/bin/outbe-release-sgx-e2e.rs"
+required-features = ["release-sgx-e2e"]
 
 [[bin]]
 name = "outbe-release-dcap-evidence"
 path = "src/bin/outbe-release-dcap-evidence.rs"
-
-[[bin]]
-name = "outbe-dcap-lifecycle-sgx"
-path = "src/bin/outbe-dcap-lifecycle-sgx.rs"
-required-features = ["dcap-lifecycle-sgx"]
 
 [[bin]]
 name = "outbe-e2e-evidence"

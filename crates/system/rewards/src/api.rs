@@ -68,7 +68,7 @@ pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(A
 pub struct PreparedRewardGemBatch {
     pub reward_utc_day: u32,
     /// Exact COEN-denominated Gem load amount reserved by the daily allocation.
-    pub planned_gem_load_amount: U256,
+    pub planned_promis_load_amount: U256,
     pub recipient_count: u32,
     pub digest: B256,
 }
@@ -92,7 +92,7 @@ pub enum RewardGemDeliveryOutcome {
         reward_utc_day: u32,
         recipient_count: u32,
         /// Exact COEN-denominated Gem load amount minted by this delivery.
-        delivered_gem_load_amount: U256,
+        delivered_promis_load_amount: U256,
     },
 }
 
@@ -141,7 +141,7 @@ fn prepare_daily_validator_gem_batch_inner(
         })
     })?;
     let mut recipients = Vec::new();
-    let mut planned_gem_load_amount = U256::ZERO;
+    let mut planned_promis_load_amount = U256::ZERO;
     if !validator_topup_amount.is_zero() && total_count != 0 {
         let denominator = U256::from(total_count);
         for (owner, count) in voters {
@@ -162,10 +162,12 @@ fn prepare_daily_validator_gem_batch_inner(
                     "validator reward Gem owner is zero",
                 ));
             }
-            planned_gem_load_amount =
-                planned_gem_load_amount.checked_add(load).ok_or_else(|| {
-                    reward_gem_retryable_error("validator reward planned total overflow")
-                })?;
+            planned_promis_load_amount =
+                planned_promis_load_amount
+                    .checked_add(load)
+                    .ok_or_else(|| {
+                        reward_gem_retryable_error("validator reward planned total overflow")
+                    })?;
             recipients.push((*owner, load));
         }
     }
@@ -183,12 +185,12 @@ fn prepare_daily_validator_gem_batch_inner(
         gem_type as u8,
         REWARD_GEM_CURRENCY,
         REWARD_GEM_CURRENCY,
-        planned_gem_load_amount,
+        planned_promis_load_amount,
         &recipients,
     );
     let summary = PreparedRewardGemBatch {
         reward_utc_day: utc_day,
-        planned_gem_load_amount,
+        planned_promis_load_amount,
         recipient_count,
         digest,
     };
@@ -196,7 +198,7 @@ fn prepare_daily_validator_gem_batch_inner(
     if rewards.daily_topup_prepared.read(&utc_day)? {
         let stored_digest = rewards.reward_gem_batch_digest.read(&utc_day)?;
         let stored_amount = rewards.reward_gem_planned_load_amount.read(&utc_day)?;
-        if stored_digest != digest || stored_amount != planned_gem_load_amount {
+        if stored_digest != digest || stored_amount != planned_promis_load_amount {
             return Err(reward_gem_retryable_error(format!(
                 "validator reward Gem preparation replay contradicts UTC day {utc_day}"
             )));
@@ -218,7 +220,7 @@ fn prepare_daily_validator_gem_batch_inner(
     rewards.reward_gem_batch_digest.write(&utc_day, digest)?;
     rewards
         .reward_gem_planned_load_amount
-        .write(&utc_day, planned_gem_load_amount)?;
+        .write(&utc_day, planned_promis_load_amount)?;
     rewards.reward_gem_type.write(&utc_day, gem_type as u8)?;
     rewards
         .reward_gem_issuance_currency
@@ -256,7 +258,7 @@ fn prepare_daily_validator_gem_batch_inner(
     }
 
     let owners = rewards.reward_gem_owner_at.get_nested(&utc_day);
-    let loads = rewards.reward_gem_load_at.get_nested(&utc_day);
+    let loads = rewards.reward_promis_load_at.get_nested(&utc_day);
     for (index, (owner, load)) in recipients.iter().copied().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
             reward_gem_retryable_error("validator reward Gem recipient index overflow")
@@ -344,7 +346,7 @@ fn require_prepared_reward_gem_batch_replay_consistency(
     }
 
     let owners = rewards.reward_gem_owner_at.get_nested(&utc_day);
-    let loads = rewards.reward_gem_load_at.get_nested(&utc_day);
+    let loads = rewards.reward_promis_load_at.get_nested(&utc_day);
     for (index, (expected_owner, expected_load)) in expected_recipients.iter().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
             reward_gem_retryable_error("validator reward Gem recipient index overflow")
@@ -453,9 +455,9 @@ fn deliver_oldest_reward_gem_batch_inner(
     }
 
     let owners = rewards.reward_gem_owner_at.get_nested(&reward_utc_day);
-    let loads = rewards.reward_gem_load_at.get_nested(&reward_utc_day);
+    let loads = rewards.reward_promis_load_at.get_nested(&reward_utc_day);
     let mut recipients = Vec::with_capacity(recipient_count as usize);
-    let mut delivered_gem_load_amount = U256::ZERO;
+    let mut delivered_promis_load_amount = U256::ZERO;
     for index in 0..recipient_count {
         let owner = owners.read(&index)?;
         let load = loads.read(&index)?;
@@ -464,13 +466,15 @@ fn deliver_oldest_reward_gem_batch_inner(
                 "validator reward Gem UTC day {reward_utc_day} has an empty recipient at index {index}"
             )));
         }
-        delivered_gem_load_amount =
-            delivered_gem_load_amount.checked_add(load).ok_or_else(|| {
-                reward_gem_retryable_error("validator reward Gem delivery total overflow")
-            })?;
+        delivered_promis_load_amount =
+            delivered_promis_load_amount
+                .checked_add(load)
+                .ok_or_else(|| {
+                    reward_gem_retryable_error("validator reward Gem delivery total overflow")
+                })?;
         recipients.push((owner, load));
     }
-    if delivered_gem_load_amount
+    if delivered_promis_load_amount
         != rewards
             .reward_gem_planned_load_amount
             .read(&reward_utc_day)?
@@ -484,7 +488,7 @@ fn deliver_oldest_reward_gem_batch_inner(
         gem_type_raw,
         issuance_currency,
         reference_currency,
-        delivered_gem_load_amount,
+        delivered_promis_load_amount,
         &recipients,
     );
     if digest != rewards.reward_gem_batch_digest.read(&reward_utc_day)? {
@@ -511,7 +515,7 @@ fn deliver_oldest_reward_gem_batch_inner(
     };
 
     for (owner, load) in recipients {
-        outbe_gemfactory::api::mint_gem(
+        outbe_gemfactory::api::issue_gem(
             &ctx.storage,
             owner,
             gem_type,
@@ -543,7 +547,7 @@ fn deliver_oldest_reward_gem_batch_inner(
     Ok(RewardGemDeliveryOutcome::Delivered {
         reward_utc_day,
         recipient_count,
-        delivered_gem_load_amount,
+        delivered_promis_load_amount,
     })
 }
 
@@ -581,7 +585,7 @@ fn reward_gem_batch_digest(
     gem_type: u8,
     issuance_currency: u16,
     reference_currency: u16,
-    planned_gem_load_amount: U256,
+    planned_promis_load_amount: U256,
     recipients: &[(Address, U256)],
 ) -> B256 {
     let mut bytes = Vec::with_capacity(
@@ -593,7 +597,7 @@ fn reward_gem_batch_digest(
     bytes.extend_from_slice(&issuance_currency.to_be_bytes());
     bytes.extend_from_slice(&reference_currency.to_be_bytes());
     bytes.extend_from_slice(&(recipients.len() as u32).to_be_bytes());
-    bytes.extend_from_slice(&planned_gem_load_amount.to_be_bytes::<32>());
+    bytes.extend_from_slice(&planned_promis_load_amount.to_be_bytes::<32>());
     for (owner, load) in recipients {
         bytes.extend_from_slice(owner.as_slice());
         bytes.extend_from_slice(&load.to_be_bytes::<32>());
@@ -679,7 +683,7 @@ mod tests {
     }
 
     /// Seeds COEN/840 oracle pair at `rate_6`. Required because
-    /// `deliver_oldest_reward_gem_batch` -> `mint_gem` resolves `coen_rate` for floor
+    /// `deliver_oldest_reward_gem_batch` -> `issue_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -693,7 +697,7 @@ mod tests {
             ctx.block.timestamp,
         )
         .unwrap();
-        // Register ISO 840 (USD) so mint_gem currency-validation passes.
+        // Register ISO 840 (USD) so issue_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
         // Close every reward day these tests use: none carries a VWAP, so
@@ -707,7 +711,7 @@ mod tests {
 
     /// Collects all gem loads owned by `voter` from the gem entity store.
     /// Returns empty Vec if voter holds no gems.
-    fn voter_gem_loads(ctx: &BlockRuntimeContext, voter: Address) -> Vec<U256> {
+    fn voter_promis_loads(ctx: &BlockRuntimeContext, voter: Address) -> Vec<U256> {
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         let count = gem.balance_of(voter).unwrap();
         (0..count)
@@ -716,7 +720,7 @@ mod tests {
                 outbe_gem::api::get_gem(&ctx.storage, gem_id)
                     .unwrap()
                     .unwrap()
-                    .gem_load_minor
+                    .promis_load_minor
             })
             .collect()
     }
@@ -835,11 +839,11 @@ mod tests {
                 panic!("fresh day must prepare one batch: {outcome:?}");
             };
             assert_eq!(batch.reward_utc_day, 20240101);
-            assert_eq!(batch.planned_gem_load_amount, U256::from(400u64));
+            assert_eq!(batch.planned_promis_load_amount, U256::from(400u64));
             assert_eq!(batch.recipient_count, 2);
 
-            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
-            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
 
             let rewards = ctx.storage.contract::<Rewards>();
             assert!(rewards.daily_topup_prepared.read(&20240101).unwrap());
@@ -864,7 +868,7 @@ mod tests {
             );
             assert_eq!(
                 rewards
-                    .reward_gem_load_at
+                    .reward_promis_load_at
                     .get_nested(&20240101)
                     .read(&0)
                     .unwrap(),
@@ -880,7 +884,7 @@ mod tests {
             );
             assert_eq!(
                 rewards
-                    .reward_gem_load_at
+                    .reward_promis_load_at
                     .get_nested(&20240101)
                     .read(&1)
                     .unwrap(),
@@ -1002,7 +1006,7 @@ mod tests {
                 .write(&0, VAL_Y)
                 .unwrap();
             rewards
-                .reward_gem_load_at
+                .reward_promis_load_at
                 .get_nested(&20240101)
                 .write(&0, U256::from(999u64))
                 .unwrap();
@@ -1017,7 +1021,7 @@ mod tests {
             assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 1);
             assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
             assert_eq!(rewards.reward_gem_pending_batch_count.read().unwrap(), 0);
-            assert_eq!(voter_gem_loads(&ctx, VAL_X).len(), 1);
+            assert_eq!(voter_promis_loads(&ctx, VAL_X).len(), 1);
         });
     }
 
@@ -1047,7 +1051,7 @@ mod tests {
                 matches!(delivery_error, PrecompileError::Revert(_)),
                 "an empty queue cannot hide a prepared unsettled obligation: {delivery_error:?}"
             );
-            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
         });
     }
 
@@ -1114,7 +1118,7 @@ mod tests {
             let rewards = ctx.storage.contract::<Rewards>();
             assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
             assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
-            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
         });
     }
 
@@ -1138,17 +1142,17 @@ mod tests {
                 RewardGemDeliveryOutcome::Delivered {
                     reward_utc_day: 20240101,
                     recipient_count: 2,
-                    delivered_gem_load_amount: U256::from(400u64),
+                    delivered_promis_load_amount: U256::from(400u64),
                 }
             );
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
             assert_eq!(
                 deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::Empty
             );
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
         });
     }
 
@@ -1176,8 +1180,8 @@ mod tests {
                 .with_checkpoint(|| deliver_oldest_reward_gem_batch(&ctx))
                 .unwrap_err();
             assert!(matches!(err, PrecompileError::Revert(_)), "{err:?}");
-            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
-            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
             let rewards = ctx.storage.contract::<Rewards>();
             assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
 
@@ -1189,8 +1193,8 @@ mod tests {
                     ..
                 }
             ));
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(100u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(100u64)]);
         });
     }
 
@@ -1214,8 +1218,8 @@ mod tests {
                     ..
                 }
             ));
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(10u64)]);
-            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
+            assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(10u64)]);
+            assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
 
             let second = deliver_oldest_reward_gem_batch(&ctx).unwrap();
             assert!(matches!(
@@ -1225,7 +1229,7 @@ mod tests {
                     ..
                 }
             ));
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(20u64)]);
+            assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(20u64)]);
         });
     }
 
@@ -1250,11 +1254,14 @@ mod tests {
                 deliver_oldest_reward_gem_batch(&reopened).unwrap(),
                 RewardGemDeliveryOutcome::Delivered {
                     reward_utc_day: 20240101,
-                    delivered_gem_load_amount,
+                    delivered_promis_load_amount,
                     ..
-                } if delivered_gem_load_amount == U256::from(90u64)
+                } if delivered_promis_load_amount == U256::from(90u64)
             ));
-            assert_eq!(voter_gem_loads(&reopened, VAL_Z), vec![U256::from(90u64)]);
+            assert_eq!(
+                voter_promis_loads(&reopened, VAL_Z),
+                vec![U256::from(90u64)]
+            );
             assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
         });
     }

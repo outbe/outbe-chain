@@ -46,45 +46,45 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
-    function test_Mint_AtCap_Succeeds() public {
+    function test_Issue_AtCap_Succeeds() public {
         uint32 cap = 100;
         _createSeries(cap);
 
         vm.prank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
+        nft.issue(holderA, cap, SERIES_ID);
 
         assertEq(nft.totalSupply(TOKEN_ID), cap);
         assertEq(nft.readData(SERIES_ID).issuedIntexCount, cap);
         assertEq(nft.balanceOf(holderA, TOKEN_ID), cap);
     }
 
-    function test_Mint_OverCap_Reverts() public {
+    function test_Issue_OverCap_Reverts() public {
         uint32 cap = 100;
         _createSeries(cap);
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
-        nft.mint(holderA, cap + 1, SERIES_ID);
+        nft.issue(holderA, cap + 1, SERIES_ID);
     }
 
-    function test_Mint_OneOverAfterPartial_Reverts() public {
+    function test_Issue_OneOverAfterPartial_Reverts() public {
         uint32 cap = 100;
         _createSeries(cap);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, 60, SERIES_ID);
+        nft.issue(holderA, 60, SERIES_ID);
         // 60 + 41 = 101 > 100 -> reverts with the post-increment attempted total.
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
-        nft.mint(holderA, 41, SERIES_ID);
+        nft.issue(holderA, 41, SERIES_ID);
         vm.stopPrank();
     }
 
     // --- burnSettled state gate (state in {Qualified, Called}) ---
 
-    function _mintAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
+    function _issueAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
         _createSeries(cap);
         vm.prank(bridger);
-        nft.mint(holderA, mintAmount, SERIES_ID);
+        nft.issue(holderA, mintAmount, SERIES_ID);
         if (callBeforeSettle) {
             vm.prank(bridger);
             nft.markCalled(SERIES_ID, uint32(block.timestamp));
@@ -120,7 +120,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_OnQualifiedState_Succeeds() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         // Series is in Qualified, holder has 4 Settled.
         vm.prank(promis);
         nft.burnSettled(holderA, SERIES_ID, 3);
@@ -128,7 +128,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_OnCalledState_Succeeds() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: true});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: true});
         // Series is in Called, holder has 4 Settled.
         vm.prank(promis);
         nft.burnSettled(holderA, SERIES_ID, 4);
@@ -140,7 +140,7 @@ contract IntexNFT1155SupplyTest is Test {
     function test_Settle_ZeroAmount_Reverts() public {
         _createSeries(10);
         vm.prank(bridger);
-        nft.mint(holderA, 5, SERIES_ID);
+        nft.issue(holderA, 5, SERIES_ID);
         // amount == 0 is rejected before any series-state work.
         vm.prank(settler);
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
@@ -148,7 +148,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_ZeroAmount_Reverts() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         vm.prank(promis);
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
         nft.burnSettled(holderA, SERIES_ID, 0);
@@ -156,14 +156,14 @@ contract IntexNFT1155SupplyTest is Test {
 
     // --- Live-supply cap (a burn frees cap room; cap is `totalSupply <= issuedIntexCount`) ---
 
-    function test_Cap_Mint_AfterSettle_FreesCapRoom() public {
+    function test_Cap_Issue_AfterSettle_FreesCapRoom() public {
         // Mint to cap, settle (burns 4 Issued -> totalSupply 6): the freed room is reusable, so a
         // mint of 4 succeeds back up to the cap, and only the unit past the cap reverts.
         uint32 cap = 10;
         _createSeries(cap);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
+        nft.issue(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
         vm.stopPrank();
 
@@ -173,13 +173,13 @@ contract IntexNFT1155SupplyTest is Test {
 
         // The 4 units freed by settle can be re-minted.
         vm.prank(bridger);
-        nft.mint(holderA, 4, SERIES_ID);
+        nft.issue(holderA, 4, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, cap, "re-mint refills freed room up to cap");
 
         // One more overshoots the cap.
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
-        nft.mint(holderA, 1, SERIES_ID);
+        nft.issue(holderA, 1, SERIES_ID);
     }
 
     function test_Cap_CrosschainMint_AtCap_Reverts() public {
@@ -189,7 +189,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(cap);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
+        nft.issue(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, cap + 1, cap));
@@ -204,7 +204,7 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(cap);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
+        nft.issue(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
         nft.crosschainBurn(holderA, holderA, TOKEN_ID, 4);
         nft.crosschainMint(holderB, TOKEN_ID, 4);
@@ -222,10 +222,10 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 0);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, 3, SERIES_ID);
+        nft.issue(holderA, 3, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, 3);
 
-        nft.mint(holderB, 4, SERIES_ID);
+        nft.issue(holderB, 4, SERIES_ID);
         assertEq(nft.readData(SERIES_ID).totalSupply, 7);
 
         nft.markQualified(SERIES_ID);
@@ -237,7 +237,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }
 
-    function test_Cap_Mint_OverCap_SurfacesTypedRevertNotPanic() public {
+    function test_Cap_Issue_OverCap_SurfacesTypedRevertNotPanic() public {
         // The cap-check intermediate is widened to uint256 so `totalSupply + qty` cannot wrap
         // uint32 - even at `issuedIntexCount == type(uint32).max`. We can't drive `totalSupply`
         // all the way to 2^32 in a test (per-mint capped at uint16.max would need 65k+ calls),
@@ -248,13 +248,13 @@ contract IntexNFT1155SupplyTest is Test {
         _createSeries(cap);
 
         vm.startPrank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
+        nft.issue(holderA, cap, SERIES_ID);
 
         // mint overshoot by uint16-bounded amounts - typed revert, not panic
         vm.expectRevert(
             abi.encodeWithSelector(IIntexNFT1155.SupplyCapExceeded.selector, SERIES_ID, uint256(cap) + 1, uint256(cap))
         );
-        nft.mint(holderB, 1, SERIES_ID);
+        nft.issue(holderB, 1, SERIES_ID);
 
         // crosschainMint overshoot - typed revert with the (tokenId-derived seriesId, attempted, cap) tuple
         nft.markQualified(SERIES_ID);

@@ -947,7 +947,7 @@ fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
         0,
         U256::ZERO,
         status::COMPLETED,
-        U256::ZERO,
+        U256::from(777),
     );
 }
 
@@ -960,7 +960,7 @@ fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
         1,
         U256::ONE,
         status::COMPLETED,
-        U256::ZERO,
+        U256::ONE,
     );
 }
 
@@ -2695,7 +2695,7 @@ fn test_ready_processing_zero_limit_fails() {
 }
 
 #[test]
-fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
+fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
     with_storage(|storage| {
         let wwd_raw = 20260312u32;
         let wwd = outbe_common::WorldwideDay::new(wwd_raw);
@@ -2728,7 +2728,8 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a supply-less brief; the limit stays in PROMIS.
+        // A red day is recorded as a supply-less brief; a day with no tributes issues nothing,
+        // so its whole limit goes back to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
@@ -2869,9 +2870,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
-    use alloy_sol_types::SolEvent;
-
+fn green_empty_day_briefs_no_supply_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
@@ -2886,9 +2885,10 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd).unwrap()).unwrap(),
-            outbe_desis::AuctionStage::None
+            outbe_desis::AuctionStage::Briefed
         );
-        assert_eq!(desis.sched_active_count.read().unwrap(), 0);
+        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
+        assert_eq!(desis.pending_supply_promis.read(&wwd).unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -2896,25 +2896,6 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
             U256::MAX
         );
     });
-
-    let signature =
-        outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::SIGNATURE_HASH;
-    let events = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    let rejection = events
-        .iter()
-        .filter(|event| event.topics().first() == Some(&signature))
-        .map(|event| {
-            outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(event)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(rejection.len(), 1);
-    assert_eq!(rejection[0].supply, U256::MAX);
-    assert_eq!(rejection[0].maxAccepted, U256::from(u128::MAX));
-    assert_eq!(
-        rejection[0].reasonCode,
-        outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
-    );
 }
 
 #[test]
@@ -3136,7 +3117,6 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
                     league_id: 1,
                     floor_price_minor: U256::from(1),
                     entry_price_minor: U256::from(1),
-                    cost_amount_minor: U256::from(1),
                     issuance_currency: 840,
                     reference_currency: 840,
                 },
@@ -3184,7 +3164,7 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
 }
 
 #[test]
-fn no_tributes_green_day_briefs_the_full_limit() {
+fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
     with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
@@ -3224,17 +3204,17 @@ fn no_tributes_green_day_briefs_the_full_limit() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 1);
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_supply_promis.read(&series).unwrap(),
-            day_limit
+            U256::ZERO
         );
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(
             promis.get_total_unallocated().unwrap(),
-            U256::ZERO,
-            "a green brief takes the whole no-tributes limit"
+            day_limit,
+            "a day that earned nothing auctions nothing and leaves its limit on the warehouse"
         );
     });
 }
@@ -3374,7 +3354,7 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
         // is how Desis is told the day is unpriced, so it cancels the auction and
         // refunds the supply instead of opening one at a zero entry price.
         assert!(
-            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, U256::ZERO)
+            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd)
                 .unwrap()
                 .is_empty()
         );
@@ -3384,16 +3364,15 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
         // `require_coen_pair` - could never price this day at all.
         assert!(outbe_oracle::api::require_coen_pair(storage.clone(), 840).is_err());
 
-        let current_vwap = U256::from(110_u64);
-        let table =
-            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, current_vwap).unwrap();
-        let projection = outbe_oracle::api::ocomp_pre_admission_projection(
-            storage.clone(),
-            wwd,
-            current_vwap,
-            ctx.block.timestamp,
-        )
-        .unwrap();
+        // The day carries a WorldwideDay VWAP of its own and it is still not an
+        // entry price: an auction is priced from the last closed UTC day alone.
+        metadosis.set_wwd_vwap(wwd, U256::from(110_u64)).unwrap();
+        let table = crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd).unwrap();
+        assert!(table.is_empty());
+
+        let projection =
+            outbe_oracle::api::ocomp_pre_admission_projection(storage.clone(), ctx.block.timestamp)
+                .unwrap();
 
         // One rule prices every day: the settlement table is the projection's,
         // less rows the oracle could not put a price on.
@@ -3409,11 +3388,6 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
                 .map(|row| (row.reference_currency, row.entry_price_minor))
                 .collect::<Vec<_>>()
         );
-        let day_type_row = table
-            .iter()
-            .find(|row| row.iso_code == 840)
-            .expect("the day-type currency is priced from the day's own VWAP");
-        assert_eq!(day_type_row.entry_price_minor, current_vwap);
     });
 }
 

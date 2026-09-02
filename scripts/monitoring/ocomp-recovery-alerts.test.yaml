@@ -1,0 +1,35 @@
+rule_files:
+  - alerts.example.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: recovery window survives a process restart before the first counter scrape
+    interval: 1m
+    input_series:
+      - series: 'outbe_ocomp_recovery_deadline{job="outbe",instance="node-1",addr="0x1111111111111111111111111111111111111111"}'
+        values: '0 43300 43300 0'
+      - series: 'outbe_ocomp_recovery_block_number{job="outbe",instance="node-1"}'
+        values: '100 101 102 103'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: OutbeOcompRecoveryWindowOpen
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: OutbeOcompRecoveryWindowOpen
+        exp_alerts:
+          - exp_labels:
+              addr: '0x1111111111111111111111111111111111111111'
+              instance: node-1
+              job: outbe
+              severity: critical
+              subsystem: ocomp
+            exp_annotations:
+              summary: 'Validator 0x1111111111111111111111111111111111111111 missed OCOMP and lost 10% bonded stake'
+              description: |
+                A fixed 43,200-block recovery window is open with 43199 blocks
+                remaining. Restore OCOMP and replenish bonded stake before the
+                per-validator deadline.
+      - eval_time: 3m
+        alertname: OutbeOcompRecoveryWindowOpen
+        exp_alerts: []

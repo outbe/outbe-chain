@@ -62,7 +62,7 @@ contract EscrowAdapter is
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
 
     /// @notice Decimals every payment token must report.
-    uint8 public constant PAYMENT_TOKEN_DECIMALS = 6;
+    uint8 public constant PAYMENT_TOKEN_DECIMALS = 18;
 
     /// @notice Canonical dead address receiving burned proceeds (the payment token has no burn()).
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;

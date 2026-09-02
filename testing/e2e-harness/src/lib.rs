@@ -1,3 +1,5 @@
+#![cfg(any(not(feature = "release-sgx-e2e"), feature = "ocomp-integration"))]
+
 //! Rust cucumber harness for the outbe-chain e2e suite.
 //!
 //! The scenarios live as Gherkin fixtures under `features/`; the step code
@@ -15,8 +17,6 @@
 //! the [`env::Environment`] (validators / TEE mode / sudo), and Gherkin tags
 //! define each scenario's requirements.
 
-#[cfg(feature = "dcap-lifecycle-sgx")]
-pub mod dcap_lifecycle_sgx;
 pub mod env;
 pub mod features;
 pub mod localnet_driver;

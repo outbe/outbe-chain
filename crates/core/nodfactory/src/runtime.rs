@@ -5,9 +5,9 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, U256};
-use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolEvent;
+use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -20,7 +20,6 @@ use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use crate::sol_ext::IERC20;
 
 /// Issues a Nod through the block-scoped compressed-body lifecycle.
 pub fn issue_nod(
@@ -66,11 +65,9 @@ fn issue_nod_inner(
         league_id: params.league_id,
         floor_price_minor: params.floor_price_minor,
         bucket_key,
-        cost_amount_minor: params.cost_amount_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at,
-        is_settled: false,
     };
     add(&item)?;
 
@@ -84,128 +81,53 @@ fn issue_nod_inner(
             floorPriceMinor: params.floor_price_minor,
             gratisLoadMinor: params.gratis_load_minor,
             entryPriceMinor: params.entry_price_minor,
-            costAmountMinor: params.cost_amount_minor,
+            costAmountMinor: nod_api::cost_amount_minor(
+                params.entry_price_minor,
+                params.gratis_load_minor,
+            )?,
         },
     )?;
 
     Ok(nod_id)
 }
 
-/// Atomic settle path: pay `cost_amount_minor` into the reserve vault and mark
-/// the Nod settled, emitting `NodSettled`. Returns the amount paid.
-///
-/// Settlement is unrestricted: any address may settle any Nod at any point in
-/// its life, including before its bucket qualifies. Ownership, PoW, and
-/// qualification are `mine_gratis` concerns only.
-///
-/// The payment asset is not caller-selected: it is resolved from the vault
-/// router's registry of assets denominating the Nod's recorded
-/// `reference_currency`, taking the first registered entry. Settling a
-/// nonzero-cost Nod whose reference currency has no registered asset fails
-/// with `NoSettlementAsset`.
-///
-/// Payment pulls `cost_amount_minor` of that asset from `payer` into the
-/// precompile address via `IERC20.transferFrom`, approves the reserve
-/// `VAULT_ROUTER_ADDRESS` for the same amount, and calls `IVaultRouter.deposit`
-/// declaring the `StablesSource::NodCostAmount` classifier. The payer MUST
-/// grant the NodFactory precompile an ERC20 allowance of at least
-/// `cost_amount_minor` beforehand.
-///
-/// When `cost_amount_minor == 0` the payment sequence is skipped entirely and
-/// no asset is resolved.
-pub fn settle_nod(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    payer: Address,
-    nod_id: WwdEntityId,
-) -> Result<U256> {
-    let item =
-        nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if item.body().is_settled {
-        return Err(NodFactoryError::NodAlreadySettled.into());
-    }
-    storage
-        .clone()
-        .with_checkpoint(|| settle_nod_inner(storage, scope, payer, nod_id, item))
+/// One `mineGratis` command. Grouped rather than passed positionally because
+/// `caller`, `nod_id`, and `nonce` are otherwise three adjacent opaque scalars.
+pub struct MineGratisRequest<'proof> {
+    pub caller: Address,
+    pub nod_id: WwdEntityId,
+    pub nonce: u64,
+    pub auth: outbe_gratisfactory::api::ModifyAuth,
+    /// Spend proof for the note discharging the Nod's cost.
+    pub paynote_proof: &'proof [u8],
 }
 
-fn settle_nod_inner(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    payer: Address,
-    nod_id: WwdEntityId,
-    item: LoadedNodItem,
-) -> Result<U256> {
-    let owner = item.body().owner;
-    let cost = item.body().cost_amount_minor;
-    let reference_currency = item.body().reference_currency;
-
-    // Effects before interactions: a reentrant asset sees the settled flag
-    // and reverts instead of paying twice.
-    nod_api::settle_nod(storage, scope, item)?;
-
-    let mut asset = Address::ZERO;
-    if !cost.is_zero() {
-        // The cost amount is denominated in the Nod's reference currency, so the
-        // asset comes from the router's registry for that currency rather than
-        // from the caller.
-        asset = settlement_asset(storage, reference_currency)?;
-
-        // 1) Pull stablecoin from the payer into the nodfactory precompile address.
-        let transfer = IERC20::transferFromCall {
-            from: payer,
-            to: NOD_FACTORY_ADDRESS,
-            amount: cost,
-        }
-        .abi_encode();
-        storage.call(asset, U256::ZERO, transfer.into())?;
-
-        // 2) Approve the reserve vault to spend that exact amount. The precompile
-        //    owns the intermediate balance and resets to `cost` each call, so
-        //    there is no leftover allowance to clear.
-        let approve = IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount: cost,
-        }
-        .abi_encode();
-        storage.call(asset, U256::ZERO, approve.into())?;
-
-        // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
-        outbe_vaultrouter::api::deposit(storage, asset, cost)?;
-    }
-
-    emit_event(
-        storage,
-        INodFactory::NodSettled {
-            owner,
-            payer,
-            nodId: nod_id.to_u256(),
-            asset,
-            amountPaid: cost,
-        },
-    )?;
-
-    Ok(cost)
-}
-
-/// Atomic mine-gratis path: validate ownership + PoW + bucket qualification +
-/// settlement, burn the Nod (emitting `NodBurned`), then delegate the matching
-/// gratis mint to `gratisfactory` (which mints to the owner and records the
-/// Fidelity cohort; the `GratisMinted` event is emitted by the Gratis token).
-/// Returns the minted amount.
+/// Atomic mine-gratis path: validate ownership + PoW + bucket qualification,
+/// discharge the Nod's cost by spending a PayNote, burn the Nod (emitting
+/// `NodBurned`), then delegate the matching gratis mint to `gratisfactory`
+/// (which mints to the owner and records the Fidelity cohort; the
+/// `GratisMinted` event is emitted by the Gratis token). Returns the minted
+/// amount.
 ///
-/// The Nod's cost amount must already have been paid through [`settle_nod`];
-/// this path moves no value of its own.
+/// This path moves no value. The cost's underlying assets already reached the
+/// reserve vault when the note was deposited through `IPayNote.deposit`, which
+/// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
+/// proof obligation: `paynote_proof` must name `caller` as its spender, carry
+/// the asset registered for the Nod's `reference_currency`, and cover the Nod's
+/// cost.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    nod_id: WwdEntityId,
-    nonce: u64,
-    auth: outbe_gratisfactory::api::ModifyAuth,
+    request: MineGratisRequest<'_>,
 ) -> Result<U256> {
+    let MineGratisRequest {
+        caller,
+        nod_id,
+        nonce,
+        auth,
+        paynote_proof,
+    } = request;
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     if NodContract::new(storage.clone())
@@ -228,24 +150,26 @@ pub fn mine_gratis(
                 item,
                 bucket,
                 auth,
+                paynote_proof,
             },
             scope,
         )
     })
 }
 
-struct MineGratisInput {
+struct MineGratisInput<'proof> {
     caller: Address,
     nod_id: WwdEntityId,
     nonce: u64,
     item: LoadedNodItem,
     bucket: LoadedNodBucket,
     auth: outbe_gratisfactory::api::ModifyAuth,
+    paynote_proof: &'proof [u8],
 }
 
 fn mine_gratis_inner(
     storage: &StorageHandle<'_>,
-    input: MineGratisInput,
+    input: MineGratisInput<'_>,
     scope: &ExecutionScope,
 ) -> Result<U256> {
     let MineGratisInput {
@@ -255,6 +179,7 @@ fn mine_gratis_inner(
         item,
         bucket,
         auth,
+        paynote_proof,
     } = input;
     if caller != item.body().owner {
         return Err(NodFactoryError::NotOwner.into());
@@ -277,13 +202,28 @@ fn mine_gratis_inner(
         return Err(NodFactoryError::CallDeadlineExpired.into());
     }
 
-    if !item.body().is_settled {
-        return Err(NodFactoryError::NodNotSettled.into());
-    }
+    let paid = discharge_cost(
+        storage,
+        item.body(),
+        bucket.body().entry_price_minor,
+        caller,
+        paynote_proof,
+    )?;
 
     let owner = item.body().owner;
     let gratis_load_minor = item.body().gratis_load_minor;
     nod_api::remove_nod(storage, scope, item, bucket)?;
+
+    emit_event(
+        storage,
+        INodFactory::NodPaid {
+            owner,
+            nodId: nod_id.to_u256(),
+            asset: paid.asset,
+            nullifier: paid.nullifier,
+            amountCovered: U256::from(paid.spend_amount),
+        },
+    )?;
 
     emit_event(
         storage,
@@ -299,14 +239,82 @@ fn mine_gratis_inner(
     Ok(gratis_load_minor)
 }
 
-/// Resolves the settlement asset for a reference currency from the vault
-/// router's registry. Registry order carries no meaning, so the first entry is
-/// as good as any; an empty registry is a configuration error, not a payer one.
-fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Address> {
-    outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| NodFactoryError::NoSettlementAsset { reference_currency }.into())
+/// One discharged Nod cost, as it is reported by `NodPaid`.
+struct PaidCost {
+    asset: Address,
+    nullifier: B256,
+    spend_amount: u128,
+}
+
+/// Discharges `item`'s cost by spending one PayNote.
+///
+/// The proof is the payment. `consume` books its nullifier before returning, so
+/// the note cannot be spent twice; running inside the caller's checkpoint means
+/// a later failure un-books it. It is called last, after the cheap
+/// owner/PoW/qualification guards, so a doomed mine never pays for
+/// verification.
+fn discharge_cost(
+    storage: &StorageHandle<'_>,
+    item: &NodItemState,
+    entry_price_minor: U256,
+    caller: Address,
+    paynote_proof: &[u8],
+) -> Result<PaidCost> {
+    let cost = nod_api::cost_amount_minor(entry_price_minor, item.gratis_load_minor)?;
+    // todo remove this check and add support for u256 in the circuit.
+    let cost_minor =
+        u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
+
+    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+
+    // PayNote notes are bearer instruments: the proof names its own spender and
+    // anyone can relay it. Binding that spender to the caller is what stops an
+    // observer from lifting a broadcast proof to pay for their own Nod.
+    if claim.spender != caller {
+        return Err(NodFactoryError::PayNoteSpenderMismatch {
+            expected: caller,
+            actual: claim.spender,
+        }
+        .into());
+    }
+    check_settlement_asset(storage, item.reference_currency, claim.asset)?;
+    if claim.spend_amount < cost_minor {
+        return Err(NodFactoryError::PayNoteUndercoversCost {
+            covered: claim.spend_amount,
+            required: cost_minor,
+        }
+        .into());
+    }
+
+    Ok(PaidCost {
+        asset: claim.asset,
+        nullifier: claim.nullifier,
+        spend_amount: claim.spend_amount,
+    })
+}
+
+/// Rejects a note whose asset the vault router does not register under
+/// `reference_currency`.
+///
+/// The cost is denominated in the Nod's own reference currency, so any asset
+/// registered under it settles the Nod: the registry lists interchangeable
+/// alternatives, not a preference, and the payer picks which one their note
+/// carries. An empty registry is a configuration error, not a payer one.
+fn check_settlement_asset(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+    asset: Address,
+) -> Result<()> {
+    let registered =
+        outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?;
+    if !registered.contains(&asset) {
+        return Err(NodFactoryError::PayNoteAssetMismatch {
+            asset,
+            reference_currency,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]

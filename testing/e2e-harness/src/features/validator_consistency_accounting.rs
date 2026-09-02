@@ -17,7 +17,7 @@ use crate::world::rpc::ValidatorRecord;
 use crate::world::validators::RegistrationIdentity;
 use crate::world::World;
 
-const COEN: u128 = 1_000_000;
+const COEN: u128 = 1_000_000_000_000_000_000;
 const REGISTRATION_FUNDING_COEN: u64 = 100;
 const PERIODIC_EXCLUSION_TRIES: u32 = 240;
 const S08_UNBONDING_SECS: u64 = 240;
@@ -824,8 +824,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn whole_coen_uses_the_chain_native_six_decimal_scale() {
-        assert_eq!(whole_coen(1), U256::from(1_000_000_u64));
-        assert_eq!(whole_coen(100), U256::from(100_000_000_u64));
+    fn whole_coen_uses_the_chain_native_eighteen_decimal_scale() {
+        assert_eq!(whole_coen(1), U256::from(1_000_000_000_000_000_000_u128));
+        assert_eq!(
+            whole_coen(100),
+            U256::from(100_000_000_000_000_000_000_u128)
+        );
     }
 }

@@ -186,7 +186,7 @@ impl BenchmarkScenario for GemScenario {
                 let mut provider = new_provider(true)?;
                 let position_id = StorageHandle::enter(&mut provider, |storage| {
                     seed_series(&storage)?;
-                    outbe_gemfactory::api::mint_gem_position(
+                    outbe_gemfactory::api::issue_gem_position(
                         &storage,
                         ALICE,
                         source_intex_id(),
@@ -218,7 +218,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     let event_offset = provider.get_ordered_events().len();
     let started = Instant::now();
     let output = StorageHandle::enter(&mut provider, |storage| match prepared.path {
-        PreparedGemPath::Direct(gem_type) => outbe_gemfactory::api::mint_gem(
+        PreparedGemPath::Direct(gem_type) => outbe_gemfactory::api::issue_gem(
             &storage,
             ALICE,
             gem_type,
@@ -230,14 +230,14 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             U256::from(2) * six_decimal_unit(),
         )
         .map_err(|error| error.to_string()),
-        PreparedGemPath::Position => outbe_gemfactory::api::mint_gem_position(
+        PreparedGemPath::Position => outbe_gemfactory::api::issue_gem_position(
             &storage,
             ALICE,
             source_intex_id(),
             U256::from(PARK_UNITS),
         )
         .map_err(|error| error.to_string()),
-        PreparedGemPath::Merchant { position_id, .. } => outbe_gemfactory::api::mint_merchant_gem(
+        PreparedGemPath::Merchant { position_id, .. } => outbe_gemfactory::api::issue_merchant_gem(
             &storage,
             ALICE,
             position_id,

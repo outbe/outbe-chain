@@ -82,7 +82,7 @@ class ReleaseManifestTests(unittest.TestCase):
                     "package": "outbe-tee-enclave",
                     "role": "tee-enclave",
                     "classification": "production",
-                    "features": ["native-dcap"],
+                    "features": ["production-dcap-release"],
                     "install_profiles": ["full-node", "validator"],
                 },
             ],
@@ -140,7 +140,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             hashlib.sha256(first).hexdigest(),
-            "8f38128fa39fa4454f2937cab1a97d47b06235e64bcd3de5596dbea132b017fe",
+            "cdb3718fc6b60e09d232bcdcbd22b97c80d33b61a25d4b414d750a408aed4bc4",
         )
         self.assertTrue(first.endswith(b"\n"))
         self.assertNotIn(str(self.root).encode(), first)
@@ -161,13 +161,13 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbidden test/dev marker"):
             self.build()
 
-    def test_production_enclave_requires_exact_native_dcap_feature(self) -> None:
+    def test_production_enclave_requires_exact_production_dcap_release_feature(self) -> None:
         self.spec["artifacts"][1]["features"] = []
-        with self.assertRaisesRegex(ValueError, "exactly native-dcap"):
+        with self.assertRaisesRegex(ValueError, "exactly production-dcap-release"):
             self.build()
 
     def test_non_enclave_artifact_rejects_application_features(self) -> None:
-        self.spec["artifacts"][0]["features"] = ["native-dcap"]
+        self.spec["artifacts"][0]["features"] = ["production-dcap-release"]
         with self.assertRaisesRegex(ValueError, "non-enclave release artifacts"):
             self.build()
 

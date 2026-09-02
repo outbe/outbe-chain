@@ -8,7 +8,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::NATIVE_TOKEN_DECIMALS;
+use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::IntexState;
@@ -273,9 +273,9 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Decimals a price x PROMIS load product carries: both factors sit on the
-/// native six-decimal scale.
-const PRODUCT_DECIMALS: u32 = 2 * NATIVE_TOKEN_DECIMALS as u32;
+/// Decimals a price x PROMIS load product carries: both protocol factors stay
+/// on the six-decimal scale independently of native COEN denomination.
+const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 /// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into payment-token
 /// minor units, rounded up in favor of the reserve receiving the settlement.
@@ -835,7 +835,7 @@ pub fn settle(
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
 
-    // Burn Issued from holder, mint Settled to the settler.
+    // Burn Issued from holder, issue Settled to the settler.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
@@ -875,16 +875,24 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-/// Per-Intex cost of settling `series_id` in `payment_token`, in that token's
-/// minor units. Rejects a token the series does not accept.
-pub fn quote_cost_amount(
+/// What settling one Intex of `series_id` with `payment_token` costs, and which of
+/// the series' two currencies that token settles on. Rejects a token the series
+/// does not accept.
+pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     payment_token: Address,
-) -> Result<U256> {
+) -> Result<(u16, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     let currency = accept_payment_token(storage, payment_token, &series)?;
-    cost_in_token(storage, &series, payment_token, currency)
+    let settlement_currency = match currency {
+        PaymentCurrency::Reference => series.reference_currency,
+        PaymentCurrency::Issuance => series.issuance_currency,
+    };
+    Ok((
+        settlement_currency,
+        cost_in_token(storage, &series, payment_token, currency)?,
+    ))
 }
 
 /// Which of the series' two currencies a payment token is denominated in.

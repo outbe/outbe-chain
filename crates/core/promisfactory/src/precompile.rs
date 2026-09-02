@@ -39,6 +39,23 @@ pub fn dispatch(
                     };
                     runtime::mine_coen(storage.clone(), sender, c.amount, auth)
                 }),
+                mineGratis(c) => mutate(c, caller, |sender, c| {
+                    let promis_auth = ModifyAuth {
+                        mac: c.promisMac.0,
+                        op_nonce: c.promisOpNonce,
+                    };
+                    let gratis_auth = ModifyAuth {
+                        mac: c.gratisMac.0,
+                        op_nonce: c.gratisOpNonce,
+                    };
+                    runtime::mine_gratis(
+                        storage.clone(),
+                        sender,
+                        c.amount,
+                        promis_auth,
+                        gratis_auth,
+                    )
+                }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
                     Ok(id == ERC165_INTERFACE_ID)

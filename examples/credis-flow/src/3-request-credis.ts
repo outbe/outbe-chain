@@ -13,6 +13,7 @@ import {
   DEFAULT_CREDIS_FACTORY_ADDRESS,
   formatTokenMeta,
   formatCoen,
+  protocolAmountToNativeCoen,
   formatTokenDiff,
   fetchTokenMeta,
   DEFAULT_ENV,
@@ -23,6 +24,10 @@ import { pledgeSecret as derivePledgeSecret, spendAuth, positionId as computePos
 import { findLatestTicket, readTicket, writeTicket, type Ticket } from "./ticket.js";
 
 const SALT = 0n;
+
+// ISO 4217 code of the threshold anchor the CCA elects for the position. It gates
+// only the call - the loan stays denominated in the disbursed asset's currency.
+const REFERENCE_CURRENCY = 840; // USD
 
 // The CCA calls requestCredis with the confidential pledge handle + a spend
 // authorization that binds it to the user's smart account. The CCA holds the
@@ -114,7 +119,7 @@ async function main() {
   // The CCA matches the user's collateral one for one in native COEN. The required
   // amount is the gratis the quote cost, which the ticket recorded at pledge time -
   // it is not in calldata, because it was sealed into the pledge.
-  const stake = BigInt(ticket.amount);
+  const stake = protocolAmountToNativeCoen(BigInt(ticket.amount));
   console.log(`CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral)`);
 
   // The loan is delivered by a call into the smart account, so the precompile now
@@ -137,10 +142,16 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("\nSending requestCredis(smartAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend, {
-    value: stake,
-  });
+  console.log(
+    "\nSending requestCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency)...",
+  );
+  const tx = await credisFactory.requestCredis(
+    smartAccount,
+    ticket.pledgeHandle,
+    spend,
+    REFERENCE_CURRENCY,
+    { value: stake },
+  );
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");
@@ -192,6 +203,7 @@ async function main() {
   console.log(`  entryPrice:        ${position.entryPrice}`);
   console.log(`  callPrice:         ${position.callPrice}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
+  console.log(`  referenceCurrency: ${position.referenceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 
   // Persist the position + bundle for settlement.

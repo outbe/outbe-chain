@@ -33,6 +33,9 @@ use crate::dcap_protocol::{
     MAX_DCAP_VERIFICATION_CHUNK_BYTES,
 };
 use crate::errors::TransportError;
+use crate::finalized_admission::{
+    onboarding_artifact_ingest_request_hash_v1, MAX_ONBOARDING_INGEST_CHUNK_BYTES,
+};
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use crate::remote_session::RemoteSessionAdmissionV1;
 use crate::NOISE_PARAMS;
@@ -658,7 +661,173 @@ impl AuthorizedEnclaveClient {
                 "remote session authorization requires a finalized admission capability".into(),
             ));
         }
+        if matches!(
+            request,
+            EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+                | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
+                | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
+                | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
+        ) {
+            return Err(TransportError::DcapVerification(
+                "multi-frame onboarding ingest must use the whole-operation client API".into(),
+            ));
+        }
         self.request_internal(request)
+    }
+
+    /// Upload and install one exact finalized onboarding admission over this
+    /// authenticated owner connection. There is no per-frame retry: after any
+    /// fault the caller must reconnect and restart from `Begin`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_finalized_admission_v1(
+        &mut self,
+        artifact: &[u8],
+        anchor_outcome: &[u8],
+        committee_transitions: &[Vec<u8>],
+        finalized_admission_witness: &[u8],
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    ) -> Result<[u8; 32], TransportError> {
+        let request_hash = self.begin_finalized_admission_v1(
+            artifact,
+            anchor_outcome,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        )?;
+        for transition in committee_transitions {
+            self.upload_finalized_admission_record_v1(
+                request_hash,
+                crate::finalized_admission::FinalizedAdmissionRecordKindV1::CommitteeTransition,
+                transition,
+            )?;
+        }
+        self.upload_finalized_admission_record_v1(
+            request_hash,
+            crate::finalized_admission::FinalizedAdmissionRecordKindV1::Admission,
+            finalized_admission_witness,
+        )?;
+        self.finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_finalized_admission_v1(
+        &mut self,
+        artifact: &[u8],
+        anchor_outcome: &[u8],
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    ) -> Result<B256, TransportError> {
+        let request_hash = onboarding_artifact_ingest_request_hash_v1(
+            artifact,
+            anchor_outcome,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        )
+        .map_err(|error| TransportError::DcapVerification(error.to_string()))?;
+        match self.request_internal(&EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 {
+            request_hash,
+            artifact: artifact.to_vec(),
+            anchor_outcome: anchor_outcome.to_vec(),
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        })? {
+            EnclaveResponse::DcapOnboardingArtifactIngestStartedV1 {
+                request_hash: echoed,
+            } if echoed == request_hash => Ok(request_hash),
+            _ => Err(TransportError::DcapVerification(
+                "enclave did not acknowledge the exact onboarding ingest".into(),
+            )),
+        }
+    }
+
+    pub fn finish_finalized_admission_v1(
+        &mut self,
+        request_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+    ) -> Result<[u8; 32], TransportError> {
+        match self.request_internal(&EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 {
+            request_hash,
+        })? {
+            EnclaveResponse::FinalizedAdmissionIngestedV1 {
+                request_hash: echoed,
+                tribute_offer_public,
+            } if echoed == request_hash
+                && tribute_offer_public == expected_tribute_offer_public =>
+            {
+                Ok(tribute_offer_public)
+            }
+            _ => Err(TransportError::DcapVerification(
+                "enclave finalized a different onboarding admission".into(),
+            )),
+        }
+    }
+
+    pub fn upload_finalized_admission_record_v1(
+        &mut self,
+        request_hash: B256,
+        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
+        record: &[u8],
+    ) -> Result<(), TransportError> {
+        if record.is_empty() {
+            return Err(TransportError::DcapVerification(
+                "finalized admission record is empty".into(),
+            ));
+        }
+        let mut offset = 0usize;
+        for chunk in record.chunks(MAX_ONBOARDING_INGEST_CHUNK_BYTES) {
+            let wire_offset = u32::try_from(offset).map_err(|_| {
+                TransportError::DcapVerification(
+                    "finalized admission proof offset exceeds u32".into(),
+                )
+            })?;
+            let next = offset.checked_add(chunk.len()).ok_or_else(|| {
+                TransportError::DcapVerification("finalized admission proof offset overflow".into())
+            })?;
+            let expected_next = u32::try_from(next).map_err(|_| {
+                TransportError::DcapVerification(
+                    "finalized admission proof offset exceeds u32".into(),
+                )
+            })?;
+            match self.request_internal(&EnclaveRequest::DcapOnboardingArtifactChunkV1 {
+                request_hash,
+                kind,
+                offset: wire_offset,
+                bytes: chunk.to_vec(),
+            })? {
+                EnclaveResponse::DcapOnboardingArtifactChunkAcceptedV1 {
+                    request_hash: echoed,
+                    next_offset,
+                } if echoed == request_hash && next_offset == expected_next => {}
+                _ => {
+                    return Err(TransportError::DcapVerification(
+                        "enclave acknowledged a different onboarding proof chunk".into(),
+                    ))
+                }
+            }
+            offset = next;
+        }
+        match self.request_internal(&EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 {
+            request_hash,
+            kind,
+        })? {
+            EnclaveResponse::DcapOnboardingArtifactRecordAcceptedV1 {
+                request_hash: echoed,
+                kind: echoed_kind,
+            } if echoed == request_hash && echoed_kind == kind => Ok(()),
+            _ => Err(TransportError::DcapVerification(
+                "enclave did not accept the exact finalized admission record".into(),
+            )),
+        }
     }
 
     fn request_internal(
@@ -1726,6 +1895,8 @@ mod tests {
                 intent_hash: B256::repeat_byte(0x43),
                 node_id_hash: B256::repeat_byte(0x44),
                 enclave_id: B256::repeat_byte(0x45),
+                binding_id: B256::repeat_byte(0x4a),
+                policy_hash: B256::repeat_byte(0x4b),
                 recipient_x25519: [0x46; 32],
                 tribute_offer_public: [0x47; 32],
                 key_epoch: 7,

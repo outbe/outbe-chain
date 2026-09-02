@@ -46,7 +46,7 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.createSeries(params);
         vm.prank(bridger);
-        token.mint(user, 10, SERIES_ID);
+        token.issue(user, 10, SERIES_ID);
         (iTok, sTok) = token.tokenIds(SERIES_ID);
     }
 
@@ -82,6 +82,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Issued Intex Count"), "cap is a series parameter, not a trait");
         assertFalse(json.contains("Issued At"), "worldwide day carries the date semantics");
         assertFalse(json.contains("Series ID"), "composite id lives in the name");
+        assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
     }
 
     function test_uri_Qualified_ReflectsState() public {

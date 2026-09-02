@@ -149,11 +149,13 @@ pub fn run_ocomp_lifecycle_begin_with_scope(
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    with_ce_checkpoint(scope, || {
+    let metrics = with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
             crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx, scope)
         })
-    })
+    })?;
+    metrics.record();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -163,9 +165,12 @@ pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::ocomp::expiry::run_lifecycle_begin(ctx)
-    })
+    let metrics =
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::ocomp::expiry::run_lifecycle_begin(ctx)
+        })?;
+    metrics.record();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -404,14 +409,9 @@ mod tests {
                     .profile_ready
             );
             assert!(
-                outbe_oracle::api::ocomp_pre_admission_projection(
-                    storage,
-                    WorldwideDay::new(2026_0101),
-                    U256::ZERO,
-                    0,
-                )
-                .unwrap()
-                .profile_ready
+                outbe_oracle::api::ocomp_pre_admission_projection(storage, 0)
+                    .unwrap()
+                    .profile_ready
             );
         });
     }

@@ -104,7 +104,60 @@
   },
   {
     "type": "function",
-    "name": "mineGemPromis",
+    "name": "issueGem",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "promisLoad",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "issueGemPosition",
+    "inputs": [
+      {
+        "name": "sourceIntexId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "minePromis",
     "inputs": [
       {
         "name": "gemId",
@@ -130,59 +183,6 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "mintGemPosition",
-    "inputs": [
-      {
-        "name": "sourceIntexId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "mintMerchantGem",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "gemLoad",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "gemId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -300,31 +300,6 @@
   },
   {
     "type": "event",
-    "name": "GemBurned",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "gemLoad",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "GemIssued",
     "inputs": [
       {
@@ -346,19 +321,13 @@
         "internalType": "address"
       },
       {
-        "name": "gemLoad",
+        "name": "promisLoad",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "entryPrice",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "costAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -386,6 +355,62 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GemMined",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "promisLoad",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GemPositionExpired",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "merchant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sourceIntexId",
+        "type": "bytes14",
+        "indexed": false,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "returnedCapacity",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

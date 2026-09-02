@@ -233,30 +233,3 @@ pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
         )
     })
 }
-
-/// DETERMINISTICALLY seal the resident tribute offer key to `recipient_x25519` via
-/// the enclave (`SealOfferKeyForRegistry`), for committing the sealed blob on-chain
-/// (on-chain offer-key delivery to a joining validator). Every committee
-/// node's enclave returns the same blob (static-static ECDH), so the on-chain write
-/// is consensus-deterministic.
-///
-/// Returns `Ok(None)` only to represent an unconfigured process. The production V1
-/// registry caller maps that state to a fatal execution invariant; it never skips
-/// the event. `Ok(Some(blob))` is success and `Err` reports an enclave or transport
-/// failure.
-pub fn seal_offer_key_for_registry(recipient_x25519: [u8; 32]) -> Result<Option<Vec<u8>>, String> {
-    let Some(result) = try_with_enclave(|session| {
-        session.request(&EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 })
-    }) else {
-        return Ok(None);
-    };
-    match result.map_err(|e| format!("enclave SealOfferKeyForRegistry transport error: {e}"))? {
-        EnclaveResponse::SealedOfferKeyForRegistry { sealed } => Ok(Some(sealed)),
-        EnclaveResponse::Error { message } => Err(format!(
-            "enclave refused SealOfferKeyForRegistry: {message}"
-        )),
-        other => Err(format!(
-            "unexpected enclave response to SealOfferKeyForRegistry: {other:?}"
-        )),
-    }
-}

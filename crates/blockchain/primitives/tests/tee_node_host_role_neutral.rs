@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
-    EnclaveInitializationManifestV1, NodeIdV1, ValidatorNodeBindingV1,
+    AttestationMode, EnclaveInitializationManifestV1, NodeIdV1, ValidatorNodeBindingV1,
 };
 
 fn compressed_public(key: &SigningKey) -> [u8; 33] {
@@ -31,6 +31,7 @@ fn node_host_identity_is_only_the_persistent_reth_p2p_key() {
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: [0x11; 32],
         genesis_hash: B256::repeat_byte(0x12),
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: node_id.clone(),
         initialization_challenge: [0x13; 32],
         node_host_noise_x25519: [0x14; 32],

@@ -250,3 +250,21 @@ fn pre_admission_state_version_overflow_is_fatal() {
         ));
     });
 }
+
+#[test]
+fn a_day_the_oracle_cannot_price_is_admitted_with_an_empty_table() {
+    let mut unpriced = inputs();
+    unpriced.oracle.auction_entry_prices.clear();
+
+    let PreAdmissionDecision::Eligible(envelope) =
+        evaluate_pre_admission(&context(), &unpriced).unwrap()
+    else {
+        panic!("an unpriced day is admitted; the empty table is how Desis is told");
+    };
+    assert!(envelope.auction_entry_prices.is_empty());
+    // Emptiness is a well-formed day, not a malformed envelope: the table only has
+    // to be strictly ascending, and an empty one trivially is.
+    envelope
+        .validate_price_table()
+        .expect("an empty price table is well-formed");
+}

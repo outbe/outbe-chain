@@ -12,10 +12,12 @@ path = "src/main.rs"
 [dependencies]
 # Alloy (ABI encoding + primitives)
 alloy-consensus.workspace = true
+alloy-rlp.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 alloy-eips.workspace = true
 outbe-common.workspace = true
+outbe-consensus.workspace = true
 outbe-primitives.workspace = true
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true

@@ -73,13 +73,7 @@ pub fn decode_public_finalized_block(
     if max_committee_members == 0 {
         return Err(PublicFinalizedBlockDecodeError::ZeroCommitteeBound);
     }
-    let certificate_config = max_committee_members;
-    let mut finalization_reader = finalization_bytes;
-    let finalization = Finalization::read_cfg(&mut finalization_reader, &certificate_config)
-        .map_err(|error| PublicFinalizedBlockDecodeError::Finalization(error.to_string()))?;
-    if !finalization_reader.is_empty() {
-        return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
-    }
+    let finalization = decode_public_finalization(finalization_bytes, max_committee_members)?;
 
     let mut block_reader = block_bytes;
     let block = ConsensusBlock::read_cfg(&mut block_reader, &())
@@ -91,6 +85,25 @@ pub fn decode_public_finalized_block(
         finalization,
         block,
     })
+}
+
+/// Canonically decode one public Commonware finalization without trusting it.
+/// The caller must verify the returned certificate against the exact historical
+/// committee and bind its proposal payload to the authenticated header hash.
+pub fn decode_public_finalization(
+    finalization_bytes: &[u8],
+    max_committee_members: usize,
+) -> Result<Finalization, PublicFinalizedBlockDecodeError> {
+    if max_committee_members == 0 {
+        return Err(PublicFinalizedBlockDecodeError::ZeroCommitteeBound);
+    }
+    let mut reader = finalization_bytes;
+    let finalization = Finalization::read_cfg(&mut reader, &max_committee_members)
+        .map_err(|error| PublicFinalizedBlockDecodeError::Finalization(error.to_string()))?;
+    if !reader.is_empty() {
+        return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
+    }
+    Ok(finalization)
 }
 
 /// Source of finalized blocks + certificates, by height, from an upstream node.

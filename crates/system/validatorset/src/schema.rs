@@ -99,6 +99,10 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///       immutable Radicle transport identity bound during validator registration.
 ///   60: radicle_node_id_to_validator - mapping(bytes32 => address)
 ///       reverse uniqueness reservation for Radicle transport identities.
+///   61: val_ocomp_miss_count - mapping(address => uint64)
+///       cumulative number of missed OCOMP result votes.
+///   62: val_ocomp_recovery_deadline - mapping(address => uint64)
+///       fixed recovery deadline opened by the first miss; zero means closed.
 #[contract(addr = VALIDATOR_SET_ADDRESS)]
 pub struct ValidatorSet {
     // Config (slots 0-4)
@@ -267,4 +271,10 @@ pub struct ValidatorSet {
 
     /// Slot 60 - unique validator owner of a non-zero Radicle NodeId.
     pub radicle_node_id_to_validator: Mapping<B256, Address>,
+
+    /// Slot 61 - cumulative OCOMP result-vote misses per validator.
+    pub val_ocomp_miss_count: Mapping<Address, u64>,
+
+    /// Slot 62 - fixed OCOMP recovery deadline. Zero means no open window.
+    pub val_ocomp_recovery_deadline: Mapping<Address, u64>,
 }

@@ -215,13 +215,9 @@ impl PreAdmissionEnvelopeV1 {
         hash_framed(HashDomain::PreAdmission, &self.encode_canonical(limits)?)
     }
 
-    /// Non-empty and strictly ascending by currency: the rows are hashed in order, so
+    /// Strictly ascending by currency: the rows are hashed in order, so
     /// two orderings of the same prices would otherwise be two different days.
     pub fn validate_price_table(&self) -> Result<(), ProtocolError> {
-        require(
-            !self.auction_entry_prices.is_empty(),
-            "day prices at least one reference currency",
-        )?;
         for pair in self.auction_entry_prices.windows(2) {
             require(
                 pair[0].reference_currency < pair[1].reference_currency,
@@ -314,8 +310,10 @@ impl JobIntentV1 {
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Metadosis budget split",
             })?;
+        // A day issues at most its own nominal; the unissued headroom is credited back to the
+        // warehouse, and the exact identity is enforced on the split receipt.
         require(
-            split_total == self.frozen_metadosis_values.day_limit,
+            split_total <= self.frozen_metadosis_values.day_limit,
             "Metadosis budget split",
         )?;
         self.activation_preconditions.validate_for_intent(self)

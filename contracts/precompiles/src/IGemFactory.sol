@@ -3,12 +3,12 @@ pragma solidity ^0.8.30;
 
 interface IGemFactory {
     /// @notice Park the caller's Intex series `sourceIntexId` (burning `amount`
-    ///         units via IntexNFT1155) and mint a GemPosition NFT to the caller.
+    ///         units via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
-    function mintGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
+    function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
     ///         capacity. Only the position's merchant (the caller) may call.
-    function mintMerchantGem(uint256 positionId, address owner, uint256 gemLoad) external returns (uint256 gemId);
+    function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
     /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
     ///         settlement stablecoin supplied by the caller).
@@ -19,7 +19,7 @@ interface IGemFactory {
     ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
-    function mineGemPromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
     ///         Promis unit ever parked; it is not reduced when a position drains
     ///         or expires.
@@ -61,14 +61,13 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A new gem was minted (agent reward, merchant, or genesis flow).
+    /// @notice A new gem was issued (agent reward, merchant, or genesis flow).
     event GemIssued(
         uint256 indexed gemId,
         uint8 gemType,
         address owner,
-        uint256 gemLoad,
+        uint256 promisLoad,
         uint256 entryPrice,
-        uint256 costAmount,
         uint256 floorPrice,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
@@ -77,5 +76,9 @@ interface IGemFactory {
     /// @notice A gem's Cost Amount was settled into the Reserve.
     event GemSettled(uint256 indexed gemId, address owner, uint256 amountPaid, uint16 settlementCurrency);
     /// @notice A settled gem was burned to mine confidential Promis.
-    event GemBurned(uint256 indexed gemId, address owner, uint256 gemLoad);
+    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoad);
+    /// @notice A position ended its validity with capacity it never issued.
+    event GemPositionExpired(
+        uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacity
+    );
 }

@@ -94,10 +94,10 @@ interface ITargetRouter {
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
 
-    /// @notice Emitted when an issuance mint is parked after a recipient's ERC-1155 hook reverts.
-    event IssuanceMintDeferred(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
-    /// @notice Emitted when `flushPendingIssuanceMint` successfully retries a parked mint.
-    event IssuanceMintFlushed(uint256 indexed idx, bytes14 indexed seriesId);
+    /// @notice Emitted when an issuance is parked after a recipient's ERC-1155 hook reverts.
+    event IssuanceDeferred(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
+    /// @notice Emitted when `flushPendingIssuance` successfully retries a parked issuance.
+    event IssuanceFlushed(uint256 indexed idx, bytes14 indexed seriesId);
 
     /// @notice Emitted when a lifecycle mark waits in its series' slot because the series has not landed here yet.
     /// @param seriesId Series the mark is for.
@@ -131,8 +131,8 @@ interface ITargetRouter {
     error NoSuchPendingBidsRelay(uint256 idx);
     /// @notice No parked proceeds route at `idx`.
     error NoSuchPendingProceedsRoute(uint256 idx);
-    /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
-    error NoSuchPendingIssuanceMint(uint256 idx);
+    /// @notice `flushPendingIssuance` called for an index that was never enqueued.
+    error NoSuchPendingIssuance(uint256 idx);
     /// @notice `applyPendingMark` called for a series with nothing waiting in its slot.
     error NoPendingMark(bytes14 seriesId);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.

@@ -15,14 +15,17 @@ export const DEFAULT_CREDIS_FACTORY_ADDRESS = "0x0000000000000000000000000000000
 export const DEFAULT_CREDIS_ADDRESS = "0x000000000000000000000000000000000000100A";
 export const DEFAULT_FIDELITY_ADDRESS = "0x000000000000000000000000000000000000100C";
 
-// Native COEN is SIX-decimal on this chain, not eighteen:
-// `crates/blockchain/primitives/src/units.rs` sets NATIVE_TOKEN_DECIMALS = 6 and
-// ONE_COEN = 1e6, and `mineCoen` mints native 1:1 from six-decimal Gratis. Using
-// ethers' parseEther/formatEther here is off by 1e12 - enough to exceed every
-// funded account and revert. Always go through these two.
-export const COEN_DECIMALS = 6;
+// Native COEN uses the standard 18-decimal EVM boundary. Protocol-side Gratis
+// accounting remains six-decimal; mineCoen performs that conversion on-chain.
+export const COEN_DECIMALS = 18;
+export const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
 
-/** Whole COEN -> base units. `coen("1.5")` === 1_500_000n. */
+/** Six-decimal protocol amount -> native COEN atomic units. */
+export function protocolAmountToNativeCoen(value: bigint): bigint {
+  return value * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+}
+
+/** Whole COEN -> base units. `coen("1.5")` === 1_500_000_000_000_000_000n. */
 export function coen(whole: string): bigint {
   return ethers.parseUnits(whole, COEN_DECIMALS);
 }
@@ -36,8 +39,8 @@ export function formatCoen(value: bigint): string {
 //   (verificationGasLimit + callGasLimit + preVerificationGas) * maxFeePerGas
 // to be on deposit before validation. The UserOps here use [2e6, 2e6] account gas
 // limits, 1e6 preVerificationGas and maxFeePerGas = 1, so that floor is 5e6 base
-// units = 5 COEN. Note this is a COEN amount, so it must be sized in base units -
-// a "0.05 COEN" deposit would be 50_000 units and fail validation.
+// units. At the fixture's maxFeePerGas = 1 that is 0.000000000005 COEN; this
+// constant intentionally follows the raw gas reservation, not a whole-COEN amount.
 export const ENTRYPOINT_MIN_DEPOSIT = 5_000_000n;
 export const ENTRYPOINT_TOPUP = 20_000_000n;
 

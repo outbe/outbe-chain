@@ -6,8 +6,7 @@
 //! The Fidelity cohort op rides INSIDE the gratis enclave round-trip (no extra
 //! trip): `mine` folds an acquisition (`In`), `mine_coen` a sale (`Out`), and
 //! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
-//! factory persists the returned fidelity outcome. `mine_from_promis` burns
-//! public promis and reuses `mine` (promis itself is fidelity-neutral).
+//! factory persists the returned fidelity outcome.
 //!
 //! The credis loan is priced HERE, at pledge time: the pledger names the stablecoin
 //! credit they want and this module derives the gratis it costs, sealing both plus
@@ -27,7 +26,7 @@ use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::scaled_math::checked_mul_div_ceil;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 
 /// Reads the pledged asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
@@ -126,7 +125,7 @@ pub fn unpledge_gratis(
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
 /// key) and record the Fidelity acquisition cohort. The `GratisMinted` event is
-/// emitted by the Gratis token; the factory `GratisMined` is emitted here.
+/// emitted by the Gratis token.
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
@@ -143,33 +142,15 @@ pub fn mint(
     Ok(())
 }
 
-/// Burn `amount` confidential promis from `account` and mint the matching Gratis
-/// 1:1. Both tokens are enclave-confidential and independently authorized: the
-/// promis burn takes the account owner's **Promis** modify key (`promis_auth`) and
-/// the gratis mint takes their **Gratis** modify key (`gratis_auth`). Each `auth`
-/// binds `amount` to that ledger's own current op-nonce, so the caller supplies two
-/// `mac`/`opNonce` pairs.
-pub fn mine_from_promis(
-    storage: StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    gratis_auth: ModifyAuth,
-    promis_auth: ModifyAuth,
-) -> Result<U256> {
-    outbe_promis::api::burn(storage.clone(), account, amount, promis_auth)?;
-
-    // Reuse `mint`: gratis mint + fresh Fidelity cohort at the current block time.
-    mint(storage, account, amount, gratis_auth)?;
-
-    Ok(amount)
-}
-
 pub fn mine_coen(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
+    let native_amount = checked_protocol_to_native(amount)
+        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+
     // Fold the sale cohort into the gratis burn round-trip; persist the returned
     // fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
@@ -178,16 +159,16 @@ pub fn mine_coen(
     let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
     outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
 
-    // Mint native COEN to the seller 1:1 against the burned gratis.
-    storage.increase_balance(account, amount)?;
+    // GRATIS stays at six decimals; the matching native COEN exits at 18 decimals.
+    storage.increase_balance(account, native_amount)?;
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
         SolEvent::encode_log_data(&IGratisFactory::CoenMined {
             sender: account,
-            amount,
+            amount: native_amount,
         }),
     )?;
 
-    Ok(amount)
+    Ok(native_amount)
 }

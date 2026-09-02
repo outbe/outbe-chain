@@ -35,3 +35,4 @@ target-docker/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads

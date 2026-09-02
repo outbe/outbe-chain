@@ -40,7 +40,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
 
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         token.markQualified(SERIES_ID);
-        token.mint(user, AMOUNT, SERIES_ID);
+        token.issue(user, AMOUNT, SERIES_ID);
     }
 
     function _expectMalformed() internal {

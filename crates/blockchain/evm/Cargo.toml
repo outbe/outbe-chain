@@ -54,6 +54,7 @@ outbe-zerofee.workspace = true
 outbe-cycle.workspace = true
 outbe-accounting.workspace = true
 outbe-zkproof.workspace = true
+outbe-paynote.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
@@ -80,15 +81,21 @@ reth-primitives-traits.workspace = true
 reth-rpc-eth-api.workspace = true
 
 alloy-sol-types.workspace = true
+blst.workspace = true
 eyre.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 outbe-chain-constants.workspace = true
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils"] }
+outbe-paynote = { workspace = true, features = ["test-utils"] }
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
+outbe-tee-enclave.workspace = true
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 outbe-offchain-storage.workspace = true

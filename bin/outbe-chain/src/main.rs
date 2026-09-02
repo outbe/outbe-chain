@@ -26,8 +26,9 @@ use outbe_node::{
     compressed_storage::{
         validate_compressed_storage_runtime_config, CompressedStorageRuntimeConfig,
     },
+    ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
     projection::{
-        prepare_offchain_data_projection, validate_offchain_data_checkpoint,
+        prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
         OffchainDataProjectionConfig,
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
@@ -882,14 +883,11 @@ fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Resul
 
 /// Ceiling for advised gas price: one COEN per gas, already far above anything
 /// this chain charges, so a fee spike can never advise an unpayable number.
-const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000;
+const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000_000_000_000_000;
 
 /// Reth suggests a one gwei tip while its oracle has no sampled block to learn
-/// from. A gwei is an Ethereum-scale number, and one COEN unit is a millionth
-/// of a COEN, so that cold-start advice prices a single gas at a thousand COEN
-/// and makes the first transactions on a young chain unaffordable. Advise the
-/// protocol floor instead, and cap the advice at a figure that stays sane in
-/// this denomination.
+/// from. Keep the cold-start floor tiny in raw native units and cap sampled
+/// advice at one 18-decimal COEN per gas.
 fn apply_outbe_gas_price_oracle_defaults<C: reth_cli::chainspec::ChainSpecParser, Ext, SubCmd>(
     command: &mut reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
 ) where
@@ -958,7 +956,6 @@ where
 enum LauncherExitCause {
     NodeExited,
     ConsensusExited,
-    ProjectionRequested,
     OcompRequested,
     UpgradeRequested,
     TeeLeaseRejected,
@@ -969,10 +966,7 @@ impl LauncherExitCause {
     const fn requests_engine_shutdown(self) -> bool {
         matches!(
             self,
-            Self::ProjectionRequested
-                | Self::OcompRequested
-                | Self::UpgradeRequested
-                | Self::TeeLeaseRejected
+            Self::OcompRequested | Self::UpgradeRequested | Self::TeeLeaseRejected
         )
     }
 }
@@ -1291,6 +1285,8 @@ fn run_node() -> eyre::Result<()> {
         ConsensusArgs,
         ProjectionReadinessHandle,
         Option<ProjectionReadinessHandle>,
+        Arc<RetainedTributeWriter>,
+        Arc<SharedOcompRetentionSelector>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
         Option<(
@@ -1312,6 +1308,8 @@ fn run_node() -> eyre::Result<()> {
             mut args,
             projection_readiness,
             ocomp_readiness,
+            retained_tribute_writer,
+            retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
             radicle,
@@ -1414,6 +1412,8 @@ fn run_node() -> eyre::Result<()> {
                         {
                             let mut services = outbe_engine::ConsensusStackServices::new(
                                 projection_readiness,
+                                retained_tribute_writer,
+                                retention_selector,
                                 finalized_ce_committer,
                                 ce_startup_recovery,
                             );
@@ -1682,13 +1682,30 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
+        let retention_selector = Arc::new(SharedOcompRetentionSelector::new());
+        let discovery_control_address = std::env::var("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS")
+            .wrap_err("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS is required")?
+            .parse::<std::net::SocketAddr>()
+            .wrap_err("parse OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS")?;
+        if !discovery_control_address.ip().is_loopback()
+            || discovery_control_address.port() == 0
+        {
+            eyre::bail!(
+                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS must be a non-zero loopback socket"
+            );
+        }
+        let discovery_spool_root = ocomp_domain_root.join("exporter-v1/discovery");
         let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
             domain_root: ocomp_domain_root,
+            discovery_spool_root,
+            discovery_control_address,
             bundles: ocomp_runtime_bundles,
             policy: ocomp_policy,
             validator_rpc_url: ocomp_validator_rpc_url,
             chain_id: builder.config().chain.chain().id(),
             genesis_hash: builder.config().chain.genesis_hash(),
+            retention_selector: Arc::clone(&retention_selector),
+            retention_required: args.is_validator || args.upstream.is_some(),
         };
         let ocomp_baseline = ProjectionCheckpoint {
             block_number: 0,
@@ -1753,8 +1770,7 @@ fn run_node() -> eyre::Result<()> {
                     endpoint,
                     &node_data_dir,
                     outbe_tee::NodeHostIdentityV1 {
-                        chain_id: builder.config().chain.chain().id(),
-                        genesis_hash: builder.config().chain.genesis_hash(),
+                        network_binding: initial_tee_policy.network_binding(),
                         reth_p2p_public,
                     },
                     |hash| {
@@ -1872,8 +1888,12 @@ fn run_node() -> eyre::Result<()> {
             mongodb_uri: offchain_data.mongodb_uri,
             mongodb_database: offchain_data.mongodb_database,
         };
+        let projection_retention_selector = Arc::clone(&retention_selector);
         let prepared_projection = tokio::task::spawn_blocking(move || {
-            prepare_offchain_data_projection(projection_config)
+            prepare_offchain_data_projection_with_retention(
+                projection_config,
+                projection_retention_selector,
+            )
         })
         .await
         .wrap_err("offchain-data startup validation worker failed")??;
@@ -1881,6 +1901,7 @@ fn run_node() -> eyre::Result<()> {
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
         let projection_readiness = prepared_projection.readiness();
+        let retained_tribute_writer = prepared_projection.retained_tribute_writer();
         let ce_data_dir = builder
             .config()
             .datadir
@@ -1934,8 +1955,6 @@ fn run_node() -> eyre::Result<()> {
             ),
         };
         let outbe_node = outbe_node.with_ocomp_fork_install(ocomp_fork_install);
-        let (projection_exit_tx, mut projection_exit_rx) =
-            tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health: published by the tee-canary worker (spawned
@@ -1948,24 +1967,28 @@ fn run_node() -> eyre::Result<()> {
             node_exit_future,
         } = builder
             .node(outbe_node)
-            .install_exex("outbe-offchain-data", move |ctx| async move {
+            .install_exex("outbe-finalized", move |ctx| {
                 let projection_provider = ctx.provider().clone();
-                let ready_projection = tokio::task::spawn_blocking(move || {
-                    validate_offchain_data_checkpoint(prepared_projection, &projection_provider)
-                })
-                .await
-                .wrap_err("offchain-data checkpoint validation worker failed")??;
-                Ok(outbe_node::projection::supervise_offchain_data_projection(
-                    ctx,
-                    ready_projection,
-                    projection_exit_tx,
-                ))
-            })
-            .install_exex("outbe-ocomp", move |ctx| {
                 let config = ocomp_exex_config.clone();
                 let readiness = ocomp_readiness_publisher.clone();
                 let exit = ocomp_exit_tx.clone();
-                async move { Ok(ocomp_exex::run_ocomp_exex(ctx, config, readiness, exit)) }
+                async move {
+                    let ready_projection = tokio::task::spawn_blocking(move || {
+                        validate_offchain_data_checkpoint(
+                            prepared_projection,
+                            &projection_provider,
+                        )
+                    })
+                    .await
+                    .wrap_err("offchain-data checkpoint validation worker failed")??;
+                    Ok(ocomp_exex::run_ocomp_exex(
+                        ctx,
+                        ready_projection,
+                        config,
+                        readiness,
+                        exit,
+                    ))
+                }
             })
             .apply(|mut builder| {
                 configure_outbe_engine_args(&mut builder.config_mut().engine);
@@ -2397,6 +2420,8 @@ fn run_node() -> eyre::Result<()> {
                 args,
                 projection_readiness,
                 ocomp_readiness_for_consensus,
+                retained_tribute_writer,
+                retention_selector,
                 finalized_ce_committer,
                 ce_startup_recovery,
                 radicle_consensus,
@@ -2410,16 +2435,6 @@ fn run_node() -> eyre::Result<()> {
                 _ = &mut consensus_dead_rx => {
                     info!("consensus node exited");
                     LauncherExitCause::ConsensusExited
-                }
-                exit = projection_exit_rx.recv() => {
-                    if let Some(exit) = exit {
-                        tracing::error!(
-                            failure_class = ?exit.failure.class,
-                            failure = %exit.failure.message,
-                            "mandatory offchain-data projection requested node shutdown"
-                        );
-                    }
-                    LauncherExitCause::ProjectionRequested
                 }
                 exit = ocomp_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -2465,18 +2480,6 @@ fn run_node() -> eyre::Result<()> {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
-                }
-                exit = projection_exit_rx.recv() => {
-                    if let Some(exit) = exit {
-                        tracing::error!(
-                            failure_class = ?exit.failure.class,
-                            failure = %exit.failure.message,
-                            "mandatory offchain-data projection requested node shutdown"
-                        );
-                    }
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
                 }
                 exit = ocomp_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -3012,7 +3015,6 @@ mod tests {
             assert!(!cause.requests_engine_shutdown());
         }
         for cause in [
-            LauncherExitCause::ProjectionRequested,
             LauncherExitCause::OcompRequested,
             LauncherExitCause::UpgradeRequested,
         ] {

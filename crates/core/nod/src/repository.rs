@@ -604,11 +604,9 @@ pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
         league_id: body.league_id,
         floor_price_minor: body.floor_price_minor,
         bucket_key: body.bucket_key,
-        cost_amount_minor: body.cost_amount_minor,
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
         issued_at: body.issued_at,
-        is_settled: body.is_settled,
     }
 }
 
@@ -640,11 +638,9 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
         league_id: body.league_id,
         floor_price_minor: body.floor_price_minor,
         bucket_key: body.bucket_key,
-        cost_amount_minor: body.cost_amount_minor,
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
         issued_at: body.issued_at,
-        is_settled: body.is_settled,
     }
 }
 

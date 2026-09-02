@@ -268,6 +268,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let target_manifest = outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1 {
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: target_node.clone(),
         initialization_challenge: challenge,
         node_host_noise_x25519: target_owner.public(),
@@ -407,6 +408,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     let active = EnclaveInitializationManifestV1 {
         chain_id: chain_id_word(chain_id),
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: node_id.clone(),
         initialization_challenge: [0x74; 32],
         node_host_noise_x25519: node_host.public(),

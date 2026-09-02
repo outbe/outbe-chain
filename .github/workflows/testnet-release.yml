@@ -12,6 +12,14 @@ on:
         description: "Existing immutable testnet tag (vX.Y.Z-testnet.N)"
         required: true
         type: string
+      seeded_genesis_url:
+        description: "HTTPS URL of the approved seeded testnet genesis without teeAttestationV1"
+        required: true
+        type: string
+      seeded_genesis_sha256:
+        description: "Lowercase SHA-256 of the approved seeded testnet genesis"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,7 +31,7 @@ concurrency:
 env:
   IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/outbe-tee-enclave-testnet
   RELEASE_TAG: ${{ inputs.release_tag }}
-  TESTNET_GENESIS: release/testnet-genesis.json
+  TESTNET_SEEDED_GENESIS: ${{ runner.temp }}/release-inputs/testnet-seeded-genesis.json
 
 jobs:
   build-and-compare:
@@ -55,7 +63,6 @@ jobs:
           }
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          git ls-files --error-unmatch "${TESTNET_GENESIS}"
           tag_object="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
@@ -72,6 +79,29 @@ jobs:
           test "${tag_commit}" = "${GITHUB_SHA}"
           echo "verified_commit=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
           echo "verified_tag_object=${tag_object}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fetch and pin the approved seeded Testnet genesis
+        env:
+          OUTBE_GENESIS_SHA256: ${{ inputs.seeded_genesis_sha256 }}
+          OUTBE_GENESIS_URL: ${{ inputs.seeded_genesis_url }}
+        run: |
+          set -euo pipefail
+          [[ "${OUTBE_GENESIS_URL}" == https://* ]] || {
+            echo "Testnet genesis URL must use HTTPS" >&2
+            exit 2
+          }
+          [[ "${OUTBE_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "Testnet genesis SHA-256 must be 64 lowercase hexadecimal characters" >&2
+            exit 2
+          }
+          mkdir -p "${RUNNER_TEMP}/release-inputs"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${TESTNET_SEEDED_GENESIS}" "${OUTBE_GENESIS_URL}"
+          printf '%s  %s\n' "${OUTBE_GENESIS_SHA256}" "${TESTNET_SEEDED_GENESIS}" \
+            | sha256sum --check
+          test "$(jq -er '.config.chainId' "${TESTNET_SEEDED_GENESIS}")" = '54322345'
+          test "$(jq -r '.config | has("teeAttestationV1")' \
+            "${TESTNET_SEEDED_GENESIS}")" = 'false'
 
       - name: Build the exact ELF matrix twice without cache
         run: |
@@ -102,10 +132,12 @@ jobs:
           set -euo pipefail
           cargo xtask release sgx prepare \
             --network testnet \
+            --genesis "${TESTNET_SEEDED_GENESIS}" \
             --elf-output "${RUNNER_TEMP}/elf-a" \
             --output "${RUNNER_TEMP}/unsigned-a"
           cargo xtask release sgx prepare \
             --network testnet \
+            --genesis "${TESTNET_SEEDED_GENESIS}" \
             --elf-output "${RUNNER_TEMP}/elf-b" \
             --output "${RUNNER_TEMP}/unsigned-b"
           cargo xtask release sgx compare \
@@ -132,11 +164,12 @@ jobs:
             -C "${RUNNER_TEMP}/elf-a" .
           tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
             | grep -qx './bin/outbe-ocomp'
-          # Shared deployment unit files shipped with the signed binaries.
           tar --sort=name --format=gnu --mtime="@${epoch}" \
             --owner=0 --group=0 --numeric-owner \
             -cf "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar" \
-            deploy/systemd
+            deploy/validator/install.sh \
+            deploy/validator/outbe-validator-service.py \
+            deploy/validator/systemd
 
       - name: Upload exact unsigned release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -198,10 +231,18 @@ jobs:
             --unsigned "${RUNNER_TEMP}/unsigned" \
             --key-file "${RUNNER_TEMP}/testnet-sgx-key.pem" \
             --output "${RUNNER_TEMP}/signed"
+          mkdir "${RUNNER_TEMP}/signed-output"
+          cargo xtask release sgx finalize-genesis \
+            --network testnet \
+            --seeded-genesis "${TESTNET_SEEDED_GENESIS}" \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --output "${RUNNER_TEMP}/signed-output/testnet-genesis.json" \
+            --evidence-output \
+              "${RUNNER_TEMP}/signed-output/testnet-genesis-binding-evidence.json"
           cargo xtask release sgx verify \
             --network testnet \
-            --bundle "${RUNNER_TEMP}/signed"
-          mkdir "${RUNNER_TEMP}/signed-output"
+            --bundle "${RUNNER_TEMP}/signed" \
+            --genesis "${RUNNER_TEMP}/signed-output/testnet-genesis.json"
           cargo xtask release sgx archive \
             --network testnet \
             --bundle "${RUNNER_TEMP}/signed" \
@@ -217,7 +258,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-sgx-bundle
-          path: ${{ runner.temp }}/signed-output/outbe-tee-enclave-sgx.tar
+          path: ${{ runner.temp }}/signed-output
           if-no-files-found: error
           retention-days: 30
 
@@ -344,6 +385,10 @@ jobs:
             > "${RUNNER_TEMP}/published/cosign-provenance-verification.json"
           cp "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
             "${RUNNER_TEMP}/published/"
+          cp "${RUNNER_TEMP}/package/testnet-genesis.json" \
+            "${RUNNER_TEMP}/published/"
+          cp "${RUNNER_TEMP}/package/testnet-genesis-binding-evidence.json" \
+            "${RUNNER_TEMP}/published/"
 
       - name: Upload published-image evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -411,10 +456,11 @@ jobs:
           mkdir "${RUNNER_TEMP}/signed"
           tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
-          cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+          cargo run --locked -p outbe-e2e-harness --features release-sgx-e2e --bin outbe-release-sgx-e2e -- \
             --network testnet \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
+            --genesis "${RUNNER_TEMP}/published/testnet-genesis.json" \
             --evidence "${RUNNER_TEMP}/hardware-sgx.json"
 
       - name: Upload hardware-SGX evidence
@@ -443,7 +489,7 @@ jobs:
             --network testnet \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
-            --genesis "${TESTNET_GENESIS}" \
+            --genesis "${RUNNER_TEMP}/published/testnet-genesis.json" \
             --expected-pck-ca processor \
             --output-dir "${RUNNER_TEMP}/hardware-dcap-processor"
 
@@ -541,7 +587,10 @@ jobs:
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
             --processor-dcap-archive "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
-            --genesis "${TESTNET_GENESIS}" \
+            --seeded-genesis "${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json" \
+            --network-binding-evidence \
+              "${RUNNER_TEMP}/published/testnet-genesis-binding-evidence.json" \
+            --genesis "${RUNNER_TEMP}/published/testnet-genesis.json" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
@@ -597,7 +646,9 @@ jobs:
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.json"
             "${RUNNER_TEMP}/final/hardware-dcap-processor.tar"
-            "${TESTNET_GENESIS}"
+            "${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json"
+            "${RUNNER_TEMP}/published/testnet-genesis.json"
+            "${RUNNER_TEMP}/published/testnet-genesis-binding-evidence.json"
           )
           test "$(remote_tag_object)" = "${verified_tag_object}"
           gh release create "${RELEASE_TAG}" "${assets[@]}" \

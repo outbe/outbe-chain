@@ -268,8 +268,7 @@ fn run(cli: Cli) -> Result<()> {
         .try_into()
         .map_err(|_| eyre!("NodeHost public key is not SEC1-33"))?;
     let identity = NodeHostIdentityV1 {
-        chain_id: binding.chain_id,
-        genesis_hash: binding.genesis_hash,
+        network_binding: binding.policy.network_binding(),
         reth_p2p_public,
     };
     let mut client =

@@ -19,7 +19,7 @@ contract RevertingReceiver {
 }
 
 contract WCOENTest is Test {
-    uint256 internal constant COEN_UNIT = 1_000_000;
+    uint256 internal constant COEN_UNIT = 1 ether;
 
     WCOEN internal token;
 
@@ -27,8 +27,8 @@ contract WCOENTest is Test {
         token = new WCOEN();
     }
 
-    function test_Metadata_UsesSixDecimals() public view {
-        assertEq(token.decimals(), 6);
+    function test_Metadata_UsesEighteenDecimals() public view {
+        assertEq(token.decimals(), 18);
     }
 
     function test_DepositAndWithdraw_UpdateSupply() public {

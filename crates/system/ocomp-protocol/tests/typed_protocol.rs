@@ -1696,9 +1696,57 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
 }
 
 #[test]
+fn a_split_short_of_the_day_limit_is_accepted() {
+    let mut short_intent = intent();
+    short_intent.frozen_metadosis_values.day_limit = U256::from(10);
+    short_intent.frozen_metadosis_values.lysis_budget = U256::from(3);
+    short_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    short_intent.encode_canonical(&LIMITS).unwrap();
+}
+
+#[test]
+fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
+    let credited_headroom = RequestBudgetSplitReceiptV1 {
+        protocol_bundle_hash: hash(41),
+        wwd: 7,
+        pending_nonce: 1,
+        day_type: DayType::Green,
+        day_limit: U256::from(10),
+        lysis_budget: U256::from(4),
+        auction_base: U256::from(5),
+        destination: BudgetSplitDestination::DesisAuction,
+        desis_brief_hash: Some(hash(113)),
+        carry_over_credit: U256::from(1),
+        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
+            reference_currency: 840,
+            entry_price_minor: U256::from(2),
+            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
+            source_day: 6,
+        }],
+        logical_anchor: 10,
+    };
+    credited_headroom.encode_canonical(&LIMITS).unwrap();
+
+    let mut dropped_headroom = credited_headroom.clone();
+    dropped_headroom.carry_over_credit = U256::ZERO;
+    assert!(matches!(
+        dropped_headroom.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("request budget split"))
+    ));
+
+    // A red day briefs nothing, so its base returns together with the headroom.
+    let mut red_returns_everything = credited_headroom;
+    red_returns_everything.day_type = DayType::Red;
+    red_returns_everything.destination = BudgetSplitDestination::CarryOver;
+    red_returns_everything.carry_over_credit = U256::from(6);
+    red_returns_everything.encode_canonical(&LIMITS).unwrap();
+}
+
+#[test]
 fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut invalid_intent = intent();
     invalid_intent.frozen_metadosis_values.day_limit = U256::from(1);
+    invalid_intent.frozen_metadosis_values.auction_base = U256::from(2);
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("Metadosis budget split"))

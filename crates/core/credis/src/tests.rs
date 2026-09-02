@@ -5,7 +5,6 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::CALL_RATE_PCT;
 use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
 use crate::runtime::{calc_call_price, settlement_deadline, OpenPositionParams};
@@ -18,8 +17,9 @@ const ORIGINATED_AT: u64 = 1_700_000_000;
 // ---------------------------------------------------------------------------
 // The product paper's section 5 worked example, in exact on-chain units.
 //
-// Maria pledges Gratis worth $1,000 at P0 = $0.50/COEN. Stablecoin minor units
-// are 6-decimal; COEN and the oracle rate are 18-decimal.
+// Maria pledges Gratis worth $1,000 at P0 = $0.50/COEN. Stablecoin minor units,
+// Gratis collateral and the oracle rate stay six-decimal; native COEN is not
+// part of this internal calculation.
 // ---------------------------------------------------------------------------
 
 /// P = 1,000 USDC.
@@ -77,6 +77,7 @@ fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
         eoa_ct: eoa_ct(),
         asset: asset(),
         issuance_currency: 840,
+        reference_currency: 978,
         policy_rate: policy_rate(),
         principal: U256::from(PRINCIPAL),
         entry_price: entry_price(),
@@ -108,7 +109,7 @@ fn position_id_matches_keccak() {
 }
 
 #[test]
-fn open_position_seals_the_call_price_from_the_entry_price() {
+fn open_position_seals_the_call_price_from_the_reference_entry_price() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.open_position(params(handle(1), alice())).unwrap();
@@ -117,6 +118,12 @@ fn open_position_seals_the_call_price_from_the_entry_price() {
         // $0.50 + 64% = $0.82.
         assert_eq!(p.call_price, U256::from(820_000u64));
         assert_eq!(p.call_price, calc_call_price(entry_price()).unwrap());
+
+        // Both codes are sealed, and they are distinct: the threshold anchor is
+        // the reference currency, never the issuance one the position is
+        // denominated in.
+        assert_eq!(p.issuance_currency, 840);
+        assert_eq!(p.reference_currency, 978);
 
         // Collateral starts fully locked; accrual anchors at origination.
         assert_eq!(p.outstanding, p.principal);
@@ -1003,6 +1010,7 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.cca, cca());
         assert_eq!(decoded.asset, asset());
         assert_eq!(decoded.issuanceCurrency, 840);
+        assert_eq!(decoded.referenceCurrency, 978);
         assert_eq!(decoded.principal, U256::from(PRINCIPAL));
         assert_eq!(decoded.collateral, collateral());
         assert_eq!(decoded.entryPrice, entry_price());

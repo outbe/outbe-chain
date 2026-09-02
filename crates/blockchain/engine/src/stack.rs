@@ -92,6 +92,7 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
+use outbe_node::ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector};
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 fn radicle_channel_config() -> (u64, u32, usize) {
@@ -291,6 +292,8 @@ type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 pub struct ConsensusStackServices {
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
+    retained_tribute_writer: Arc<RetainedTributeWriter>,
+    retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     radicle_status: outbe_radicle::integration::RadicleStatusHandle,
@@ -303,12 +306,16 @@ pub struct ConsensusStackServices {
 impl ConsensusStackServices {
     pub fn new(
         projection_readiness: ProjectionReadinessHandle,
+        retained_tribute_writer: Arc<RetainedTributeWriter>,
+        retention_selector: Arc<SharedOcompRetentionSelector>,
         finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ) -> Self {
         Self {
             projection_readiness,
             ocomp_readiness: None,
+            retained_tribute_writer,
+            retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
@@ -2425,6 +2432,8 @@ async fn run_follow_stack<E>(
     upstream: String,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
+    retained_tribute_writer: Arc<RetainedTributeWriter>,
+    retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
@@ -2508,6 +2517,8 @@ where
         epoch_length,
         projection_readiness,
         ocomp_readiness,
+        retained_tribute_writer,
+        retention_selector,
         finalized_ce_committer,
         ce_startup_recovery,
         ocomp_storage_root,
@@ -2570,7 +2581,6 @@ async fn reconcile_certified_follower_height(
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     parent_cert_store: &outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-    retention: &Arc<outbe_node::ocomp::retention::OcompRetentionCoordinator>,
     height: u64,
 ) -> Result<outbe_consensus::block::ConsensusBlock> {
     let finalization = marshal_mailbox
@@ -2599,7 +2609,6 @@ async fn reconcile_certified_follower_height(
         node,
         certificate_scheme_provider,
         parent_cert_store,
-        retention,
         &finalization,
         &block,
     )?;
@@ -2610,7 +2619,6 @@ fn reconcile_certified_follower_record(
     node: &OutbeFullNode,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     parent_cert_store: &outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-    retention: &Arc<outbe_node::ocomp::retention::OcompRetentionCoordinator>,
     finalization: &outbe_consensus::marshal_types::Finalization,
     block: &outbe_consensus::block::ConsensusBlock,
 ) -> Result<()> {
@@ -2643,12 +2651,6 @@ fn reconcile_certified_follower_record(
         )
         .wrap_err("failed to prune follower finalized parent certificates")?;
 
-    retention.reconcile_finalized(block).map_err(|error| {
-        eyre::eyre!(
-            "certified FullNode OCOMP retention failed at height {}: {error}",
-            block.number()
-        )
-    })?;
     Ok(())
 }
 
@@ -2675,6 +2677,8 @@ async fn run_certified_follow_stack<E>(
     epoch_length_blocks: u32,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
+    retained_tribute_writer: Arc<RetainedTributeWriter>,
+    retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ocomp_storage_root: std::path::PathBuf,
@@ -3068,17 +3072,20 @@ where
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes(
             ocomp_storage_root.join("ocomp_retention"),
             ocomp_proof_source,
+            retained_tribute_writer,
         ),
     );
+    retention_selector
+        .install(Arc::clone(&ocomp_retention_coordinator))
+        .wrap_err("failed to install follower OCOMP retention selector")?;
     if let Some(finalization) = recovery_anchor.finalization.as_ref() {
         reconcile_certified_follower_record(
             &node,
             &certificate_scheme_provider,
             &finalized_parent_cert_store,
-            &ocomp_retention_coordinator,
             finalization,
             &recovery_anchor.block,
         )
@@ -3121,7 +3128,6 @@ where
     let observer_node = node.clone();
     let observer_schemes = certificate_scheme_provider.clone();
     let observer_store = finalized_parent_cert_store.clone();
-    let observer_retention = ocomp_retention_coordinator.clone();
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
         while let Some(height) = execution_finalized_height_rx.recv().await {
@@ -3133,7 +3139,6 @@ where
                 &observer_mailbox,
                 &observer_schemes,
                 &observer_store,
-                &observer_retention,
                 height,
             )
             .await?;
@@ -3247,6 +3252,8 @@ where
     let ConsensusStackServices {
         projection_readiness,
         ocomp_readiness,
+        retained_tribute_writer,
+        retention_selector,
         finalized_ce_committer,
         ce_startup_recovery,
         radicle_status,
@@ -3281,6 +3288,8 @@ where
             upstream,
             projection_readiness,
             ocomp_readiness,
+            retained_tribute_writer,
+            retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
         )
@@ -3894,8 +3903,6 @@ where
             let my_validator = proposer_evm_address.ok_or_else(|| {
                 eyre::eyre!("founding validator TEE bootstrap requires its EVM identity")
             })?;
-            let dkg_chain_id =
-                B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
             let n = participants.len();
             let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
                 .iter()
@@ -4018,7 +4025,7 @@ where
                             &mut enclave,
                             dkg_clock,
                             n,
-                            dkg_chain_id,
+                            tee_policy.network_binding(),
                             0,
                             dkg_remote_peers,
                             dkg_sender,
@@ -4602,36 +4609,19 @@ where
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes(
             ocomp_retention_dir,
             ocomp_proof_source,
+            retained_tribute_writer,
         ),
     );
-    let (ocomp_retention_service, ocomp_retention_handle, ocomp_retention_execution_handle) =
-        outbe_node::ocomp::retention::OcompRetentionService::new_with_execution_readiness(
+    retention_selector
+        .install(Arc::clone(&ocomp_retention_coordinator))
+        .wrap_err("failed to install validator OCOMP retention selector")?;
+    let ocomp_retention_handle =
+        outbe_node::ocomp::retention::OcompRetentionHandle::for_unified_finalized_reader(
             ocomp_retention_coordinator,
-            None,
-            recovery_anchor_height,
         );
-    if last_consensus_finalized > Height::zero() {
-        let recovered_tip = marshal_mailbox
-            .get_block(last_consensus_finalized)
-            .await
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "marshal is missing recovered finalized block at height {} for OCOMP retention",
-                    last_consensus_finalized.get()
-                )
-            })?;
-        ocomp_retention_handle
-            .reconcile_finalized(&recovered_tip)
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to seed OCOMP retention from recovered finalized height {}: {error}",
-                    last_consensus_finalized.get()
-                )
-            })?;
-    }
     let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -4693,30 +4683,14 @@ where
 
     // -- 13. Spawn persistent actors (survive engine restarts) -----------
 
-    // Finality reconciliation may open historical state, build MPT proofs and
-    // fsync the pin journal. Keep all of that in a node-owned worker; consensus
-    // only appends finalized-block notifications to its bounded ordered queue.
-    let _ocomp_retention_worker = ctx
-        .child("ocomp_retention")
-        .spawn(move |_ctx| ocomp_retention_service.run());
     let execution_height_fanout = execution_finalized_height_tx.clone();
-    let _ocomp_execution_ready_worker = ctx.child("ocomp_execution_ready").spawn(move |_ctx| {
-        async move {
-            while let Some(height) = executor_finalized_height_rx.recv().await {
-                if let Err(error) = ocomp_retention_execution_handle
-                    .notify_execution_finalized(height)
-                {
-                    tracing::warn!(
-                        target: "outbe::ocomp",
-                        height,
-                        %error,
-                        "OCOMP execution-readiness notification failed locally; consensus execution continues"
-                    );
+    let _ocomp_execution_ready_worker =
+        ctx.child("ocomp_execution_ready")
+            .spawn(move |_ctx| async move {
+                while let Some(height) = executor_finalized_height_rx.recv().await {
+                    let _ = execution_height_fanout.send(height);
                 }
-                let _ = execution_height_fanout.send(height);
-            }
-        }
-    });
+            });
 
     // Half B step 21: construct FinalizationActor + matching mailbox.
     // After step 21 the actor IS the production finalization path: the

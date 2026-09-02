@@ -30,6 +30,45 @@
   },
   {
     "type": "function",
+    "name": "mineGratis",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "promisMac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "promisOpNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "gratisMac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "gratisOpNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {

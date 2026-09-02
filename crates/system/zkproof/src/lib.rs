@@ -22,6 +22,7 @@ mod tests;
 pub use errors::ZkProofError;
 pub use precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
 pub use verify::{
-    decode_full_proof_public_inputs, init_crs, verify_full_proof, FullProofPublicInputs,
-    FULL_PROOF_COMBINED_LEN,
+    decode_full_proof_public_inputs, decode_paynote_public_inputs, init_crs, verify_full_proof,
+    verify_paynote, FullProofPublicInputs, PayNotePublicInputs, FULL_PROOF_COMBINED_LEN,
+    PAYNOTE_COMBINED_LEN, PAYNOTE_PROOF_WORDS,
 };

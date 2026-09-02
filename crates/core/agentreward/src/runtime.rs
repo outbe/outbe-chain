@@ -1,7 +1,14 @@
-use crate::schema::AgentRewardContract;
+use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
+
+/// ISO 4217 code both currency axes of an agent reward Gem carry. Agent rewards
+/// are denominated in USD by protocol policy, the same as validator Gems.
+const AGENT_GEM_CURRENCY: u16 = 840;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -40,39 +47,107 @@ impl AgentRewardContract<'_> {
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
-    /// Gets claimable reward balance for an address.
+    /// Gets the total claimable reward balance for an address across both pools.
     pub fn get_claimable_reward(&self, address: Address) -> Result<U256> {
-        self.claimable_rewards.read(&address)
+        let waa = self.get_pool_claimable_reward(RewardPool::Waa, address)?;
+        let sra = self.get_pool_claimable_reward(RewardPool::Sra, address)?;
+        checked_add(waa, sra, "agentreward claimable total overflow")
     }
 
-    /// Adds amount to claimable reward for an address.
-    pub fn add_claimable_reward(&mut self, address: Address, amount: U256) -> Result<()> {
-        let current = self.claimable_rewards.read(&address)?;
-        self.claimable_rewards.write(
-            &address,
-            checked_add(current, amount, "agentreward claimable_rewards overflow")?,
-        )
+    /// Gets the claimable reward balance an address holds in one pool.
+    pub fn get_pool_claimable_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
+        match pool {
+            RewardPool::Waa => self.waa_claimable_rewards.read(&address),
+            RewardPool::Sra => self.sra_claimable_rewards.read(&address),
+        }
     }
 
-    /// Claims reward: subtracts amount from claimable balance and transfers
-    /// real native tokens from the contract address to the caller.
-    pub fn claim_reward(&mut self, address: Address, amount: U256) -> Result<U256> {
-        let balance = self.claimable_rewards.read(&address)?;
-        if amount > balance {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
+    /// Adds amount to an address's claimable reward in one pool.
+    pub fn add_claimable_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        let current = self.get_pool_claimable_reward(pool, address)?;
+        let next = checked_add(current, amount, "agentreward claimable_rewards overflow")?;
+        self.write_pool_claimable_reward(pool, address, next)
+    }
+
+    fn write_pool_claimable_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        match pool {
+            RewardPool::Waa => self.waa_claimable_rewards.write(&address, amount),
+            RewardPool::Sra => self.sra_claimable_rewards.write(&address, amount),
+        }
+    }
+
+    /// Claims `amount` of the pool's balance as a Gem, or all of it when `amount`
+    /// is zero. Issues the Gem, burns the native COEN that backed it and clears
+    /// what was converted. The Gem load is not that COEN - it becomes Promis at
+    /// mining time - so leaving the backing in place would let one emission exist
+    /// twice.
+    ///
+    /// The balance is the safe form of the reward and the Gem is not: an unsettled
+    /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
+    /// own risk control, and what it leaves behind keeps accruing.
+    ///
+    /// Any failure reverts the call and leaves the balance for the next day, which
+    /// brings a new VWAP with it.
+    pub fn claim_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        amount: U256,
+    ) -> Result<U256> {
+        let balance = self.get_pool_claimable_reward(pool, address)?;
+        if balance.is_zero() {
+            return Err(PrecompileError::Revert(
+                "no claimable balance in this pool".into(),
+            ));
+        }
+        let requested = if amount.is_zero() { balance } else { amount };
+        if requested > balance {
+            return Err(PrecompileError::Revert(
                 "insufficient claimable balance".into(),
             ));
         }
-        self.claimable_rewards.write(&address, balance - amount)?;
-
-        // Transfer real tokens from contract to claimant.
-        self.storage.transfer_balance(
-            outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+        // The balance is native COEN; a Gem load is a protocol amount. Only the
+        // part that survives the conversion is minted and burned, so a sub-unit
+        // remainder keeps accumulating instead of being lost.
+        let gem_load = native_to_protocol_floor(requested);
+        if gem_load.is_zero() {
+            return Err(PrecompileError::Revert(
+                "claimed amount is below one protocol unit".into(),
+            ));
+        }
+        let burned = checked_protocol_to_native(gem_load)
+            .ok_or_else(|| PrecompileError::Revert("native AgentReward claim overflow".into()))?;
+        let entry_price = resolve_gem_entry_price(&self.storage)?.ok_or_else(|| {
+            PrecompileError::Revert("agentreward has no usable COEN price yet".into())
+        })?;
+        let gem_type = match pool {
+            RewardPool::Waa => GemTypes::Wallet,
+            RewardPool::Sra => GemTypes::Sra,
+        };
+        let gem_id = outbe_gemfactory::api::issue_gem(
+            &self.storage,
             address,
-            amount,
+            gem_type,
+            gem_load,
+            AGENT_GEM_CURRENCY,
+            AGENT_GEM_CURRENCY,
+            entry_price,
         )?;
+        self.storage
+            .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
+        self.write_pool_claimable_reward(pool, address, balance - burned)?;
 
-        Ok(amount)
+        Ok(gem_id)
     }
 
     /// Gets all WAA tribute counts for a day as (address, count) pairs.
@@ -146,6 +221,27 @@ impl AgentRewardContract<'_> {
         self.sra_address_count.write(&day, 0)?;
         Ok(())
     }
+}
+
+/// The COEN price an agent reward Gem is issued at: the newest closed UTC day's
+/// VWAP, falling back to the live quote. The agent picks the moment it claims,
+/// so a price frozen on the day of accrual would be a look-back option.
+fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    let last_finalized_day = oracle.utc_day_vwap_last_finalized.read()?;
+    if last_finalized_day != 0 {
+        if let Some(index) =
+            outbe_oracle::api::coen_pair_index_opt(storage.clone(), AGENT_GEM_CURRENCY)?
+        {
+            if let Some(vwap) =
+                outbe_oracle::api::get_utc_day_vwap(storage.clone(), last_finalized_day, index)?
+            {
+                return Ok(Some(vwap));
+            }
+        }
+    }
+
+    outbe_oracle::api::fresh_coen_rate_for_opt(storage.clone(), AGENT_GEM_CURRENCY)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.

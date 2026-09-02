@@ -28,26 +28,26 @@ pub fn dispatch(
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
-            mintGemPosition(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_gem_position(
+            issueGemPosition(c) => mutate(c, caller, |sender, c| {
+                runtime::issue_gem_position(
                     &storage,
                     sender,
                     SeriesId::from(c.sourceIntexId),
                     c.amount,
                 )
             }),
-            mintMerchantGem(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_merchant_gem(&storage, sender, c.positionId, c.owner, c.gemLoad)
+            issueGem(c) => mutate(c, caller, |sender, c| {
+                runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset)
             }),
-            mineGemPromis(c) => mutate(c, caller, |sender, c| {
+            minePromis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_gem_promis(&storage, sender, c.gemId, c.nonce, auth)
+                runtime::mine_promis(&storage, sender, c.gemId, c.nonce, auth)
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());

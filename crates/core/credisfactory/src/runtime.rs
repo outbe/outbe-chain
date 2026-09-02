@@ -5,10 +5,11 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, OpenPositionParams};
-use outbe_oracle::api::get_policy_rate;
+use outbe_oracle::api::{fresh_coen_rate_for, get_policy_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::checked_protocol_to_native;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
@@ -27,12 +28,18 @@ use crate::sol_ext::IERC20;
 /// collateral release / void burn, and delivers the stablecoin loan via the
 /// vault sub-call.
 ///
-/// Nothing is priced here. The disbursed amount, the asset and the entry price were all
-/// quoted and sealed into the pledge ticket by `pledgeGratis`, so the loan is issued at
-/// the price the pledger accepted rather than whatever the oracle reads now. Only the
-/// policy rate is pinned at issuance, because that belongs to the loan and not to the
-/// collateral. The call price derives from the sealed entry price, so the
-/// whole geometry of the position is fixed by the quote the pledger accepted.
+/// The loan is not priced here: the disbursed amount, the asset and the collateral were
+/// quoted and sealed into the pledge ticket by `pledgeGratis`, so the borrower gets the
+/// terms they accepted rather than whatever the oracle reads now.
+///
+/// The threshold geometry is priced here, and only it. `reference_currency` is elected at
+/// this call and pinned for the position's life; `entry_price` is the COEN quote in that
+/// currency and the call price derives from it. Anchoring to the issuance currency reuses
+/// the rate sealed into the ticket, so nothing about such a position moves between pledge
+/// and origination; a cross-currency anchor has no sealed quote and is read now, which
+/// means a delayed `requestCredis` moves its call threshold, though never its loan. The
+/// policy rate is pinned here too, off the ISSUANCE currency - it belongs to the debt, not
+/// to the threshold.
 ///
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
 /// returns it sealed (`eoa_ct`). `caller` is the CCA and is recorded on the position -
@@ -44,6 +51,7 @@ pub fn request_credis(
     smart_account: Address,
     pledge_handle: B256,
     spend_auth: [u8; 32],
+    reference_currency: u16,
     stake: U256,
 ) -> Result<(U256, U256)> {
     if smart_account.is_zero() {
@@ -69,14 +77,6 @@ pub fn request_credis(
     // by the caller.
     let current_time = storage.timestamp()?.to::<u64>();
 
-    // An owner with an unresolved call cannot open new positions.
-    {
-        let credis = CredisContract::new(storage.clone());
-        if credis.has_called_position(smart_account)? {
-            return Err(CredisFactoryError::OwnerHasCalledPosition.into());
-        }
-    }
-
     // Consume the pledge ticket (the enclave verifies `spend_auth` binds it to
     // `smart_account`, so a mempool copy cannot redirect the loan). The collateral
     // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
@@ -93,12 +93,15 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidAsset.into());
     }
 
-    // The CCA matches the borrower's collateral one for one, in COEN. Checked only
+    // The CCA matches the borrower's six-decimal GRATIS collateral one for one in
+    // value, but msg.value and the escrow are native 18-decimal COEN. Checked only
     // after `consume_pledge` because the required amount is sealed in the ticket, not
     // in calldata - a caller cannot know it from the call alone, and must read it from
     // the pledge quote. Exact equality, not a floor: an overpayment has no release path
     // (the escrow returns exactly what the position recorded) and would strand.
-    if stake != terms.gratis_amount {
+    let required_stake = checked_protocol_to_native(terms.gratis_amount)
+        .ok_or_else(|| PrecompileError::Revert("native COEN stake overflow".into()))?;
+    if stake != required_stake {
         return Err(CredisFactoryError::CcaStakeMismatch.into());
     }
 
@@ -107,6 +110,14 @@ pub fn request_credis(
     // official policy rate for the position's life.
     let issuance_currency = read_iso_code(&storage, asset)?;
     let policy_rate = policy_rate_for(storage.clone(), issuance_currency)?;
+
+    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+
+    let entry_price = if reference_currency == issuance_currency {
+        terms.entry_rate
+    } else {
+        fresh_coen_rate_for(storage.clone(), reference_currency)?
+    };
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
     // can address the right confidential pledged ledger. The `handle_id`
@@ -119,9 +130,10 @@ pub fn request_credis(
         eoa_ct,
         asset,
         issuance_currency,
+        reference_currency,
         policy_rate,
         principal: terms.stables_amount,
-        entry_price: terms.entry_rate,
+        entry_price,
         collateral: terms.gratis_amount,
         originated_at: current_time,
     })?;

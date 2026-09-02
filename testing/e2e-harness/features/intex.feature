@@ -23,7 +23,7 @@ Feature: Intex from auction to Promis
   # closed day's VWAP, and the fixture's seeded pair is small enough that Lysis
   # would floor the monetary cost to zero without one.
   @intex-auction
-  Scenario: A settled green day runs its auction through to a minted Intex
+  Scenario: A settled green day runs its auction through to an issued Intex
     Given a fresh four-validator OCOMP public capacity localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
@@ -43,7 +43,7 @@ Feature: Intex from auction to Promis
     Then three matching validator domains atomically apply Lysis and create the Nod
     When those bidders reveal their bids once the venues are revealing
     Then the auction clears and the venue moves past its reveal window
-    And the cleared day mints the Intex on every chain it issued to
+    And the cleared day issues the Intex on every chain it reached
     And each escrow settles the day and returns what the bids did not buy
 
   # Two series rather than one: the sweeps decide per (reference currency,
@@ -78,7 +78,6 @@ Feature: Intex from auction to Promis
     Then holders may settle in that currency
     When two test Intex series sharing a reference currency are issued to a funded holder
     Then the holder holds issued units of both series on each chain
-    When the day advances past the qualification period
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
     Then both series qualify in one group decision
@@ -92,4 +91,4 @@ Feature: Intex from auction to Promis
     And the holder settles the remaining units inside the notice period
     Then no issued units remain and every unit is settled
     When the holder mines Promis against their settled units
-    Then the settled units are burned and Promis is minted
+    Then the settled units are burned and Promis is mined

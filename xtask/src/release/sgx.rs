@@ -2,8 +2,8 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
-    io::{BufReader, Read},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, Read, Write as _},
     os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
     process::{Command, Output},
@@ -13,8 +13,15 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use clap::ValueEnum;
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
-use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_evm::tee_attestation_activation::{DcapChainSpecBindingV1, DcapSeededChainSpecBindingV1};
 use outbe_primitives::chain::{OutbeNetwork, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
+};
+use outbe_primitives::tee_genesis_v1::{
+    initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
+    ProductionSgxMeasurementV1,
+};
 use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,10 +29,12 @@ use sha2::{Digest as _, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use walkdir::WalkDir;
 
-const REQUIRED_BUNDLE_FILES: [&str; 6] = [
+const REQUIRED_BUNDLE_FILES: [&str; 8] = [
+    "metadata/network-descriptor-v1.bin",
     "rootfs/opt/outbe/sgx/bin/outbe-tee-enclave",
     "rootfs/opt/outbe/sgx/gramine/libpal.so",
     "rootfs/opt/outbe/sgx/gramine/loader",
+    "rootfs/opt/outbe/sgx/network-descriptor-v1.bin",
     "rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest",
     "rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest.sgx",
     "rootfs/opt/outbe/sgx/outbe-tee-enclave.sig",
@@ -203,11 +212,19 @@ impl BundleSpec {
         if self.install_root != "/opt/outbe/sgx" {
             bail!("SGX install root must remain /opt/outbe/sgx");
         }
+        if self.sealed_state_schema != u32::from(outbe_tee::SEALED_STATE_SCHEMA_V1) {
+            bail!("SGX bundle sealed-state schema does not match the enclave wire format");
+        }
         if self.sgx.debug {
             bail!("release SGX bundle must use a non-debug enclave");
         }
         if self.sgx.remote_attestation != "dcap" {
             bail!("production SGX bundle must enable DCAP remote attestation");
+        }
+        if self.sgx.minimum_tcb_evaluation_data_number == 0 {
+            bail!(
+                "production SGX bundle must pin a non-zero minimum Intel TCB evaluation data number"
+            );
         }
         if self.sgx.sigstruct_date_source != "source-date-epoch-utc" {
             bail!("SIGSTRUCT date must derive from SOURCE_DATE_EPOCH in UTC");
@@ -230,6 +247,7 @@ pub struct SgxPolicy {
     pub isv_prod_id: u16,
     pub isv_svn: u16,
     pub max_threads: u32,
+    pub minimum_tcb_evaluation_data_number: u32,
     pub remote_attestation: String,
     pub sigstruct_date_source: String,
 }
@@ -333,6 +351,8 @@ pub struct VerifiedReleaseInputs {
     pub oci_evidence: PathBuf,
     pub sbom: PathBuf,
     pub sgx_evidence: PathBuf,
+    pub seeded_genesis: PathBuf,
+    pub network_binding_evidence: PathBuf,
     pub genesis: PathBuf,
 }
 
@@ -380,7 +400,9 @@ fn build_release_manifest_from_evidence(
     if chain_binding.chain_id != network.chain_id() {
         bail!("release genesis belongs to a foreign network");
     }
+    require_measured_network_descriptor(&inputs.bundle, &inputs.genesis, &chain_binding)?;
     require_bundle_measurement_binding(&chain_binding, &bundle)?;
+    require_seeded_genesis_release_evidence(inputs, &bundle, &chain_binding)?;
 
     if !oci.provenance_attestation || !oci.sbom_attestation {
         bail!("OCI image must carry BuildKit provenance and SBOM attestations");
@@ -558,6 +580,10 @@ fn build_release_manifest_from_evidence(
         passed_gate("independent-unsigned-sgx-bundle", &inputs.sgx_evidence)?,
         passed_gate("signed-sgx-sigstruct-verification", &bundle_manifest_path)?,
         passed_gate_many(
+            "seeded-genesis-to-signed-enclave-policy",
+            &[&inputs.seeded_genesis, &inputs.network_binding_evidence],
+        )?,
+        passed_gate_many(
             "immutable-oci-sbom-and-provenance",
             &[
                 &inputs.oci_evidence,
@@ -577,6 +603,73 @@ fn build_release_manifest_from_evidence(
     ];
     release_object.insert("verification_gates".to_owned(), Value::Array(gates));
     Ok(release)
+}
+
+fn require_seeded_genesis_release_evidence(
+    inputs: &VerifiedReleaseInputs,
+    bundle: &BundleManifest,
+    chain_binding: &DcapChainSpecBindingV1,
+) -> Result<()> {
+    require_nonempty_regular_file(&inputs.seeded_genesis, "approved seeded release genesis")?;
+    let seeded = DcapSeededChainSpecBindingV1::from_genesis_path(&inputs.seeded_genesis)
+        .map_err(|error| eyre!("seeded release ChainSpec binding is invalid: {error}"))?;
+    if seeded.chain_id != inputs.network.chain_id() {
+        bail!("seeded release genesis belongs to a foreign network");
+    }
+    let final_seeded = DcapSeededChainSpecBindingV1::from_genesis_path(&inputs.genesis)
+        .map_err(|error| eyre!("final seeded release ChainSpec binding is invalid: {error}"))?;
+    if final_seeded != seeded
+        || seeded.chain_id != chain_binding.chain_id
+        || seeded.genesis_hash != chain_binding.genesis_hash
+    {
+        bail!("final genesis changed the approved seeded chain identity or epoch-0 committee");
+    }
+
+    let seeded_bytes = fs::read(&inputs.seeded_genesis).wrap_err_with(|| {
+        format!(
+            "read approved seeded release genesis: {}",
+            inputs.seeded_genesis.display()
+        )
+    })?;
+    let mut expected_final: Value =
+        serde_json::from_slice(&seeded_bytes).wrap_err("parse approved seeded genesis JSON")?;
+    let config = expected_final
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| eyre!("seeded genesis config must be a JSON object"))?;
+    if config.contains_key("teeAttestationV1") {
+        bail!("seeded genesis already contains teeAttestationV1");
+    }
+    config.insert(
+        "teeAttestationV1".to_owned(),
+        tee_attestation_v1_genesis_field(&chain_binding.policy).map_err(eyre::Report::msg)?,
+    );
+    let expected_final = canonical_json(&expected_final)?;
+    let actual_final = fs::read(&inputs.genesis)
+        .wrap_err_with(|| format!("read final release genesis: {}", inputs.genesis.display()))?;
+    if actual_final != expected_final {
+        bail!("final genesis is not the exact allowed seeded-genesis policy insertion");
+    }
+
+    let evidence = require_evidence_result(&inputs.network_binding_evidence, &["passed"])?;
+    let expected_evidence = serde_json::json!({
+        "schema": "outbe-sgx-final-genesis-evidence-v1",
+        "network": inputs.network.authorization_scope(),
+        "chain_id": chain_binding.chain_id,
+        "genesis_hash": format!("{:#x}", chain_binding.genesis_hash),
+        "seeded_genesis": file_digest(&inputs.seeded_genesis)?,
+        "final_genesis": file_digest(&inputs.genesis)?,
+        "bundle_manifest": file_digest(&inputs.bundle.join(inputs.network.bundle_manifest_path()))?,
+        "measured_descriptor": file_digest(&inputs.bundle.join("metadata/network-descriptor-v1.bin"))?,
+        "measurements": bundle.measurements,
+        "minimum_tcb_evaluation_data_number": chain_binding.policy.minimum_tcb_evaluation_data_number,
+        "mutation": "insert-config-teeAttestationV1-only",
+        "result": "passed"
+    });
+    if evidence != expected_evidence {
+        bail!("network-binding evidence does not exactly bind the seed, final genesis and signed bundle");
+    }
+    Ok(())
 }
 
 fn require_bundle_network(bundle: &BundleManifest, network: SgxReleaseNetwork) -> Result<()> {
@@ -1379,6 +1472,12 @@ pub fn verify_signed_bundle(
     if manifest.files != bundle_files(bundle_root)? {
         bail!("bundle file matrix mismatch");
     }
+    let descriptor = read_measured_network_descriptor(bundle_root)?;
+    if descriptor.network_binding.chain_id
+        != alloy_primitives::U256::from(bundle_spec.chain_id).to_be_bytes()
+    {
+        bail!("measured network descriptor belongs to a foreign chain");
+    }
     let measurements = parse_sigstruct_view(sigstruct_view)?;
     validate_measurements(bundle_spec, &measurements)?;
     if manifest.measurements != measurements {
@@ -1386,6 +1485,50 @@ pub fn verify_signed_bundle(
     }
     if manifest.sigstruct_date != sigstruct_date(manifest.source.source_date_epoch)? {
         bail!("SIGSTRUCT date does not match SOURCE_DATE_EPOCH");
+    }
+    Ok(())
+}
+
+fn read_measured_network_descriptor(bundle_root: &Path) -> Result<TrustedNetworkDescriptorV1> {
+    let metadata_path = bundle_root.join("metadata/network-descriptor-v1.bin");
+    let measured_path = bundle_root.join("rootfs/opt/outbe/sgx/network-descriptor-v1.bin");
+    let metadata = fs::read(&metadata_path).wrap_err_with(|| {
+        format!(
+            "read trusted network descriptor: {}",
+            metadata_path.display()
+        )
+    })?;
+    let measured = fs::read(&measured_path).wrap_err_with(|| {
+        format!(
+            "read measured network descriptor: {}",
+            measured_path.display()
+        )
+    })?;
+    if metadata != measured {
+        bail!("trusted network descriptor differs from the file measured into MRENCLAVE");
+    }
+    TrustedNetworkDescriptorV1::decode_canonical(&measured)
+        .map_err(|error| eyre!("trusted network descriptor is invalid: {error}"))
+}
+
+fn require_measured_network_descriptor(
+    bundle_root: &Path,
+    genesis: &Path,
+    binding: &DcapChainSpecBindingV1,
+) -> Result<()> {
+    let actual = read_measured_network_descriptor(bundle_root)?;
+    let seeded = DcapSeededChainSpecBindingV1::from_genesis_path(genesis)
+        .map_err(|error| eyre!("release seeded ChainSpec binding is invalid: {error}"))?;
+    let expected = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
+            genesis_hash: binding.genesis_hash,
+            attestation_mode: AttestationMode::DcapRequired,
+        },
+        genesis_consensus_keys: seeded.genesis_consensus_keys,
+    };
+    if actual != expected {
+        bail!("measured network descriptor does not match the release genesis ChainSpec");
     }
     Ok(())
 }
@@ -1536,6 +1679,7 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 pub fn prepare(
     repo_root: &Path,
     network: SgxReleaseNetwork,
+    genesis: &Path,
     elf_output: &Path,
     output: &Path,
 ) -> Result<()> {
@@ -1546,6 +1690,31 @@ pub fn prepare(
     require_clean_source(repo_root, &identity.source_commit)?;
     let toolchain_image = build_project_toolchain_image(repo_root, &spec, &identity.source_commit)?;
     let output = create_empty_output(repo_root, output)?;
+    let genesis = fs::canonicalize(genesis)
+        .wrap_err_with(|| format!("resolve release genesis ChainSpec: {}", genesis.display()))?;
+    let seeded = DcapSeededChainSpecBindingV1::from_genesis_path(&genesis)
+        .map_err(|error| eyre!("release seeded ChainSpec binding is invalid: {error}"))?;
+    if seeded.chain_id != network.chain_id() {
+        bail!("release genesis belongs to a foreign SGX network");
+    }
+    let trusted_network_descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(seeded.chain_id).to_be_bytes(),
+            genesis_hash: seeded.genesis_hash,
+            attestation_mode: AttestationMode::DcapRequired,
+        },
+        genesis_consensus_keys: seeded.genesis_consensus_keys,
+    }
+    .encode_canonical()
+    .map_err(|error| eyre!("encode trusted network descriptor: {error}"))?;
+    let descriptor_path = output.join("metadata/network-descriptor-v1.bin");
+    fs::create_dir_all(
+        descriptor_path
+            .parent()
+            .expect("network descriptor path has a parent"),
+    )?;
+    fs::write(&descriptor_path, trusted_network_descriptor)
+        .wrap_err("write trusted network descriptor")?;
     let elf_output = fs::canonicalize(elf_output)
         .wrap_err_with(|| format!("resolve ELF output: {}", elf_output.display()))?;
 
@@ -1632,6 +1801,132 @@ pub fn sign(
     Ok(())
 }
 
+/// Creates the final network genesis from one approved seeded genesis and the
+/// exact measurements of an already signed bundle. The only JSON mutation is
+/// insertion of `config.teeAttestationV1`; the measured descriptor remains
+/// rooted in the unchanged chain identity and epoch-0 committee.
+pub fn finalize_genesis(
+    repo_root: &Path,
+    network: SgxReleaseNetwork,
+    seeded_genesis: &Path,
+    bundle: &Path,
+    output: &Path,
+    evidence_output: &Path,
+) -> Result<()> {
+    if output == evidence_output || output.exists() || evidence_output.exists() {
+        bail!("final genesis and evidence outputs must be distinct new paths");
+    }
+    let spec = BundleSpec::read(&repo_root.join(network.bundle_spec_path()))?;
+    require_release_checkout(repo_root, network)?;
+    let bundle = fs::canonicalize(bundle)
+        .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
+    verify_checksums(&bundle, "SHA256SUMS")?;
+    let manifest_path = bundle.join(network.bundle_manifest_path());
+    let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
+    require_bundle_network(&manifest, network)?;
+    require_clean_source(repo_root, &manifest.source.commit)?;
+
+    let seeded = DcapSeededChainSpecBindingV1::from_genesis_path(seeded_genesis)
+        .map_err(|error| eyre!("seeded release ChainSpec binding is invalid: {error}"))?;
+    if seeded.chain_id != network.chain_id() {
+        bail!("seeded release genesis belongs to a foreign network");
+    }
+    let descriptor = read_measured_network_descriptor(&bundle)?;
+    let expected_descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(seeded.chain_id).to_be_bytes(),
+            genesis_hash: seeded.genesis_hash,
+            attestation_mode: AttestationMode::DcapRequired,
+        },
+        genesis_consensus_keys: seeded.genesis_consensus_keys.clone(),
+    };
+    if descriptor != expected_descriptor {
+        bail!("signed bundle descriptor does not match the approved seeded genesis");
+    }
+
+    let measurement = |value: &str, label: &str| -> Result<alloy_primitives::B256> {
+        if !is_lower_hex(value, 64) {
+            bail!("signed bundle {label} is not 32 lowercase hexadecimal bytes");
+        }
+        let bytes = hex::decode(value).wrap_err_with(|| format!("decode signed bundle {label}"))?;
+        Ok(alloy_primitives::B256::from_slice(&bytes))
+    };
+    let profile = InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
+        mrenclave: measurement(&manifest.measurements.mrenclave, "MRENCLAVE")?,
+        mrsigner: measurement(&manifest.measurements.mrsigner, "MRSIGNER")?,
+        isv_prod_id: manifest.measurements.isv_prod_id,
+        minimum_isv_svn: manifest.measurements.isv_svn,
+        minimum_tcb_evaluation_data_number: spec.sgx.minimum_tcb_evaluation_data_number,
+    });
+    let policy = initial_tee_policy_v1(profile, seeded.chain_id, seeded.genesis_hash)
+        .map_err(eyre::Report::msg)?;
+    let policy_field = tee_attestation_v1_genesis_field(&policy).map_err(eyre::Report::msg)?;
+
+    let seeded_bytes = fs::read(seeded_genesis)
+        .wrap_err_with(|| format!("read approved seeded genesis: {}", seeded_genesis.display()))?;
+    let mut final_value: Value =
+        serde_json::from_slice(&seeded_bytes).wrap_err("parse approved seeded genesis JSON")?;
+    let config = final_value
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| eyre!("seeded genesis config must be a JSON object"))?;
+    if config.contains_key("teeAttestationV1") {
+        bail!("seeded genesis already contains teeAttestationV1");
+    }
+    config.insert("teeAttestationV1".to_owned(), policy_field);
+    let final_bytes = canonical_json(&final_value)?;
+    write_new_file(output, &final_bytes, "final genesis")?;
+
+    let validate_result = (|| -> Result<DcapChainSpecBindingV1> {
+        let final_binding = DcapChainSpecBindingV1::from_genesis_path(output)
+            .map_err(|error| eyre!("generated final ChainSpec binding is invalid: {error}"))?;
+        if final_binding.chain_id != seeded.chain_id
+            || final_binding.genesis_hash != seeded.genesis_hash
+        {
+            bail!("final genesis changed the seeded chain identity");
+        }
+        let final_seeded = DcapSeededChainSpecBindingV1::from_genesis_path(output)
+            .map_err(|error| eyre!("generated final seeded binding is invalid: {error}"))?;
+        if final_seeded != seeded {
+            bail!("final genesis changed the seeded epoch-0 committee or chain identity");
+        }
+        require_measured_network_descriptor(&bundle, output, &final_binding)?;
+        require_bundle_measurement_binding(&final_binding, &manifest)?;
+        Ok(final_binding)
+    })();
+    let final_binding = match validate_result {
+        Ok(binding) => binding,
+        Err(error) => {
+            let _ = fs::remove_file(output);
+            return Err(error);
+        }
+    };
+
+    let evidence = serde_json::json!({
+        "schema": "outbe-sgx-final-genesis-evidence-v1",
+        "network": network.authorization_scope(),
+        "chain_id": final_binding.chain_id,
+        "genesis_hash": format!("{:#x}", final_binding.genesis_hash),
+        "seeded_genesis": file_digest(seeded_genesis)?,
+        "final_genesis": file_digest(output)?,
+        "bundle_manifest": file_digest(&manifest_path)?,
+        "measured_descriptor": file_digest(&bundle.join("metadata/network-descriptor-v1.bin"))?,
+        "measurements": manifest.measurements,
+        "minimum_tcb_evaluation_data_number": spec.sgx.minimum_tcb_evaluation_data_number,
+        "mutation": "insert-config-teeAttestationV1-only",
+        "result": "passed"
+    });
+    if let Err(error) = write_new_file(
+        evidence_output,
+        &canonical_json(&evidence)?,
+        "final genesis evidence",
+    ) {
+        let _ = fs::remove_file(output);
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub fn verify(repo_root: &Path, network: SgxReleaseNetwork, bundle: &Path) -> Result<()> {
     let spec = BundleSpec::read(&repo_root.join(network.bundle_spec_path()))?;
     require_release_checkout(repo_root, network)?;
@@ -1650,6 +1945,26 @@ pub fn verify(repo_root: &Path, network: SgxReleaseNetwork, bundle: &Path) -> Re
         .args([container_adapter(), "view"]);
     let sigstruct_view = run_output(&mut command, "read signed SGX SIGSTRUCT")?;
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
+}
+
+pub fn verify_with_genesis(
+    repo_root: &Path,
+    network: SgxReleaseNetwork,
+    bundle: &Path,
+    genesis: &Path,
+) -> Result<()> {
+    verify(repo_root, network, bundle)?;
+    let bundle = fs::canonicalize(bundle)
+        .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
+    let manifest: BundleManifest =
+        read_canonical_json(&bundle.join(network.bundle_manifest_path()))?;
+    let chain_binding = DcapChainSpecBindingV1::from_genesis_path(genesis)
+        .map_err(|error| eyre!("final release ChainSpec binding is invalid: {error}"))?;
+    if chain_binding.chain_id != network.chain_id() {
+        bail!("final release genesis belongs to a foreign network");
+    }
+    require_measured_network_descriptor(&bundle, genesis, &chain_binding)?;
+    require_bundle_measurement_binding(&chain_binding, &manifest)
 }
 
 pub fn archive(
@@ -2255,6 +2570,21 @@ fn write_canonical<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     fs::write(path, canonical_json(value)?)
         .wrap_err_with(|| format!("write canonical metadata: {}", path.display()))
+}
+
+fn write_new_file(path: &Path, bytes: &[u8], label: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("create {label} directory: {}", parent.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .wrap_err_with(|| format!("create new {label}: {}", path.display()))?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .wrap_err_with(|| format!("write {label}: {}", path.display()))
 }
 
 fn read_canonical_json<T>(path: &Path) -> Result<T>

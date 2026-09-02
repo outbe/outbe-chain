@@ -96,7 +96,7 @@ contract RecordingFactory {
 /// @dev WETH-style wCOEN: ERC20 for the escrow plus a native `withdraw` (paid from its own
 ///      pre-funded balance) for the origin unwrap.
 contract WCOEN is MockERC20 {
-    constructor() MockERC20("Wrapped COEN", "WCOEN", 6) {}
+    constructor() MockERC20("Wrapped COEN", "WCOEN", 18) {}
 
     function withdraw(uint256 wad) external {
         (bool ok,) = payable(msg.sender).call{value: wad}("");
@@ -142,7 +142,7 @@ contract SyncTokenBridge {
 contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
-    uint256 internal constant INITIAL_WCOEN_BALANCE = 100e6;
+    uint256 internal constant INITIAL_WCOEN_BALANCE = 100e18;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
         "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
@@ -273,13 +273,13 @@ contract LocalLoopbackTest is Test {
         auction.commitBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
 
         // 3. Past commitEnd the stage computes to RevealingBids; reveals lock escrow
-        //    (qty * load * rate / 1e6).
+        //    (qty * load * rate / 1e6), converted to 18-decimal WCOEN.
         vm.warp(startTs + 101);
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
         _commitAndReveal(iba1, 30, 800_000, iba1Pk);
         _commitAndReveal(iba2, 40, 700_000, iba2Pk);
-        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24e6, "iba1 lock");
-        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e6, "iba2 lock");
+        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24e18, "iba1 lock");
+        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
         //    back through the loopback to the origin - three chained same-tx deliveries.
@@ -308,21 +308,21 @@ contract LocalLoopbackTest is Test {
         bidders[0] = iba1;
         bidders[1] = iba2;
         uint128[] memory refunded = new uint128[](2);
-        refunded[0] = 3e6; // lock 24 WCOEN - paid 30*1*0.7
-        refunded[1] = 14e6; // lock 28 WCOEN - paid 20*1*0.7
+        refunded[0] = 3e18; // lock 24 WCOEN - paid 30*1*0.7
+        refunded[1] = 14e18; // lock 28 WCOEN - paid 20*1*0.7
         uint128[] memory paid = new uint128[](2);
-        paid[0] = 21e6;
-        paid[1] = 14e6;
+        paid[0] = 21e18;
+        paid[1] = 14e18;
         vm.prank(address(desis));
         origin.sendRefundInstructions(local, DAY, 0, 1, bidders, refunded, paid);
 
         assertEq(
             uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Finalized), "iba1 not final"
         );
-        assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e6 + 3e6, "iba1 refund");
-        assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e6 + 14e6, "iba2 refund");
+        assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund");
+        assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund");
         assertEq(factory.calls(), 1, "proceeds not distributed");
-        assertEq(factory.lastValue(), 35e6, "proceeds amount");
+        assertEq(factory.lastValue(), 35e18, "proceeds amount");
         assertEq(factory.lastSrcChainId(), local, "proceeds source chain");
         assertEq(factory.lastDay(), DAY, "proceeds day");
         assertEq(address(origin).balance, 0, "native stranded on origin");
@@ -361,7 +361,7 @@ contract LocalLoopbackTest is Test {
         assertEq(target.nextPendingBidsRelayIdx(), 0, "bids relay parked");
         (,, bool proceedsParked,) = target.pendingProceedsRoutes(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(target.nextPendingIssuanceMintIdx(), 0, "issuance mint parked");
+        assertEq(target.nextPendingIssuanceIdx(), 0, "issuance mint parked");
         assertEq(origin.parkedSend(0).payload.length, 0, "origin leg parked");
     }
 }
