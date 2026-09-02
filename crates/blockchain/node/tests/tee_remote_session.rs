@@ -59,6 +59,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
         let source_witness = NodeHostAuthorizationWitnessV1 {
             chain_id: chain_id_word(CHAIN_ID),
             genesis_hash,
+            attestation_mode: AttestationMode::DcapRequired,
             node_id: source_node.clone(),
             node_host_noise_x25519: [0x41; 32],
         };
@@ -221,17 +222,20 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
 
 #[test]
 fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
+    let chain_id = outbe_primitives::chain::TESTNET_CHAIN_ID;
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("facade-enclave.sock");
     let endpoint = socket.to_str().unwrap().to_owned();
     let genesis_hash = B256::repeat_byte(0x91);
     let boot = Arc::new(EnclaveBootConfig::new(
-        chain_id_word(CHAIN_ID),
+        chain_id_word(chain_id),
         root.path().to_path_buf(),
         0,
     ));
     let keys = Arc::new(EnclaveKeys::new([0x92; 32], Some([0x92; 32])).unwrap());
-    let initialization = Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+    let initialization = Arc::new(
+        InitializationState::production_with_synthetic_dcap_for_test(boot.clone(), &keys).unwrap(),
+    );
     let challenge = match initialization.challenge_response(&keys).unwrap() {
         outbe_tee::protocol::EnclaveResponse::InitializationChallenge { challenge, .. } => {
             challenge
@@ -266,7 +270,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let target_node = validator_node_for_signer(&target_signer, 0x93);
     let target_owner = NodeHostNoiseKey::create_new(&root.path().join("target-owner.key")).unwrap();
     let target_manifest = outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1 {
-        chain_id: chain_id_word(CHAIN_ID),
+        chain_id: chain_id_word(chain_id),
         genesis_hash,
         attestation_mode: AttestationMode::DcapRequired,
         node_id: target_node.clone(),
@@ -292,8 +296,9 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let source_node = validator_node_for_signer(&source_signer, 0x94);
     let source_host = NodeHostNoiseKey::create_new(&root.path().join("source-host.key")).unwrap();
     let source_witness = NodeHostAuthorizationWitnessV1 {
-        chain_id: chain_id_word(CHAIN_ID),
+        chain_id: chain_id_word(chain_id),
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: source_node.clone(),
         node_host_noise_x25519: source_host.public(),
     };
@@ -303,7 +308,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+    let mut seed = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     StorageHandle::enter(&mut seed, |storage| {
         let registry = TeeRegistry::new(storage);
         seed_binding(
@@ -362,10 +367,10 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let ticket = authorize_local_finalized_remote_session_v1(
         &finalized,
         &mut target_client,
-        CHAIN_ID,
+        chain_id,
         genesis_hash,
         RemoteSessionExpectationV1 {
-            chain_id: chain_id_word(CHAIN_ID),
+            chain_id: chain_id_word(chain_id),
             genesis_hash,
             source_node_id_hash: source_hash,
             target_node_id_hash: target_hash,
@@ -579,6 +584,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x71; 32],
     };

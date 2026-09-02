@@ -369,14 +369,21 @@ impl Localnet {
     /// already attached to `<node_dir>/node.log` by the caller (via
     /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
-        self.spawn_node_with_projection_identity(label, label, node_dir, cmd)
+    fn spawn_node(
+        &self,
+        label: &str,
+        index: usize,
+        node_dir: &Path,
+        cmd: Command,
+    ) -> Result<ChildGuard> {
+        self.spawn_node_with_projection_identity(label, label, index, node_dir, cmd)
     }
 
     fn spawn_node_with_projection_identity(
         &self,
         label: &str,
         projection_identity: &str,
+        index: usize,
         node_dir: &Path,
         mut cmd: Command,
     ) -> Result<ChildGuard> {
@@ -393,6 +400,10 @@ impl Localnet {
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
             self.projection_database_name(projection_identity),
+        )
+        .env(
+            "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
+            self.cfg.ocomp_discovery_control_address(index).to_string(),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();

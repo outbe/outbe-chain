@@ -2102,6 +2102,12 @@ impl OcompTopology {
         command
             .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
             .env(
+                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
+                self.cfg
+                    .ocomp_discovery_control_address(validator_index)
+                    .to_string(),
+            )
+            .env(
                 "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
                 &self.cfg.projection_mongodb_uri,
             )
@@ -2163,6 +2169,10 @@ impl OcompTopology {
             );
         command
             .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
+            .env(
+                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
+                self.cfg.ocomp_discovery_control_address(index).to_string(),
+            )
             .env(
                 "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
                 &self.cfg.projection_mongodb_uri,

@@ -228,6 +228,7 @@ impl Localnet {
         let guard = self.spawn_node_with_projection_identity(
             name,
             projection_identity,
+            index,
             &node_dir,
             command,
         )?;
