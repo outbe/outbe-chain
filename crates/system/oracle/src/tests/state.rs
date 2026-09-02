@@ -883,6 +883,82 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
 }
 
 #[test]
+fn submit_vote_rejects_an_unregistered_signer() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+
+        let stranger = Address::new([0x99; 20]);
+        let err = oracle
+            .submit_vote(
+                stranger,
+                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("not an active ORACLE signer"),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(oracle.voter_list.len().unwrap(), 0);
+    });
+}
+
+#[test]
+fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, native_coen(100));
+        outbe_validatorset::contract::ValidatorSet::new(storage)
+            .deactivate_validator(Address::ZERO, validator)
+            .unwrap();
+
+        let err = oracle
+            .submit_vote(
+                validator,
+                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("not an active ORACLE signer"),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(oracle.voter_list.len().unwrap(), 0);
+    });
+}
+
+#[test]
+fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let registered = AddressPair::from_addresses(ETH, usd());
+        oracle.register_pair(registered).unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage, validator, native_coen(100));
+        let err = oracle
+            .submit_vote(
+                validator,
+                &[(registered.address2(), registered.address1(), fixed18(2), SCALE_1E18)],
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("does not match the registered orientation"),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(oracle.voter_list.len().unwrap(), 0);
+    });
+}
+
+#[test]
 fn submit_vote_rejects_a_duplicated_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());

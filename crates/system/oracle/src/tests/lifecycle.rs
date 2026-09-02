@@ -205,7 +205,7 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
     });
 }
 #[test]
-fn run_tally_accepts_a_single_validator_as_the_weighted_median() {
+fn run_tally_accepts_a_single_validator_as_the_validator_median() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -276,9 +276,7 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
-        // Weighted median: powers 100, 200, 100. Total=400, half=200.
-        // Sorted: 1000(100), 1001(200), 1002(100).
-        // Cumsum: 100(<200), 300(>=200) -> median = 1001.
+        // One validator contributes one observation, so the central rate is 1001.
         let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, fixed18(1001));
 
@@ -287,6 +285,36 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v3).unwrap(), 1);
+    });
+}
+
+#[test]
+fn run_tally_gives_every_validator_one_median_observation_regardless_of_stake() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+
+        let v1 = Address::new([0x11; 20]);
+        let v2 = Address::new([0x22; 20]);
+        let v3 = Address::new([0x33; 20]);
+        register_validator(storage.clone(), v1, native_coen(1_000_000));
+        register_validator(storage.clone(), v2, native_coen(1));
+        register_validator(storage, v3, native_coen(1));
+
+        for (voter, rate) in [(v1, 100), (v2, 200), (v3, 300)] {
+            oracle
+                .submit_vote(
+                    voter,
+                    &[(COEN, usd(), coen_iso(rate), COEN_ISO_SCALE)],
+                )
+                .unwrap();
+        }
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(200));
     });
 }
 
@@ -320,7 +348,7 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
-        // Median should be 50 (powers 100+200 cross threshold before 500)
+        // The validator median is 50.
         let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
         assert_eq!(rate, fixed18(50));
 
@@ -367,7 +395,7 @@ fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
 }
 
 #[test]
-fn run_tally_breaks_equal_reference_power_ties_by_registry_order() {
+fn run_tally_breaks_equal_reference_observation_ties_by_registry_order() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -465,6 +493,55 @@ fn two_large_stakes_cannot_replace_the_third_vote_required_for_four_validator_qu
         assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
         assert_eq!(oracle.penalty_abstain_count.read(&v3).unwrap(), 1);
         assert_eq!(oracle.penalty_abstain_count.read(&v4).unwrap(), 1);
+    });
+}
+
+#[test]
+fn a_validator_deactivated_after_submission_does_not_count_toward_tally_quorum() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .set_exchange_rate(Address::ZERO, pair, coen_iso(40), 1, 12)
+            .unwrap();
+
+        let voters = [
+            Address::new([0x11; 20]),
+            Address::new([0x22; 20]),
+            Address::new([0x33; 20]),
+            Address::new([0x44; 20]),
+        ];
+        for voter in voters {
+            register_validator(storage.clone(), voter, native_coen(100));
+        }
+
+        for voter in &voters[..2] {
+            oracle
+                .submit_vote(
+                    *voter,
+                    &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+                )
+                .unwrap();
+        }
+        outbe_validatorset::contract::ValidatorSet::new(storage)
+            .deactivate_validator(Address::ZERO, voters[1])
+            .unwrap();
+
+        // Three validators remain active, so two observations are required.
+        // The exiting validator's stored row must not supply the missing vote.
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle.get_exchange_rate_data(COEN, usd()).unwrap(),
+            (coen_iso(40), 1, 12)
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        assert_eq!(oracle.penalty_success_count.read(&voters[0]).unwrap(), 1);
+        assert_eq!(oracle.penalty_success_count.read(&voters[1]).unwrap(), 0);
+        assert_eq!(oracle.penalty_abstain_count.read(&voters[2]).unwrap(), 1);
+        assert_eq!(oracle.penalty_abstain_count.read(&voters[3]).unwrap(), 1);
     });
 }
 
