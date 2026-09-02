@@ -4,15 +4,17 @@
 //! One pass over the dense active-position index applies up to two transitions
 //! per position, in lifecycle order:
 //!
-//! - `Open -> Called` when the reference price sat at or above the call price on
-//!   [`CALL_BREACH_DAYS`] of the trailing [`CALL_LOOKBACK_DAYS`] days.
+//! - `Open -> Called` when the COEN price in the position's REFERENCE currency sat
+//!   at or above the call price on [`CALL_BREACH_DAYS`] of the trailing
+//!   [`CALL_LOOKBACK_DAYS`] days. The issuance currency the position is denominated
+//!   in never enters the threshold.
 //! - `Called -> Void` when the settlement window has lapsed with principal still
 //!   outstanding.
 //!
 //! The breach rule needs no per-position streak state: the daily series is
-//! global per currency, so one trailing window per currency decides every
-//! position denominated in it, and the count is recomputed from oracle history
-//! on every run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call`,
+//! global per currency, so one trailing window per reference currency decides
+//! every position anchored to it, and the count is recomputed from oracle
+//! history on every run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call`,
 //! which evaluates the same `CALL_WINDOW`/`CALL_THRESHOLD` shape.
 
 use alloy_primitives::U256;
@@ -102,8 +104,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         resume => resume.saturating_sub(1).min(len - 1),
     };
 
-    // A VWAP window belongs to one `COEN/<iso>` pair, but the active index mixes
-    // currencies. Cache the windows and keep the single pass; the registry holds
+    // A VWAP window belongs to one `COEN/<reference iso>` pair, but the active index
+    // mixes anchors. Cache the windows and keep the single pass; the registry holds
     // a handful of codes, so a linear probe beats a map.
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
 
@@ -125,7 +127,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 &ctx.storage,
                 &oracle,
                 &mut windows,
-                position.issuance_currency,
+                position.reference_currency,
                 last_closed_day,
             )?;
             // `window_for` only ever returns an index it just validated or
@@ -209,8 +211,8 @@ struct Visit {
 
 /// Applies the call, and reports whether the void is due.
 ///
-/// A currency this chain cannot price yields an empty window: no call, but the
-/// void arm still runs, so such a position is never stranded.
+/// A reference currency this chain cannot price yields an empty window: no call, but
+/// the void arm still runs, so such a position is never stranded.
 fn visit_price_path(
     credis: &mut CredisContract<'_>,
     window: &[(u32, Option<U256>)],
@@ -234,8 +236,8 @@ fn visit_price_path(
     })
 }
 
-/// True when the official daily reference price sat at or above the position's
-/// call price on at least [`CALL_BREACH_DAYS`] of the window.
+/// True when the daily COEN price in the position's reference currency sat at or
+/// above its call price on at least [`CALL_BREACH_DAYS`] of the window.
 ///
 /// Days below the call price and days with no published price both simply fail
 /// to count, so the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS`

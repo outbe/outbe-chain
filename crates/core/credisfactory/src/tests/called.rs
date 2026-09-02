@@ -18,6 +18,9 @@ use crate::tests::common::*;
 /// back past a position's origination day.
 const AFTER_WINDOW: u64 = (CALL_LOOKBACK_DAYS as u64 + 2) * DAY;
 
+/// An ISO code the fixture registers no `COEN/<iso>` pair for.
+const UNPRICED_ISO: u16 = 392; // JPY
+
 fn state_of(storage: &StorageHandle<'_>, position_id: U256) -> CredisState {
     CredisContract::new(storage.clone())
         .get_position(position_id)
@@ -65,7 +68,7 @@ fn a_full_window_at_the_call_price_calls_the_position() {
             "the 14-day settlement window opens at the call"
         );
 
-        // The owner is blocked from opening new positions while it is unresolved.
+        // The owner's called-position counter tracks the unresolved call.
         assert!(CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());
@@ -264,7 +267,7 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void released the owner's call block and left the active index.
+        // The void cleared the owner's called count and left the active index.
         assert!(!CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());
@@ -277,29 +280,86 @@ fn the_call_and_the_void_compose_across_runs() {
 }
 
 #[test]
-fn each_currency_prices_off_its_own_daily_series() {
+fn each_reference_currency_prices_off_its_own_daily_series() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
         let position_id = open(&storage, 1);
 
-        // Re-point the stored position at an unregistered currency, so it prices
-        // off a series that does not exist.
+        // Re-point the stored position's ANCHOR at an unregistered currency, so it
+        // prices off a series that does not exist.
         {
             let credis = CredisContract::new(storage.clone());
             let mut position = credis.get_position(position_id).unwrap();
-            position.issuance_currency = 978; // EUR - no COEN pair registered
+            position.reference_currency = UNPRICED_ISO;
             credis.positions.update(&position).unwrap();
         }
 
-        // USD's series is a full breach window, but this position is not in USD.
+        // The seeded reference series is a full breach window, but this position is
+        // no longer anchored to it.
         advance_to(&storage, at);
         fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
         assert_eq!(
             scan(&storage, at),
             0,
-            "an unpriced currency is never called"
+            "an unpriced reference currency is never called"
+        );
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+    });
+    teardown();
+}
+
+/// The call is anchored to the reference currency, never to the issuance currency
+/// the position is denominated in. Both directions, because getting the anchor
+/// wrong fails silently in one of them: with the two series moving together an
+/// issuance-keyed scan still reaches the right verdict by coincidence.
+#[test]
+fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
+    // Breach published only on the reference series -> the position is called.
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let position_id = open(&storage, 1);
+        assert_ne!(
+            ISSUANCE_ISO, REFERENCE_ISO,
+            "the fixture must keep the two codes distinct"
+        );
+
+        advance_to(&storage, at);
+        fill_days_for(
+            &storage,
+            REFERENCE_ISO,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            at_call(),
+        );
+        // COEN/840 stays silent for the whole window.
+        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+    });
+    teardown();
+
+    // Breach published only on the issuance series -> nothing happens.
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let position_id = open(&storage, 1);
+
+        advance_to(&storage, at);
+        fill_days_for(
+            &storage,
+            ISSUANCE_ISO,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            at_call(),
+        );
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "a breach in the issuance currency must not call the position"
         );
         assert_eq!(state_of(&storage, position_id), CredisState::Open);
     });

@@ -34,7 +34,14 @@ pub const CREATED_AT: u64 = 1_700_000_000;
 pub const BLOCK_NUMBER: u64 = 42;
 
 /// Issuance currency (ISO 4217) reported by [`asset`]'s stubbed `isoCode()`.
+/// Denominates the loan and keys the policy rate.
 pub const ISSUANCE_ISO: u16 = 840;
+
+/// Reference currency every position here elects. Deliberately distinct from
+/// [`ISSUANCE_ISO`] so a test that passes on the wrong series cannot pass by
+/// coincidence. Both pairs are seeded at the same spot rate, so the position
+/// geometry (entry 2.0, call 3.28) is unchanged by the choice.
+pub const REFERENCE_ISO: u16 = 978;
 
 pub const DAY: u64 = 86_400;
 
@@ -60,8 +67,8 @@ pub fn policy_rate() -> U256 {
     U256::from(43_000u64)
 }
 
-/// COEN/840 rate these tests seed: 2.0 at scale 1e6. This is the entry price of
-/// every position opened here, so call = 3.28.
+/// COEN rate these tests seed on BOTH pairs: 2.0 at scale 1e6. The COEN/978 leg
+/// is what a position's entry price is struck from, so call = 3.28.
 pub fn oracle_rate() -> U256 {
     U256::from(2u64) * SCALE_1E6_U256
 }
@@ -119,9 +126,16 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let handle = pledge(storage, who, nonce);
     let spend = credis_spend_auth(who, handle, who);
     fund_stake(storage, pledge_stake());
-    let (position_id, _) =
-        runtime::request_credis(storage.clone(), cca(), who, handle, spend, pledge_stake())
-            .unwrap();
+    let (position_id, _) = runtime::request_credis(
+        storage.clone(),
+        cca(),
+        who,
+        handle,
+        spend,
+        REFERENCE_ISO,
+        pledge_stake(),
+    )
+    .unwrap();
     position_id
 }
 
@@ -129,8 +143,9 @@ pub fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-/// Registers the `COEN/840` pair and seeds its spot rate and policy rate.
-/// Idempotent - `bootstrap_for` calls it once per owner.
+/// Registers the `COEN/840` and `COEN/978` pairs, seeds both spot rates, the USD
+/// policy rate, and the reference-currency registry `request_credis` validates
+/// the elected anchor against. Idempotent - `bootstrap_for` calls it once per owner.
 pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), ISSUANCE_ISO)
         .unwrap()
@@ -139,7 +154,9 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
     }
+    register_reference_pair(&storage, REFERENCE_ISO);
     set_coen_rate(&storage, coen_iso_rate);
+    set_coen_rate_for(&storage, REFERENCE_ISO, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
         .policy_rate
@@ -147,15 +164,40 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
         .unwrap();
 }
 
+/// Registers `COEN/<iso>` and admits `iso` to the reference-currency registry, so
+/// a position may elect it. Idempotent in both halves.
+pub fn register_reference_pair(storage: &StorageHandle<'_>, iso: u16) {
+    if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
+        .unwrap()
+        .is_none()
+    {
+        outbe_oracle::api::register_pair(
+            storage.clone(),
+            outbe_oracle::api::AddressPair::new_coen_to(iso),
+        )
+        .unwrap();
+    }
+    let oracle = OracleContract::new(storage.clone());
+    if outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), iso).is_err() {
+        oracle.reference_currencies.push(iso).unwrap();
+    }
+}
+
 /// Re-publishes the COEN/840 spot rate - how these tests move the live price
 /// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
 /// which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
+    set_coen_rate_for(storage, ISSUANCE_ISO, coen_iso_rate);
+}
+
+/// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the one
+/// `request_credis` strikes a position's entry price from.
+pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
         coen_iso_rate,
         1,
         timestamp,
@@ -194,16 +236,23 @@ pub fn set_vwap_for(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, value: 
     bump_watermark(storage, utc_day);
 }
 
-/// [`set_vwap_for`] on the default issuance currency.
+/// [`set_vwap_for`] on [`REFERENCE_ISO`] - the series the scan actually reads,
+/// since the call threshold is anchored to the position's reference currency.
 pub fn set_vwap(storage: &StorageHandle<'_>, utc_day: u32, value: U256) {
-    set_vwap_for(storage, ISSUANCE_ISO, utc_day, value);
+    set_vwap_for(storage, REFERENCE_ISO, utc_day, value);
 }
 
-/// Sets `days` consecutive closed UTC days ending at `latest` to `value`.
+/// Sets `days` consecutive closed UTC days ending at `latest` to `value` on the
+/// reference series.
 pub fn fill_days(storage: &StorageHandle<'_>, latest: u32, days: u32, value: U256) {
+    fill_days_for(storage, REFERENCE_ISO, latest, days, value)
+}
+
+/// [`fill_days`] on an arbitrary `COEN/<iso>` series.
+pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u32, value: U256) {
     let mut day = latest;
     for _ in 0..days {
-        set_vwap(storage, day, value);
+        set_vwap_for(storage, iso, day, value);
         day = previous_date_key(day);
     }
 }

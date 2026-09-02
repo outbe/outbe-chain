@@ -17,6 +17,11 @@
         "name": "spendAuth",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [

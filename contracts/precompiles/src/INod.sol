@@ -25,10 +25,7 @@ interface INod {
     event NodBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
 
     event NodBucketQualified(
-        bytes32 indexed bucketKey,
-        uint256 worldwideDay,
-        uint256 floorPriceMinor,
-        uint16 referenceCurrency
+        bytes32 indexed bucketKey, uint256 worldwideDay, uint256 floorPriceMinor, uint16 referenceCurrency
     );
 
     /// Qualified bucket force-called by the daily Call scan: the reference price
