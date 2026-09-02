@@ -531,7 +531,7 @@ impl Localnet {
         self.validator_argv.insert(i, a.clone());
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
-        let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;
+        let guard = self.spawn_node(&format!("validator-{i}"), i, &vd, cmd)?;
         self.validators.insert(i, guard);
         Ok(())
     }

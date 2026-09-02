@@ -3,10 +3,75 @@
 //! to the independent lifecycle suite.
 
 use cucumber::{then, when};
+use std::{thread::sleep, time::Duration};
 
 use crate::world::World;
 
 const FULL_NODE_NAME: &str = "dcap-full-node";
+const VALIDATOR_CATCHUP_LOG: &str = "local TEE lease guard armed at authenticated catch-up anchor";
+
+fn wait_for_live_follower_log(
+    world: &mut World,
+    name: &str,
+    index: usize,
+    needle: &str,
+    attempts: u32,
+) -> bool {
+    for _ in 0..attempts {
+        if world.localnet.log_has(index, needle) {
+            return true;
+        }
+        if !world.localnet.follower_running(name) {
+            return false;
+        }
+        sleep(Duration::from_secs(1));
+    }
+    false
+}
+
+fn require_live_validator_progress(
+    world: &mut World,
+    index: usize,
+    port: u16,
+    primary: u16,
+    baseline: u64,
+    phase: &str,
+) -> u64 {
+    assert!(
+        world.localnet.validator_running(index),
+        "{phase} validator process exited immediately after launch"
+    );
+    let target = world
+        .rpc
+        .finalized(primary)
+        .unwrap_or(baseline)
+        .max(baseline.saturating_add(1));
+    assert!(
+        world.rpc.wait_finalized_at_least(primary, target, 60),
+        "primary did not advance beyond the {phase} validator baseline"
+    );
+    assert!(
+        world.rpc.wait_finalized_at_least(port, target, 60),
+        "{phase} validator did not finalize a block after launch"
+    );
+    assert!(
+        world.localnet.validator_running(index),
+        "{phase} validator process exited while catching up"
+    );
+    let validator_hash = world
+        .rpc
+        .block_hash(port, target)
+        .expect("validator finalized target block hash");
+    let primary_hash = world
+        .rpc
+        .block_hash(primary, target)
+        .expect("primary finalized target block hash");
+    assert_eq!(
+        validator_hash, primary_hash,
+        "{phase} validator finalized a noncanonical block"
+    );
+    target
+}
 
 #[when("a production validator joins and restarts with its permanent offer key")]
 fn validator_joins_and_restarts(world: &mut World) {
@@ -16,15 +81,55 @@ fn validator_joins_and_restarts(world: &mut World) {
         .localnet
         .provision_joiner(index)
         .expect("production validator DcapRequired join");
+    let anchor = outbe_tee::load_finalized_join_admission_anchor(&world.validators.data_dir(index))
+        .expect("load durable finalized join admission anchor")
+        .expect("finalized join must persist its exact admission anchor");
+    let anchor_hash = format!("{:#x}", anchor.finalized_hash);
+    let primary = world.validators.primary_port();
+    assert_eq!(
+        world.rpc.block_hash(primary, anchor.finalized_height),
+        Some(anchor_hash.clone()),
+        "durable admission anchor is not canonical on the primary"
+    );
+
+    // A fresh validator datadir cannot start authority at height zero merely
+    // because its enclave has a finalized admission. First catch the exact same
+    // NodeHost/datadir up through a certified, non-authority follower path.
+    let catchup_name = format!("validator-{index}");
+    world
+        .localnet
+        .launch_dcap_full_node(&catchup_name, index, 0)
+        .expect("launch admitted validator datadir as a certified follower");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(port, anchor.finalized_height, 120),
+        "certified follower did not reach its durable admission anchor"
+    );
+    assert_eq!(
+        world.rpc.block_hash(port, anchor.finalized_height),
+        Some(anchor_hash),
+        "certified follower reached a noncanonical admission checkpoint"
+    );
+    assert!(
+        wait_for_live_follower_log(world, &catchup_name, index, VALIDATOR_CATCHUP_LOG, 60,),
+        "certified follower did not authenticate and arm the admission anchor"
+    );
+    let catchup_finalized = world
+        .rpc
+        .finalized(port)
+        .expect("certified follower finalized height before validator launch");
+    world
+        .localnet
+        .stop_follower(&catchup_name)
+        .expect("stop certified follower before validator authority startup");
+
     world
         .localnet
         .launch_joiner(index, &[])
         .expect("launch joined production validator");
-    let checkpoint = world.rpc.head(world.validators.primary_port()).unwrap_or(1);
-    assert!(
-        world.rpc.wait_block(port, checkpoint, 24).is_some(),
-        "joined validator did not start from its finalized onboarding state"
-    );
+    let checkpoint =
+        require_live_validator_progress(world, index, port, primary, catchup_finalized, "joined");
     world.state.joiner_offer_public_before_restart = Some(
         world
             .localnet
@@ -33,6 +138,10 @@ fn validator_joins_and_restarts(world: &mut World) {
     );
     world.state.marker_height = Some(checkpoint);
 
+    let restart_baseline = world
+        .rpc
+        .finalized(port)
+        .expect("joined validator finalized height before restart");
     world.localnet.stop_joiner(index).expect("stop validator");
     world
         .localnet
@@ -42,10 +151,7 @@ fn validator_joins_and_restarts(world: &mut World) {
         .localnet
         .launch_joiner(index, &[])
         .expect("restart joined production validator");
-    assert!(
-        world.rpc.wait_block(port, checkpoint, 24).is_some(),
-        "restarted validator did not resume from finalized state"
-    );
+    require_live_validator_progress(world, index, port, primary, restart_baseline, "restarted");
 }
 
 #[then("the validator reopens the exact permanent key without re-registration")]

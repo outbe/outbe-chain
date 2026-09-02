@@ -493,10 +493,6 @@ fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
 
 fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
-    cmd.env(
-        "OUTBE_TEST_REMOTE_ATTESTATION",
-        spec.remote_attestation.as_str(),
-    );
     cmd.args([
         "run",
         "--name",
@@ -506,6 +502,10 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
         "--network",
         "host",
     ]);
+    cmd.arg("--env").arg(format!(
+        "OUTBE_TEST_REMOTE_ATTESTATION={}",
+        spec.remote_attestation.as_str()
+    ));
 
     // Real SGX: fail closed when no enclave device exists. The same test image
     // also supports the separately selected GramineDirectDev lane, so silently
@@ -930,9 +930,18 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument == TEST_ENCLAVE_IMAGE));
-        assert!(command.get_envs().any(|(key, value)| {
-            key == "OUTBE_TEST_REMOTE_ATTESTATION" && value.is_some_and(|value| value == "none")
-        }));
+        let remote_attestation = arguments
+            .windows(2)
+            .position(|pair| pair[0] == "--env" && pair[1] == "OUTBE_TEST_REMOTE_ATTESTATION=none")
+            .expect("Docker must pass the selected attestation mode into the container");
+        let image = arguments
+            .iter()
+            .position(|argument| argument == image_id.as_str())
+            .expect("pinned image ID argument");
+        assert!(remote_attestation < image);
+        assert!(command
+            .get_envs()
+            .all(|(key, _)| key != "OUTBE_TEST_REMOTE_ATTESTATION"));
         assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
     }
 
@@ -1051,6 +1060,22 @@ mod tests {
     fn only_explicit_dcap_remote_attestation_requires_qvl() {
         assert!(!TestRemoteAttestation::None.requires_qvl());
         assert!(TestRemoteAttestation::Dcap.requires_qvl());
+    }
+
+    #[test]
+    fn dcap_test_renderers_bind_the_pinned_container_qvl_directory() {
+        const ENTRYPOINT: &str =
+            include_str!("../../../../bin/outbe-tee-enclave/gramine/entrypoint.test.sh");
+        const INSPECTOR: &str =
+            include_str!("../../../../bin/outbe-tee-enclave/gramine/inspect-test-measurement.sh");
+
+        for (name, renderer) in [("entrypoint", ENTRYPOINT), ("inspector", INSPECTOR)] {
+            assert_eq!(
+                renderer.matches("-Dqvl_host_dir=/qvl").count(),
+                1,
+                "{name} must bind the already pinned /qvl directory into the DCAP manifest"
+            );
+        }
     }
 
     #[test]

@@ -43,6 +43,18 @@ name = "outbe-tee-enclave-mock"
 path = "src/mock_main.rs"
 required-features = ["mock"]
 
+# These end-to-end DKG targets inject an arbitrary network binding through the
+# mock-only transport seam. Keep them out of production-feature package tests.
+[[test]]
+name = "dkg_e2e"
+path = "tests/dkg_e2e.rs"
+required-features = ["mock"]
+
+[[test]]
+name = "dkg_ceremony_driver"
+path = "tests/dkg_ceremony_driver.rs"
+required-features = ["mock"]
+
 [dependencies]
 outbe-tee.workspace = true
 # Already in the enclave build graph transitively via `outbe-tee` (so no MRENCLAVE

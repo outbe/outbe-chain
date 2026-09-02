@@ -2280,8 +2280,7 @@ mod tests {
             0,
         ));
         let keys = Arc::new(EnclaveKeys::new([0x73; 32], Some([0x73; 32])).unwrap());
-        let initialization =
-            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let initialization = Arc::new(production_dcap_state(boot.clone(), &keys));
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
         let listener = UnixListener::bind(&socket).unwrap();
         let server_keys = keys.clone();
@@ -2303,12 +2302,8 @@ mod tests {
         let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
         let node_host_path = root.path().join("node-host-noise.key");
         let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
-        let (manifest, node_signature) = signed_initialization_manifest_for_mode(
-            &keys,
-            challenge.challenge,
-            node_host.public(),
-            AttestationMode::GramineDirectDev,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge.challenge, node_host.public());
         let mut client = AuthorizedEnclaveClient::initialize_endpoint(
             &endpoint,
             &manifest,

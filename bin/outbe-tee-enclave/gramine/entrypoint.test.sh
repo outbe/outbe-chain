@@ -49,6 +49,7 @@ gramine-manifest \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir="${TEE_DIR}" \
   -Dremote_attestation="${REMOTE_ATTESTATION}" \
+  -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest

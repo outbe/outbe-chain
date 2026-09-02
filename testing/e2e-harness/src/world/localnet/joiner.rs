@@ -26,6 +26,12 @@ use crate::world::validators::RegistrationIdentity;
 use super::Localnet;
 
 const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+const PRODUCTION_NO_ATTEST_REJECTION: &str = "production DCAP release refuses runtime attestation \
+none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)";
+
+fn has_exact_production_no_attest_rejection(log: &str) -> bool {
+    log.contains(PRODUCTION_NO_ATTEST_REJECTION)
+}
 
 fn retry_node_offer_read(real_sgx: bool, attempt: usize, error: &TransportError) -> bool {
     real_sgx
@@ -115,7 +121,7 @@ impl Localnet {
             .env("RUST_LOG", "info,outbe_consensus::follow=debug")
             .args(&process_args);
         attach_log(&mut command, &vd)?;
-        let guard = self.spawn_node(&name, &vd, command)?;
+        let guard = self.spawn_node(&name, index, &vd, command)?;
         self.followers.insert(name, guard);
         Ok(())
     }
@@ -692,9 +698,7 @@ impl Localnet {
             .join("enclave-no-attest-downgrade.log");
         let log = fs::read_to_string(&log_path)
             .wrap_err_with(|| format!("read downgrade log {}", log_path.display()))?;
-        if !log.contains("production DCAP release refuses runtime attestation sgx-no-attest")
-            && !log.contains("does not satisfy DcapRequired")
-        {
+        if !has_exact_production_no_attest_rejection(&log) {
             bail!("downgrade runtime did not report a fail-closed DCAP policy rejection");
         }
         if log.contains("unsealed offer key + group signature")
@@ -878,7 +882,7 @@ impl Localnet {
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216").args(&a);
         attach_log(&mut cmd, &vd)?;
-        let guard = self.spawn_node(&format!("validator-{index}"), &vd, cmd)?;
+        let guard = self.spawn_node(&format!("validator-{index}"), index, &vd, cmd)?;
         self.validators.insert(index, guard);
         Ok(())
     }
@@ -1018,5 +1022,18 @@ mod tests {
             root.join("validator-0/data/keys/dkg_polynomial.hex")
         );
         assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
+    }
+
+    #[test]
+    fn downgrade_log_requires_the_exact_production_no_attest_rejection() {
+        assert!(has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "runtime mode does not satisfy DcapRequired"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation sgx-no-attest"
+        ));
     }
 }
