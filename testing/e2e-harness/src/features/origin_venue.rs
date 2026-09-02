@@ -590,8 +590,8 @@ fn auction_clears(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-#[then("the cleared day mints the Intex on every chain it issued to")]
-fn issuance_mints_intex(world: &mut World) {
+#[then("the cleared day issues the Intex on every chain it reached")]
+fn cleared_day_issues_intex(world: &mut World) {
     let bidders = world.state.auction_bidders.clone();
     let home = world.rpc.url(world.validators.primary_port());
     let worldwide_day = settled_day(world);
