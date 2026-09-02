@@ -1,4 +1,10 @@
+#[path = "../release_dcap.rs"]
+#[allow(dead_code)]
+mod release_dcap;
+#[path = "../release_sgx.rs"]
+mod release_sgx;
+
 #[tokio::main]
 async fn main() {
-    outbe_e2e_harness::release_sgx::run().await;
+    release_sgx::run().await;
 }

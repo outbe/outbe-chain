@@ -188,6 +188,8 @@ mod tests {
             "join",
             "--enclave-socket",
             "/tmp/enclave.sock",
+            "--genesis",
+            "/tmp/genesis.json",
             "--binding-id",
             "0101010101010101010101010101010101010101010101010101010101010101",
             "--valid-until",

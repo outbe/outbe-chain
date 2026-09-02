@@ -16,7 +16,7 @@ use super::{
     profile::OcompRequestProfileExt,
     schema::{poc_schema_limits, OcompExpiryDisposition},
     state::{DayPhase, JobFsmProjection},
-    vote::ResponseWindowCloseV1,
+    vote::{OcompPenaltyMetrics, ResponseWindowCloseV1},
 };
 
 /// Records finality for the exact live OCOMP request whose request block is the
@@ -77,7 +77,7 @@ pub fn record_certified_parent_finality(
 pub fn run_lifecycle_begin_with_scope(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
-) -> Result<()> {
+) -> Result<OcompPenaltyMetrics> {
     if let Some(wwd) = missed_lifecycle_boundary(ctx)? {
         crate::terminal::fail_worldwide_day(
             ctx.storage.clone(),
@@ -86,29 +86,32 @@ pub fn run_lifecycle_begin_with_scope(
             scope,
             wwd,
         )?;
-        return Ok(());
+        return Ok(OcompPenaltyMetrics::default());
     }
     run_lifecycle_begin_exact(ctx, Some(scope))
 }
 
 #[cfg(test)]
-pub(crate) fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+pub(crate) fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<OcompPenaltyMetrics> {
     run_lifecycle_begin_exact(ctx, None)
 }
 
 fn run_lifecycle_begin_exact(
     ctx: &BlockRuntimeContext<'_>,
     scope: Option<&ExecutionScope>,
-) -> Result<()> {
+) -> Result<OcompPenaltyMetrics> {
     let schema_limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
-        return Ok(());
+        return Ok(OcompPenaltyMetrics::default());
     };
     let limits = profile.fsm_limits();
     metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits, limits)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-    match metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)? {
+    let response =
+        metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)?;
+    let metrics = response.metrics;
+    match response.close {
         ResponseWindowCloseV1::NotDue | ResponseWindowCloseV1::QuorumPreserved { .. } => Ok(()),
         ResponseWindowCloseV1::NoQuorum { intent_id } => {
             let state = metadosis
@@ -183,7 +186,7 @@ fn run_lifecycle_begin_exact(
         }
     }
     let Some(before) = due else {
-        return Ok(());
+        return Ok(metrics);
     };
     let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
         storage_corruption_message("awaiting-finality expiry has no persisted outer WorldwideDay")
@@ -205,7 +208,8 @@ fn run_lifecycle_begin_exact(
         before,
         limits,
         &outer_transition,
-    )
+    )?;
+    Ok(metrics)
 }
 
 fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<WorldwideDay>> {

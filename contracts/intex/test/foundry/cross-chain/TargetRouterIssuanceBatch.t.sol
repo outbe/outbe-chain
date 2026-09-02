@@ -48,7 +48,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.quantities = quantities;
     }
 
-    function _mintTo(address recipient, uint256 quantity)
+    function _issueTo(address recipient, uint256 quantity)
         internal
         pure
         returns (address[] memory recipients, uint256[] memory quantities)
@@ -76,7 +76,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
 
     function test_OneMessageCreatesEverySeriesItCarries() public {
         address holder = makeAddr("holder");
-        (address[] memory recipients, uint256[] memory quantities) = _mintTo(holder, 7);
+        (address[] memory recipients, uint256[] memory quantities) = _issueTo(holder, 7);
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](3);
         series[0] = _series("20250101-USD-U", recipients, quantities);
@@ -92,17 +92,17 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         assertEq(intex.balanceOf(holder, intex.issuedTokenId("20250101-EUR-E")), 7);
     }
 
-    function test_ASeriesSplitAcrossMessagesIsCreatedOnceAndMintsEveryPiece() public {
+    function test_ASeriesSplitAcrossMessagesIsCreatedOnceAndIssuesEveryPiece() public {
         address first = makeAddr("first");
         address second = makeAddr("second");
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory head = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
-        (address[] memory r1, uint256[] memory q1) = _mintTo(first, 4);
+        (address[] memory r1, uint256[] memory q1) = _issueTo(first, 4);
         head[0] = _series("20250101-USD-U", r1, q1);
         _deliver(0, 2, head);
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory tail = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
-        (address[] memory r2, uint256[] memory q2) = _mintTo(second, 6);
+        (address[] memory r2, uint256[] memory q2) = _issueTo(second, 6);
         tail[0] = _series("20250101-USD-U", r2, q2);
         // The second piece repeats the series; creating it again would revert, so the
         // receiver must recognise that it already exists.

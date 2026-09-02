@@ -46,7 +46,7 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.createSeries(params);
         vm.prank(bridger);
-        token.mint(user, 10, SERIES_ID);
+        token.issue(user, 10, SERIES_ID);
         (iTok, sTok) = token.tokenIds(SERIES_ID);
     }
 

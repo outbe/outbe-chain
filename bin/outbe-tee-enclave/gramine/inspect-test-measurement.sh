@@ -6,6 +6,12 @@ set -euo pipefail
 readonly ENTRY=/app/outbe-tee-enclave
 readonly ARCH_LIBDIR=/lib/x86_64-linux-gnu
 readonly TEST_SIGNING_KEY=/run/secrets/outbe-test-sgx-key.pem
+readonly NETWORK_DESCRIPTOR=/opt/outbe/sgx/network-descriptor-v1.bin
+
+if [[ ! -f "${NETWORK_DESCRIPTOR}" ]]; then
+  echo "measurement inspection requires ${NETWORK_DESCRIPTOR}" >&2
+  exit 2
+fi
 
 cd /app
 gramine-manifest \
@@ -14,6 +20,7 @@ gramine-manifest \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir=/tee \
   -Dremote_attestation=dcap \
+  -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest
 gramine-sgx-sign \

@@ -361,7 +361,7 @@ contract LocalLoopbackTest is Test {
         assertEq(target.nextPendingBidsRelayIdx(), 0, "bids relay parked");
         (,, bool proceedsParked,) = target.pendingProceedsRoutes(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(target.nextPendingIssuanceMintIdx(), 0, "issuance mint parked");
+        assertEq(target.nextPendingIssuanceIdx(), 0, "issuance mint parked");
         assertEq(origin.parkedSend(0).payload.length, 0, "origin leg parked");
     }
 }

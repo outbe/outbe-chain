@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 alloy-primitives = { workspace = true, features = ["std"] }
 base64 = "0.22"
+blst.workspace = true
 clap.workspace = true
 eyre.workspace = true
 filetime.workspace = true

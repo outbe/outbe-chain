@@ -57,7 +57,7 @@ contract IntexNFT1155UupsTest is Test {
         vm.prank(bridger);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
         vm.prank(bridger);
-        nft.mint(stranger, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(stranger, 3, CreateSeriesLib.seriesId(7));
 
         IntexNFT1155 newImpl = new IntexNFT1155();
         vm.prank(admin);

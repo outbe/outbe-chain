@@ -34,7 +34,7 @@
     },
     {
       "classification": "production",
-      "features": ["native-dcap"],
+      "features": ["production-dcap-release"],
       "install_profiles": ["full-node", "validator"],
       "name": "outbe-tee-enclave",
       "package": "outbe-tee-enclave",

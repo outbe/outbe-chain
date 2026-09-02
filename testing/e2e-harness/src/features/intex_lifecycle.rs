@@ -444,7 +444,7 @@ fn mine_promis(world: &mut World) {
     }
 }
 
-#[then("the settled units are burned and Promis is minted")]
+#[then("the settled units are burned and Promis is mined")]
 fn settled_burned_into_promis(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);

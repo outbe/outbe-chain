@@ -65,7 +65,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         tokenB.markQualified(SERIES_ID);
 
         // Mint initial tokens to user on chain A
-        tokenA.mint(user, AMOUNT, SERIES_ID);
+        tokenA.issue(user, AMOUNT, SERIES_ID);
     }
 
     /// @dev Deliver the packet the source adapter just handed the bridge to `dst` as if from `src` on A.
@@ -270,7 +270,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         uint256 failTokenId = uint256(uint112(failSeries));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
-        tokenA.mint(user, AMOUNT, failSeries);
+        tokenA.issue(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, amount: AMOUNT
@@ -315,7 +315,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         uint256 failTokenId = uint256(uint112(failSeries));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
-        tokenA.mint(user, AMOUNT, failSeries);
+        tokenA.issue(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, amount: AMOUNT

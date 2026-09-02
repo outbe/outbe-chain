@@ -969,6 +969,7 @@ mod tests {
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: policy.chain_id,
             genesis_hash,
+            attestation_mode: policy.attestation_mode,
             node_id: node_id.clone(),
             initialization_challenge: [0x87; 32],
             node_host_noise_x25519: [0x88; 32],
@@ -1551,6 +1552,7 @@ mod tests {
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: policy.chain_id,
             genesis_hash,
+            attestation_mode: policy.attestation_mode,
             node_id: node_id.clone(),
             initialization_challenge: [0x54; 32],
             node_host_noise_x25519: [0x55; 32],

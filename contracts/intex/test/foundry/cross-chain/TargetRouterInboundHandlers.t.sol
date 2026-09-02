@@ -164,7 +164,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
-    function test_handleIssuanceInstructions_createsSeriesAndMints() public {
+    function test_handleIssuanceInstructions_createsSeriesAndIssues() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;
         uint256[] memory quantities = new uint256[](1);
@@ -225,7 +225,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         );
     }
 
-    function test_handleIssuanceInstructions_RevertingRecipient_OthersMinted() public {
+    function test_handleIssuanceInstructions_RevertingRecipient_OthersIssued() public {
         RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
         address[] memory recipients = new address[](2);
         recipients[0] = bidder;
@@ -239,8 +239,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
         assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
-        assertEq(bnbRouter.nextPendingIssuanceMintIdx(), 1, "one mint parked");
-        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuanceMints(0);
+        assertEq(bnbRouter.nextPendingIssuanceIdx(), 1, "one mint parked");
+        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.pendingIssuances(0);
         assertEq(s, SERIES_ID);
         assertEq(r, address(bad));
         assertEq(q, 3);
@@ -248,7 +248,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertFalse(done);
     }
 
-    function test_flushPendingIssuanceMint_afterFix() public {
+    function test_flushPendingIssuance_afterFix() public {
         RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
         address[] memory recipients = new address[](2);
         recipients[0] = bidder;
@@ -260,15 +260,15 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         // Recipient stops reverting; the parked mint is retried permissionlessly.
         bad.setReject(false);
-        bnbRouter.flushPendingIssuanceMint(0);
+        bnbRouter.flushPendingIssuance(0);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
-        (,,,, bool done) = bnbRouter.pendingIssuanceMints(0);
+        (,,,, bool done) = bnbRouter.pendingIssuances(0);
         assertTrue(done);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyFlushed.selector, uint256(0)));
-        bnbRouter.flushPendingIssuanceMint(0);
+        bnbRouter.flushPendingIssuance(0);
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction; lock flips Finalized ---

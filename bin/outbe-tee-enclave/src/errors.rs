@@ -41,6 +41,12 @@ pub enum TeeError {
     #[error("sealed blob unseal failed (bad sealing key or tampered blob)")]
     SealedBlobUnsealFailed,
 
+    #[error("sealed blob contains an invalid network binding: {0}")]
+    SealedBlobBadNetworkBinding(String),
+
+    #[error("sealed blob belongs to another network binding")]
+    SealedBlobNetworkBindingMismatch,
+
     #[error("sealed blob payload had unexpected length: {0}")]
     SealedBlobBadPayload(usize),
 

@@ -9,17 +9,21 @@ use alloy_primitives::B256;
 
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, EnclaveInitializationManifestV1, RegistrationIntentV1,
+    TrustedNetworkDescriptorV1,
 };
+use outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use rand_core::RngCore as _;
 
 use crate::keys::EnclaveKeys;
 use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    SealHeader, SEAL_FORMAT,
+    seal_tribute_offer_and_group_sig, unseal_network_bound_payload, EnclaveBootConfig, SealHeader,
+    SEAL_FORMAT,
 };
 
 const MAX_PENDING_REMOTE_SESSIONS_V1: usize = 64;
+#[cfg(not(feature = "mock"))]
+const TRUSTED_NETWORK_DESCRIPTOR_PATH: &str = "/opt/outbe/sgx/network-descriptor-v1.bin";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitializationMode {
@@ -85,9 +89,12 @@ struct StoredInitialization {
 /// rotate the enclave/NodeHost trust boundary.
 pub struct InitializationState {
     mode: InitializationMode,
+    attestation: crate::gramine::AttestationType,
     gramine_direct_dev_evidence_allowed: bool,
     challenge: [u8; 32],
     boot: Option<Arc<EnclaveBootConfig>>,
+    trusted_network_descriptor: Option<TrustedNetworkDescriptorV1>,
+    mock_network_binding: Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>,
     stored: Mutex<Option<StoredInitialization>>,
     remote_sessions: Mutex<BTreeMap<B256, PendingRemoteSessionV1>>,
 }
@@ -99,11 +106,39 @@ impl InitializationState {
         if crate::transport::sealing_key().is_none() {
             return Err("production initialization requires an SGX sealing key".to_string());
         }
+        let attestation = crate::gramine::attestation_type();
+        #[cfg(all(not(feature = "mock"), feature = "production-dcap-release"))]
+        let trusted_network_descriptor = match &attestation {
+            crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
+            other => {
+                return Err(format!(
+                    "production DCAP release refuses runtime attestation {}",
+                    other.label()
+                ));
+            }
+        };
+        #[cfg(all(not(feature = "mock"), not(feature = "production-dcap-release")))]
+        let trusted_network_descriptor = match &attestation {
+            crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
+            _ => None,
+        };
+        #[cfg(feature = "mock")]
+        let trusted_network_descriptor = None;
+        #[cfg(not(feature = "mock"))]
+        if let Some(descriptor) = trusted_network_descriptor.as_ref() {
+            let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
+                descriptor.network_binding.chain_id,
+            ))
+            .map_err(|_| "measured consensus chain id does not fit u64".to_owned())?;
+            outbe_consensus::config::init_consensus_chain_id(chain_id)
+                .map_err(|error| format!("bind measured consensus chain id: {error}"))?;
+        }
         Self::production_with_challenge_and_attestation_inner(
             boot,
             keys,
             challenge,
-            crate::gramine::attestation_type(),
+            attestation,
+            trusted_network_descriptor,
         )
     }
 
@@ -117,7 +152,8 @@ impl InitializationState {
             boot,
             keys,
             challenge,
-            crate::gramine::attestation_type(),
+            crate::gramine::AttestationType::Dcap,
+            None,
         )
     }
 
@@ -126,25 +162,33 @@ impl InitializationState {
         keys: &EnclaveKeys,
         challenge: [u8; 32],
         attestation: crate::gramine::AttestationType,
+        trusted_network_descriptor: Option<TrustedNetworkDescriptorV1>,
     ) -> Result<Self, String> {
         if challenge == [0; 32] {
             return Err("initialization challenge must be nonzero".to_string());
         }
         let restored = restore_manifest(&boot, keys)?;
-        Ok(Self {
+        let state = Self {
             mode: InitializationMode::Production,
             gramine_direct_dev_evidence_allowed: matches!(
-                attestation,
+                &attestation,
                 crate::gramine::AttestationType::SgxNoAttest
             ),
+            attestation,
             challenge,
             boot: Some(boot),
+            trusted_network_descriptor,
+            mock_network_binding: None,
             stored: Mutex::new(restored.map(|manifest| StoredInitialization {
                 manifest,
                 loaded_from_seal: true,
             })),
             remote_sessions: Mutex::new(BTreeMap::new()),
-        })
+        };
+        if let Some(manifest) = state.manifest()? {
+            state.validate_network_binding(&manifest)?;
+        }
+        Ok(state)
     }
 
     #[cfg(test)]
@@ -154,7 +198,47 @@ impl InitializationState {
         challenge: [u8; 32],
         attestation: crate::gramine::AttestationType,
     ) -> Result<Self, String> {
-        Self::production_with_challenge_and_attestation_inner(boot, keys, challenge, attestation)
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            attestation,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn production_with_trusted_network_descriptor(
+        boot: Arc<EnclaveBootConfig>,
+        keys: &EnclaveKeys,
+        challenge: [u8; 32],
+        trusted_network_descriptor: TrustedNetworkDescriptorV1,
+    ) -> Result<Self, String> {
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            crate::gramine::AttestationType::Dcap,
+            Some(trusted_network_descriptor),
+        )
+    }
+
+    /// Hardware-free production-session state for cross-crate integration
+    /// tests. This seam is absent unless the enclave is built with `mock`.
+    #[cfg(feature = "mock")]
+    pub fn production_with_synthetic_dcap_for_test(
+        boot: Arc<EnclaveBootConfig>,
+        keys: &EnclaveKeys,
+    ) -> Result<Self, String> {
+        let mut challenge = [0_u8; 32];
+        rand_core::OsRng.fill_bytes(&mut challenge);
+        Self::production_with_challenge_and_attestation_inner(
+            boot,
+            keys,
+            challenge,
+            crate::gramine::AttestationType::Dcap,
+            None,
+        )
     }
 
     /// Separate dev/mock behavior. It never creates a production authorization
@@ -162,9 +246,32 @@ impl InitializationState {
     pub fn development() -> Self {
         Self {
             mode: InitializationMode::Development,
+            attestation: crate::gramine::AttestationType::Unavailable,
             gramine_direct_dev_evidence_allowed: true,
             challenge: [0xDD; 32],
             boot: None,
+            trusted_network_descriptor: None,
+            mock_network_binding: None,
+            stored: Mutex::new(None),
+            remote_sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// Hardware-free transport tests still exercise the exact network-bound DKG
+    /// protocol. This constructor exists only in mock builds and cannot create a
+    /// production authorization or sealed state.
+    #[cfg(feature = "mock")]
+    pub fn development_for_network(
+        network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
+    ) -> Self {
+        Self {
+            mode: InitializationMode::Development,
+            attestation: crate::gramine::AttestationType::Unavailable,
+            gramine_direct_dev_evidence_allowed: true,
+            challenge: [0xDD; 32],
+            boot: None,
+            trusted_network_descriptor: None,
+            mock_network_binding: Some(network_binding),
             stored: Mutex::new(None),
             remote_sessions: Mutex::new(BTreeMap::new()),
         }
@@ -235,6 +342,7 @@ impl InitializationState {
             .boot
             .as_deref()
             .ok_or_else(|| "production initialization requires sealed storage".to_string())?;
+        persist_identity(boot, keys, pending.manifest.network_binding())?;
         persist_manifest(boot, &pending.manifest)?;
         *stored = Some(StoredInitialization {
             manifest: pending.manifest,
@@ -269,6 +377,20 @@ impl InitializationState {
             .lock()
             .map(|stored| stored.as_ref().map(|value| value.manifest.clone()))
             .map_err(|_| "initialization state lock is poisoned".to_string())
+    }
+
+    pub fn network_binding(
+        &self,
+    ) -> Result<Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>, String> {
+        self.manifest().map(|manifest| {
+            manifest
+                .map(|value| value.network_binding())
+                .or(self.mock_network_binding)
+        })
+    }
+
+    pub(crate) const fn trusted_network_descriptor(&self) -> Option<&TrustedNetworkDescriptorV1> {
+        self.trusted_network_descriptor.as_ref()
     }
 
     pub fn expected_node_host(&self) -> Result<[u8; 32], String> {
@@ -389,13 +511,7 @@ impl InitializationState {
         manifest: &EnclaveInitializationManifestV1,
         keys: &EnclaveKeys,
     ) -> Result<(), String> {
-        let boot = self
-            .boot
-            .as_deref()
-            .ok_or_else(|| "production initialization requires sealed storage".to_string())?;
-        if manifest.chain_id != boot.chain_id.0 {
-            return Err("initialization chain id does not match enclave boot config".to_string());
-        }
+        self.validate_network_binding(manifest)?;
         if manifest.initialization_challenge != self.challenge {
             return Err("initialization challenge mismatch".to_string());
         }
@@ -407,8 +523,83 @@ impl InitializationState {
                 "initialization manifest does not bind this enclave's persistent keys".to_string(),
             );
         }
+        if keys
+            .sealed_network_binding()
+            .is_some_and(|binding| binding != manifest.network_binding())
+        {
+            return Err(
+                "initialization network binding differs from the sealed enclave identity"
+                    .to_string(),
+            );
+        }
         Ok(())
     }
+
+    fn validate_network_binding(
+        &self,
+        manifest: &EnclaveInitializationManifestV1,
+    ) -> Result<(), String> {
+        let boot = self
+            .boot
+            .as_deref()
+            .ok_or_else(|| "production initialization requires sealed storage".to_string())?;
+        if manifest.chain_id != boot.chain_id.0 {
+            return Err("initialization chain id does not match enclave boot config".to_string());
+        }
+        if self
+            .trusted_network_descriptor
+            .as_ref()
+            .is_some_and(|descriptor| descriptor.network_binding != manifest.network_binding())
+        {
+            return Err(
+                "initialization network binding differs from the release-measured descriptor"
+                    .to_string(),
+            );
+        }
+        let chain_id = manifest.chain_id[24..]
+            .try_into()
+            .map(u64::from_be_bytes)
+            .map_err(|_| "initialization chain id has invalid width".to_string())?;
+        if manifest.chain_id[..24] != [0; 24]
+            || !is_attestation_mode_allowed_for_chain_id(chain_id, manifest.attestation_mode)
+        {
+            return Err("attestation mode is forbidden for the initialized network".to_string());
+        }
+        let runtime_matches = matches!(
+            (&self.attestation, manifest.attestation_mode),
+            (
+                crate::gramine::AttestationType::Dcap,
+                AttestationMode::DcapRequired
+            ) | (
+                crate::gramine::AttestationType::SgxNoAttest,
+                AttestationMode::GramineDirectDev
+            )
+        );
+        if !runtime_matches {
+            return Err(format!(
+                "runtime attestation {} does not satisfy {:?}",
+                self.attestation.label(),
+                manifest.attestation_mode
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "mock"))]
+fn load_trusted_network_descriptor_v1() -> Result<TrustedNetworkDescriptorV1, String> {
+    let bytes = std::fs::read(TRUSTED_NETWORK_DESCRIPTOR_PATH).map_err(|error| {
+        format!(
+            "production DCAP requires release-measured network descriptor {}: {error}",
+            TRUSTED_NETWORK_DESCRIPTOR_PATH
+        )
+    })?;
+    TrustedNetworkDescriptorV1::decode_canonical(&bytes).map_err(|error| {
+        format!(
+            "release-measured network descriptor {} is invalid: {error}",
+            TRUSTED_NETWORK_DESCRIPTOR_PATH
+        )
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -418,8 +609,6 @@ enum CommandClass {
     FoundingKeyless,
     KeylessOnboardingArtifact,
     Ready,
-    DevSourceSeal,
-    DevRecipientIngest,
 }
 
 fn command_class(request: &EnclaveRequest) -> CommandClass {
@@ -433,7 +622,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
         | EnclaveRequest::FinishDcapVerificationV1 { .. }
         | EnclaveRequest::Health => CommandClass::Initialized,
-        EnclaveRequest::DkgOpen { .. }
+        EnclaveRequest::DkgParticipantAnnounceV1 { .. }
+        | EnclaveRequest::DkgOpen { .. }
         | EnclaveRequest::DkgStartDealer { .. }
         | EnclaveRequest::DkgPlayerIngest { .. }
         | EnclaveRequest::DkgDealerReceiveAck { .. }
@@ -441,7 +631,10 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgPlayerFinalize { .. }
         | EnclaveRequest::DkgTributeOfferPartial { .. }
         | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::FoundingKeyless,
-        EnclaveRequest::IngestDcapOnboardingArtifactV1 { .. } => {
+        EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+        | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
+        | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
+        | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
@@ -451,8 +644,6 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::SnapshotFidelityLeagues { .. }
         | EnclaveRequest::QueryFidelityIndex { .. }
         | EnclaveRequest::DeriveAccountKeys { .. } => CommandClass::Ready,
-        EnclaveRequest::SealOfferKeyForRegistry { .. } => CommandClass::DevSourceSeal,
-        EnclaveRequest::IngestSealedOfferKeyForRegistry { .. } => CommandClass::DevRecipientIngest,
         EnclaveRequest::GetQuote { .. }
         | EnclaveRequest::GetInitializationChallenge
         | EnclaveRequest::Initialize { .. }
@@ -473,8 +664,6 @@ pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry:
         CommandClass::FoundingKeyless => RequestClassLabel::FoundingKeyless,
         CommandClass::KeylessOnboardingArtifact => RequestClassLabel::KeylessOnboarding,
         CommandClass::Ready => RequestClassLabel::Ready,
-        CommandClass::DevSourceSeal => RequestClassLabel::DevSourceSeal,
-        CommandClass::DevRecipientIngest => RequestClassLabel::DevRecipientIngest,
     }
 }
 
@@ -488,7 +677,7 @@ fn unix_time_seconds() -> Result<u64, &'static str> {
 fn command_allowed_for_environment(
     class: CommandClass,
     offer_key_ready: bool,
-    gramine_direct_dev_evidence_allowed: bool,
+    _gramine_direct_dev_evidence_allowed: bool,
 ) -> Result<(), &'static str> {
     let allowed = match class {
         CommandClass::Never => false,
@@ -496,13 +685,6 @@ fn command_allowed_for_environment(
         CommandClass::FoundingKeyless => !offer_key_ready,
         CommandClass::KeylessOnboardingArtifact => !offer_key_ready,
         CommandClass::Ready => offer_key_ready,
-        // The legacy raw delivery is available only to the local authenticated
-        // NodeHost session of an SGX enclave running without remote attestation.
-        // Any resident-key holder must be able to replay the deterministic seal
-        // performed by registry execution; profile does not change the artifact.
-        // DCAP production remains purpose-bound and denied here.
-        CommandClass::DevSourceSeal => gramine_direct_dev_evidence_allowed && offer_key_ready,
-        CommandClass::DevRecipientIngest => gramine_direct_dev_evidence_allowed && !offer_key_ready,
     };
     allowed
         .then_some(())
@@ -535,13 +717,56 @@ fn persist_manifest(
         &authorization_hash.0,
         &encoded,
         &sealing_key,
-        boot.chain_id,
+        manifest.network_binding(),
         &header,
     )
     .map_err(|error| error.to_string())?;
     let path = boot.sealed_node_authorization_path();
     crate::transport::write_once_0600(&path, &blob)
         .map_err(|error| format!("persist sealed node authorization: {error}"))
+}
+
+fn persist_identity(
+    boot: &EnclaveBootConfig,
+    keys: &EnclaveKeys,
+    network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
+) -> Result<(), String> {
+    let (sealing_key, policy) = crate::transport::sealing_key()
+        .ok_or_else(|| "SGX sealing key is unavailable".to_string())?;
+    let path = boot.sealed_identity_path();
+    if path.exists() {
+        let blob =
+            std::fs::read(&path).map_err(|error| format!("read sealed identity: {error}"))?;
+        let unsealed = unseal_network_bound_payload(&blob, &sealing_key, boot.isv_svn)
+            .map_err(|error| format!("verify sealed identity: {error}"))?;
+        if unsealed.network_binding != network_binding
+            || unsealed.tribute_offer_secret.as_ref() != keys.identity_seed()
+            || !unsealed.group_sig.is_empty()
+        {
+            return Err("sealed enclave identity differs from initialization".to_string());
+        }
+        return Ok(());
+    }
+    let mut nonce = [0u8; 12];
+    rand_core::OsRng.fill_bytes(&mut nonce);
+    let header = SealHeader {
+        format_version: SEAL_FORMAT,
+        key_policy: policy,
+        isv_svn: boot.isv_svn,
+        key_epoch: 0,
+        tribute_offer_epoch: 0,
+        nonce,
+    };
+    let blob = seal_tribute_offer_and_group_sig(
+        keys.identity_seed(),
+        &[],
+        &sealing_key,
+        network_binding,
+        &header,
+    )
+    .map_err(|error| format!("seal enclave identity: {error}"))?;
+    crate::transport::write_once_0600(&path, &blob)
+        .map_err(|error| format!("persist sealed enclave identity: {error}"))
 }
 
 fn restore_manifest(
@@ -554,18 +779,17 @@ fn restore_manifest(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("read sealed node authorization: {error}")),
     };
-    let (sealed_hash, encoded, _) = unseal_tribute_offer_and_group_sig(
+    let unsealed = unseal_network_bound_payload(
         &blob,
         &crate::transport::sealing_key()
             .ok_or_else(|| "SGX sealing key is unavailable".to_string())?
             .0,
-        boot.chain_id,
         boot.isv_svn,
     )
     .map_err(|error| format!("unseal node authorization: {error}"))?;
-    let manifest = EnclaveInitializationManifestV1::decode_canonical(&encoded)
+    let manifest = EnclaveInitializationManifestV1::decode_canonical(&unsealed.group_sig)
         .map_err(|error| format!("sealed node authorization is non-canonical: {error}"))?;
-    if *sealed_hash
+    if *unsealed.tribute_offer_secret
         != manifest
             .authorization_hash()
             .map_err(|error| error.to_string())?
@@ -573,7 +797,11 @@ fn restore_manifest(
     {
         return Err("sealed node authorization hash mismatch".to_string());
     }
-    if manifest.chain_id != boot.chain_id.0
+    if unsealed.network_binding != manifest.network_binding()
+        || manifest.chain_id != boot.chain_id.0
+        || keys
+            .sealed_network_binding()
+            .is_some_and(|binding| binding != manifest.network_binding())
         || manifest.recipient_x25519 != keys.tribute_offer_public()
         || manifest.attestation_ed25519 != keys.attestation_pub()
         || manifest.noise_responder_x25519 != keys.noise_public()
@@ -586,9 +814,13 @@ fn restore_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, U256};
     use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
     use outbe_primitives::tee_attestation_v1::{AttestationOperationV1, NodeIdV1};
+
+    fn test_chain_id() -> [u8; 32] {
+        U256::from(outbe_primitives::chain::TESTNET_CHAIN_ID).to_be_bytes()
+    }
 
     /// `Health` is an `Initialized`-class probe: allowed in every
     /// post-handshake state (keyless included), denied only pre-handshake.
@@ -618,8 +850,9 @@ mod tests {
             .try_into()
             .unwrap();
         let manifest = EnclaveInitializationManifestV1 {
-            chain_id: [0x10; 32],
+            chain_id: test_chain_id(),
             genesis_hash: B256::repeat_byte(0x11),
+            attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
             node_id: NodeIdV1 { reth_p2p_public },
             initialization_challenge: challenge,
             node_host_noise_x25519: [0x42; 32],
@@ -636,11 +869,153 @@ mod tests {
         (manifest, bytes)
     }
 
+    fn resign_manifest(manifest: &EnclaveInitializationManifestV1) -> [u8; 65] {
+        let signing = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+        let (signature, recovery) = signing
+            .sign_prehash(manifest.authorization_hash().unwrap().as_slice())
+            .unwrap();
+        let mut bytes = [0u8; 65];
+        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+        bytes[64] = recovery.to_byte();
+        bytes
+    }
+
+    #[test]
+    fn runtime_mode_and_network_policy_are_fail_closed_before_identity_is_sealed() {
+        let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
+
+        let dcap_root = tempfile::tempdir().unwrap();
+        let dcap_boot = Arc::new(EnclaveBootConfig::new(
+            test_chain_id(),
+            dcap_root.path().to_path_buf(),
+            0,
+        ));
+        let no_attest = InitializationState::production_with_challenge_and_attestation(
+            dcap_boot,
+            &keys,
+            [0x41; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
+        let (dcap_manifest, dcap_signature) = signed_manifest(&keys, [0x41; 32]);
+        assert!(no_attest
+            .prepare(
+                &dcap_manifest.encode_canonical().unwrap(),
+                &dcap_signature,
+                &keys,
+            )
+            .unwrap_err()
+            .contains("does not satisfy DcapRequired"));
+        assert!(!dcap_root.path().join("sealed_identity.bin").exists());
+
+        let mainnet_chain = U256::from(outbe_primitives::chain::MAINNET_CHAIN_ID).to_be_bytes();
+        let mainnet_root = tempfile::tempdir().unwrap();
+        let mainnet = InitializationState::production_with_challenge_and_attestation(
+            Arc::new(EnclaveBootConfig::new(
+                mainnet_chain,
+                mainnet_root.path().to_path_buf(),
+                0,
+            )),
+            &keys,
+            [0x41; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
+        let mut direct_mainnet = dcap_manifest.clone();
+        direct_mainnet.chain_id = mainnet_chain;
+        direct_mainnet.attestation_mode = AttestationMode::GramineDirectDev;
+        let signature = resign_manifest(&direct_mainnet);
+        assert!(mainnet
+            .prepare(
+                &direct_mainnet.encode_canonical().unwrap(),
+                &signature,
+                &keys,
+            )
+            .unwrap_err()
+            .contains("forbidden"));
+        assert!(!mainnet_root.path().join("sealed_identity.bin").exists());
+    }
+
+    #[test]
+    fn dcap_initialization_requires_the_release_measured_network_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            test_chain_id(),
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = EnclaveKeys::new([0x51; 32], Some([0x52; 32])).unwrap();
+        let challenge = [0x53; 32];
+        let (manifest, signature) = signed_manifest(&keys, challenge);
+        let descriptor = TrustedNetworkDescriptorV1 {
+            network_binding: manifest.network_binding(),
+            genesis_consensus_keys: vec![[0x61; 48]],
+        };
+        let state = InitializationState::production_with_trusted_network_descriptor(
+            boot,
+            &keys,
+            challenge,
+            descriptor.clone(),
+        )
+        .unwrap();
+        assert_eq!(state.trusted_network_descriptor(), Some(&descriptor));
+        state
+            .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
+            .expect("the exact release-measured binding must initialize");
+
+        let mut foreign = manifest;
+        foreign.genesis_hash = B256::repeat_byte(0x55);
+        let foreign_signature = resign_manifest(&foreign);
+        assert!(state
+            .prepare(
+                &foreign.encode_canonical().unwrap(),
+                &foreign_signature,
+                &keys,
+            )
+            .unwrap_err()
+            .contains("release-measured descriptor"));
+        assert!(!root.path().join("sealed_identity.bin").exists());
+    }
+
+    #[test]
+    fn sgx_no_attest_commits_only_an_explicit_testnet_direct_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            test_chain_id(),
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = EnclaveKeys::new([0x71; 32], Some([0x72; 32])).unwrap();
+        let challenge = [0x73; 32];
+        let state = InitializationState::production_with_challenge_and_attestation(
+            boot.clone(),
+            &keys,
+            challenge,
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
+        let (mut manifest, _) = signed_manifest(&keys, challenge);
+        manifest.attestation_mode = AttestationMode::GramineDirectDev;
+        let signature = resign_manifest(&manifest);
+
+        let pending = state
+            .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
+            .unwrap();
+        state.commit(pending, &keys).unwrap();
+
+        assert_eq!(
+            state.network_binding().unwrap(),
+            Some(manifest.network_binding())
+        );
+        assert!(boot.sealed_identity_path().exists());
+        assert!(boot.sealed_node_authorization_path().exists());
+    }
+
     #[test]
     fn initialization_is_write_once_and_restores_the_same_node_bound_identity() {
         let root = tempfile::tempdir().unwrap();
         let boot = Arc::new(EnclaveBootConfig::new(
-            [0x10; 32],
+            test_chain_id(),
             root.path().to_path_buf(),
             0,
         ));
@@ -695,7 +1070,7 @@ mod tests {
     fn initialization_rejects_challenge_key_and_chain_substitution() {
         let root = tempfile::tempdir().unwrap();
         let boot = Arc::new(EnclaveBootConfig::new(
-            [0x10; 32],
+            test_chain_id(),
             root.path().to_path_buf(),
             0,
         ));
@@ -739,7 +1114,7 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let boot = Arc::new(EnclaveBootConfig::new(
-            [0x10; 32],
+            test_chain_id(),
             root.path().to_path_buf(),
             0,
         ));
@@ -765,9 +1140,7 @@ mod tests {
                 deadline: u64::MAX,
                 finalized_block_hash: B256::repeat_byte(0x74),
             },
-            EnclaveRequest::SealOfferKeyForRegistry {
-                recipient_x25519: [0x75; 32],
-            },
+            EnclaveRequest::Health,
         ] {
             assert!(state
                 .authorize_command(&owner_request, true, remote)
@@ -821,7 +1194,7 @@ mod tests {
     fn quote_report_data_is_exact_for_initial_renewal_and_replacement_intents() {
         let root = tempfile::tempdir().unwrap();
         let boot = Arc::new(EnclaveBootConfig::new(
-            [0x10; 32],
+            test_chain_id(),
             root.path().to_path_buf(),
             0,
         ));
@@ -887,7 +1260,7 @@ mod tests {
         let replacement_keys = EnclaveKeys::new([8; 32], Some([2; 32])).unwrap();
         let first_state = InitializationState::production_with_challenge(
             Arc::new(EnclaveBootConfig::new(
-                [0x10; 32],
+                test_chain_id(),
                 first_root.path().to_path_buf(),
                 0,
             )),
@@ -897,7 +1270,7 @@ mod tests {
         .unwrap();
         let replacement_state = InitializationState::production_with_challenge(
             Arc::new(EnclaveBootConfig::new(
-                [0x10; 32],
+                test_chain_id(),
                 replacement_root.path().to_path_buf(),
                 0,
             )),
@@ -994,8 +1367,6 @@ mod tests {
             (FoundingKeyless, [true, false]),
             (KeylessOnboardingArtifact, [true, false]),
             (Ready, [false, true]),
-            (DevSourceSeal, [false, false]),
-            (DevRecipientIngest, [false, false]),
         ];
         for (class, expected) in cases {
             let actual = [
@@ -1021,9 +1392,11 @@ mod tests {
     }
 
     #[test]
-    fn purpose_bound_ingest_is_keyless_only_while_raw_key_commands_remain_denied() {
-        let purpose_bound = command_class(&EnclaveRequest::IngestDcapOnboardingArtifactV1 {
+    fn purpose_bound_ingest_is_keyless_only() {
+        let purpose_bound = command_class(&EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 {
+            request_hash: B256::repeat_byte(0x10),
             artifact: vec![0x11; 300],
+            anchor_outcome: vec![0x14; 300],
             expected_intent_hash: B256::repeat_byte(0x12),
             expected_tribute_offer_public: [0x13; 32],
             expected_key_epoch: 0,
@@ -1032,46 +1405,5 @@ mod tests {
         assert_eq!(purpose_bound, CommandClass::KeylessOnboardingArtifact);
         assert!(command_allowed_for_environment(purpose_bound, false, false).is_ok());
         assert!(command_allowed_for_environment(purpose_bound, true, false).is_err());
-
-        for (raw, expected_class) in [
-            (
-                EnclaveRequest::SealOfferKeyForRegistry {
-                    recipient_x25519: [0x21; 32],
-                },
-                CommandClass::DevSourceSeal,
-            ),
-            (
-                EnclaveRequest::IngestSealedOfferKeyForRegistry {
-                    sealed: vec![0x22; 60],
-                    expected_tribute_offer_public: [0x23; 32],
-                    chain_id: B256::repeat_byte(0x24),
-                    tribute_offer_epoch: 0,
-                },
-                CommandClass::DevRecipientIngest,
-            ),
-        ] {
-            let class = command_class(&raw);
-            assert_eq!(class, expected_class);
-            assert!(command_allowed_for_environment(class, false, false).is_err());
-            assert!(command_allowed_for_environment(class, true, false).is_err());
-        }
-    }
-
-    #[test]
-    fn sgx_without_dcap_allows_only_local_node_host_onboarding_roles() {
-        let seal = command_class(&EnclaveRequest::SealOfferKeyForRegistry {
-            recipient_x25519: [0x31; 32],
-        });
-        let ingest = command_class(&EnclaveRequest::IngestSealedOfferKeyForRegistry {
-            sealed: vec![0x32; 60],
-            expected_tribute_offer_public: [0x33; 32],
-            chain_id: B256::repeat_byte(0x34),
-            tribute_offer_epoch: 0,
-        });
-
-        assert!(command_allowed_for_environment(seal, true, true).is_ok());
-        assert!(command_allowed_for_environment(ingest, false, true).is_ok());
-        assert!(command_allowed_for_environment(ingest, true, true).is_err());
-        assert!(command_allowed_for_environment(ingest, false, false).is_err());
     }
 }

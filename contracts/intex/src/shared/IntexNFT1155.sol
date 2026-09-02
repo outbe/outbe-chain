@@ -24,7 +24,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role; gates series lifecycle, mint, and
+    /// @notice Bridge relayer role; gates series lifecycle, issue, and
     ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
@@ -200,7 +200,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function mint(address to, uint256 quantity, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+    function issue(address to, uint256 quantity, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) {
             revert ZeroAddress("to", to);
         }

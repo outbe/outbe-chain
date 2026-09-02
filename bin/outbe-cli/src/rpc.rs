@@ -66,6 +66,26 @@ pub trait Rpc {
     fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
         async { Err(eyre::eyre!("finalized block RPC is unsupported")) }
     }
+    fn outbe_get_finalization(
+        &self,
+        height: u64,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send {
+        async move {
+            let _ = height;
+            Err(eyre::eyre!("outbe finalization RPC is unsupported"))
+        }
+    }
+    fn eth_get_proof(
+        &self,
+        address: Address,
+        storage_slots: &[String],
+        block: u64,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send {
+        async move {
+            let _ = (address, storage_slots, block);
+            Err(eyre::eyre!("eth_getProof RPC is unsupported"))
+        }
+    }
     fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_emission_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_get_slash_config(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
@@ -379,6 +399,28 @@ impl Rpc for RpcClient {
         self.call_rpc(
             "eth_getBlockByNumber",
             serde_json::json!(["finalized", false]),
+        )
+        .await
+    }
+
+    async fn outbe_get_finalization(&self, height: u64) -> Result<Value> {
+        self.call_rpc("outbe_getFinalization", serde_json::json!([height]))
+            .await
+    }
+
+    async fn eth_get_proof(
+        &self,
+        address: Address,
+        storage_slots: &[String],
+        block: u64,
+    ) -> Result<Value> {
+        self.call_rpc(
+            "eth_getProof",
+            serde_json::json!([
+                format!("{address:?}"),
+                storage_slots,
+                format!("0x{block:x}")
+            ]),
         )
         .await
     }

@@ -18,10 +18,7 @@ use zeroize::Zeroizing;
 
 use crate::initialization::InitializationState;
 use crate::keys::EnclaveKeys;
-use crate::seal::{
-    seal_tribute_offer_and_group_sig, unseal_tribute_offer_and_group_sig, EnclaveBootConfig,
-    SealHeader, SEAL_FORMAT,
-};
+use crate::seal::EnclaveBootConfig;
 use crate::transport::{serve, serve_tcp};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]; the
@@ -135,15 +132,19 @@ pub fn run(opts: RunOpts) -> i32 {
     };
     // Production accepts only an enclave-generated, successfully sealed seed.
     // Explicit deterministic seeds and the offer-secret fallback are mock-only.
-    let (identity_seed, identity_id) =
-        match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.is_mock()) {
-            Ok(identity) => identity,
-            Err(error) => {
-                eprintln!("outbe-tee-enclave: identity init failed: {error}");
-                return 1;
-            }
-        };
-    let keys = match EnclaveKeys::new_with_identity_seed(tribute_offer_secret, identity_seed) {
+    let identity = match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.is_mock()) {
+        Ok(identity) => identity,
+        Err(error) => {
+            eprintln!("outbe-tee-enclave: identity init failed: {error}");
+            return 1;
+        }
+    };
+    let identity_id = identity.description;
+    let keys = match EnclaveKeys::new_with_identity_seed(
+        tribute_offer_secret,
+        identity.seed,
+        identity.network_binding,
+    ) {
         Ok(keys) => keys,
         Err(err) => {
             eprintln!("outbe-tee-enclave: key init failed: {err}");
@@ -170,23 +171,10 @@ pub fn run(opts: RunOpts) -> i32 {
             .unwrap_or([0u8; 32]),
     );
 
-    // Shared, write-once permanent offer-key slot. A valid sealed blob restores
-    // it. An existing blob that cannot be unsealed is terminal and is never
-    // converted into a fresh ceremony or another key.
+    // Shared, write-once permanent offer-key slot. It is restored only after the
+    // sealed initialization manifest has established the exact network binding.
     let offer_key: crate::transport::SharedTributeOfferKey =
         std::sync::Arc::new(std::sync::OnceLock::new());
-    if let Some(cfg) = boot.as_deref() {
-        match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg) {
-            Ok(Some(derived)) => {
-                let _ = offer_key.set(derived);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                eprintln!("outbe-tee-enclave: {error}");
-                return 1;
-            }
-        }
-    }
 
     #[cfg(feature = "mock")]
     let initialization = if opts.is_mock() {
@@ -222,6 +210,41 @@ pub fn run(opts: RunOpts) -> i32 {
             }
         }
     };
+    if let Some(cfg) = boot.as_deref() {
+        let network_binding = match initialization.network_binding() {
+            Ok(Some(binding)) => Some(binding),
+            Ok(None) if cfg.sealed_root_path().exists() => {
+                eprintln!(
+                    "outbe-tee-enclave: sealed permanent offer key exists without sealed initialization authority"
+                );
+                return 1;
+            }
+            Ok(None) => None,
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: initialization binding unavailable: {error}");
+                return 1;
+            }
+        };
+        if let Some(network_binding) = network_binding {
+            match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg, network_binding)
+            {
+                Ok(Some(derived)) => {
+                    let _ = offer_key.set(derived);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("outbe-tee-enclave: {error}");
+                    return 1;
+                }
+            }
+        }
+    }
+    let chain_id = initialization
+        .network_binding()
+        .ok()
+        .flatten()
+        .map(|binding| B256::from(binding.chain_id))
+        .unwrap_or(chain_id);
     let keys = std::sync::Arc::new(keys);
     let initialization = std::sync::Arc::new(initialization);
 
@@ -287,12 +310,27 @@ pub fn run(opts: RunOpts) -> i32 {
 
 /// Resolve the one seed backing every persistent enclave identity key.
 ///
-/// Development may use an explicit deterministic seed or the legacy offer-secret
-/// fallback. Production permits neither: it restores an existing valid sealed
-/// seed or creates and durably seals one on the first boot. Existing unreadable
+/// Development may use an explicit deterministic seed or its fixed test seed.
+/// Production restores an existing valid sealed seed or creates one in enclave
+/// memory on first boot. Initialization durably seals it with the ChainSpec
+/// network binding before publishing NodeHost authority. Existing unreadable
 /// state is never overwritten. If node authorization exists but the identity is
 /// missing, startup fails: there is no recovery or implicit identity rotation.
-type EnclaveIdentitySeedResolution = (Option<Zeroizing<[u8; 32]>>, &'static str);
+struct EnclaveIdentitySeedResolution {
+    seed: Option<Zeroizing<[u8; 32]>>,
+    network_binding: Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>,
+    description: &'static str,
+}
+
+impl std::fmt::Debug for EnclaveIdentitySeedResolution {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EnclaveIdentitySeedResolution")
+            .field("network_binding", &self.network_binding)
+            .field("description", &self.description)
+            .finish_non_exhaustive()
+    }
+}
 
 fn resolve_enclave_identity_seed(
     args: &[String],
@@ -301,9 +339,14 @@ fn resolve_enclave_identity_seed(
 ) -> Result<EnclaveIdentitySeedResolution, String> {
     #[cfg(feature = "mock")]
     if development {
-        return Ok(match cli_seed {
-            Some(seed) => (Some(Zeroizing::new(seed)), "explicit development seed"),
-            None => (None, "development offer-secret fallback"),
+        return Ok(EnclaveIdentitySeedResolution {
+            seed: cli_seed.map(Zeroizing::new),
+            network_binding: None,
+            description: if cli_seed.is_some() {
+                "explicit development seed"
+            } else {
+                "development test seed"
+            },
         });
     }
     #[cfg(not(feature = "mock"))]
@@ -315,12 +358,6 @@ fn resolve_enclave_identity_seed(
     let tee_dir = arg_value(args, "--tee-dir")
         .map(std::path::PathBuf::from)
         .ok_or_else(|| "production requires --tee-dir for sealed identity".to_string())?;
-    let chain_id_hex = arg_value(args, "--chain-id")
-        .ok_or_else(|| "production requires --chain-id <hex32>".to_string())?;
-    let chain_id = B256::from(
-        parse_hex32(&chain_id_hex)
-            .ok_or_else(|| "production --chain-id must be exactly 32 bytes of hex".to_string())?,
-    );
     let (sealing_key, key_policy) = crate::transport::sealing_key()
         .ok_or_else(|| "production identity requires an SGX sealing key".to_string())?;
 
@@ -336,21 +373,24 @@ fn resolve_enclave_identity_seed(
 
     match std::fs::read(&path) {
         Ok(blob) => {
-            let (seed, empty_group_signature, _) =
-                unseal_tribute_offer_and_group_sig(&blob, &sealing_key, chain_id, isv_svn)
-                    .map_err(|error| {
-                        format!(
-                            "sealed identity at {} is unusable and will not be replaced: {error}",
-                            path.display()
-                        )
-                    })?;
-            if !empty_group_signature.is_empty() {
+            let unsealed = crate::seal::unseal_network_bound_payload(&blob, &sealing_key, isv_svn)
+                .map_err(|error| {
+                    format!(
+                        "sealed identity at {} is unusable and will not be replaced: {error}",
+                        path.display()
+                    )
+                })?;
+            if !unsealed.group_sig.is_empty() {
                 return Err(format!(
                     "sealed identity at {} contains unexpected group-signature bytes",
                     path.display()
                 ));
             }
-            return Ok((Some(seed), "self-generated (restored from seal)"));
+            return Ok(EnclaveIdentitySeedResolution {
+                seed: Some(unsealed.tribute_offer_secret),
+                network_binding: Some(unsealed.network_binding),
+                description: "self-generated (restored from network-bound seal)",
+            });
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -375,24 +415,16 @@ fn resolve_enclave_identity_seed(
         }
     }
 
-    // First boot only: generate and seal before any node authorization exists.
+    // First boot only: generate in enclave memory. Initialization seals the seed
+    // with the signed NetworkBinding before it persists NodeHost authorization.
     let mut seed = Zeroizing::new([0u8; 32]);
     rand_core::OsRng.fill_bytes(&mut *seed);
-    let mut nonce = [0u8; 12];
-    rand_core::OsRng.fill_bytes(&mut nonce);
-    let header = SealHeader {
-        format_version: SEAL_FORMAT,
-        key_policy,
-        isv_svn,
-        key_epoch: 0,
-        tribute_offer_epoch: 0,
-        nonce,
-    };
-    let blob = seal_tribute_offer_and_group_sig(&seed, &[], &sealing_key, chain_id, &header)
-        .map_err(|error| format!("seal first enclave identity: {error}"))?;
-    crate::transport::write_once_0600(&path, &blob)
-        .map_err(|error| format!("persist first sealed identity {}: {error}", path.display()))?;
-    Ok((Some(seed), "self-generated (fresh, sealed)"))
+    let _ = (sealing_key, key_policy, isv_svn);
+    Ok(EnclaveIdentitySeedResolution {
+        seed: Some(seed),
+        network_binding: None,
+        description: "self-generated (fresh, pending network-bound seal)",
+    })
 }
 
 /// Build the optional seal/unseal boot configuration from CLI args.
@@ -486,8 +518,6 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt as _;
-
     use super::{is_loopback_endpoint, resolve_enclave_identity_seed};
 
     fn production_args(root: &std::path::Path) -> Vec<String> {
@@ -528,16 +558,11 @@ mod tests {
     fn first_production_identity_is_owner_only_and_restores_exactly() {
         let root = tempfile::tempdir().unwrap();
         let args = production_args(root.path());
-        let (first, _) = resolve_enclave_identity_seed(&args, None, false).unwrap();
+        let first = resolve_enclave_identity_seed(&args, None, false).unwrap();
         let path = root.path().join("sealed_identity.bin");
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        let original_blob = std::fs::read(&path).unwrap();
-        let (restored, _) = resolve_enclave_identity_seed(&args, None, false).unwrap();
-        assert_eq!(first, restored);
-        assert_eq!(std::fs::read(path).unwrap(), original_blob);
+        assert!(!path.exists());
+        assert!(first.seed.is_some());
+        assert!(first.network_binding.is_none());
     }
 
     #[test]

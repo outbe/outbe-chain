@@ -1,4 +1,5 @@
 use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -469,6 +470,372 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
 
         // Pending set change flagged
         assert!(val_set.has_pending_set_change().unwrap());
+    });
+}
+
+#[test]
+fn first_ocomp_miss_slashes_bonded_once_and_keeps_validator_active() {
+    with_staking(|storage, staking| {
+        let validator = address!("0x9B99999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        stake_registered(storage.clone(), staking, validator, U256::from(MIN_STAKE)).unwrap();
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        assert!(!validators.has_pending_set_change().unwrap());
+
+        let first = staking.record_ocomp_miss(validator).unwrap();
+        assert!(first.first_in_window);
+        assert_eq!(first.miss_count, 1);
+        assert_eq!(first.recovery_deadline, 43_201);
+        assert_eq!(first.slashed_bonded, U256::from(100));
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(900));
+        assert_eq!(staking.get_total_staked().unwrap(), U256::from(900));
+        assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), U256::from(900));
+        let validators = ValidatorSet::new(storage.clone());
+        assert!(matches!(
+            validators.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Active(_)
+        ));
+        assert!(!validators.has_pending_set_change().unwrap());
+
+        let repeated = staking.record_ocomp_miss(validator).unwrap();
+        assert!(!repeated.first_in_window);
+        assert_eq!(repeated.miss_count, 2);
+        assert_eq!(repeated.recovery_deadline, 43_201);
+        assert_eq!(repeated.slashed_bonded, U256::ZERO);
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(900));
+        assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), U256::from(900));
+    });
+}
+
+#[test]
+fn first_ocomp_miss_handles_the_full_u256_bonded_domain() {
+    with_staking(|storage, staking| {
+        let validator = address!("0x9199999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        stake_registered(storage.clone(), staking, validator, U256::from(MIN_STAKE)).unwrap();
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+
+        staking.stake_amount.write(&validator, U256::MAX).unwrap();
+        staking.total_staked.write(U256::MAX).unwrap();
+        storage.set_balance(STAKING_ADDRESS, U256::MAX).unwrap();
+        validators
+            .record_stake_increase(validator, U256::MAX, U256::from(MIN_STAKE))
+            .unwrap();
+
+        let expected_slash = U256::MAX / U256::from(10u64);
+        let expected_remaining = U256::MAX - expected_slash;
+        let penalty = staking.record_ocomp_miss(validator).unwrap();
+
+        assert_eq!(penalty.slashed_bonded, expected_slash);
+        assert_eq!(staking.get_stake(validator).unwrap(), expected_remaining);
+        assert_eq!(staking.get_total_staked().unwrap(), expected_remaining);
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            expected_remaining
+        );
+        assert!(matches!(
+            ValidatorSet::new(storage)
+                .validator_lifecycle(validator)
+                .unwrap(),
+            ValidatorLifecycle::Active(_)
+        ));
+    });
+}
+
+#[test]
+fn due_window_is_resolved_before_a_same_height_new_miss() {
+    let validator = address!("0x9299999999999999999999999999999999999999");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        staking
+            .config_min_stake
+            .write(U256::from(MIN_STAKE))
+            .unwrap();
+        register_validator(storage.clone(), validator);
+        seed_staking_balance(storage.clone(), 2_000);
+        stake_registered(storage.clone(), &mut staking, validator, U256::from(2_000)).unwrap();
+        ValidatorSet::new(storage)
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        let first = staking.record_ocomp_miss(validator).unwrap();
+        assert_eq!(first.slashed_bonded, U256::from(200));
+    });
+
+    provider.set_block_number(43_201);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        let resolution = staking
+            .resolve_due_ocomp_recovery_window(validator)
+            .unwrap();
+        assert!(matches!(
+            resolution,
+            crate::logic::OcompRecoveryResolution::Restored {
+                recovery_deadline: 43_201
+            }
+        ));
+
+        let next = staking.record_ocomp_miss(validator).unwrap();
+        assert!(next.first_in_window);
+        assert_eq!(next.miss_count, 2);
+        assert_eq!(next.slashed_bonded, U256::from(180));
+        assert_eq!(next.recovery_deadline, 86_401);
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(1_620));
+    });
+}
+
+#[test]
+fn ocomp_recovery_is_decided_at_deadline_from_authoritative_bonded_stake() {
+    let restored = address!("0x9C99999999999999999999999999999999999999");
+    let underfunded = address!("0x9D99999999999999999999999999999999999999");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        staking
+            .config_min_stake
+            .write(U256::from(MIN_STAKE))
+            .unwrap();
+        staking.config_unbonding_period.write(3_600).unwrap();
+        for validator in [restored, underfunded] {
+            register_validator(storage.clone(), validator);
+            seed_staking_balance(storage.clone(), MIN_STAKE);
+            stake_registered(
+                storage.clone(),
+                &mut staking,
+                validator,
+                U256::from(MIN_STAKE),
+            )
+            .unwrap();
+            ValidatorSet::new(storage.clone())
+                .activate_validator_via_boundary_for_test(validator)
+                .unwrap();
+            staking.record_ocomp_miss(validator).unwrap();
+        }
+
+        seed_staking_balance(storage.clone(), 100);
+        staking.stake(restored, restored, U256::from(100)).unwrap();
+    });
+
+    provider.set_block_number(43_200);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        let before = staking.close_due_ocomp_recovery_windows().unwrap();
+        assert_eq!(before.open_windows, 2);
+        assert_eq!(before.restored, 0);
+        assert_eq!(before.jailed, 0);
+    });
+
+    provider.set_block_number(43_201);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        let due = staking.close_due_ocomp_recovery_windows().unwrap();
+        assert_eq!(due.open_windows, 2);
+        assert_eq!(due.restored, 1);
+        assert_eq!(due.jailed, 1);
+
+        let validators = ValidatorSet::new(storage);
+        assert!(matches!(
+            validators.validator_lifecycle(restored).unwrap(),
+            ValidatorLifecycle::Active(_)
+        ));
+        assert!(matches!(
+            validators.validator_lifecycle(underfunded).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert!(validators
+            .ocomp_recovery_window(restored)
+            .unwrap()
+            .is_none());
+        assert!(validators
+            .ocomp_recovery_window(underfunded)
+            .unwrap()
+            .is_none());
+    });
+
+    let resolutions = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| {
+            outbe_validatorset::precompile::IValidatorSet::OcompRecoveryResolved::decode_log(log)
+                .ok()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resolutions.len(), 2);
+    assert!(resolutions.iter().any(|event| {
+        event.validator == restored
+            && event.recoveryDeadline == 43_201
+            && event.bondedStake == U256::from(MIN_STAKE)
+            && event.outcome == 1
+    }));
+    assert!(resolutions.iter().any(|event| {
+        event.validator == underfunded
+            && event.recoveryDeadline == 43_201
+            && event.bondedStake == U256::from(900)
+            && event.outcome == 2
+    }));
+}
+
+#[test]
+fn ocomp_miss_slash_never_touches_unbonding_claims() {
+    with_staking_timed(10_000, |storage, staking| {
+        let validator = address!("0x9E99999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+        seed_staking_balance(storage.clone(), 2_000);
+        stake_registered(storage.clone(), staking, validator, U256::from(2_000)).unwrap();
+        ValidatorSet::new(storage.clone())
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        staking.unstake(validator, U256::from(500)).unwrap();
+
+        let head_before = staking.per_val_unbonding_head.read(&validator).unwrap();
+        let amount_before = staking.unbonding_amount.read(&0).unwrap();
+        let complete_before = staking.unbonding_complete_time.read(&0).unwrap();
+        let next_before = staking.unbonding_next.read(&0).unwrap();
+
+        let penalty = staking.record_ocomp_miss(validator).unwrap();
+        assert_eq!(penalty.slashed_bonded, U256::from(150));
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(1_350));
+        assert_eq!(staking.get_total_staked().unwrap(), U256::from(1_350));
+        assert_eq!(
+            staking.per_val_unbonding_head.read(&validator).unwrap(),
+            head_before
+        );
+        assert_eq!(staking.unbonding_amount.read(&0).unwrap(), amount_before);
+        assert_eq!(
+            staking.unbonding_complete_time.read(&0).unwrap(),
+            complete_before
+        );
+        assert_eq!(staking.unbonding_next.read(&0).unwrap(), next_before);
+        assert_eq!(amount_before, U256::from(500));
+    });
+}
+
+#[test]
+fn open_ocomp_recovery_does_not_weaken_ordinary_slash_policy() {
+    with_staking_timed(20_000, |storage, staking| {
+        let validator = address!("0x9F99999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+        seed_staking_balance(storage.clone(), 2_000);
+        stake_registered(storage.clone(), staking, validator, U256::from(2_000)).unwrap();
+        ValidatorSet::new(storage.clone())
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        staking.unstake(validator, U256::from(500)).unwrap();
+        staking.record_ocomp_miss(validator).unwrap();
+        let complete_before = staking.unbonding_complete_time.read(&0).unwrap();
+
+        staking.slash_stake(validator, 60).unwrap();
+
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(540));
+        assert_eq!(staking.unbonding_amount.read(&0).unwrap(), U256::from(200));
+        assert!(staking.unbonding_complete_time.read(&0).unwrap() > complete_before);
+        assert!(matches!(
+            ValidatorSet::new(storage)
+                .validator_lifecycle(validator)
+                .unwrap(),
+            ValidatorLifecycle::Exiting(_)
+        ));
+    });
+}
+
+#[test]
+fn recovery_sweep_keeps_non_active_window_until_deadline() {
+    with_staking(|storage, staking| {
+        let validator = address!("0x9099999999999999999999999999999999999999");
+        register_validator(storage.clone(), validator);
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        staking.record_ocomp_miss(validator).unwrap();
+        validators.jail_validator(validator).unwrap();
+
+        let sweep = staking.close_due_ocomp_recovery_windows().unwrap();
+        assert_eq!(sweep.open_windows, 1);
+        assert_eq!(sweep.closed_non_active, 0);
+        assert_eq!(sweep.jailed, 0);
+        assert!(validators
+            .ocomp_recovery_window(validator)
+            .unwrap()
+            .is_some());
+        assert!(matches!(
+            validators.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+    });
+}
+
+#[test]
+fn recovery_sweep_closes_non_active_window_at_deadline_without_reverting() {
+    let validator = address!("0x9199999999999999999999999999999999999999");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        staking
+            .config_min_stake
+            .write(U256::from(MIN_STAKE))
+            .unwrap();
+        register_validator(storage.clone(), validator);
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        staking.record_ocomp_miss(validator).unwrap();
+        validators.jail_validator(validator).unwrap();
+    });
+
+    provider.set_block_number(43_201);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        let sweep = staking.close_due_ocomp_recovery_windows().unwrap();
+        assert_eq!(sweep.open_windows, 1);
+        assert_eq!(sweep.closed_non_active, 1);
+        assert_eq!(sweep.jailed, 0);
+        let validators = ValidatorSet::new(storage);
+        assert!(validators
+            .ocomp_recovery_window(validator)
+            .unwrap()
+            .is_none());
+        assert!(matches!(
+            validators.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+    });
+}
+
+#[test]
+fn recovery_sweep_rejects_registry_state_beyond_the_existing_consensus_bound() {
+    with_staking(|storage, staking| {
+        let mut validators = ValidatorSet::new(storage);
+        for index in 0..=outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND {
+            let ordinal = u64::from(index) + 1;
+            let mut address_bytes = [0u8; 20];
+            address_bytes[12..].copy_from_slice(&ordinal.to_be_bytes());
+            let mut consensus_pubkey = [0u8; 48];
+            consensus_pubkey[..8].copy_from_slice(&ordinal.to_be_bytes());
+            validators
+                .test_register_validator_without_pop(
+                    Address::from(address_bytes),
+                    &consensus_pubkey,
+                )
+                .unwrap();
+        }
+        let error = staking.close_due_ocomp_recovery_windows().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("validator registry exceeds consensus bound"));
     });
 }
 

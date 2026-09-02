@@ -38,7 +38,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
             factory.remove_live_position(position_id)?;
             continue;
         };
-        // `>=`, copied from the guard in `mint_merchant_gem`: the merchant can no
+        // `>=`, copied from the guard in `issue_merchant_gem`: the merchant can no
         // longer issue from the position at exactly this instant.
         if now < record.parked_at + POSITION_VALIDITY_SECONDS {
             break;

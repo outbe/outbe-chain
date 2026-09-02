@@ -247,7 +247,7 @@ contract IntexAuction is
             revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
         }
 
-        // No-sale (issuedIntexCount == 0): supply was exhausted/zero, nothing is minted and every
+        // No-sale (issuedIntexCount == 0): supply was exhausted/zero, nothing is issued and every
         // bidder is fully refunded via REFUND_INSTRUCTIONS. The clearing rate is then unconstrained
         // - it may be 0 even when minIntexBidRate > 0 (no bid was allocated). A sale (issued > 0)
         // must carry a real clearing rate at or above the floor.

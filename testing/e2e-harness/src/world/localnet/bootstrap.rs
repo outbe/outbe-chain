@@ -19,8 +19,12 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 #[cfg(not(feature = "ocomp-integration"))]
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
+use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
+use outbe_primitives::tee_attestation_v1::{
+    AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
+};
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -308,6 +312,25 @@ impl Localnet {
             );
         }
         fs::rename(&genesis, &seeded)?;
+        let network_descriptor = if self.cfg.tee_mode == TeeMode::Real {
+            let binding = DcapSeededChainSpecBindingV1::from_genesis_path(&seeded)
+                .map_err(|error| eyre!("derive seeded DCAP network descriptor: {error}"))?;
+            let descriptor = TrustedNetworkDescriptorV1 {
+                network_binding: NetworkBindingV1 {
+                    chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
+                    genesis_hash: binding.genesis_hash,
+                    attestation_mode: AttestationMode::DcapRequired,
+                },
+                genesis_consensus_keys: binding.genesis_consensus_keys,
+            }
+            .encode_canonical()
+            .map_err(|error| eyre!("encode seeded DCAP network descriptor: {error}"))?;
+            let path = self.cfg.dir.join("network-descriptor-v1.bin");
+            fs::write(&path, descriptor)?;
+            Some(path)
+        } else {
+            None
+        };
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .arg("tee")
@@ -330,6 +353,9 @@ impl Localnet {
                     &self.cfg.repo,
                     &self.real_enclave_bin()?,
                     &signing_key,
+                    network_descriptor
+                        .as_deref()
+                        .expect("real SGX creates a measured network descriptor"),
                     &image_id,
                     self.cfg.sudo,
                 )?;

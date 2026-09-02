@@ -18,19 +18,31 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader as _, Transaction as _, TxReceipt as _};
-use alloy_primitives::{Address, Sealable as _, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use eyre::{bail, Context as _};
 use futures::StreamExt as _;
+use metrics::{counter, gauge, histogram};
 use outbe_metadosis::precompile::IMetadosis;
+use outbe_node::{
+    finalized_frame::{read_bounded_finalized_frames, FinalizedFrame, RethFinalizedFrameSource},
+    ocomp::retention::{observe_finalized_request, FinalizedRequestObservationV1},
+    projection::{
+        projection_frame_failure_class, FinalizedProjectionSink, ProjectionRuntimeRecoveryHandle,
+        ProjectionRuntimeRecoveryV1, ReadyOffchainDataProjection, RuntimeBodyFailure,
+        PROJECTION_RECOVERY_DEADLINE,
+    },
+};
 use outbe_ocomp::payout_submitter::PayoutTickOutcomeV1;
 use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
+    discovery_control::DiscoveryOfferRefV1,
+    discovery_spool::{ContiguousCheckpointStoreV1, DiscoverySpoolV1, RetirementReportV1},
+    discovery_transport::DiscoveryOfferClientV1,
     embedded::{
         EmbeddedJobActionV1, EmbeddedJobEventV1, EmbeddedJobGenerationV1, EmbeddedJobStateV1,
         EmbeddedOcompJobsV1, EmbeddedOcompModeV1, EmbeddedTerminalReasonV1,
     },
-    embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
         EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
         EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1,
@@ -59,7 +71,7 @@ use outbe_primitives::{
 };
 use reth_ethereum::exex::{ExExContext, ExExEvent, ExExHead};
 use reth_node_builder::FullNodeComponents;
-use reth_primitives_traits::{Block as _, BlockBody as _};
+use reth_primitives_traits::Block as _;
 use reth_provider::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, ReceiptProvider, StateProvider,
     StateProviderFactory,
@@ -80,11 +92,15 @@ pub struct OcompExExBundleConfigV1 {
 #[derive(Clone)]
 pub struct OcompExExConfigV1 {
     pub domain_root: PathBuf,
+    pub discovery_spool_root: PathBuf,
+    pub discovery_control_address: std::net::SocketAddr,
     pub bundles: Vec<OcompExExBundleConfigV1>,
     pub policy: EmbeddedNodePolicyV1,
     pub validator_rpc_url: Option<String>,
     pub chain_id: u64,
     pub genesis_hash: B256,
+    pub retention_selector: Arc<outbe_node::ocomp::retention::SharedOcompRetentionSelector>,
+    pub retention_required: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +118,7 @@ struct RequestLocatorV1 {
     block_number: u64,
     block_hash: B256,
     state_root: B256,
+    before_request: ProjectionCheckpoint,
 }
 
 struct RuntimeJobV1 {
@@ -155,12 +172,6 @@ fn bound_materialization_attempts(
     current: Option<MaterializationAttemptKeyV1>,
 ) {
     attempts.retain(|key, _| Some(*key) == current);
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FinalizedHeadPhaseV1 {
-    StartupRecovery,
-    Running,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -259,121 +270,60 @@ fn classify_canonical_job(
     })
 }
 
-/// What startup must do with a persisted watermark, given the canonical chain
-/// this node actually has on disk.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CheckpointRecoveryV1 {
-    /// The checkpoint block is canonical here; resume from it.
-    Resume,
-    /// The checkpoint outran block persistence; re-scan from the canonical tip.
-    RewindTo(OcompExExCheckpointV1),
-}
-
-/// Decide how to resume from `checkpoint`.
-///
-/// The watermark is fsynced independently of reth's block persistence, so an
-/// unclean shutdown can leave it naming a block above what was written. That is
-/// recoverable: per-job work is reconstructed from canonical notifications, so
-/// re-scanning from the canonical tip loses nothing. A checkpoint that is
-/// missing at or below the tip, or one whose hash disagrees with canonical, is a
-/// genuine inconsistency and still fails closed.
-fn classify_checkpoint_recovery(
-    checkpoint: OcompExExCheckpointV1,
-    canonical_at_checkpoint: Option<B256>,
-    canonical_tip: u64,
-    canonical_tip_hash: Option<B256>,
-) -> eyre::Result<CheckpointRecoveryV1> {
-    if let Some(canonical) = canonical_at_checkpoint {
-        if canonical == checkpoint.block_hash {
-            return Ok(CheckpointRecoveryV1::Resume);
-        }
-        bail!(
-            "OCOMP ExEx checkpoint hash {} conflicts with canonical {} at height {}",
-            checkpoint.block_hash,
-            canonical,
-            checkpoint.block_number
-        );
-    }
-    if checkpoint.block_number <= canonical_tip {
-        bail!(
-            "OCOMP ExEx checkpoint block {} is unavailable at or below canonical tip {}",
-            checkpoint.block_number,
-            canonical_tip
-        );
-    }
-    let block_hash = canonical_tip_hash
-        .ok_or_else(|| eyre::eyre!("OCOMP ExEx canonical tip {canonical_tip} is unavailable"))?;
-    Ok(CheckpointRecoveryV1::RewindTo(OcompExExCheckpointV1 {
-        block_number: canonical_tip,
-        block_hash,
-    }))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FinalizedHeadActionV1 {
-    WaitForRecovery,
-    EnterRunning,
-    ContinueRunning,
-}
-
-fn classify_finalized_head(
-    phase: FinalizedHeadPhaseV1,
-    scanned_height: u64,
-    scanned_hash: B256,
-    target_height: u64,
-    target_hash: B256,
-) -> Result<FinalizedHeadActionV1, &'static str> {
-    if target_height < scanned_height {
-        return match phase {
-            FinalizedHeadPhaseV1::StartupRecovery => Ok(FinalizedHeadActionV1::WaitForRecovery),
-            FinalizedHeadPhaseV1::Running => {
-                Err("OCOMP finalized head regressed behind the scanned height")
-            }
-        };
-    }
-    if target_height == scanned_height && target_hash != scanned_hash {
-        return Err("OCOMP finalized head changed hash at the scanned height");
-    }
-    Ok(match phase {
-        FinalizedHeadPhaseV1::StartupRecovery => FinalizedHeadActionV1::EnterRunning,
-        FinalizedHeadPhaseV1::Running => FinalizedHeadActionV1::ContinueRunning,
-    })
-}
-
-fn initial_projection_status(
-    checkpoint: Option<OcompExExCheckpointV1>,
-    genesis_hash: B256,
-) -> ProjectionStatus {
-    match checkpoint {
-        Some(_) => ProjectionStatus::CatchingUp { checkpoint: None },
-        None => ProjectionStatus::Ready {
-            checkpoint: ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis_hash,
-            },
-        },
-    }
-}
-
 async fn wait_for_node_teardown() -> ! {
     std::future::pending::<()>().await;
     unreachable!("pending future completed")
+}
+
+fn finalized_reader_lags(finalized_head: u64, scanned: u64, closed: u64) -> (u64, u64) {
+    (
+        finalized_head.saturating_sub(scanned),
+        finalized_head.saturating_sub(closed),
+    )
+}
+
+fn publish_finalized_reader_metrics(finalized_head: u64, scanned: u64, closed: u64) {
+    let (reader_lag, closure_lag) = finalized_reader_lags(finalized_head, scanned, closed);
+    gauge!("outbe_ocomp_finalized_head_number").set(finalized_head as f64);
+    gauge!("outbe_ocomp_finalized_reader_checkpoint_number").set(scanned as f64);
+    gauge!("outbe_ocomp_finalized_reader_lag_blocks").set(reader_lag as f64);
+    gauge!("outbe_ocomp_closure_checkpoint_number").set(closed as f64);
+    gauge!("outbe_ocomp_closure_lag_blocks").set(closure_lag as f64);
+}
+
+fn pending_offer_notifications(
+    pending: &BTreeMap<B256, DiscoveryOfferRefV1>,
+) -> Vec<DiscoveryOfferRefV1> {
+    pending.values().cloned().collect()
+}
+
+fn record_discovery_retirement_report(report: RetirementReportV1) {
+    if report.completed != 0 {
+        counter!("outbe_ocomp_discovery_spool_retired_total").increment(report.completed);
+    }
+    gauge!("outbe_ocomp_discovery_spool_retirement_intents")
+        .set(report.waiting_for_checkpoint as f64);
 }
 
 struct EmbeddedOcompExExV1<P> {
     provider: P,
     policy: EmbeddedNodePolicyV1,
     domain: EmbeddedOcompDomainV1,
-    checkpoint: OcompExExCheckpointStoreV1,
     readiness: ProjectionReadinessPublisher,
     exit: tokio::sync::mpsc::UnboundedSender<OcompExExExitV1>,
     requests: BTreeMap<B256, RequestLocatorV1>,
     materialized_requests: BTreeSet<B256>,
     jobs: BTreeMap<B256, RuntimeJobV1>,
+    intent_jobs: BTreeMap<B256, B256>,
+    discovery_spools: BTreeMap<B256, DiscoverySpoolV1>,
+    pending_offers: BTreeMap<B256, DiscoveryOfferRefV1>,
+    acknowledged_exports: BTreeSet<B256>,
+    retention_selector: Arc<outbe_node::ocomp::retention::SharedOcompRetentionSelector>,
+    closure_checkpoint: ContiguousCheckpointStoreV1,
+    latest_scanned_checkpoint: ProjectionCheckpoint,
     state: EmbeddedOcompJobsV1,
     scanned_height: u64,
     scanned_hash: B256,
-    finalized_head_phase: FinalizedHeadPhaseV1,
     compute_tx: mpsc::Sender<EmbeddedComputeOutcomeV1>,
     compute_rx: mpsc::Receiver<EmbeddedComputeOutcomeV1>,
     vote_tx: mpsc::Sender<EmbeddedVoteOutcomeV1>,
@@ -392,6 +342,7 @@ struct EmbeddedOcompExExV1<P> {
 
 pub async fn run_ocomp_exex<Node>(
     mut ctx: ExExContext<Node>,
+    ready_projection: ReadyOffchainDataProjection,
     config: OcompExExConfigV1,
     readiness: ProjectionReadinessPublisher,
     exit: tokio::sync::mpsc::UnboundedSender<OcompExExExitV1>,
@@ -409,7 +360,31 @@ where
         + Sync
         + 'static,
 {
+    gauge!("outbe_ocomp_finalized_loop_fatal").set(0.0);
     let provider = ctx.provider().clone();
+    let limits = poc_schema_limits();
+    let mut discovery_spools = BTreeMap::new();
+    for bundle in &config.bundles {
+        let bundle_hash = bundle.protocol_bundle.hash();
+        discovery_spools.insert(
+            bundle_hash,
+            DiscoverySpoolV1::open(
+                config
+                    .discovery_spool_root
+                    .join(hex::encode(bundle_hash.as_slice())),
+                config.chain_id,
+                config.genesis_hash,
+                limits,
+            )?,
+        );
+    }
+    let closure_checkpoint = ContiguousCheckpointStoreV1::open(
+        config.discovery_spool_root.join("closure-checkpoint-v1"),
+        ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: config.genesis_hash,
+        },
+    )?;
     let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
         domain_root: config.domain_root,
         registry_generation: 1,
@@ -424,10 +399,11 @@ where
             .collect(),
         policy: config.policy,
         validator_rpc_url: config.validator_rpc_url,
-        limits: poc_schema_limits(),
+        limits,
     })
     .map_err(|error| eyre::eyre!("open Node-owned OCOMP domain: {error}"))?;
     if let Some(detail) = load_persisted_fatal_evidence(domain.fatal_evidence_root())? {
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         let failure = ProjectionFailure::new(
             ProjectionFailureClass::Other,
             format!("embedded OCOMP persisted fatal evidence: {detail}"),
@@ -439,64 +415,61 @@ where
         let _ = exit.send(OcompExExExitV1 { failure });
         wait_for_node_teardown().await;
     }
-    let mut checkpoint = OcompExExCheckpointStoreV1::open(domain.checkpoint_root())
-        .wrap_err("open OCOMP ExEx checkpoint")?;
-    let loaded_checkpoint = match checkpoint.load() {
-        Some(stored) => {
-            let canonical_tip = provider
-                .best_block_number()
-                .wrap_err("read canonical tip for OCOMP ExEx checkpoint recovery")?;
-            let recovery = classify_checkpoint_recovery(
-                stored,
-                provider
-                    .block_hash(stored.block_number)
-                    .wrap_err("validate OCOMP ExEx checkpoint hash")?,
-                canonical_tip,
-                provider
-                    .block_hash(canonical_tip)
-                    .wrap_err("read canonical tip hash for OCOMP ExEx checkpoint recovery")?,
-            )?;
-            match recovery {
-                CheckpointRecoveryV1::Resume => stored,
-                CheckpointRecoveryV1::RewindTo(target) => {
-                    tracing::warn!(
-                        target: "outbe::ocomp::exex",
-                        checkpoint_block = stored.block_number,
-                        canonical_tip = target.block_number,
-                        "OCOMP ExEx checkpoint outran block persistence; re-scanning from the canonical tip"
-                    );
-                    checkpoint
-                        .rewind_to(target)
-                        .wrap_err("rewind OCOMP ExEx checkpoint to the canonical tip")?;
-                    target
-                }
-            }
+    let closed = closure_checkpoint.current()?;
+    if closed.block_number > 0 {
+        let canonical = provider
+            .block_hash(closed.block_number)
+            .wrap_err("validate unified OCOMP closure checkpoint")?
+            .ok_or_else(|| eyre::eyre!("unified OCOMP closure checkpoint is unavailable"))?;
+        if canonical != closed.block_hash {
+            bail!("unified OCOMP closure checkpoint conflicts with canonical history");
         }
-        None => OcompExExCheckpointV1 {
-            block_number: 0,
-            block_hash: config.genesis_hash,
-        },
+        ctx.set_notifications_with_head(ExExHead::new(
+            (closed.block_number, closed.block_hash).into(),
+        ));
+    }
+    readiness.publish(ProjectionStatus::CatchingUp {
+        checkpoint: Some(closed),
+    });
+    let projection_sink = Arc::new(std::sync::Mutex::new(FinalizedProjectionSink::new(
+        ready_projection,
+    )));
+    let (mut projection_runtime_failures, projection_runtime_recovery) = {
+        let sink = projection_sink
+            .lock()
+            .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?;
+        (
+            sink.runtime_failure_receiver()?,
+            sink.runtime_recovery_handle()?,
+        )
     };
-    // Height 0 carries no notification head: there is nothing scanned to resume
-    // from, which is exactly the fresh-start contract.
-    let (scanned_height, scanned_hash, finalized_head_phase) =
-        if loaded_checkpoint.block_number == 0 {
-            (0, config.genesis_hash, FinalizedHeadPhaseV1::Running)
-        } else {
-            ctx.set_notifications_with_head(ExExHead::new(
-                (loaded_checkpoint.block_number, loaded_checkpoint.block_hash).into(),
-            ));
-            (
-                loaded_checkpoint.block_number,
-                loaded_checkpoint.block_hash,
-                FinalizedHeadPhaseV1::StartupRecovery,
-            )
-        };
-    let loaded_checkpoint = (loaded_checkpoint.block_number != 0).then_some(loaded_checkpoint);
-    readiness.publish(initial_projection_status(
-        loaded_checkpoint,
-        config.genesis_hash,
-    ));
+    {
+        let sink = projection_sink
+            .lock()
+            .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?;
+        if let Some(projected) = sink.durable_checkpoint() {
+            if projected.block_number < closed.block_number
+                || (projected.block_number == closed.block_number
+                    && projected.block_hash != closed.block_hash)
+            {
+                bail!("unified OCOMP closure checkpoint is ahead of durable projection");
+            }
+        } else if closed.block_number != 0 {
+            bail!("unified OCOMP closure exists before the durable projection checkpoint");
+        }
+    }
+    let mut startup_retirements = RetirementReportV1::default();
+    for spool in discovery_spools.values() {
+        let report = spool.complete_retirements_through(closed.block_number)?;
+        startup_retirements.completed = startup_retirements
+            .completed
+            .saturating_add(report.completed);
+        startup_retirements.waiting_for_checkpoint = startup_retirements
+            .waiting_for_checkpoint
+            .saturating_add(report.waiting_for_checkpoint);
+    }
+    record_discovery_retirement_report(startup_retirements);
+    let frame_source = RethFinalizedFrameSource::new(provider.clone());
     let mode = match config.policy {
         EmbeddedNodePolicyV1::Validator => EmbeddedOcompModeV1::Validator,
         EmbeddedNodePolicyV1::FullNode => EmbeddedOcompModeV1::FullNode,
@@ -509,16 +482,21 @@ where
         provider,
         policy: config.policy,
         domain,
-        checkpoint,
         readiness,
         exit,
         requests: BTreeMap::new(),
         materialized_requests: BTreeSet::new(),
         jobs: BTreeMap::new(),
+        intent_jobs: BTreeMap::new(),
+        discovery_spools,
+        pending_offers: BTreeMap::new(),
+        acknowledged_exports: BTreeSet::new(),
+        retention_selector: config.retention_selector,
+        closure_checkpoint,
+        latest_scanned_checkpoint: closed,
         state: EmbeddedOcompJobsV1::new(mode),
-        scanned_height,
-        scanned_hash,
-        finalized_head_phase,
+        scanned_height: closed.block_number,
+        scanned_hash: closed.block_hash,
         compute_tx,
         compute_rx,
         vote_tx,
@@ -537,9 +515,63 @@ where
 
     let mut poll = tokio::time::interval(POLL_INTERVAL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut projection_health = tokio::time::interval(Duration::from_millis(250));
+    projection_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut projection_unavailable_since = None;
+    let mut projection_runtime_recovery_task = None;
     let mut notifications_open = true;
     loop {
+        let projection_runtime_deadline =
+            projection_unavailable_since.map(|(_, since)| since + PROJECTION_RECOVERY_DEADLINE);
         tokio::select! {
+            _ = wait_for_optional_deadline(projection_runtime_deadline) => {
+                if let Some(failure) = consume_projection_runtime_deadline(
+                    &projection_runtime_failures,
+                    &mut projection_unavailable_since,
+                ) {
+                    projection_sink
+                        .lock()
+                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .publish_failure(failure.clone());
+                    runtime.latch_external_failure(failure);
+                    wait_for_node_teardown().await;
+                }
+            }
+            _ = projection_health.tick() => {
+                if let Some(failure) = projection_runtime_failure(
+                    &projection_runtime_failures,
+                    &mut projection_unavailable_since,
+                    &projection_runtime_recovery,
+                    &mut projection_runtime_recovery_task,
+                ).await {
+                    projection_sink
+                        .lock()
+                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .publish_failure(failure.clone());
+                    runtime.latch_external_failure(failure);
+                    wait_for_node_teardown().await;
+                }
+            }
+            changed = projection_runtime_failures.changed() => {
+                let failure = if changed.is_err() {
+                    Some(projection_runtime_watch_closed_failure())
+                } else {
+                    projection_runtime_failure(
+                        &projection_runtime_failures,
+                        &mut projection_unavailable_since,
+                        &projection_runtime_recovery,
+                        &mut projection_runtime_recovery_task,
+                    ).await
+                };
+                if let Some(failure) = failure {
+                    projection_sink
+                        .lock()
+                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .publish_failure(failure.clone());
+                    runtime.latch_external_failure(failure);
+                    wait_for_node_teardown().await;
+                }
+            }
             notification = ctx.notifications.next(), if notifications_open => {
                 match classify_exex_notification(notification) {
                     ExExNotificationDispositionV1::Continue => {}
@@ -554,10 +586,7 @@ where
                 }
             }
             _ = poll.tick() => {
-                if let Err(error) = runtime.reconcile() {
-                    runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
-                    wait_for_node_teardown().await;
-                }
+                let tick_result: eyre::Result<()> = async {
                 while let Ok(outcome) = runtime.compute_rx.try_recv() {
                     if let Err(error) = runtime.handle_compute(outcome) {
                         runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
@@ -582,12 +611,202 @@ where
                 while let Ok(outcome) = runtime.payout_rx.try_recv() {
                     runtime.handle_payout(outcome);
                 }
-                if let Some(checkpoint) = runtime.advance_checkpoint()? {
+
+                let finalized_target = runtime
+                    .provider
+                    .finalized_block_num_hash()
+                    .wrap_err("sample unified finalized head")?;
+                if let Some(target) = finalized_target {
+                    publish_finalized_reader_metrics(
+                        target.number,
+                        runtime.scanned_height,
+                        runtime.closure_checkpoint.current()?.block_number,
+                    );
+                    let next_height = runtime
+                        .scanned_height
+                        .checked_add(1)
+                        .ok_or_else(|| eyre::eyre!("unified finalized height overflow"))?;
+                    let source = frame_source.clone();
+                    let batch = tokio::task::spawn_blocking(move || {
+                        read_bounded_finalized_frames(&source, next_height, target)
+                    })
+                    .await
+                    .wrap_err("unified finalized reader worker failed")??;
+                    if let Some(batch) = batch {
+                        histogram!("outbe_ocomp_finalized_reader_batch_blocks")
+                            .record(batch.frames().len() as f64);
+                        'frames: for frame in batch.frames() {
+                            let request_observation = observe_finalized_request(frame)?;
+                            match runtime
+                                .retention_selector
+                                .reconcile_finalized_frame(frame, request_observation)
+                            {
+                                Ok(()) => {}
+                                Err(outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled)
+                                    if !config.retention_required => {}
+                                Err(error) => {
+                                    warn!(
+                                        %error,
+                                        block_number = frame.identity().number,
+                                        block_hash = %frame.identity().hash,
+                                        "unified OCOMP retention is not ready; retrying the same finalized frame"
+                                    );
+                                    break 'frames;
+                                }
+                            }
+                            runtime.record_request_observation(frame, request_observation)?;
+                            let sink = Arc::clone(&projection_sink);
+                            let projected_frame = frame.clone();
+                            let projection_deadline =
+                                tokio::time::Instant::now() + PROJECTION_RECOVERY_DEADLINE;
+                            let projection_write_deadline = projection_deadline.into_std();
+                            let mut projection_task = tokio::task::spawn_blocking(move || {
+                                sink.lock()
+                                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                                    .project_frame_until(&projected_frame, projection_write_deadline)
+                            });
+                            let projection_result = loop {
+                                let runtime_recovery_deadline = projection_unavailable_since
+                                    .map(|(_, since)| since + PROJECTION_RECOVERY_DEADLINE);
+                                tokio::select! {
+                                    biased;
+                                    _ = tokio::time::sleep_until(projection_deadline) => {
+                                        let failure = ProjectionFailure::new(
+                                            ProjectionFailureClass::MongoReconnectDeadline,
+                                            "unified durable projection exceeded the recovery deadline",
+                                        );
+                                        runtime.latch_external_failure(failure);
+                                        wait_for_node_teardown().await;
+                                    }
+                                    _ = wait_for_optional_deadline(runtime_recovery_deadline) => {
+                                        if let Some(failure) = consume_projection_runtime_deadline(
+                                            &projection_runtime_failures,
+                                            &mut projection_unavailable_since,
+                                        ) {
+                                            runtime.latch_external_failure(failure);
+                                            wait_for_node_teardown().await;
+                                        }
+                                    }
+                                    result = &mut projection_task => break result,
+                                    notification = ctx.notifications.next(), if notifications_open => {
+                                        match classify_exex_notification(notification) {
+                                            ExExNotificationDispositionV1::Continue => {}
+                                            ExExNotificationDispositionV1::CloseAfterError(error) => {
+                                                warn!(%error, "failed to drain OCOMP ExEx notification while MongoDB projection was pending");
+                                                notifications_open = false;
+                                            }
+                                            ExExNotificationDispositionV1::Closed => {
+                                                notifications_open = false;
+                                                warn!("OCOMP ExEx notification stream closed while MongoDB projection was pending");
+                                            }
+                                        }
+                                    }
+                                    _ = projection_health.tick() => {
+                                        if let Some(failure) = projection_runtime_failure(
+                                            &projection_runtime_failures,
+                                            &mut projection_unavailable_since,
+                                            &projection_runtime_recovery,
+                                            &mut projection_runtime_recovery_task,
+                                        ).await {
+                                            runtime.latch_external_failure(failure);
+                                            wait_for_node_teardown().await;
+                                        }
+                                    }
+                                    changed = projection_runtime_failures.changed() => {
+                                        let failure = if changed.is_err() {
+                                            Some(projection_runtime_watch_closed_failure())
+                                        } else {
+                                            projection_runtime_failure(
+                                                &projection_runtime_failures,
+                                                &mut projection_unavailable_since,
+                                                &projection_runtime_recovery,
+                                                &mut projection_runtime_recovery_task,
+                                            ).await
+                                        };
+                                        if let Some(failure) = failure {
+                                            runtime.latch_external_failure(failure);
+                                            wait_for_node_teardown().await;
+                                        }
+                                    }
+                                }
+                            };
+                            if let Err(error) = projection_result
+                                .wrap_err("unified projection worker failed")
+                                .and_then(|result| result)
+                            {
+                                let failure = projection_task_failure(error);
+                                projection_sink
+                                    .lock()
+                                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                                    .publish_failure(failure.clone());
+                                runtime.latch_external_failure(failure);
+                                wait_for_node_teardown().await;
+                            }
+                            runtime.record_scanned_frame(frame)?;
+                            counter!("outbe_ocomp_finalized_reader_blocks_total").increment(1);
+                            runtime.refresh_jobs(
+                                frame.identity().number,
+                                frame.identity().hash,
+                                frame,
+                                true,
+                            )?;
+                            runtime.reconcile_materialization(frame)?;
+                            runtime.drive_payout(frame.block().header().timestamp());
+                        }
+                    }
+                    projection_sink
+                        .lock()
+                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .publish_progress(ProjectionCheckpoint {
+                            block_number: target.number,
+                            block_hash: target.hash,
+                        })?;
+                }
+
+                gauge!("outbe_ocomp_discovery_pending_offers")
+                    .set(runtime.pending_offers.len() as f64);
+                for offer in pending_offer_notifications(&runtime.pending_offers) {
+                    counter!("outbe_ocomp_discovery_control_attempts_total").increment(1);
+                    match DiscoveryOfferClientV1::connect(config.discovery_control_address).await {
+                        Ok(mut client) => {
+                            if let Err(error) = client.send_offer(&offer).await {
+                                counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "send")
+                                    .increment(1);
+                                warn!(%error, observation_id = %offer.observation_id, "failed to notify snapshot exporter; durable offer remains pending");
+                            }
+                        }
+                        Err(error) => {
+                            counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "connect")
+                                .increment(1);
+                            warn!(%error, observation_id = %offer.observation_id, "snapshot exporter control endpoint unavailable; durable offer remains pending");
+                        }
+                    }
+                }
+
+                if let Some(checkpoint) = runtime.flush_closure_checkpoint()? {
                     if ctx.events.send(ExExEvent::FinishedHeight(
                         (checkpoint.block_number, checkpoint.block_hash).into()
                     )).is_err() {
-                        warn!("failed to publish OCOMP ExEx finished height");
+                        warn!("failed to publish unified finalized height");
                     }
+                }
+                if let Some(target) = finalized_target {
+                    runtime.publish_closure_progress(ProjectionCheckpoint {
+                        block_number: target.number,
+                        block_hash: target.hash,
+                    })?;
+                    publish_finalized_reader_metrics(
+                        target.number,
+                        runtime.scanned_height,
+                        runtime.closure_checkpoint.current()?.block_number,
+                    );
+                }
+                Ok(())
+                }.await;
+                if let Err(error) = tick_result {
+                    counter!("outbe_ocomp_finalized_loop_errors_total").increment(1);
+                    runtime.latch_fatal(B256::ZERO, format!("unified finalized loop failed: {error:#}"))?;
+                    wait_for_node_teardown().await;
                 }
             }
         }
@@ -606,111 +825,39 @@ where
         + Sync
         + 'static,
 {
-    fn reconcile(&mut self) -> eyre::Result<()> {
-        let Some(target) = self
-            .provider
-            .finalized_block_num_hash()
-            .wrap_err("sample OCOMP finalized head")?
-        else {
+    fn record_request_observation(
+        &mut self,
+        frame: &FinalizedFrame,
+        observation: Option<FinalizedRequestObservationV1>,
+    ) -> eyre::Result<()> {
+        let Some(observation) = observation else {
             return Ok(());
         };
-        match classify_finalized_head(
-            self.finalized_head_phase,
-            self.scanned_height,
-            self.scanned_hash,
-            target.number,
-            target.hash,
-        )
-        .map_err(eyre::Report::msg)?
-        {
-            FinalizedHeadActionV1::WaitForRecovery => return Ok(()),
-            FinalizedHeadActionV1::EnterRunning => {
-                self.finalized_head_phase = FinalizedHeadPhaseV1::Running;
-                info!(
-                    checkpoint_height = self.scanned_height,
-                    target_height = target.number,
-                    "embedded OCOMP finalized checkpoint recovery completed"
-                );
+        let identity = frame.identity();
+        let number = identity.number;
+        let hash = identity.hash;
+        let locator = RequestLocatorV1 {
+            intent_id: observation.intent_id,
+            wwd: observation.wwd,
+            pending_nonce: observation.pending_nonce,
+            attempt: observation.attempt,
+            activation_preconditions_hash: observation.activation_preconditions_hash,
+            block_number: number,
+            block_hash: hash,
+            state_root: frame.state_root(),
+            before_request: ProjectionCheckpoint {
+                block_number: number.saturating_sub(1),
+                block_hash: frame.parent_hash(),
+            },
+        };
+        self.validate_request(&locator, hash)?;
+        match self.requests.get(&locator.intent_id) {
+            Some(existing) if same_locator(*existing, locator) => {}
+            Some(_) => {
+                bail!("conflicting OCOMP request locator replay");
             }
-            FinalizedHeadActionV1::ContinueRunning => {}
-        }
-        if target.number == self.scanned_height {
-            self.refresh_jobs(target.number, target.hash)?;
-            self.reconcile_materialization(target.number, target.hash)?;
-            self.drive_payout(target.hash);
-            self.publish_readiness(target.number, target.hash)?;
-            return Ok(());
-        }
-        for number in self.scanned_height.saturating_add(1)..=target.number {
-            let hash = self
-                .provider
-                .block_hash(number)
-                .wrap_err_with(|| format!("load OCOMP canonical hash at {number}"))?
-                .ok_or_else(|| eyre::eyre!("OCOMP canonical block {number} is unavailable"))?;
-            self.scan_requests(number, hash)?;
-            self.refresh_jobs(number, hash)?;
-            self.reconcile_materialization(number, hash)?;
-            self.drive_payout(hash);
-            self.scanned_height = number;
-            self.scanned_hash = hash;
-            self.publish_readiness(number, hash)?;
-        }
-        if self.scanned_hash != target.hash {
-            bail!("OCOMP scanned finalized target hash mismatch");
-        }
-        Ok(())
-    }
-
-    fn scan_requests(&mut self, number: u64, hash: B256) -> eyre::Result<()> {
-        let block = self
-            .provider
-            .block_by_hash(hash)
-            .wrap_err("load OCOMP request block")?
-            .ok_or_else(|| eyre::eyre!("OCOMP request block is unavailable"))?;
-        if block.header().number() != number || block.header().hash_slow() != hash {
-            bail!("OCOMP provider returned a conflicting canonical block");
-        }
-        let receipts = self
-            .provider
-            .receipts_by_block(hash.into())
-            .wrap_err("load OCOMP request receipts")?
-            .ok_or_else(|| eyre::eyre!("OCOMP request receipts are unavailable"))?;
-        if block.body().transactions().len() != receipts.len() {
-            bail!("OCOMP request transaction/receipt count mismatch");
-        }
-        for receipt in receipts {
-            if !receipt.status() {
-                continue;
-            }
-            for log in receipt.logs() {
-                if log.address != METADOSIS_ADDRESS
-                    || log.data.topics().first()
-                        != Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
-                {
-                    continue;
-                }
-                let event = IMetadosis::OffchainJobRequested::decode_log(log)
-                    .wrap_err("decode OCOMP request locator")?;
-                let locator = RequestLocatorV1 {
-                    intent_id: event.data.intentId,
-                    wwd: event.data.wwd,
-                    pending_nonce: event.data.pendingNonce,
-                    attempt: event.data.attempt,
-                    activation_preconditions_hash: event.data.activationPreconditionsHash,
-                    block_number: number,
-                    block_hash: hash,
-                    state_root: block.header().state_root(),
-                };
-                self.validate_request(&locator, hash)?;
-                match self.requests.get(&locator.intent_id) {
-                    Some(existing) if same_locator(*existing, locator) => {}
-                    Some(_) => {
-                        bail!("conflicting OCOMP request locator replay");
-                    }
-                    None => {
-                        self.requests.insert(locator.intent_id, locator);
-                    }
-                }
+            None => {
+                self.requests.insert(locator.intent_id, locator);
             }
         }
         Ok(())
@@ -741,7 +888,13 @@ where
         Ok(())
     }
 
-    fn refresh_jobs(&mut self, height: u64, hash: B256) -> eyre::Result<()> {
+    fn refresh_jobs(
+        &mut self,
+        height: u64,
+        hash: B256,
+        frame: &FinalizedFrame,
+        drive_lifecycle: bool,
+    ) -> eyre::Result<()> {
         let limits = poc_schema_limits();
         let locators = self.requests.values().copied().collect::<Vec<_>>();
         for locator in locators {
@@ -786,9 +939,106 @@ where
             if job_id != finalized.job_id {
                 bail!("OCOMP finalized job carries a conflicting JobId");
             }
+            match self.intent_jobs.insert(locator.intent_id, job_id) {
+                Some(existing) if existing != job_id => {
+                    bail!("OCOMP intent replay resolved to a conflicting JobId");
+                }
+                Some(_) | None => {}
+            }
             let discovered = !self.jobs.contains_key(&job_id);
             if discovered {
-                let discovery = discovery_record(locator, &record, job_id, &limits)?;
+                let retained_candidates =
+                    match self.retention_selector.discovery_job_records(job_id) {
+                        Ok(record) => record,
+                        Err(
+                            outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled,
+                        ) => continue,
+                        Err(outbe_node::ocomp::retention::RetentionError::InvalidTransition(_))
+                            if matches!(
+                                disposition,
+                                CanonicalJobDispositionV1::Closed {
+                                    has_finalized_job: true,
+                                    ..
+                                }
+                            ) =>
+                        {
+                            self.verify_released_export_ack(
+                                locator,
+                                &record,
+                                job_id,
+                                &limits,
+                            )?;
+                            // Released retention is reachable only after an
+                            // exact durable export ACK. The request is therefore
+                            // closed for replay even though its live pin was GC'd.
+                            self.materialized_requests.insert(locator.intent_id);
+                            continue;
+                        }
+                        Err(outbe_node::ocomp::retention::RetentionError::InvalidTransition(_)) => {
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(error).wrap_err("load exact OCOMP retention generation");
+                        }
+                    };
+                let input_lease_id = record
+                    .intent
+                    .input_lease_id()
+                    .wrap_err("derive exact OCOMP input lease")?;
+                let mut fallback = None;
+                let mut selected = None;
+                for (source_generation, retained) in retained_candidates {
+                    if retained.job_id != job_id
+                        || retained.candidate.block_number != locator.block_number
+                        || retained.candidate.block_hash != locator.block_hash
+                        || retained.candidate.state_root != locator.state_root
+                        || retained.candidate.intent_id != locator.intent_id
+                        || retained.candidate.wwd != locator.wwd
+                        || retained.candidate.ce_sealed_root != record.intent.ce_sealed_root
+                        || retained.candidate.protocol_bundle_hash
+                            != record.intent.protocol_bundle_hash
+                        || retained.candidate.input_lease_id != input_lease_id
+                        || retained.open_height != finalized.open_height
+                        || retained.deadline_height != finalized.deadline_height
+                    {
+                        bail!("OCOMP retained pin disagrees with finalized typed state");
+                    }
+                    let candidate =
+                        discovery_record(locator, &record, job_id, source_generation, &limits)?;
+                    let spool = self
+                        .discovery_spools
+                        .get(&record.intent.protocol_bundle_hash)
+                        .ok_or_else(|| {
+                            eyre::eyre!(
+                                "OCOMP discovery spool is missing for bundle {}",
+                                record.intent.protocol_bundle_hash
+                            )
+                        })?;
+                    let probe = DiscoveryOfferRefV1::from_spec(
+                        self.chain_id,
+                        self.genesis_hash,
+                        candidate.generation,
+                        &candidate.spec,
+                        &limits,
+                    )?;
+                    let pending = spool.pending(&probe.observation_id)?;
+                    let acknowledged = spool.ack(&probe.observation_id)?;
+                    let durable_reference = pending
+                        .as_ref()
+                        .map(|pending| pending.reference.clone())
+                        .or_else(|| acknowledged.as_ref().map(|ack| ack.reference.offer_ref()));
+                    let has_durable_authority = durable_reference.as_ref() == Some(&probe);
+                    if has_durable_authority {
+                        if selected.replace(candidate).is_some() {
+                            bail!("multiple OCOMP discovery generations have durable authority");
+                        }
+                    } else if fallback.is_none() {
+                        fallback = Some(candidate);
+                    }
+                }
+                let discovery = selected.or(fallback).ok_or_else(|| {
+                    eyre::eyre!("OCOMP retention returned no discovery generation")
+                })?;
                 let generation = self
                     .state
                     .observe_job(job_id, finalized.deadline_height)
@@ -811,11 +1061,17 @@ where
                     },
                 );
             }
-            self.materialized_requests.insert(locator.intent_id);
+            let export_acknowledged = self.reconcile_export_ack(job_id)?;
+            if export_acknowledged {
+                self.materialized_requests.insert(locator.intent_id);
+            }
 
             match disposition {
                 CanonicalJobDispositionV1::FinalizedAwaitingOpen => {}
                 CanonicalJobDispositionV1::VotingOpen => {
+                    if !export_acknowledged || !drive_lifecycle {
+                        continue;
+                    }
                     let eligibility_became_available =
                         self.refresh_vote_eligibility(locator, &record, job_id)?;
                     let compute_started = self
@@ -836,7 +1092,10 @@ where
                     self.ensure_compute_started(job_id)?;
                 }
                 CanonicalJobDispositionV1::Completed => {
-                    self.observe_completed(job_id, &record)?;
+                    if !export_acknowledged || !drive_lifecycle {
+                        continue;
+                    }
+                    self.observe_completed(job_id, &record, frame)?;
                     if self.policy == EmbeddedNodePolicyV1::FullNode {
                         let compute_started = self
                             .jobs
@@ -857,13 +1116,16 @@ where
                     }
                 }
                 CanonicalJobDispositionV1::Closed { reason, .. } => {
-                    self.observe_terminal(job_id, reason)?;
+                    if drive_lifecycle {
+                        self.observe_terminal(job_id, reason)?;
+                    }
                 }
                 CanonicalJobDispositionV1::AwaitingFinality => {
                     unreachable!("awaiting-finality records returned before job discovery")
                 }
             }
-            if height >= finalized.deadline_height
+            if drive_lifecycle
+                && height >= finalized.deadline_height
                 && matches!(
                     self.state.state(job_id),
                     Some(
@@ -878,6 +1140,232 @@ where
                     .wrap_err("observe OCOMP deadline")?;
             }
         }
+        Ok(())
+    }
+
+    fn reconcile_export_ack(&mut self, job_id: B256) -> eyre::Result<bool> {
+        if self.acknowledged_exports.contains(&job_id) {
+            return Ok(true);
+        }
+        let job = self
+            .jobs
+            .get(&job_id)
+            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared before export"))?;
+        let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
+        let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
+            eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
+        })?;
+        let offer = match self.pending_offers.get(&job_id) {
+            Some(reference) => reference.clone(),
+            None => {
+                let (reference, _) = spool.put_offer(job.record.generation, &job.record.spec)?;
+                self.pending_offers.insert(job_id, reference.clone());
+                info!(
+                    %job_id,
+                    observation_id = %reference.observation_id,
+                    generation = reference.generation,
+                    "persisted durable OCOMP discovery offer; awaiting SnapshotExporter ACK"
+                );
+                reference
+            }
+        };
+        let Some(acknowledgment) = spool.ack(&offer.observation_id)? else {
+            return Ok(false);
+        };
+        self.retention_selector
+            .confirm_export_ack(
+                job_id,
+                offer.generation,
+                acknowledgment.lease_generation,
+                acknowledgment.manifest_hash,
+            )
+            .wrap_err("commit exact exporter ACK to OCOMP retention")?;
+        self.acknowledged_exports.insert(job_id);
+        self.pending_offers.remove(&job_id);
+        info!(
+            %job_id,
+            observation_id = %offer.observation_id,
+            generation = offer.generation,
+            lease_generation = acknowledgment.lease_generation,
+            manifest_hash = %acknowledgment.manifest_hash,
+            "committed durable SnapshotExporter ACK"
+        );
+        Ok(true)
+    }
+
+    fn verify_released_export_ack(
+        &self,
+        locator: RequestLocatorV1,
+        record: &OcompJobRecordV1,
+        job_id: B256,
+        limits: &outbe_ocomp_protocol::SchemaLimits,
+    ) -> eyre::Result<()> {
+        let export = self
+            .retention_selector
+            .released_export_authority(job_id)?
+            .ok_or_else(|| eyre::eyre!("closed OCOMP job has no released export authority"))?;
+        let candidate =
+            discovery_record(locator, record, job_id, export.source_generation, limits)?;
+        let bundle_hash = candidate.spec.summary.protocol_bundle_hash;
+        let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
+            eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
+        })?;
+        let probe = DiscoveryOfferRefV1::from_spec(
+            self.chain_id,
+            self.genesis_hash,
+            export.source_generation,
+            &candidate.spec,
+            limits,
+        )?;
+        let acknowledgment = spool
+            .ack(&probe.observation_id)?
+            .ok_or_else(|| eyre::eyre!("released OCOMP export has no durable discovery ACK"))?;
+        let reference = acknowledgment.reference.offer_ref();
+        if reference != probe
+            || acknowledgment.lease_generation != export.lease_generation
+            || acknowledgment.manifest_hash != export.manifest_hash
+        {
+            bail!("released OCOMP ACK conflicts with canonical durable authority");
+        }
+        Ok(())
+    }
+
+    fn record_scanned_frame(&mut self, frame: &FinalizedFrame) -> eyre::Result<()> {
+        let identity = frame.identity();
+        let checkpoint = ProjectionCheckpoint {
+            block_number: identity.number,
+            block_hash: identity.hash,
+        };
+        let expected_number = self
+            .scanned_height
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("unified OCOMP scan height overflow"))?;
+        if checkpoint.block_number != expected_number {
+            bail!("unified OCOMP frame scan is not contiguous");
+        }
+        self.scanned_height = identity.number;
+        self.scanned_hash = identity.hash;
+        self.latest_scanned_checkpoint = checkpoint;
+        Ok(())
+    }
+
+    fn flush_closure_checkpoint(&mut self) -> eyre::Result<Option<ProjectionCheckpoint>> {
+        let current = self.closure_checkpoint.current()?;
+        let target = self
+            .requests
+            .values()
+            .filter(|locator| !self.request_is_closed(locator.intent_id))
+            .min_by_key(|locator| locator.block_number)
+            .map_or(self.latest_scanned_checkpoint, |locator| {
+                locator.before_request
+            });
+        if target.block_number <= current.block_number {
+            self.prepare_closed_discovery_retirements(current.block_number)?;
+            self.complete_discovery_retirements(current.block_number)?;
+            self.prune_closed_requests_through(current.block_number);
+            return Ok(None);
+        }
+        self.prepare_closed_discovery_retirements(target.block_number)?;
+        self.complete_discovery_retirements(current.block_number)?;
+        self.closure_checkpoint
+            .compare_and_advance_to(current, target)?;
+        self.complete_discovery_retirements(target.block_number)?;
+        self.prune_closed_requests_through(target.block_number);
+        Ok(Some(target))
+    }
+
+    fn prepare_closed_discovery_retirements(&self, closed_height: u64) -> eyre::Result<()> {
+        for (intent_id, locator) in &self.requests {
+            if locator.block_number > closed_height || !self.request_is_closed(*intent_id) {
+                continue;
+            }
+            let Some(job_id) = self.intent_jobs.get(intent_id) else {
+                continue;
+            };
+            let job = self.jobs.get(job_id).ok_or_else(|| {
+                eyre::eyre!("closed OCOMP job disappeared before spool retirement")
+            })?;
+            let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
+            let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
+                eyre::eyre!("closed OCOMP job references an unknown discovery spool")
+            })?;
+            let reference = DiscoveryOfferRefV1::from_spec(
+                self.chain_id,
+                self.genesis_hash,
+                job.record.generation,
+                &job.record.spec,
+                &poc_schema_limits(),
+            )?;
+            spool.prepare_retirement(&reference, closed_height)?;
+        }
+        Ok(())
+    }
+
+    fn complete_discovery_retirements(&self, closed_height: u64) -> eyre::Result<()> {
+        let mut aggregate = RetirementReportV1::default();
+        for spool in self.discovery_spools.values() {
+            let report = spool.complete_retirements_through(closed_height)?;
+            aggregate.completed = aggregate.completed.saturating_add(report.completed);
+            aggregate.waiting_for_checkpoint = aggregate
+                .waiting_for_checkpoint
+                .saturating_add(report.waiting_for_checkpoint);
+        }
+        record_discovery_retirement_report(aggregate);
+        Ok(())
+    }
+
+    fn prune_closed_requests_through(&mut self, closed_height: u64) {
+        let closed_intents = self
+            .requests
+            .iter()
+            .filter_map(|(intent_id, locator)| {
+                (locator.block_number <= closed_height && self.request_is_closed(*intent_id))
+                    .then_some(*intent_id)
+            })
+            .collect::<Vec<_>>();
+        for intent_id in closed_intents {
+            self.requests.remove(&intent_id);
+            self.materialized_requests.remove(&intent_id);
+            if let Some(job_id) = self.intent_jobs.remove(&intent_id) {
+                self.jobs.remove(&job_id);
+                self.acknowledged_exports.remove(&job_id);
+                self.pending_offers.remove(&job_id);
+            }
+        }
+        self.state.prune_terminal();
+    }
+
+    fn request_is_closed(&self, intent_id: B256) -> bool {
+        if !self.materialized_requests.contains(&intent_id) {
+            return false;
+        }
+        self.intent_jobs.get(&intent_id).is_none_or(|job_id| {
+            !matches!(
+                self.state.state(*job_id),
+                Some(
+                    EmbeddedJobStateV1::Computing
+                        | EmbeddedJobStateV1::WaitAtDeadline
+                        | EmbeddedJobStateV1::LocalReady
+                )
+            )
+        })
+    }
+
+    fn publish_closure_progress(&self, target: ProjectionCheckpoint) -> eyre::Result<()> {
+        let closed = self.closure_checkpoint.current()?;
+        if closed.block_number > target.block_number
+            || (closed.block_number == target.block_number
+                && closed.block_hash != target.block_hash)
+        {
+            bail!("OCOMP closure checkpoint is ahead of or conflicts with finalized target");
+        }
+        self.readiness.publish(if closed == target {
+            ProjectionStatus::Ready { checkpoint: closed }
+        } else {
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(closed),
+            }
+        });
         Ok(())
     }
 
@@ -927,7 +1415,12 @@ where
         Ok(())
     }
 
-    fn observe_completed(&mut self, job_id: B256, record: &OcompJobRecordV1) -> eyre::Result<()> {
+    fn observe_completed(
+        &mut self,
+        job_id: B256,
+        record: &OcompJobRecordV1,
+        frame: &FinalizedFrame,
+    ) -> eyre::Result<()> {
         if self
             .jobs
             .get(&job_id)
@@ -944,12 +1437,8 @@ where
             .completed_binding
             .as_ref()
             .ok_or_else(|| eyre::eyre!("completed OCOMP job lacks completed binding"))?;
-        let vote = canonical_vote_at(
-            &self.provider,
-            binding.quorum_height,
-            record,
-            binding.result_digest,
-        )?;
+        let vote =
+            canonical_vote_from_frame(frame, binding.quorum_height, record, binding.result_digest)?;
         let canonical = vote.result;
         let digest = canonical.result_digest(&poc_schema_limits())?;
         self.jobs
@@ -1270,14 +1759,12 @@ where
         }
     }
 
-    fn reconcile_materialization(&mut self, height: u64, hash: B256) -> eyre::Result<()> {
-        let block = self
-            .provider
-            .block_by_hash(hash)
-            .wrap_err("load NOD materialization trigger block")?
-            .ok_or_else(|| eyre::eyre!("NOD materialization trigger block is unavailable"))?;
+    fn reconcile_materialization(&mut self, frame: &FinalizedFrame) -> eyre::Result<()> {
+        let identity = frame.identity();
+        let height = identity.number;
+        let hash = identity.hash;
         let Some(proposer) =
-            finalized_materialization_proposer(height, block.body().transactions())?
+            finalized_materialization_proposer(height, frame.block().body().transactions())?
         else {
             return Ok(());
         };
@@ -1368,17 +1855,13 @@ where
     /// Ticks the payout sender owned by the embedded Supervisor.
     /// One tick at a time: the submitter journals its own progress, so a later
     /// block simply resumes where this one stopped.
-    fn drive_payout(&mut self, head: B256) {
+    fn drive_payout(&mut self, timestamp: u64) {
         if self.payout_active {
             return;
         }
         // The chain's own clock, not the host's: a localnet can run a shifted
         // genesis, and a day the host has not reached yet still owes its payout.
-        let Ok(Some(block)) = self.provider.block_by_hash(head) else {
-            return;
-        };
-        let mut day =
-            outbe_primitives::time::worldwide_day_from_timestamp(block.header().timestamp());
+        let mut day = outbe_primitives::time::worldwide_day_from_timestamp(timestamp);
         let mut days = Vec::with_capacity(PAYOUT_LOOKBACK_DAYS as usize + 1);
         for _ in 0..=PAYOUT_LOOKBACK_DAYS {
             days.push(day);
@@ -1458,65 +1941,6 @@ where
         Ok(())
     }
 
-    fn publish_readiness(&self, finalized_height: u64, finalized_hash: B256) -> eyre::Result<()> {
-        if self.policy != EmbeddedNodePolicyV1::FullNode || self.fatal.is_some() {
-            return Ok(());
-        }
-        let allowed = self.state.progress_limit(finalized_height);
-        let hash = if allowed == finalized_height {
-            finalized_hash
-        } else {
-            self.provider
-                .block_hash(allowed)
-                .wrap_err("load OCOMP readiness checkpoint hash")?
-                .ok_or_else(|| eyre::eyre!("OCOMP readiness checkpoint block is unavailable"))?
-        };
-        let checkpoint = ProjectionCheckpoint {
-            block_number: allowed,
-            block_hash: hash,
-        };
-        self.readiness.publish(if allowed == finalized_height {
-            ProjectionStatus::Ready { checkpoint }
-        } else {
-            ProjectionStatus::CatchingUp {
-                checkpoint: Some(checkpoint),
-            }
-        });
-        Ok(())
-    }
-
-    fn advance_checkpoint(&mut self) -> eyre::Result<Option<OcompExExCheckpointV1>> {
-        if self.fatal.is_some()
-            || self.state.live_job_count() != 0
-            || self.scanned_height == 0
-            || !all_requests_materialized(
-                self.requests.keys().copied(),
-                &self.materialized_requests,
-            )
-        {
-            return Ok(None);
-        }
-        let next = OcompExExCheckpointV1 {
-            block_number: self.scanned_height,
-            block_hash: self.scanned_hash,
-        };
-        if self.checkpoint.load() == Some(next) {
-            self.prune_checkpointed_projection();
-            return Ok(None);
-        }
-        self.checkpoint.persist(next)?;
-        self.prune_checkpointed_projection();
-        Ok(Some(next))
-    }
-
-    fn prune_checkpointed_projection(&mut self) {
-        debug_assert_eq!(self.state.live_job_count(), 0);
-        self.requests.clear();
-        self.materialized_requests.clear();
-        self.jobs.clear();
-        self.state.prune_terminal();
-    }
-
     fn persist_and_publish_mismatch(
         &mut self,
         job_id: B256,
@@ -1557,6 +1981,7 @@ where
                 })
         };
         self.fatal = Some(failure.clone());
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         self.readiness.publish(ProjectionStatus::Fatal {
             checkpoint,
             error: failure.clone(),
@@ -1564,6 +1989,113 @@ where
         let _ = self.exit.send(OcompExExExitV1 { failure });
         Ok(())
     }
+
+    fn latch_external_failure(&mut self, failure: ProjectionFailure) {
+        if self.fatal.is_some() {
+            return;
+        }
+        self.fatal = Some(failure.clone());
+        gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
+        self.readiness.publish(ProjectionStatus::Fatal {
+            checkpoint: Some(ProjectionCheckpoint {
+                block_number: self.scanned_height,
+                block_hash: self.scanned_hash,
+            }),
+            error: failure.clone(),
+        });
+        let _ = self.exit.send(OcompExExExitV1 { failure });
+    }
+}
+
+async fn projection_runtime_failure(
+    receiver: &tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+    unavailable_since: &mut Option<(u64, tokio::time::Instant)>,
+    recovery: &ProjectionRuntimeRecoveryHandle,
+    recovery_task: &mut Option<tokio::task::JoinHandle<ProjectionRuntimeRecoveryV1>>,
+) -> Option<ProjectionFailure> {
+    if recovery_task
+        .as_ref()
+        .is_some_and(tokio::task::JoinHandle::is_finished)
+    {
+        match recovery_task.take().expect("finished task exists").await {
+            Ok(
+                ProjectionRuntimeRecoveryV1::Recovered | ProjectionRuntimeRecoveryV1::Unavailable,
+            ) => {}
+            Ok(ProjectionRuntimeRecoveryV1::Fatal(failure)) => return Some(failure),
+            Err(error) => {
+                return Some(ProjectionFailure::new(
+                    ProjectionFailureClass::Other,
+                    format!("offchain runtime-body recovery worker failed: {error}"),
+                ));
+            }
+        }
+    }
+    match receiver.borrow().clone() {
+        None => {
+            *unavailable_since = None;
+            None
+        }
+        Some(RuntimeBodyFailure::Fatal(failure)) => Some(failure),
+        Some(RuntimeBodyFailure::Unavailable { generation, since }) => {
+            let since = tokio::time::Instant::from_std(since);
+            *unavailable_since = Some((generation, since));
+            if tokio::time::Instant::now() >= since + PROJECTION_RECOVERY_DEADLINE {
+                return Some(projection_runtime_deadline_failure());
+            }
+            if recovery_task.is_none() {
+                let recovery = recovery.clone();
+                *recovery_task = Some(tokio::task::spawn_blocking(move || {
+                    recovery.reconcile(generation)
+                }));
+            }
+            None
+        }
+    }
+}
+
+async fn wait_for_optional_deadline(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
+fn projection_runtime_deadline_failure() -> ProjectionFailure {
+    ProjectionFailure::new(
+        ProjectionFailureClass::MongoReconnectDeadline,
+        "offchain runtime-body storage remained unavailable past the recovery deadline",
+    )
+}
+
+fn consume_projection_runtime_deadline(
+    receiver: &tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+    state: &mut Option<(u64, tokio::time::Instant)>,
+) -> Option<ProjectionFailure> {
+    let (expected_generation, since) = state.take()?;
+    if tokio::time::Instant::now() < since + PROJECTION_RECOVERY_DEADLINE {
+        return None;
+    }
+    matches!(
+        receiver.borrow().clone(),
+        Some(RuntimeBodyFailure::Unavailable { generation, .. })
+            if generation == expected_generation
+    )
+    .then(projection_runtime_deadline_failure)
+}
+
+fn projection_runtime_watch_closed_failure() -> ProjectionFailure {
+    ProjectionFailure::new(
+        ProjectionFailureClass::ReadinessChannelClosed,
+        "offchain runtime-body failure channel closed",
+    )
+}
+
+fn projection_task_failure(error: eyre::Report) -> ProjectionFailure {
+    let class = projection_frame_failure_class(&error);
+    ProjectionFailure::new(
+        class,
+        format!("unified durable projection failed: {error:#}"),
+    )
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1583,6 +2115,7 @@ fn classify_exex_notification<T, E>(
     }
 }
 
+#[cfg(test)]
 fn all_requests_materialized(
     request_ids: impl IntoIterator<Item = B256>,
     materialized_requests: &BTreeSet<B256>,
@@ -1596,6 +2129,7 @@ fn discovery_record(
     locator: RequestLocatorV1,
     record: &OcompJobRecordV1,
     job_id: B256,
+    generation: u64,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> eyre::Result<DiscoveryRecord> {
     let finalized = record
@@ -1617,35 +2151,20 @@ fn discovery_record(
     };
     spec.encode_body(limits)?;
     Ok(DiscoveryRecord {
-        generation: locator.block_number.max(1),
+        generation,
         cursor: locator.block_number,
         spec,
     })
 }
 
-fn canonical_vote_at<P>(
-    provider: &P,
+fn canonical_vote_from_frame(
+    frame: &FinalizedFrame,
     quorum_height: u64,
     record: &OcompJobRecordV1,
     expected_digest: B256,
-) -> eyre::Result<ResultVoteV1>
-where
-    P: BlockHashReader + BlockReader + ReceiptProvider<Receipt = OutbeReceipt>,
-{
-    let hash = provider
-        .block_hash(quorum_height)
-        .wrap_err("load q-forming OCOMP block hash")?
-        .ok_or_else(|| eyre::eyre!("q-forming OCOMP block is unavailable"))?;
-    let block = provider
-        .block_by_hash(hash)
-        .wrap_err("load q-forming OCOMP block")?
-        .ok_or_else(|| eyre::eyre!("q-forming OCOMP block body is unavailable"))?;
-    let receipts = provider
-        .receipts_by_block(hash.into())
-        .wrap_err("load q-forming OCOMP receipts")?
-        .ok_or_else(|| eyre::eyre!("q-forming OCOMP receipts are unavailable"))?;
-    if block.body().transactions().len() != receipts.len() {
-        bail!("q-forming OCOMP transaction/receipt count mismatch");
+) -> eyre::Result<ResultVoteV1> {
+    if frame.identity().number != quorum_height {
+        bail!("q-forming OCOMP vote is not in the current finalized frame");
     }
     let limits = poc_schema_limits();
     let intent_id = record.intent.intent_id(&limits)?;
@@ -1654,7 +2173,7 @@ where
         .as_ref()
         .ok_or_else(|| eyre::eyre!("completed OCOMP job is not finalized"))?;
     let mut matched = None;
-    for (transaction, receipt) in block.body().transactions().iter().zip(receipts) {
+    for (transaction, receipt) in frame.block().body().transactions().zip(frame.receipts()) {
         if !receipt.status() {
             continue;
         }
@@ -1703,6 +2222,7 @@ fn same_locator(left: RequestLocatorV1, right: RequestLocatorV1) -> bool {
         && left.block_number == right.block_number
         && left.block_hash == right.block_hash
         && left.state_root == right.state_root
+        && left.before_request == right.before_request
 }
 
 fn persist_fatal_evidence(
@@ -1803,11 +2323,14 @@ fn persist_local_failure_evidence(root: &Path, job_id: B256, detail: &str) -> ey
     Ok(())
 }
 
-fn authenticated_finalized_proposer(
-    transactions: &[impl reth_primitives_traits::SignedTransaction],
-) -> eyre::Result<Address> {
+fn authenticated_finalized_proposer<'a, T>(
+    mut transactions: impl Iterator<Item = &'a T>,
+) -> eyre::Result<Address>
+where
+    T: reth_primitives_traits::SignedTransaction + 'a,
+{
     let transaction = transactions
-        .first()
+        .next()
         .ok_or_else(|| eyre::eyre!("finalized block has no proposer-signed system transaction"))?;
 
     transaction
@@ -1815,10 +2338,13 @@ fn authenticated_finalized_proposer(
         .wrap_err("recover finalized block proposer from system transaction")
 }
 
-fn finalized_materialization_proposer(
+fn finalized_materialization_proposer<'a, T>(
     height: u64,
-    transactions: &[impl reth_primitives_traits::SignedTransaction],
-) -> eyre::Result<Option<Address>> {
+    transactions: impl Iterator<Item = &'a T>,
+) -> eyre::Result<Option<Address>>
+where
+    T: reth_primitives_traits::SignedTransaction + 'a,
+{
     if height == 0 {
         return Ok(None);
     }
@@ -1871,11 +2397,29 @@ impl StorageReader for OcompExExStateReaderV1<'_> {
 mod tests {
     use super::*;
 
-    fn checkpoint_at(block_number: u64, byte: u8) -> OcompExExCheckpointV1 {
-        OcompExExCheckpointV1 {
-            block_number,
-            block_hash: B256::repeat_byte(byte),
-        }
+    #[test]
+    fn cleared_or_replaced_outage_generation_cannot_trigger_an_old_deadline() {
+        let since = tokio::time::Instant::now() - PROJECTION_RECOVERY_DEADLINE;
+        let std_since = since.into_std();
+        let (sender, receiver) =
+            tokio::sync::watch::channel(Some(RuntimeBodyFailure::Unavailable {
+                generation: 7,
+                since: std_since,
+            }));
+        assert!(consume_projection_runtime_deadline(&receiver, &mut Some((7, since)),).is_some());
+
+        sender.send_replace(None);
+        let mut cleared_state = Some((7, since));
+        assert!(consume_projection_runtime_deadline(&receiver, &mut cleared_state).is_none());
+        assert!(cleared_state.is_none());
+
+        sender.send_replace(Some(RuntimeBodyFailure::Unavailable {
+            generation: 8,
+            since: std_since,
+        }));
+        let mut replaced_state = Some((7, since));
+        assert!(consume_projection_runtime_deadline(&receiver, &mut replaced_state).is_none());
+        assert!(replaced_state.is_none());
     }
 
     #[test]
@@ -2076,68 +2620,6 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn canonical_checkpoint_resumes_in_place() {
-        let checkpoint = checkpoint_at(139, 0xaa);
-        assert_eq!(
-            classify_checkpoint_recovery(checkpoint, Some(checkpoint.block_hash), 139, None)
-                .unwrap(),
-            CheckpointRecoveryV1::Resume
-        );
-    }
-
-    /// The watermark is fsynced independently of reth's block persistence, so an
-    /// unclean shutdown can leave it above the last written block. Re-scan from
-    /// the tip instead of refusing to start.
-    #[test]
-    fn checkpoint_above_the_canonical_tip_rewinds_and_rescans() {
-        let tip_hash = B256::repeat_byte(0xbb);
-        assert_eq!(
-            classify_checkpoint_recovery(checkpoint_at(139, 0xaa), None, 137, Some(tip_hash))
-                .unwrap(),
-            CheckpointRecoveryV1::RewindTo(OcompExExCheckpointV1 {
-                block_number: 137,
-                block_hash: tip_hash,
-            })
-        );
-    }
-
-    /// A hole at or below the tip is not a persistence lag - the history this
-    /// node claims to have is inconsistent, so it must not start.
-    #[test]
-    fn checkpoint_missing_below_the_canonical_tip_fails_closed() {
-        let error = classify_checkpoint_recovery(
-            checkpoint_at(100, 0xaa),
-            None,
-            139,
-            Some(B256::repeat_byte(0xbb)),
-        )
-        .expect_err("a gap below the tip is not recoverable");
-        assert!(error.to_string().contains("at or below canonical tip"));
-    }
-
-    /// A different chain at the same height is divergence, never a rewind.
-    #[test]
-    fn checkpoint_hash_conflict_fails_closed() {
-        let error = classify_checkpoint_recovery(
-            checkpoint_at(139, 0xaa),
-            Some(B256::repeat_byte(0xcc)),
-            139,
-            None,
-        )
-        .expect_err("a conflicting canonical hash is not recoverable");
-        assert!(error.to_string().contains("conflicts with canonical"));
-    }
-
-    #[test]
-    fn unavailable_canonical_tip_fails_closed() {
-        let error = classify_checkpoint_recovery(checkpoint_at(139, 0xaa), None, 137, None)
-            .expect_err("a missing tip hash is not recoverable");
-        assert!(error
-            .to_string()
-            .contains("canonical tip 137 is unavailable"));
-    }
-
     fn materialization_head(
         last_progress_height: u64,
     ) -> outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1 {
@@ -2175,7 +2657,8 @@ mod tests {
             .sign_unsigned(unsigned)
             .expect("signed system transaction");
 
-        let proposer = authenticated_finalized_proposer(&[signed])
+        let transactions = [signed];
+        let proposer = authenticated_finalized_proposer(transactions.iter())
             .expect("recover authenticated finalized proposer");
         assert_eq!(proposer, signer.address());
         assert_ne!(
@@ -2198,7 +2681,7 @@ mod tests {
     fn genesis_without_system_transactions_has_no_materialization_proposer() {
         let transactions: Vec<outbe_primitives::OutbeTxEnvelope> = Vec::new();
         assert_eq!(
-            finalized_materialization_proposer(0, &transactions)
+            finalized_materialization_proposer(0, transactions.iter())
                 .expect("genesis has no materialization proposer"),
             None
         );
@@ -2290,78 +2773,6 @@ mod tests {
         assert!(attempts.is_empty());
     }
 
-    #[test]
-    fn loaded_checkpoint_waits_for_provider_finality_before_entering_running() {
-        let checkpoint_hash = B256::repeat_byte(0x18);
-
-        assert_eq!(
-            classify_finalized_head(
-                FinalizedHeadPhaseV1::StartupRecovery,
-                18,
-                checkpoint_hash,
-                17,
-                B256::repeat_byte(0x17),
-            )
-            .expect("startup lag is recoverable"),
-            FinalizedHeadActionV1::WaitForRecovery
-        );
-        assert_eq!(
-            classify_finalized_head(
-                FinalizedHeadPhaseV1::StartupRecovery,
-                18,
-                checkpoint_hash,
-                18,
-                checkpoint_hash,
-            )
-            .expect("exact catch-up enters strict runtime"),
-            FinalizedHeadActionV1::EnterRunning
-        );
-    }
-
-    #[test]
-    fn loaded_checkpoint_does_not_publish_ready_before_provider_catches_up() {
-        assert_eq!(
-            initial_projection_status(
-                Some(OcompExExCheckpointV1 {
-                    block_number: 18,
-                    block_hash: B256::repeat_byte(0x18),
-                }),
-                B256::repeat_byte(0x01),
-            ),
-            ProjectionStatus::CatchingUp { checkpoint: None }
-        );
-    }
-
-    #[test]
-    fn checkpoint_hash_conflict_and_post_recovery_regression_remain_fatal() {
-        let checkpoint_hash = B256::repeat_byte(0x18);
-        let conflict = classify_finalized_head(
-            FinalizedHeadPhaseV1::StartupRecovery,
-            18,
-            checkpoint_hash,
-            18,
-            B256::repeat_byte(0xff),
-        )
-        .expect_err("same-height hash conflict must remain fatal");
-        assert_eq!(
-            conflict,
-            "OCOMP finalized head changed hash at the scanned height"
-        );
-
-        let regression = classify_finalized_head(
-            FinalizedHeadPhaseV1::Running,
-            18,
-            checkpoint_hash,
-            17,
-            B256::repeat_byte(0x17),
-        )
-        .expect_err("runtime regression must remain fatal");
-        assert_eq!(
-            regression,
-            "OCOMP finalized head regressed behind the scanned height"
-        );
-    }
-
     #[tokio::test]
     async fn fatal_handoff_keeps_exex_alive_until_node_teardown() {
         assert!(
@@ -2388,6 +2799,30 @@ mod tests {
     }
 
     #[test]
+    fn finalized_reader_lag_tracks_scan_and_open_job_closure_independently() {
+        assert_eq!(finalized_reader_lags(1_000, 900, 700), (100, 300));
+        assert_eq!(finalized_reader_lags(900, 1_000, 1_000), (0, 0));
+    }
+
+    #[test]
+    fn pending_control_offers_are_replayed_until_the_ack_removes_them() {
+        let offer = DiscoveryOfferRefV1 {
+            version: 1,
+            chain_id: 7,
+            genesis_hash: B256::repeat_byte(0x11),
+            observation_id: B256::repeat_byte(0x22),
+            generation: 3,
+            discovery_record_digest: B256::repeat_byte(0x33),
+        };
+        let mut pending = BTreeMap::from([(B256::repeat_byte(0x44), offer.clone())]);
+
+        assert_eq!(pending_offer_notifications(&pending), vec![offer.clone()]);
+        assert_eq!(pending_offer_notifications(&pending), vec![offer]);
+        pending.clear();
+        assert!(pending_offer_notifications(&pending).is_empty());
+    }
+
+    #[test]
     fn notification_error_closes_the_auxiliary_stream() {
         assert_eq!(
             classify_exex_notification::<(), _>(Some(Err("ce parent mismatch"))),
@@ -2401,6 +2836,13 @@ mod tests {
             classify_exex_notification::<_, &str>(Some(Ok(()))),
             ExExNotificationDispositionV1::Continue
         );
+    }
+
+    #[test]
+    fn deterministic_projection_task_error_is_not_reported_as_mongo_timeout() {
+        let failure = projection_task_failure(eyre::eyre!("malformed finalized frame"));
+        assert_eq!(failure.class, ProjectionFailureClass::Other);
+        assert!(failure.message.contains("malformed finalized frame"));
     }
 
     #[test]
