@@ -1060,7 +1060,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   // --- Settlement + Promis (outbe IntexFactory, signed) ----------------------
   server.tool(
     "auction_bid_settle",
-    "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is minted later via " +
+    "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via " +
       "intex_promis_mine). Defaults to your own wallet; pass holder only if that holder authorized you via " +
       "auction_settler_set. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
@@ -1198,7 +1198,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as { promisLoadMinor: bigint };
       const promisAmount = sd.promisLoadMinor * amt;
-      // seq = this holder's prior mints for the series (feeds the PoW preimage).
+      // seq = this holder's prior mines for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
         event: PROMIS_MINED_EVENT,

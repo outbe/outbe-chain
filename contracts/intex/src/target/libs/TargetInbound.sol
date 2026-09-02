@@ -9,18 +9,13 @@ import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
-import {
-    TargetRouterStorage,
-    PendingBidsRelay,
-    PendingIssuanceMint,
-    PendingProceedsRoute
-} from "../TargetRouterStorage.sol";
+import {TargetRouterStorage, PendingBidsRelay, PendingIssuance, PendingProceedsRoute} from "../TargetRouterStorage.sol";
 
 /// @dev Self-call shims the router exposes for per-item isolation; called on `address(this)` from the
 ///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
-    function mintIssuanceOne(bytes14 seriesId, address to, uint256 quantity) external;
+    function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
     function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
 }
@@ -198,7 +193,7 @@ library TargetInbound {
         }
     }
 
-    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and mint each winner once.
+    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and issue to each winner once.
     /// @dev A repeated chunk, a chunk whose header disagrees with the day's run, and a series whose stored
     ///      params differ from the chunk's are acknowledged without effect (`InboundMessageIgnored`); the last
     ///      applied chunk emits `IssuanceCompleted`.
@@ -255,7 +250,7 @@ library TargetInbound {
         if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
     }
 
-    /// @dev Create the series if this chain has not seen it and mint its winners, each at most once.
+    /// @dev Create the series if this chain has not seen it and issue to its winners, each at most once.
     function _applyIssuance(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -291,7 +286,7 @@ library TargetInbound {
             uint256 quantity = payload.quantities[i];
             if (quantity == 0) continue;
             address recipient = payload.recipients[i];
-            // A quantity the NFT can never mint would park an unflushable entry; acknowledge it and leave
+            // A quantity the NFT can never issue would park an unflushable entry; acknowledge it and leave
             // the winner unissued, so the day's other chunks can still carry a corrected allocation.
             if (quantity > type(uint16).max) {
                 _ignore(
@@ -311,16 +306,16 @@ library TargetInbound {
                 );
                 continue;
             }
-            // Marked before the mint: a parked mint is still this winner's one allocation.
+            // Marked before the issue: a parked issuance is still this winner's one allocation.
             $.issued[payload.seriesId][recipient] = true;
-            // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
-            try ITargetRouterShims(address(this)).mintIssuanceOne(payload.seriesId, recipient, quantity) {}
+            // Per-recipient self-call: a reverting receiver hook parks only that issuance, not the whole batch.
+            try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, quantity) {}
             catch (bytes memory reason) {
-                uint256 idx = $.nextPendingIssuanceMintIdx++;
-                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                uint256 idx = $.nextPendingIssuanceIdx++;
+                $.pendingIssuances[idx] = PendingIssuance({
                     seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
                 });
-                emit ITargetRouter.IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+                emit ITargetRouter.IssuanceDeferred(idx, payload.seriesId, recipient, reason);
             }
         }
 

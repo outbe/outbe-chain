@@ -268,32 +268,7 @@
     },
     {
       "type": "event",
-      "name": "IssuanceInstructionsReceived",
-      "inputs": [
-        {
-          "name": "srcChainId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "recipientsCount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IssuanceMintDeferred",
+      "name": "IssuanceDeferred",
       "inputs": [
         {
           "name": "idx",
@@ -324,7 +299,7 @@
     },
     {
       "type": "event",
-      "name": "IssuanceMintFlushed",
+      "name": "IssuanceFlushed",
       "inputs": [
         {
           "name": "idx",
@@ -337,6 +312,31 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceInstructionsReceived",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "recipientsCount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -605,7 +605,7 @@
     },
     {
       "type": "error",
-      "name": "NoSuchPendingIssuanceMint",
+      "name": "NoSuchPendingIssuance",
       "inputs": [
         {
           "name": "idx",

@@ -462,6 +462,29 @@
     },
     {
       "type": "function",
+      "name": "issue",
+      "inputs": [
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "quantity",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "issuedTokenId",
       "inputs": [
         {
@@ -501,29 +524,6 @@
       "type": "function",
       "name": "markQualified",
       "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "mint",
-      "inputs": [
-        {
-          "name": "to",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "quantity",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
         {
           "name": "seriesId",
           "type": "bytes14",

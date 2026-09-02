@@ -60,7 +60,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -90,7 +90,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
+        nft.issue(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();

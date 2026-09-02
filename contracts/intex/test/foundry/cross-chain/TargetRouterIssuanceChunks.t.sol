@@ -80,7 +80,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     // --- repeats ---
 
-    function test_ARepeatedChunkMintsNothingAndIsAcknowledged() public {
+    function test_ARepeatedChunkIssuesNothingAndIsAcknowledged() public {
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
         assertEq(_balance(USD, alice), 7, "first delivery mints");
 
@@ -182,7 +182,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         assertFalse(router.issuanceChunkApplied(DAY, 0), "a corrected resend can still land");
     }
 
-    function test_AnUnmintableQuantityIsAckedAndTheAllocationStaysOpen() public {
+    function test_AnUnissuableQuantityIsAckedAndTheAllocationStaysOpen() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, alice, uint256(type(uint16).max) + 1);
         vm.recordLogs();
         _deliver(0, 2, IssuanceBatchLib.one(p));
@@ -211,7 +211,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         assertFalse(intex.seriesExists(USD), "nothing of the chunk applied");
     }
 
-    function test_ASeriesSplitInsideOneChunkMintsBothPieces() public {
+    function test_ASeriesSplitInsideOneChunkIssuesBothPieces() public {
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
         chunk[0] = _series(USD, alice, 7);
         chunk[1] = _series(USD, bob, 3); // same terms, different winners - a legitimate split

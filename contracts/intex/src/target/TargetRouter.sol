@@ -17,12 +17,7 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
-import {
-    TargetRouterStorage,
-    PendingBidsRelay,
-    PendingIssuanceMint,
-    PendingProceedsRoute
-} from "./TargetRouterStorage.sol";
+import {TargetRouterStorage, PendingBidsRelay, PendingIssuance, PendingProceedsRoute} from "./TargetRouterStorage.sol";
 
 /// @title TargetRouter
 /// @author Outbe
@@ -121,19 +116,19 @@ contract TargetRouter is
         return _ts().nextPendingBidsRelayIdx;
     }
 
-    /// @notice Parked issuance mint at `idx`.
-    function pendingIssuanceMints(uint256 idx)
+    /// @notice Parked issuance at `idx`.
+    function pendingIssuances(uint256 idx)
         external
         view
         returns (bytes14 seriesId, address recipient, uint256 quantity, bool exists, bool done)
     {
-        PendingIssuanceMint storage p = _ts().pendingIssuanceMints[idx];
+        PendingIssuance storage p = _ts().pendingIssuances[idx];
         return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
     }
 
-    /// @notice Next index to assign in `pendingIssuanceMints`.
-    function nextPendingIssuanceMintIdx() external view returns (uint256) {
-        return _ts().nextPendingIssuanceMintIdx;
+    /// @notice Next index to assign in `pendingIssuances`.
+    function nextPendingIssuanceIdx() external view returns (uint256) {
+        return _ts().nextPendingIssuanceIdx;
     }
 
     /// @notice Whether `recipient` has already been issued its allocation of `seriesId` here.
@@ -335,20 +330,20 @@ contract TargetRouter is
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
     }
 
-    /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
-    function mintIssuanceOne(bytes14 seriesId, address to, uint256 quantity) external {
+    /// @notice Self-call shim around a single issuance; isolates a reverting recipient hook.
+    function issueOne(bytes14 seriesId, address to, uint256 quantity) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _ts().intex.mint(to, quantity, seriesId);
+        _ts().intex.issue(to, quantity, seriesId);
     }
 
-    /// @notice Permissionless retry of a previously deferred issuance mint.
-    function flushPendingIssuanceMint(uint256 idx) external nonReentrant {
-        PendingIssuanceMint storage p = _ts().pendingIssuanceMints[idx];
-        if (!p.exists) revert NoSuchPendingIssuanceMint(idx);
+    /// @notice Permissionless retry of a previously deferred issuance.
+    function flushPendingIssuance(uint256 idx) external nonReentrant {
+        PendingIssuance storage p = _ts().pendingIssuances[idx];
+        if (!p.exists) revert NoSuchPendingIssuance(idx);
         if (p.done) revert AlreadyFlushed(idx);
         p.done = true;
-        _ts().intex.mint(p.recipient, p.quantity, p.seriesId);
-        emit IssuanceMintFlushed(idx, p.seriesId);
+        _ts().intex.issue(p.recipient, p.quantity, p.seriesId);
+        emit IssuanceFlushed(idx, p.seriesId);
     }
 
     /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.

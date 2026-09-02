@@ -28,16 +28,16 @@ pub fn dispatch(
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
-            mintGemPosition(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_gem_position(
+            issueGemPosition(c) => mutate(c, caller, |sender, c| {
+                runtime::issue_gem_position(
                     &storage,
                     sender,
                     SeriesId::from(c.sourceIntexId),
                     c.amount,
                 )
             }),
-            mintMerchantGem(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
+            issueGem(c) => mutate(c, caller, |sender, c| {
+                runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset)

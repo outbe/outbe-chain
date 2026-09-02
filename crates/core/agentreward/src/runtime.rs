@@ -87,7 +87,7 @@ impl AgentRewardContract<'_> {
     }
 
     /// Claims `amount` of the pool's balance as a Gem, or all of it when `amount`
-    /// is zero. Mints the Gem, burns the native COEN that backed it and clears
+    /// is zero. Issues the Gem, burns the native COEN that backed it and clears
     /// what was converted. The Gem load is not that COEN - it becomes Promis at
     /// mining time - so leaving the backing in place would let one emission exist
     /// twice.
@@ -134,7 +134,7 @@ impl AgentRewardContract<'_> {
             RewardPool::Waa => GemTypes::Wallet,
             RewardPool::Sra => GemTypes::Sra,
         };
-        let gem_id = outbe_gemfactory::api::mint_gem(
+        let gem_id = outbe_gemfactory::api::issue_gem(
             &self.storage,
             address,
             gem_type,
@@ -223,7 +223,7 @@ impl AgentRewardContract<'_> {
     }
 }
 
-/// The COEN price an agent reward Gem mints at: the newest closed UTC day's
+/// The COEN price an agent reward Gem is issued at: the newest closed UTC day's
 /// VWAP, falling back to the live quote. The agent picks the moment it claims,
 /// so a price frozen on the day of accrual would be a look-back option.
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {

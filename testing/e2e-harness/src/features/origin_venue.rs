@@ -590,8 +590,8 @@ fn auction_clears(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-#[then("the cleared day mints the Intex on every chain it issued to")]
-fn issuance_mints_intex(world: &mut World) {
+#[then("the cleared day issues the Intex on every chain it reached")]
+fn cleared_day_issues_intex(world: &mut World) {
     let bidders = world.state.auction_bidders.clone();
     let home = world.rpc.url(world.validators.primary_port());
     let worldwide_day = settled_day(world);
@@ -604,12 +604,12 @@ fn issuance_mints_intex(world: &mut World) {
     // The day issues to every chain it opened on, so every chain has to show the
     // series and the units its own bidders won.
     for side in venue_sides(world) {
-        mints_landed_on(&side, &bidders, worldwide_day);
+        issuances_landed_on(&side, &bidders, worldwide_day);
     }
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
     let url = side.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {
@@ -654,8 +654,8 @@ fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day:
         .sum();
     assert!(
         !minted.is_zero(),
-        "series {series} exists on {url} but no bidder holds any Intex ({} mints were deferred)",
-        venue_probes::deferred_mints(&url, side.target_router)
+        "series {series} exists on {url} but no bidder holds any Intex ({} issuances were deferred)",
+        venue_probes::deferred_issuances(&url, side.target_router)
     );
 }
 

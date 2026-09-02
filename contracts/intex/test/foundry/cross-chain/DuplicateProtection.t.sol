@@ -58,7 +58,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         intexDst.grantRole(intexDst.RELAYER_ROLE(), address(batchDst));
 
         // Mint on the source so the caller (an EOA that can receive/hold ERC1155) has a balance to bridge.
-        intexSrc.mint(sender, 1, SERIES_ID);
+        intexSrc.issue(sender, 1, SERIES_ID);
     }
 
     function _seedSeries(IntexNFT1155 intex) internal {
@@ -102,7 +102,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         assertEq(intexDst.balanceOf(recipient, TOKEN_ID), 1, "first send minted");
 
         // Mint another unit and send to a different recipient - a fresh payload/receiveId, not a duplicate.
-        intexSrc.mint(sender, 1, SERIES_ID);
+        intexSrc.issue(sender, 1, SERIES_ID);
         vm.prank(sender);
         batchSrc.batchSend(_batchSendParam(other));
         assertEq(intexDst.balanceOf(other, TOKEN_ID), 1, "second distinct send minted");
