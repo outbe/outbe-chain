@@ -31,7 +31,6 @@ pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;
-pub mod zk_claim;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use client::{

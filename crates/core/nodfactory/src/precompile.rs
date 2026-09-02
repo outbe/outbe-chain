@@ -19,7 +19,9 @@ sol!(
 
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&INodFactory::mineGratisCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
+        Some(&INodFactory::mineGratisCall::SELECTOR) => {
+            outbe_primitives::storage::gas::ZK_VERIFY_GAS
+        }
         _ => PRECOMPILE_BASE_GAS,
     }
 }

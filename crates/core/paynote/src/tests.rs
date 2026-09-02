@@ -16,6 +16,9 @@ use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
+use outbe_zk_canonical::paynote::{
+    COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
+};
 use outbe_zk_canonical::CircuitId as _;
 
 use crate::hash::{empty_subtrees, field_to_be_bytes, Field};
@@ -287,9 +290,10 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
     // `PAYNOTE_PROOF_WORDS`.
     assert_eq!(
         proof.len(),
-        outbe_zkproof::PAYNOTE_COMBINED_LEN,
+        PAYNOTE_COMBINED_LEN,
         "combined proof length must match the pinned frozen wire"
     );
+    assert_eq!(proof.len(), 4 + (9 + PAYNOTE_PROOF_WORDS) * 32);
     assert!(
         public.change_commitment.is_zero(),
         "full spend has no change"
@@ -383,7 +387,7 @@ fn full_width_u256_spend_round_trip() {
     let note_amount = (U256::from(1) << 200) + U256::from(100);
     let spend_amount = (U256::from(1) << 199) + U256::from(40);
     let fixture = note_and_spend_proof(CHAIN_ID, USDC, SPENDER, note_amount, spend_amount);
-    assert_eq!(fixture.proof.len(), outbe_zkproof::PAYNOTE_COMBINED_LEN);
+    assert_eq!(fixture.proof.len(), PAYNOTE_COMBINED_LEN);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     seed_pool(&mut provider, CHAIN_ID, &[fixture.commitment]);
@@ -396,25 +400,6 @@ fn full_width_u256_spend_round_trip() {
             .read(&b256(fixture.public.change_commitment))
             .unwrap());
     });
-}
-
-#[test]
-fn paynote_decoder_rejects_non_canonical_u256_limbs() {
-    let (proof, _, _) = prove_spend(CHAIN_ID, USDC, 100, 40);
-
-    let mut low_overflow = proof.clone();
-    low_overflow[4 + 5 * 32 + 16] = 1;
-    assert!(matches!(
-        outbe_zkproof::decode_paynote_public_inputs(&low_overflow),
-        Err(outbe_zkproof::ZkProofError::NonCanonicalPublicInput(5))
-    ));
-
-    let mut top_overflow = proof;
-    top_overflow[4 + 7 * 32 + 29] = 1;
-    assert!(matches!(
-        outbe_zkproof::decode_paynote_public_inputs(&top_overflow),
-        Err(outbe_zkproof::ZkProofError::NonCanonicalPublicInput(7))
-    ));
 }
 
 #[test]

@@ -789,7 +789,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
 fn mine_gratis_charges_zk_verification_base_gas() {
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
-        outbe_zkproof::constants::ZK_VERIFY_GAS
+        outbe_primitives::storage::gas::ZK_VERIFY_GAS
     );
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::materializationHeadCall::SELECTOR),

@@ -363,7 +363,7 @@ fn db_with_borrower_on(opcode: u8, mut db: CacheDB<EmptyDB>) -> CacheDB<EmptyDB>
 
 #[test]
 fn emit_burn_partial_mint_full_mint_and_replay() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
@@ -615,7 +615,7 @@ fn chained_db(mut db: CacheDB<EmptyDB>, outcome: ResultAndState) -> CacheDB<Empt
 
 #[test]
 fn root_evicted_by_32_later_appends_is_stale() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
@@ -671,7 +671,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
 
 #[test]
 fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let mut tree = ReferenceTree::new();

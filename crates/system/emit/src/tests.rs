@@ -15,6 +15,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
 use outbe_zk_canonical::u256;
 
@@ -304,7 +305,7 @@ fn fabricated_statement(
     units: u128,
     change: B256,
 ) -> Vec<u8> {
-    let mut combined = Vec::with_capacity(outbe_zkproof::EMIT_MINT_COMBINED_LEN);
+    let mut combined = Vec::with_capacity(EMIT_MINT_COMBINED_LEN);
     combined.extend_from_slice(&8u32.to_be_bytes());
     combined.extend_from_slice(&u64_word(chain_id));
     for word in [root, nullifier] {
@@ -319,7 +320,7 @@ fn fabricated_statement(
     combined.extend_from_slice(change.as_slice());
     // Pad the proof tail to the frozen circuit's exact combined length so
     // the blob passes decoder framing and the guard under test is what fires.
-    let tail_words = (outbe_zkproof::EMIT_MINT_COMBINED_LEN - combined.len()) / 32;
+    let tail_words = (EMIT_MINT_COMBINED_LEN - combined.len()) / 32;
     for _ in 0..tail_words {
         combined.extend_from_slice(&[7u8; 32]);
     }
@@ -627,7 +628,7 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
 
 #[test]
 fn malformed_proof_tail_reverts_never_fatal() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
     let key = Field::from(17u64);
@@ -880,8 +881,8 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
         result,
         &format!(
             "Emit mint proof is malformed: zk_verify: combined proof length is {} bytes, expected {}",
-            outbe_zkproof::EMIT_MINT_COMBINED_LEN - 32,
-            outbe_zkproof::EMIT_MINT_COMBINED_LEN
+            EMIT_MINT_COMBINED_LEN - 32,
+            EMIT_MINT_COMBINED_LEN
         ),
     );
 
@@ -899,7 +900,7 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
 /// mint must fail without moving anything.
 #[test]
 fn plan_scenario_partial_then_full_mint_with_real_proofs() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let key = Field::from(17u64);
@@ -1013,7 +1014,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 /// fully mint the remainder with values above the old uint128 ceiling.
 #[test]
 fn amounts_above_the_u128_range_mint_end_to_end() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
     let key = Field::from(17u64);
@@ -1069,7 +1070,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
 
 #[test]
 fn stale_root_past_the_32_window_is_rejected() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let mut tree = ReferenceTree::new(pool);
@@ -1117,7 +1118,7 @@ fn stale_root_past_the_32_window_is_rejected() {
 
 #[test]
 fn payout_overflow_is_a_user_revert_before_mutation() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let serial = scenario_serial();
@@ -1156,7 +1157,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
 
 #[test]
 fn full_tree_rejects_burns_and_partial_mints() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let serial = scenario_serial();
@@ -1207,7 +1208,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
 
 #[test]
 fn deterministic_change_precreation_reverts_partial_mint_atomically() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let serial = scenario_serial();
@@ -1309,7 +1310,7 @@ fn chains_derive_separate_commitments_and_roots_without_stored_configuration() {
 
 #[test]
 fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
     let serial = scenario_serial();
@@ -1462,7 +1463,7 @@ fn burn_rolls_back_fully_under_fault_injection_on_pristine_and_active_trees() {
 
 #[test]
 fn mint_rolls_back_fully_under_fault_injection() {
-    outbe_zkproof::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);

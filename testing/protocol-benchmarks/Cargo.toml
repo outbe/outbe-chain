@@ -47,7 +47,6 @@ outbe-vaultrouter.workspace = true
 outbe-validatorset.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
-outbe-zkproof.workspace = true
 rand.workspace = true
 revm.workspace = true
 serde.workspace = true

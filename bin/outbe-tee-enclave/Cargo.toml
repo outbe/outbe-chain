@@ -70,10 +70,10 @@ hex.workspace = true
 # so the enclave->math edge does not cycle with fidelity's `test-enclave` seam.
 outbe-fidelity-math.workspace = true
 
-# Poseidon-BN254 (same circom params as the chain's zkproof / wallet) for the
+# Poseidon-BN254 (same Circom parameters as `outbe-evm::zk` and the wallet) for
 # in-enclave `tribute_id` derivation. We depend on the lightweight Poseidon
-# stack directly - NOT `outbe-zkproof`, which pulls a heavy Barretenberg C++ FFI
-# inappropriate for the enclave.
+# stack directly - NOT `outbe-zk-backend`, which pulls a heavy Barretenberg C++
+# FFI inappropriate for the enclave.
 outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true

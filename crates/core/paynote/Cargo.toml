@@ -7,28 +7,25 @@ publish.workspace = true
 
 [dependencies]
 outbe-primitives.workspace = true
-outbe-zkproof.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-macros.workspace = true
 outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
+outbe-zk-backend.workspace = true
+outbe-zk-canonical.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
 thiserror.workspace = true
 
-# Proving fixtures only, behind `test-utils`: witness construction and proving
-# stay out of production builds entirely.
-outbe-zk-backend = { workspace = true, optional = true }
-outbe-zk-canonical = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-paynote = { path = ".", features = ["test-utils"] }
 
 [features]
 default = []
-test-utils = ["dep:outbe-zk-backend", "dep:outbe-zk-canonical"]
+test-utils = []
 
 [lints]
 workspace = true

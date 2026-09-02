@@ -40,7 +40,7 @@ outbe-operator.workspace = true
 outbe-tee.workspace = true
 outbe-txpool.workspace = true
 outbe-validatorset.workspace = true
-outbe-zkproof.workspace = true
+outbe-zk-backend.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true

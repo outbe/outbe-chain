@@ -14,7 +14,9 @@ use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_protocol::codec::u256_limbs_be;
-use outbe_zkproof::{decode_emit_mint_public_inputs, verify_emit_mint, ZkProofError};
+use outbe_zk_backend::barretenberg::verify_circuit;
+use outbe_zk_canonical::emit_mint::decode_public_inputs as decode_emit_mint_public_inputs;
+use outbe_zk_canonical::noir::emit_mint::EmitMint;
 
 use crate::errors::EmitError;
 use crate::hash::{
@@ -217,23 +219,18 @@ pub(crate) fn mint(
     if emit.spent_nullifiers.read(&nullifier_word)? {
         return Err(EmitError::NullifierSpent.into());
     }
-    match verify_emit_mint(proof) {
+    match verify_circuit::<EmitMint>(proof) {
         Ok(true) => {}
         Ok(false) => return Err(EmitError::ProofInvalid.into()),
-        // CRS initialization is the distinguishable infrastructure signal;
-        // it stays fatal per the frozen proof-consumer split.
-        Err(ZkProofError::CrsInitialization(message)) => {
-            return Err(EmitError::VerifierUnavailable(message).into())
+        // Verifier errors raised while handling attacker-controlled proof bytes
+        // fail closed as user reverts. Startup owns CRS initialization failure,
+        // so request handling has no fatal initialization branch.
+        Err(error) => {
+            return Err(EmitError::MalformedProof(format!(
+                "zk verification backend failed: {error}"
+            ))
+            .into())
         }
-        // Every other verifier error — including a `VerificationBackend`
-        // rejection of caller-supplied proof bytes — is raised while
-        // verifying attacker-controllable material and fails closed as a
-        // user revert. The backend cannot distinguish rejected input from a
-        // genuine FFI failure at this seam; misreporting the rare genuine
-        // failure as an invalid proof is safe and retryable, while promoting
-        // attacker input to a fatal error would be an unprivileged
-        // consensus-visible DoS.
-        Err(error) => return Err(EmitError::MalformedProof(error.to_string()).into()),
     }
 
     // Recipient credit overflow is a user guard, not corruption.

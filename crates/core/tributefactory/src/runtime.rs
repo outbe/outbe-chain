@@ -11,7 +11,11 @@ use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
 };
 use outbe_tribute::{TributeContract, TributeData};
-use outbe_zkproof::FullProofPublicInputs;
+use outbe_zk_backend::barretenberg::verify_circuit;
+use outbe_zk_canonical::full_proof::{
+    decode_public_inputs as decode_full_proof_public_inputs, PublicInputs as FullProofPublicInputs,
+};
+use outbe_zk_canonical::noir::full_proof::FullProof;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -119,7 +123,7 @@ impl TributeFactoryContract<'_> {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
                 }
-                let public = outbe_zkproof::decode_full_proof_public_inputs(&zk_proof)
+                let public = decode_full_proof_public_inputs(&zk_proof)
                     .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
@@ -302,12 +306,10 @@ fn validate_zk_result(
         }
         .into());
     }
-    let verified = outbe_zkproof::verify_full_proof(zk_proof).map_err(|error| match error {
-        outbe_zkproof::ZkProofError::VerificationBackend(message)
-        | outbe_zkproof::ZkProofError::CrsInitialization(message) => {
-            PrecompileError::Fatal(format!("ZK verifier unavailable: {message}"))
-        }
-        other => TributeFactoryError::MalformedZkProof(other.to_string()).into(),
+    let verified = verify_circuit::<FullProof>(zk_proof).map_err(|error| {
+        PrecompileError::Fatal(format!(
+            "ZK verifier unavailable: zk verification backend failed: {error}"
+        ))
     })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
@@ -388,6 +390,7 @@ pub(crate) fn validate_agent_reward_addresses(
 mod zk_result_tests {
     use super::*;
     use outbe_tee::protocol::TributeZkExpectedHashes;
+    use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
     fn public_inputs() -> FullProofPublicInputs {
         FullProofPublicInputs {
@@ -399,7 +402,7 @@ mod zk_result_tests {
     }
 
     fn dummy_proof(public: FullProofPublicInputs) -> Vec<u8> {
-        let mut proof = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+        let mut proof = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
         proof.extend_from_slice(&4u32.to_be_bytes());
         for word in [
             public.derived_owner,
@@ -409,7 +412,7 @@ mod zk_result_tests {
         ] {
             proof.extend_from_slice(&word);
         }
-        proof.resize(outbe_zkproof::FULL_PROOF_COMBINED_LEN, 0);
+        proof.resize(FULL_PROOF_COMBINED_LEN, 0);
         proof
     }
 
