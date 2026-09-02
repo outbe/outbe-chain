@@ -115,6 +115,17 @@ const INTEX_CALL_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const INTEX_CALL_PERIOD_SECONDS: u64 = 60;
 
+/// The gem call and position sweeps are daily in production; an e2e run seeds
+/// the days they read instead of living through them.
+#[cfg(not(feature = "e2e-test"))]
+const GEM_CALL_PERIOD_SECONDS: u64 = 86_400;
+#[cfg(feature = "e2e-test")]
+const GEM_CALL_PERIOD_SECONDS: u64 = 60;
+#[cfg(not(feature = "e2e-test"))]
+const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
+#[cfg(feature = "e2e-test")]
+const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
+
 /// Cadence of the two outbound polls, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
@@ -167,7 +178,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::GemCallDaily.as_u32(),
             label: "gem_call_daily",
-            period_seconds: 86_400,
+            period_seconds: GEM_CALL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
             // no dependency on the parent block's settlement accounting.
@@ -226,7 +237,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::GemPositionDaily.as_u32(),
             label: "gem_position_daily",
-            period_seconds: 86_400,
+            period_seconds: GEM_POSITION_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Walks positions by time alone: no oracle, no settlement accounting.
             requires_accounting_window: false,
@@ -275,13 +286,19 @@ mod protocol_parameter_tests {
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
+        // The gem sweeps are daily in a release build; e2e shortens them.
+        #[cfg(not(feature = "e2e-test"))]
+        assert_eq!(
+            (GEM_CALL_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
+            (86_400, 86_400)
+        );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
         assert_eq!(configured[0].start_offset_seconds, 0);
         assert_eq!(configured[1].period_seconds, 86_400);
         assert_eq!(configured[2].period_seconds, 43_200);
         assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds, 86_400);
+        assert_eq!(configured[3].period_seconds, GEM_CALL_PERIOD_SECONDS);
         assert!(matches!(
             configured[3].handler,
             TriggerHandler::GemCallDaily
@@ -303,7 +320,7 @@ mod protocol_parameter_tests {
             configured[7].handler,
             TriggerHandler::NodCallDaily
         ));
-        assert_eq!(configured[8].period_seconds, 86_400);
+        assert_eq!(configured[8].period_seconds, GEM_POSITION_PERIOD_SECONDS);
         assert_eq!(configured[8].start_offset_seconds, 0);
         assert!(matches!(
             configured[8].handler,
