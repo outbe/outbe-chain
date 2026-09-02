@@ -852,13 +852,19 @@ fn unsettled_series_expired(world: &mut World) {
         &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
     );
     if parked.is_some_and(|mark| mark != 0) {
-        let _ = eth::send_call(
+        // The mark carries the origin's calledAt, and this chain refuses a stamp from
+        // its own future. Its clock is its own, so carry the committee's over first.
+        if let Some(now) = eth::latest_block_timestamp(&url) {
+            let _ = world.target_chain.sync_clock_to(now);
+        }
+        eth::send_call(
             &target_url,
             target_router,
             crate::world::forge::DEPLOYER_KEY,
             &venue_probes::IIssuedSeries::applyPendingMarkCall { seriesId: series },
             None,
-        );
+        )
+        .expect("apply the mark the target chain parked");
     }
 
     for (label, at, collection) in [
