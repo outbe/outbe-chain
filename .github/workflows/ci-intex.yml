@@ -26,6 +26,8 @@ jobs:
   lint:
     name: Solhint
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/intex
@@ -44,6 +46,8 @@ jobs:
   format:
     name: Forge Format
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/intex
@@ -51,15 +55,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
       - name: Check formatting
         run: forge fmt --check
 
   compile:
     name: Compile Contracts
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/intex
@@ -78,6 +81,8 @@ jobs:
   test-foundry:
     name: Foundry Tests
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     needs: [compile]
     defaults:
       run:
@@ -102,6 +107,8 @@ jobs:
   abi:
     name: ABI Export Check
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     needs: [compile]
     defaults:
       run:
@@ -129,6 +136,8 @@ jobs:
   slither:
     name: Slither
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     needs: [compile]
     defaults:
       run:
@@ -141,9 +150,6 @@ jobs:
         uses: ./.github/actions/setup-node-yarn-foundry
         with:
           working-directory: contracts/intex
-
-      - name: Setup mise
-        uses: jdx/mise-action@v2
 
       - name: Run Slither
         run: yarn slither:ci
@@ -159,6 +165,8 @@ jobs:
   aderyn:
     name: Aderyn
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     needs: [compile]
     defaults:
       run:
@@ -171,9 +179,6 @@ jobs:
         uses: ./.github/actions/setup-node-yarn-foundry
         with:
           working-directory: contracts/intex
-
-      - name: Setup mise
-        uses: jdx/mise-action@v2
 
       - name: Run Aderyn
         run: yarn aderyn
@@ -189,6 +194,8 @@ jobs:
   ci-success:
     name: ci success
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     if: always()
     needs:
       - lint

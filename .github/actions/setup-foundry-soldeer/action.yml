@@ -1,5 +1,9 @@
-name: Setup Foundry + soldeer
-description: Install Foundry and restore soldeer dependencies after repository checkout
+name: Setup soldeer dependencies
+description: Restore soldeer dependencies after repository checkout
+
+# Foundry is not installed here: forge and cast come from the CI toolchain image
+# the calling jobs run in. Installing a second copy per job would both waste a
+# download and let the CI toolchain drift from the pinned one.
 
 inputs:
   working-directory:
@@ -9,9 +13,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install Foundry
-      uses: foundry-rs/foundry-toolchain@v1
-
     - name: Restore soldeer dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}

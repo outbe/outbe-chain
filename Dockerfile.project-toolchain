@@ -147,6 +147,10 @@ RUN cd /opt/outbe/ci && \
     mise install && \
     cd /opt/outbe/ci-intex && \
     mise install && \
+    # sccache and cargo-llvm-cov are not in mise.toml because they are CI-only.
+    # Without them here every job re-downloads them through an install action,
+    # which is the per-run fetching the image exists to remove.
+    mise install -g "cargo:sccache" "cargo:cargo-llvm-cov" && \
     mise ls --installed | awk '{print $1"@"$2}' | xargs mise use -g && \
     mise reshim && \
     rm -rf "${MISE_CACHE_DIR}"
@@ -159,7 +163,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn jq mold; do \
+                cog duckdb uv uvx aderyn sccache cargo-llvm-cov jq mold; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \
