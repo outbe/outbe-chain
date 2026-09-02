@@ -28,9 +28,9 @@ use outbe_node::{
     finalized_frame::{read_bounded_finalized_frames, FinalizedFrame, RethFinalizedFrameSource},
     ocomp::retention::{observe_finalized_request, FinalizedRequestObservationV1},
     projection::{
-        projection_frame_failure_class, FinalizedProjectionSink, ProjectionRuntimeRecoveryHandle,
-        ProjectionRuntimeRecoveryV1, ReadyOffchainDataProjection, RuntimeBodyFailure,
-        PROJECTION_RECOVERY_DEADLINE,
+        projection_frame_failure_class, FinalizedProjectionSink, FinalizedTargetReconciliationV1,
+        ProjectionRuntimeRecoveryHandle, ProjectionRuntimeRecoveryV1, ReadyOffchainDataProjection,
+        RuntimeBodyFailure, PROJECTION_RECOVERY_DEADLINE,
     },
 };
 use outbe_ocomp::payout_submitter::PayoutTickOutcomeV1;
@@ -616,6 +616,51 @@ where
                     .provider
                     .finalized_block_num_hash()
                     .wrap_err("sample unified finalized head")?;
+                let reconciliation = projection_sink
+                    .lock()
+                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                    .reconcile_finalized_target(finalized_target.as_ref().map(|target| {
+                        ProjectionCheckpoint {
+                            block_number: target.number,
+                            block_hash: target.hash,
+                        }
+                    }))?;
+                let finalized_target = match reconciliation {
+                    FinalizedTargetReconciliationV1::AwaitingProviderRecovery => None,
+                    FinalizedTargetReconciliationV1::Process {
+                        target,
+                        recovered_floor,
+                    } => {
+                        let sampled = finalized_target.ok_or_else(|| {
+                            eyre::eyre!("projection accepted an absent finalized target")
+                        })?;
+                        if sampled.number != target.block_number || sampled.hash != target.block_hash {
+                            bail!("projection reconciled a different finalized target identity");
+                        }
+                        if let Some(floor) = recovered_floor {
+                            let canonical = runtime
+                                .provider
+                                .block_hash(floor.block_number)
+                                .wrap_err("revalidate recovered durable projection floor")?
+                                .ok_or_else(|| {
+                                    eyre::eyre!(
+                                        "recovered durable projection floor {} ({}) is unavailable",
+                                        floor.block_number,
+                                        floor.block_hash
+                                    )
+                                })?;
+                            if canonical != floor.block_hash {
+                                bail!(
+                                    "recovered durable projection floor {} changed from {} to {}",
+                                    floor.block_number,
+                                    floor.block_hash,
+                                    canonical
+                                );
+                            }
+                        }
+                        Some(sampled)
+                    }
+                };
                 if let Some(target) = finalized_target {
                     publish_finalized_reader_metrics(
                         target.number,
