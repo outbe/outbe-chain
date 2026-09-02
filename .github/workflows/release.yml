@@ -30,7 +30,7 @@ jobs:
   # already-existing tag.
   goreleaser:
     if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.') && !contains(github.ref_name, '-mainnet.')"
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: testnet-release-sgx
     steps:
       - uses: actions/checkout@v6
         with:
