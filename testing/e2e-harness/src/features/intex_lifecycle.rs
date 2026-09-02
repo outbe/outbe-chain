@@ -836,11 +836,11 @@ fn unsettled_series_expired(world: &mut World) {
         &venue_probes::IIssuedSeries::pendingMarkCall { seriesId: series },
     );
     if parked.is_some_and(|mark| mark != 0) {
-        // The mark carries the origin's calledAt, and this chain refuses a stamp from
-        // its own future. Its clock is its own, so carry the committee's over first.
-        if let Some(now) = eth::latest_block_timestamp(&url) {
-            let _ = world.target_chain.sync_clock_to(now);
-        }
+        let now = eth::latest_block_timestamp(&url).expect("committee head timestamp");
+        world
+            .target_chain
+            .sync_clock_to(now)
+            .expect("carry the committee clock to the target chain");
         eth::send_call(
             &target_url,
             target_router,
@@ -893,8 +893,8 @@ fn forfeited_load_returns(world: &mut World) {
 
     let load = venue_probes::series_promis_load(&url, nft, series)
         .expect("the expiring series carries a PROMIS load");
-    // The forfeit is measured against the series' whole tirage, not one chain's
-    // balance: the units live on both chains and none of them were ever settled.
+    // Measured against the series' whole tirage, not one chain's balance: the units
+    // live on both chains, and nothing here settles or parks any of them.
     let tirage = venue_probes::series_issued_count(&url, nft, series)
         .expect("the expiring series carries an issued count");
     let (_, settled) = venue_probes::series_balances(&url, nft, series, holder)
@@ -903,8 +903,6 @@ fn forfeited_load_returns(world: &mut World) {
         settled, 0,
         "series {series} was settled after all, so it forfeits less than its tirage"
     );
-    // The two settled series forfeit nothing and this scenario parks nothing into
-    // gems, so the whole credit is this series' unsettled units.
     let want = alloy_primitives::U256::from(load) * alloy_primitives::U256::from(tirage);
     assert!(
         want > alloy_primitives::U256::ZERO,
