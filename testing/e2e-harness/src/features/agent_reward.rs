@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{Address, U256};
 use cucumber::{then, when};
 use outbe_primitives::time::timestamp_to_date_key;
+use outbe_primitives::units::native_to_protocol_floor;
 
 use crate::features::ocomp::restart_committee_at_logical_time;
 use crate::internal::addresses;
-use crate::internal::eth::{SRA_POOL, WAA_POOL};
+use crate::internal::eth::{self, SRA_POOL, WAA_POOL};
 use crate::world::state::OcompAgentRewardObservationV1;
 use crate::world::World;
 
@@ -19,6 +20,15 @@ const SRA_BENEFICIARY_KEY: &str =
     "0x4444444444444444444444444444444444444444444444444444444444444444";
 // A Gem mint costs more gas than the native transfer the claim used to do.
 const BENEFICIARY_GAS_FUNDING_COEN: u64 = 25;
+/// `GemTypes::Wallet` — what the WAA pool mints.
+const WALLET_GEM_TYPE: u8 = 3;
+/// `GemTypes::Sra` — what the SRA pool mints.
+const SRA_GEM_TYPE: u8 = 2;
+/// `GemState::Issued`; a reward Gem qualifies later, on price.
+const ISSUED_GEM_STATE: u8 = 0;
+/// Agent rewards are USD-denominated by protocol policy, on both currency axes.
+const AGENT_GEM_CURRENCY: u16 = 840;
+
 const AGENT_REWARD_WAIT: Duration = Duration::from_secs(300);
 const SECONDS_PER_DAY: u64 = 86_400;
 
@@ -409,4 +419,79 @@ fn native_balance(world: &World, port: u16, address: Address) -> U256 {
         .rpc
         .balance_on(port, &format!("{address:#x}"))
         .unwrap_or_else(|| panic!("read native balance for {address:#x} on validator port {port}"))
+}
+
+/// The claim steps prove a Gem-shaped payout only by the absence of native movement.
+/// This reads the Gem itself: what a beneficiary actually received.
+#[then("each beneficiary holds the AgentReward Gem their pool mints")]
+fn beneficiaries_hold_reward_gems(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let (waa_beneficiary, sra_beneficiary, waa_claimable, sra_claimable) = {
+        let observation = world
+            .state
+            .ocomp_agent_reward
+            .as_ref()
+            .expect("settled AgentReward observation");
+        (
+            observation.waa_beneficiary,
+            observation.sra_beneficiary,
+            observation.waa_claimable_coen_units.expect("WAA claimable"),
+            observation.sra_claimable_coen_units.expect("SRA claimable"),
+        )
+    };
+
+    for (pool, owner, claimed, gem_type) in [
+        ("WAA", waa_beneficiary, waa_claimable, WALLET_GEM_TYPE),
+        ("SRA", sra_beneficiary, sra_claimable, SRA_GEM_TYPE),
+    ] {
+        let balance = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::balanceOfCall { owner },
+        )
+        .expect("read the beneficiary's Gem balance");
+        assert_eq!(
+            balance,
+            U256::from(1),
+            "{pool} beneficiary should hold exactly the one Gem their claim minted"
+        );
+        let gem_id = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::tokenOfOwnerByIndexCall {
+                owner,
+                index: U256::ZERO,
+            },
+        )
+        .expect("read the beneficiary's Gem id");
+        let gem = eth::read_call(
+            &url,
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: gem_id },
+        )
+        .expect("read the beneficiary's Gem");
+
+        assert_eq!(gem.owner, owner, "{pool} Gem went to the wrong owner");
+        assert_eq!(gem.gemType, gem_type, "{pool} Gem carries the wrong type");
+        assert_eq!(
+            gem.state, ISSUED_GEM_STATE,
+            "{pool} Gem should start Issued and qualify later on price"
+        );
+        // Claiming converts native COEN down to whole protocol units; the sub-unit
+        // remainder stays behind by design. Use the engine's own conversion.
+        assert_eq!(
+            gem.promisLoad,
+            native_to_protocol_floor(claimed),
+            "{pool} Gem load does not match the claimed reward"
+        );
+        assert!(
+            !gem.entryPrice.is_zero(),
+            "{pool} Gem was priced against no COEN rate"
+        );
+        assert_eq!(
+            (gem.issuanceCurrency, gem.referenceCurrency),
+            (AGENT_GEM_CURRENCY, AGENT_GEM_CURRENCY),
+            "{pool} Gem should carry USD on both currency axes"
+        );
+    }
 }

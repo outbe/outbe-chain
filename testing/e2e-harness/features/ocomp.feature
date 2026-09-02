@@ -59,6 +59,7 @@ Feature: Off-chain computation and Metadosis
     Then every validator observes the same nonzero WAA and SRA AgentReward
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
+    And each beneficiary holds the AgentReward Gem their pool mints
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
