@@ -573,6 +573,8 @@ sol! {
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
+        function pendingMark(bytes14 seriesId) external view returns (uint8);
+        function applyPendingMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -699,6 +701,38 @@ pub(crate) fn series_state(
 ) -> Option<u8> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
         .map(|data| data.state)
+}
+
+/// Units the series was issued across every chain. A forfeit is measured against
+/// this, not against what one chain happens to hold.
+pub(crate) fn series_issued_count(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u32> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.issuedIntexCount)
+}
+
+/// When the series was Called, as both chains recorded it.
+pub(crate) fn series_called_at(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u32> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.calledAt)
+}
+
+/// When the notice a Called series was given runs out. Expiry is derived against
+/// this, never stored, so a scenario has to wait past it rather than watch a flag.
+pub(crate) fn series_call_deadline(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u64> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
 /// The prices the engine derived at issuance: entry, floor, and call.

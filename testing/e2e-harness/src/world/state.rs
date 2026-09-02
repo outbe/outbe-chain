@@ -447,6 +447,10 @@ pub struct FixtureState {
     pub settled_units: u32,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
+    /// Issued alongside them and never settled, so the call notice runs out on it.
+    pub expiring_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// Unallocated PROMIS before the notice ran out, so the forfeit shows as a delta.
+    pub unallocated_before_expiry: Option<alloy_primitives::U256>,
     /// The stablecoin holders settle Intex in, and its reserve vault.
     #[cfg(feature = "ocomp-integration")]
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
@@ -480,6 +484,8 @@ impl Default for FixtureState {
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),
+            expiring_series: None,
+            unallocated_before_expiry: None,
             settled_units: 0,
             proposal_id: 1,
             proposed_version: None,
