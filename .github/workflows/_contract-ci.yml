@@ -25,7 +25,7 @@ env:
 jobs:
   format:
     name: Forge Format
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -43,7 +43,7 @@ jobs:
 
   compile:
     name: Compile Contracts
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -64,7 +64,7 @@ jobs:
   test:
     name: Foundry Tests
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -84,7 +84,7 @@ jobs:
 
   lint:
     name: Forge Lint
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -108,7 +108,7 @@ jobs:
   abi:
     name: ABI Export Check
     if: ${{ inputs.abi-check }}
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -148,7 +148,7 @@ jobs:
 
   ci-success:
     name: ci success
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     if: always()
     needs:
       - format
