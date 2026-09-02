@@ -33,7 +33,9 @@ concurrency:
 jobs:
   build:
     name: Typecheck + Build
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     defaults:
       run:
         working-directory: mcp

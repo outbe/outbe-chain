@@ -416,21 +416,31 @@ pub fn desis_request_brief_hash(
 
 impl RequestBudgetSplitReceiptV1 {
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
+        let green = self.day_type == DayType::Green
+            && self.destination == BudgetSplitDestination::DesisAuction
+            && self.desis_brief_hash.is_some();
+        let red = self.day_type == DayType::Red
+            && self.destination == BudgetSplitDestination::CarryOver
+            && self.desis_brief_hash.is_some();
+        require(green || red, "request budget split destination")?;
+        // The base a red day never opens is still a share of its limit.
         let split_total = self.lysis_budget.checked_add(self.auction_base).ok_or(
             ProtocolError::IntegerOverflow {
                 what: "request budget split",
             },
         )?;
-        require(split_total == self.day_limit, "request budget split")?;
-        let green = self.day_type == DayType::Green
-            && self.destination == BudgetSplitDestination::DesisAuction
-            && self.desis_brief_hash.is_some()
-            && self.carry_over_credit == U256::ZERO;
-        let red = self.day_type == DayType::Red
-            && self.destination == BudgetSplitDestination::CarryOver
-            && self.desis_brief_hash.is_some()
-            && self.carry_over_credit == self.auction_base;
-        require(green || red, "request budget split destination")
+        require(split_total <= self.day_limit, "request budget split")?;
+        // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
+        // the warehouse; a red day briefs nothing, so its base returns with the headroom.
+        let briefed = if green { self.auction_base } else { U256::ZERO };
+        let accounted = self
+            .lysis_budget
+            .checked_add(briefed)
+            .and_then(|sum| sum.checked_add(self.carry_over_credit))
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "request budget split",
+            })?;
+        require(accounted == self.day_limit, "request budget split")
     }
 }
 

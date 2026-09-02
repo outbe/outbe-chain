@@ -30,15 +30,20 @@ jobs:
   # already-existing tag.
   goreleaser:
     if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.') && !contains(github.ref_name, '-mainnet.')"
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+    env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: sigstore/cosign-installer@v4.1.1
       - uses: anchore/sbom-action/download-syft@v0.24.0
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
       - uses: Swatinem/rust-cache@v2
       - uses: goreleaser/goreleaser-action@v7
         with:

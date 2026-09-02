@@ -310,8 +310,10 @@ impl JobIntentV1 {
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Metadosis budget split",
             })?;
+        // A day issues at most its own nominal; the unissued headroom is credited back to the
+        // warehouse, and the exact identity is enforced on the split receipt.
         require(
-            split_total == self.frozen_metadosis_values.day_limit,
+            split_total <= self.frozen_metadosis_values.day_limit,
             "Metadosis budget split",
         )?;
         self.activation_preconditions.validate_for_intent(self)
