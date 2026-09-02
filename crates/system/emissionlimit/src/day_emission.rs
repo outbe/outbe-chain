@@ -9,6 +9,7 @@
 //! `Decimal` arithmetic.
 
 use alloy_primitives::{uint, U256};
+use std::sync::LazyLock;
 
 /// Initial day emission: 2^28 COEN expressed in six-decimal `unit`.
 pub const INITIAL_DAY_EMISSION: U256 = uint!(268_435_456_000_000_U256);
@@ -34,6 +35,32 @@ const K2: u32 = K1 * 3;
 const PHASE_ONE_MIDPOINT_DAY: u32 = 512;
 const PHASE_SPLIT_DAY: u32 = 1_024;
 const PHASE_TWO_MIDPOINT_DAY: u32 = 2_048;
+
+// Founder formula (kept symbolically, rather than replacing it with
+// precomputed constants):
+//
+// P  = 26 * 2**26 / 3
+// K1 = 128
+// K2 = K1 * 3
+// A  = (P - 2**28) / math.tanh(512/(2*K1))
+// o1 = (2**28 + P)/2 - A/2
+// D  = (P - 2**26) / math.tanh(1024/(2*K2))
+// o2 = (P + 2**26)/2 + D/2
+static TWO_26: LazyLock<U256> =
+    LazyLock::new(|| U256::from(1u64 << 26) * UNITS_PER_COEN * MATH_SCALE);
+static TWO_28: LazyLock<U256> =
+    LazyLock::new(|| U256::from(1u64 << 28) * UNITS_PER_COEN * MATH_SCALE);
+static P: LazyLock<U256> = LazyLock::new(|| U256::from(26) * *TWO_26 / U256::from(3));
+static A: LazyLock<U256> = LazyLock::new(|| {
+    fixed_div(
+        *P - *TWO_28,
+        tanh_positive_ratio(PHASE_ONE_MIDPOINT_DAY, 2 * K1),
+    )
+});
+static O1: LazyLock<U256> = LazyLock::new(|| (*TWO_28 + *P) / U256::from(2) - *A / U256::from(2));
+static D: LazyLock<U256> =
+    LazyLock::new(|| fixed_div(*P - *TWO_26, tanh_positive_ratio(PHASE_SPLIT_DAY, 2 * K2)));
+static O2: LazyLock<U256> = LazyLock::new(|| (*P + *TWO_26) / U256::from(2) + *D / U256::from(2));
 
 fn exp_positive_ratio(numerator: u32, denominator: u32) -> U256 {
     let x = U256::from(numerator) * MATH_SCALE / U256::from(denominator);
@@ -80,26 +107,12 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
         return INITIAL_DAY_EMISSION;
     }
 
-    // Founder formula (kept symbolically, rather than replacing it with
-    // precomputed constants):
-    //
-    // P  = 26 * 2**26 / 3
-    // K1 = 128
-    // K2 = K1 * 3
-    // A  = (P - 2**28) / math.tanh(512/(2*K1))
-    // o1 = (2**28 + P)/2 - A/2
-    // D  = (P - 2**26) / math.tanh(1024/(2*K2))
-    // o2 = (P + 2**26)/2 + D/2
-    let two_26 = U256::from(1u64 << 26) * UNITS_PER_COEN * MATH_SCALE;
-    let two_28 = U256::from(1u64 << 28) * UNITS_PER_COEN * MATH_SCALE;
-    let p = U256::from(26) * two_26 / U256::from(3);
-    let a = fixed_div(
-        p - two_28,
-        tanh_positive_ratio(PHASE_ONE_MIDPOINT_DAY, 2 * K1),
-    );
-    let o1 = (two_28 + p) / U256::from(2) - a / U256::from(2);
-    let d = fixed_div(p - two_26, tanh_positive_ratio(PHASE_SPLIT_DAY, 2 * K2));
-    let o2 = (p + two_26) / U256::from(2) + d / U256::from(2);
+    // The first access initializes the private values once in dependency order:
+    // P -> A -> O1 -> D -> O2. Later calls only read the stored values.
+    let a = *A;
+    let o1 = *O1;
+    let d = *D;
+    let o2 = *O2;
 
     let emission = if day_number <= PHASE_SPLIT_DAY {
         let exponent = exp_signed_ratio(
