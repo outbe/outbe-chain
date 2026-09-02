@@ -198,8 +198,12 @@ pub fn verify_receipts(
             == Some(request.lysis_budget),
         "Lysis receipt budget conservation",
     )?;
+    // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
     ensure(
-        request.lysis_budget.checked_add(request.auction_base) == Some(request.day_limit),
+        request
+            .lysis_budget
+            .checked_add(request.auction_base)
+            .is_some_and(|total| total <= request.day_limit),
         "Lysis receipt day conservation",
     )?;
 
