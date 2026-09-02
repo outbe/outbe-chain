@@ -325,13 +325,10 @@ fn enter_renewal_window(world: &mut World) {
         .localnet
         .restart_committee_at_consensus_timestamp(renewal_timestamp)
         .expect("restart complete committee at a controlled testnet timestamp");
-    let head = world.rpc.head(world.validators.primary_port()).unwrap_or(1);
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.primary_port(), head.saturating_add(2), 36)
-            .is_some(),
-        "committee did not finalize blocks after controlled timestamp advance"
+    super::tee_lease::wait_for_finalized_timestamp(
+        world,
+        renewal_timestamp,
+        "the DCAP onboarding manual renewal window",
     );
     world
         .localnet

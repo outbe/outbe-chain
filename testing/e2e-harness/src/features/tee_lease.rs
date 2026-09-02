@@ -212,7 +212,11 @@ fn finalized_clock_observation(world: &World, port: u16) -> Option<(u64, u64)> {
     Some((height, timestamp))
 }
 
-fn wait_for_finalized_timestamp(world: &World, target_timestamp: u64, label: &str) -> (u64, u64) {
+pub(super) fn wait_for_finalized_timestamp(
+    world: &World,
+    target_timestamp: u64,
+    label: &str,
+) -> (u64, u64) {
     let port = world.validators.primary_port();
     let initial_deadline = Instant::now() + FINALIZED_CLOCK_STALL_TIMEOUT;
     let mut previous = loop {

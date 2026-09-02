@@ -54,6 +54,24 @@ pub(crate) struct ManualRenewalStatusObservationV1 {
     pub journal_state: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualRenewalCliOutcomeV1 {
+    Finalized,
+    NotDue,
+    Unexpected,
+}
+
+fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1 {
+    let output = output.trim_start();
+    if output.starts_with("Finalized {") {
+        ManualRenewalCliOutcomeV1::Finalized
+    } else if output.starts_with("NotDue {") {
+        ManualRenewalCliOutcomeV1::NotDue
+    } else {
+        ManualRenewalCliOutcomeV1::Unexpected
+    }
+}
+
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
     let active_keys = run_dir.join("validator-0/data/keys");
     (
@@ -585,7 +603,7 @@ impl Localnet {
         index: usize,
     ) -> Result<ManualRenewalObservationV1> {
         let vd = self.cfg.validator_dir(index);
-        Sh::new(&self.cfg).cli_required(args![
+        let output = Sh::new(&self.cfg).cli_required(args![
             "tee",
             "renew",
             "--enclave-socket",
@@ -599,8 +617,24 @@ impl Localnet {
             "--private-key",
             read_evm_key(&vd)?,
         ])?;
+        match classify_manual_renewal_cli_output(&output) {
+            ManualRenewalCliOutcomeV1::Finalized => {}
+            ManualRenewalCliOutcomeV1::NotDue => {
+                return Err(eyre!(
+                    "manual renewal remained NotDue after the harness entered the finalized renewal window for node {index}: {output}"
+                ));
+            }
+            ManualRenewalCliOutcomeV1::Unexpected => {
+                return Err(eyre!(
+                    "manual renewal returned an unexpected successful result for node {index}: {output}"
+                ));
+            }
+        }
         let journal_path = vd.join("data/tee-renewal-v1/journal.json");
-        let journal: serde_json::Value = serde_json::from_slice(&fs::read(&journal_path)?)?;
+        let journal: serde_json::Value = serde_json::from_slice(
+            &fs::read(&journal_path)
+                .wrap_err_with(|| format!("read finalized renewal journal {journal_path:?}"))?,
+        )?;
         if journal
             .pointer("/lifecycle/state")
             .and_then(|value| value.as_str())
@@ -981,6 +1015,26 @@ mod tests {
                 "wrapper mentioned enclave io timeout but this is policy".to_owned()
             )
         ));
+    }
+
+    #[test]
+    fn manual_renewal_cli_result_is_checked_before_reading_the_journal() {
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "Finalized {\n    finalized_height: 42,\n    valid_until: 99,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::Finalized
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "NotDue {\n    finalized_height: 41,\n    opens_at_timestamp: 98,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::NotDue
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output("Submitted { transaction_hash: 0x01 }"),
+            ManualRenewalCliOutcomeV1::Unexpected
+        );
     }
 
     #[test]
