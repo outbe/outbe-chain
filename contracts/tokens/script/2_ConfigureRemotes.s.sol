@@ -7,9 +7,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {RouteSpec} from "./routes/BaseRoute.sol";
-import {UsdtRoute} from "./routes/UsdtRoute.sol";
-import {WcoenRoute} from "./routes/WcoenRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
+import {Route, Routes} from "./routes/Routes.sol";
 
 /// @dev Registers the matching bridge on every remote chain, for every route. Bridges share one CREATE3 address
 ///      across chains, so the remote address equals the local one - `REMOTE_CHAIN_IDS` lists chain ids only, and the
@@ -17,7 +16,7 @@ import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `OUTBE_CHAIN_ID`.
 /// Optional env: `REMOTE_CHAIN_IDS` (csv; no-op when unset).
-contract ConfigureRemotes is UsdtRoute, WcoenRoute {
+contract ConfigureRemotes is Routes {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");
         address createX = vm.envAddress("CREATEX_ADDRESS");
@@ -29,8 +28,10 @@ contract ConfigureRemotes is UsdtRoute, WcoenRoute {
 
     function configureRemotes(address createX, string memory salt) public {
         uint256[] memory remotes = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
-        _wire(createX, salt, usdtSpec(), remotes);
-        _wire(createX, salt, wcoenSpec(), remotes);
+        Route[] memory list = routes();
+        for (uint256 i = 0; i < list.length; i++) {
+            _wire(createX, salt, list[i].spec, remotes);
+        }
     }
 
     function _wire(address createX, string memory salt, RouteSpec memory spec, uint256[] memory remotes) internal {

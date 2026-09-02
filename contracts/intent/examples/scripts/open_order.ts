@@ -97,9 +97,12 @@ async function main() {
   const openTx = await router.open(order, txOptions);
   const receipt = await openTx.wait();
 
-  // Parse orderId from the Open event
-  const events = await router.queryFilter(router.filters.Open(), receipt!.blockNumber, receipt!.blockNumber);
-  const orderId = events.length > 0 ? events[0].args.orderId : 'Not found';
+  // Parse orderId from this transaction's own Open event. Reading the block's events instead would
+  // pick up orders opened by other senders in the same block and report their id as ours.
+  const orderId =
+    receipt!.logs
+      .map((l) => { try { return router.interface.parseLog(l); } catch { return null; } })
+      .find((e) => e?.name === 'Open')?.args.orderId ?? 'Not found';
 
   console.log('\nOrder created!');
   console.log(`  OrderId: ${orderId}`);
