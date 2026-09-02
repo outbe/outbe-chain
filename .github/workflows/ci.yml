@@ -42,7 +42,7 @@ jobs:
     name: fmt
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     steps:
       - uses: actions/checkout@v6
       # No `rustup component add rustfmt` and no mise install: the image already
@@ -56,7 +56,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -84,7 +84,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -114,7 +114,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -138,7 +138,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -160,7 +160,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -182,7 +182,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 10
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -207,7 +207,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 15
     continue-on-error: true
     env:
@@ -228,7 +228,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -241,7 +241,7 @@ jobs:
     if: contains(github.event.head_commit.message, '[miri]')
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 60
     continue-on-error: true
     env:
@@ -265,7 +265,7 @@ jobs:
     name: ci success
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     if: always()
     needs:
       - fmt
@@ -296,7 +296,7 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -334,7 +334,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

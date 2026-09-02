@@ -32,7 +32,7 @@ jobs:
     if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.') && !contains(github.ref_name, '-mainnet.')"
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
       # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
