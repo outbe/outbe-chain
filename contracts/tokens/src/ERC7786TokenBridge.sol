@@ -41,6 +41,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     event CrosschainTransferReceived(
         bytes32 indexed receiveId, uint32 indexed sourceDomain, bytes from, address indexed to, uint256 amount
     );
+    event EmergencyWithdrawn(address indexed to, uint256 amount);
 
     error InvalidToken();
     error InvalidBridge();
@@ -52,6 +53,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
+    error NothingToWithdraw();
 
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
@@ -63,6 +65,17 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         token = IERC20(token_);
         bridge = IERC7786GatewaySource(bridge_);
         mode = mode_;
+    }
+
+    /// @notice TEMPORARY: recovers everything this bridge holds when a remote chain is down and no delivery can
+    ///         release it. Only `LockUnlock` custodies tokens, so only that mode has anything to recover.
+    function emergencyWithdraw() external onlyOwner {
+        if (mode != TokenBridgeMode.LockUnlock) revert NothingToWithdraw();
+
+        address to = owner();
+        uint256 amount = token.balanceOf(address(this));
+        token.safeTransfer(to, amount);
+        emit EmergencyWithdrawn(to, amount);
     }
 
     function setRemoteBridge(uint32 domain, bytes calldata recipient) external onlyOwner {
