@@ -4,7 +4,7 @@
 //! recipient X25519, Ed25519 attestation, TEE-BLS and DKG-decryption keys. The
 //! public identity therefore survives restart as one atomic unit. Intent-bound
 //! DCAP quotes are generated separately by the initialized NodeHost path; this
-//! module retains an unattested legacy response only for the mock/test transport.
+//! module retains an unattested response only for the mock/test transport.
 
 use alloy_primitives::{keccak256, B256};
 use commonware_codec::Encode as _;
@@ -12,10 +12,12 @@ use commonware_cryptography::bls12381::primitives::group::{Private as BlsPrivate
 use commonware_cryptography::Signer as _;
 use zeroize::{Zeroize as _, Zeroizing};
 
+use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 use outbe_tee::protocol::EnclaveResponse;
 
 use crate::crypto::{hkdf_sha256, x25519_public};
 use crate::dkg::PrivKey;
+use crate::errors::TeeError;
 use crate::gramine::{self, AttestationType};
 use crate::process::TributeOfferKeyMaterial;
 
@@ -24,12 +26,9 @@ use crate::process::TributeOfferKeyMaterial;
 /// mistaken for an attested enclave - a strict host policy rejects it.
 pub const UNATTESTED_MEASUREMENT: B256 = B256::ZERO;
 
-/// Domain-separation namespace binding a DKG X25519 share-encryption key to its
-/// owner's TEE-BLS identity. A peer's enc key is otherwise host-announced and
-/// cryptographically unbound; this signature lets every enclave reject an enc key
-/// that is not authenticated by the BLS identity it is paired with, so an
-/// untrusted host cannot mis-pair or duplicate enc keys at ceremony open.
-pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-enc-bind/v1";
+/// Commonware namespace for the already domain-separated, ceremony-scoped DKG
+/// participant announcement digest.
+pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-participant-announce/v1";
 
 /// Versioned RFC 9380 domain for the persistent TEE-BLS identity mapping.
 /// Changing this value rotates the identity and therefore requires an explicit
@@ -55,25 +54,14 @@ fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> Result<PrivKey, String> {
 /// Signature type produced by the TEE-BLS identity key.
 type TeeBlsSignature = <PrivKey as commonware_cryptography::Signer>::Signature;
 
-/// The 64-byte message bound by the enc-key identity signature:
-/// `chain_id (32) || dkg_enc_pub (32)`. `chain_id` scopes the binding to one
-/// chain; `dkg_enc_pub` is the bound value. No round/ceremony id is mixed in: the
-/// enc key is stable (derived from the sealed identity seed), so the binding is
-/// ceremony-independent and a replay only re-states the same true binding.
-fn dkg_enc_bind_message(chain_id: B256, dkg_enc_pub: &[u8; 32]) -> [u8; 64] {
-    let mut msg = [0u8; 64];
-    msg[..32].copy_from_slice(chain_id.as_slice());
-    msg[32..].copy_from_slice(dkg_enc_pub);
-    msg
-}
-
-/// Verify that `sig` is a valid TEE-BLS signature by `bls_pub` over the
-/// `(chain_id, dkg_enc_pub)` binding. Called at `DkgOpen` to reject any
-/// host-supplied `(bls, enc)` pairing whose enc key is not authenticated by its
-/// claimed identity. Malformed pubkey/signature bytes verify as `false`.
+/// Verify a complete ceremony-scoped participant announcement. Malformed
+/// public keys, signatures or non-canonical ceremony context fail closed.
 pub fn verify_dkg_enc_binding(
     bls_pub: &[u8],
-    chain_id: B256,
+    network_binding: &NetworkBindingV1,
+    ceremony_id: B256,
+    round: u64,
+    participant_set_hash: B256,
     dkg_enc_pub: &[u8; 32],
     sig: &[u8],
 ) -> bool {
@@ -88,12 +76,22 @@ pub fn verify_dkg_enc_binding(
     let Ok(signature) = TeeBlsSignature::read(&mut sig_reader) else {
         return false;
     };
-    let msg = dkg_enc_bind_message(chain_id, dkg_enc_pub);
-    pk.verify(DKG_ENC_BIND_NAMESPACE, &msg, &signature)
+    let Ok(digest) = outbe_primitives::tee_attestation_v1::dkg_participant_announce_hash_v1(
+        network_binding,
+        ceremony_id,
+        round,
+        participant_set_hash,
+        dkg_enc_pub,
+    ) else {
+        return false;
+    };
+    pk.verify(DKG_ENC_BIND_NAMESPACE, digest.as_slice(), &signature)
 }
 
 /// Enclave-resident key material.
 pub struct EnclaveKeys {
+    identity_seed: Zeroizing<[u8; 32]>,
+    sealed_network_binding: Option<NetworkBindingV1>,
     noise_private: Zeroizing<[u8; 32]>,
     noise_public: [u8; 32],
     /// X25519 offer secret (the decrypt key) + its public (clients encrypt to it).
@@ -109,6 +107,7 @@ pub struct EnclaveKeys {
     dkg_enc_secret: Zeroizing<[u8; 32]>,
     mrenclave: B256,
     mrsigner: B256,
+    isv_prod_id: u16,
     isv_svn: u16,
     /// The real attestation environment detected at startup.
     attest_type: AttestationType,
@@ -117,23 +116,21 @@ pub struct EnclaveKeys {
 impl EnclaveKeys {
     /// Derive the complete persistent enclave identity from one seed. On SGX the
     /// seed is generated once and sealed by `run::resolve_enclave_identity_seed`; mock
-    /// and direct tests pass an explicit seed. `legacy_seed` is only the fallback
-    /// when no persistent seed is available and is never a production authority.
-    pub fn new(
-        legacy_seed: [u8; 32],
-        identity_seed_override: Option<[u8; 32]>,
-    ) -> Result<Self, String> {
-        Self::new_with_identity_seed(legacy_seed, identity_seed_override.map(Zeroizing::new))
+    /// and direct tests pass an explicit seed. `seed` is only the fallback when no
+    /// persistent seed is available and is never a production authority.
+    pub fn new(seed: [u8; 32], identity_seed_override: Option<[u8; 32]>) -> Result<Self, String> {
+        Self::new_with_identity_seed(seed, identity_seed_override.map(Zeroizing::new), None)
     }
 
     /// Production constructor: keeps a restored or freshly generated identity
     /// seed in zeroizing storage for the complete derivation path.
     pub(crate) fn new_with_identity_seed(
-        mut legacy_seed: [u8; 32],
+        mut seed: [u8; 32],
         identity_seed_override: Option<Zeroizing<[u8; 32]>>,
+        sealed_network_binding: Option<NetworkBindingV1>,
     ) -> Result<Self, String> {
-        let identity_seed = identity_seed_override.unwrap_or_else(|| Zeroizing::new(legacy_seed));
-        legacy_seed.zeroize();
+        let identity_seed = identity_seed_override.unwrap_or_else(|| Zeroizing::new(seed));
+        seed.zeroize();
         let noise_private = Zeroizing::new(
             hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/noise-static/v1")
                 .map_err(|error| error.to_string())?,
@@ -176,13 +173,20 @@ impl EnclaveKeys {
             Self::report_data_binding(&noise_public, &tribute_offer_public, &attestation_pub);
         let mut report_data_64 = [0u8; 64];
         report_data_64[..32].copy_from_slice(report_data_b256.as_slice());
-        let (mrenclave, mrsigner, isv_svn) =
+        let (mrenclave, mrsigner, isv_prod_id, isv_svn) =
             match gramine::local_report_measurements(&report_data_64) {
-                Ok(m) => (B256::from(m.mrenclave), B256::from(m.mrsigner), m.isv_svn),
-                Err(_) => (UNATTESTED_MEASUREMENT, UNATTESTED_MEASUREMENT, 0u16),
+                Ok(m) => (
+                    B256::from(m.mrenclave),
+                    B256::from(m.mrsigner),
+                    m.isv_prod_id,
+                    m.isv_svn,
+                ),
+                Err(_) => (UNATTESTED_MEASUREMENT, UNATTESTED_MEASUREMENT, 0u16, 0u16),
             };
 
         Ok(Self {
+            identity_seed,
+            sealed_network_binding,
             noise_private,
             noise_public,
             tribute_offer_secret,
@@ -193,9 +197,18 @@ impl EnclaveKeys {
             dkg_enc_secret,
             mrenclave,
             mrsigner,
+            isv_prod_id,
             isv_svn,
             attest_type,
         })
+    }
+
+    pub(crate) fn identity_seed(&self) -> &[u8; 32] {
+        &self.identity_seed
+    }
+
+    pub(crate) fn sealed_network_binding(&self) -> Option<NetworkBindingV1> {
+        self.sealed_network_binding
     }
 
     /// This enclave's TEE threshold-BLS signing key (DKG participant identity).
@@ -245,22 +258,45 @@ impl EnclaveKeys {
         self.attestation_signing.sign(msg).to_bytes()
     }
 
-    /// Sign this enclave's X25519 share-encryption public key with its TEE-BLS
-    /// identity, binding it to `chain_id`. Advertised alongside `dkg_enc_public`
-    /// so peers can verify (via [`verify_dkg_enc_binding`]) that the enc key
-    /// genuinely belongs to this BLS identity before sealing shares to it.
-    pub fn sign_dkg_enc_binding(&self, chain_id: B256) -> Vec<u8> {
-        let msg = dkg_enc_bind_message(chain_id, &self.dkg_enc_public());
-        self.tee_bls_key
-            .sign(DKG_ENC_BIND_NAMESPACE, &msg)
+    /// Sign this enclave's exact ceremony-scoped DKG announcement.
+    pub fn sign_dkg_enc_binding(
+        &self,
+        network_binding: &NetworkBindingV1,
+        ceremony_id: B256,
+        round: u64,
+        participant_set_hash: B256,
+    ) -> crate::errors::Result<Vec<u8>> {
+        let digest = outbe_primitives::tee_attestation_v1::dkg_participant_announce_hash_v1(
+            network_binding,
+            ceremony_id,
+            round,
+            participant_set_hash,
+            &self.dkg_enc_public(),
+        )
+        .map_err(|error| TeeError::Dkg(format!("invalid DKG announcement context: {error}")))?;
+        Ok(self
+            .tee_bls_key
+            .sign(DKG_ENC_BIND_NAMESPACE, digest.as_slice())
             .encode()
-            .to_vec()
+            .to_vec())
     }
     /// The running enclave's ISV SVN (0 when unattested). Consumed by the
     /// seal/unseal boot path for the anti-rollback floor (plan section "Local
     /// Persistence").
     pub fn isv_svn(&self) -> u16 {
         self.isv_svn
+    }
+
+    /// Exact SGX code identity of this source enclave. Purpose-bound key
+    /// delivery accepts only a target running this same measured release;
+    /// caller-supplied policy bytes are never authority for another MRENCLAVE.
+    pub(crate) const fn code_identity(&self) -> (B256, B256, u16, u16) {
+        (
+            self.mrenclave,
+            self.mrsigner,
+            self.isv_prod_id,
+            self.isv_svn,
+        )
     }
 
     /// Borrow the (dev) offer decrypt key material for a batch call. The salt is
@@ -348,6 +384,7 @@ mod tests {
         let keys = EnclaveKeys::new([0x07; 32], Some([0x01; 32])).expect("key init off-hardware");
         assert_eq!(keys.mrenclave, UNATTESTED_MEASUREMENT);
         assert_eq!(keys.mrsigner, UNATTESTED_MEASUREMENT);
+        assert_eq!(keys.isv_prod_id, 0);
         assert_eq!(keys.isv_svn, 0);
         match keys.quote([0u8; 32]) {
             EnclaveResponse::Quote {

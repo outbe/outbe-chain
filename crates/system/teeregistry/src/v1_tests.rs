@@ -19,6 +19,13 @@ use outbe_tee::dcap_protocol::{
     DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapPckCaV1, DcapPlatformTcbStatusV1,
     DcapVerdictV1,
 };
+use outbe_tee::finalized_admission::{
+    TEE_REGISTRY_KEY_EPOCH_SLOT_V1, TEE_REGISTRY_NODE_BINDING_ID_SLOT_V1,
+    TEE_REGISTRY_NODE_ENCLAVE_ID_SLOT_V1, TEE_REGISTRY_NODE_INTENT_HASH_SLOT_V1,
+    TEE_REGISTRY_NODE_POLICY_HASH_SLOT_V1, TEE_REGISTRY_NODE_RECIPIENT_X25519_SLOT_V1,
+    TEE_REGISTRY_NODE_VALID_UNTIL_SLOT_V1, TEE_REGISTRY_OFFER_EPOCH_SLOT_V1,
+    TEE_REGISTRY_OFFER_PUBLIC_SLOT_V1,
+};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::{
@@ -123,10 +130,72 @@ fn storage_for_chain(chain_id: u64, genesis_hash: B256) -> HashMapStorageProvide
     storage
 }
 
-fn sealed_offer_artifact(offer_public: B256, fill: u8) -> Vec<u8> {
-    let mut sealed = vec![fill; outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
-    sealed[..32].copy_from_slice(offer_public.as_slice());
-    sealed
+#[test]
+fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
+    let mut provider = storage(B256::repeat_byte(0x44));
+    StorageHandle::enter(&mut provider, |storage| {
+        let registry = TeeRegistry::new(storage);
+        assert_eq!(
+            registry.tribute_offer_public_key.slot(),
+            U256::from(TEE_REGISTRY_OFFER_PUBLIC_SLOT_V1)
+        );
+        assert_eq!(
+            registry.key_epoch.slot(),
+            U256::from(TEE_REGISTRY_KEY_EPOCH_SLOT_V1)
+        );
+        assert_eq!(
+            registry.tribute_offer_epoch.slot(),
+            U256::from(TEE_REGISTRY_OFFER_EPOCH_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_enclave_id.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_ENCLAVE_ID_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_binding_id.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_BINDING_ID_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_intent_hash.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_INTENT_HASH_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_policy_hash.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_POLICY_HASH_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_valid_until.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_VALID_UNTIL_SLOT_V1)
+        );
+        assert_eq!(
+            registry.v1_node_recipient_x25519.base_slot(),
+            U256::from(TEE_REGISTRY_NODE_RECIPIENT_X25519_SLOT_V1)
+        );
+        Ok::<(), PrecompileError>(())
+    })
+    .unwrap();
+}
+
+fn sealed_offer_artifact(intent: &RegistrationIntentV1, offer_public: B256, fill: u8) -> Vec<u8> {
+    DcapOnboardingArtifactV1 {
+        context: DcapOnboardingContextV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            intent_hash: intent.intent_hash().unwrap(),
+            node_id_hash: intent.node_id.node_id_hash().unwrap(),
+            enclave_id: intent.derived_enclave_id().unwrap(),
+            binding_id: intent.binding_id,
+            policy_hash: intent.policy_hash,
+            recipient_x25519: intent.recipient_x25519,
+            tribute_offer_public: offer_public.0,
+            key_epoch: 0,
+            tribute_offer_epoch: 0,
+        },
+        nonce: [fill; 12],
+        ciphertext: vec![fill; 112],
+    }
+    .encode_canonical()
+    .unwrap()
 }
 
 fn register_validator(
@@ -163,6 +232,7 @@ fn initialization_manifest_for_intent(
     EnclaveInitializationManifestV1 {
         chain_id: intent.chain_id,
         genesis_hash: intent.genesis_hash,
+        attestation_mode: intent.attestation_mode,
         node_id: intent.node_id.clone(),
         initialization_challenge: challenge,
         node_host_noise_x25519: NODE_HOST_NOISE_X25519,
@@ -1123,7 +1193,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
     }
     .abi_encode();
     let offer_public = B256::repeat_byte(0x41);
-    let sealed = sealed_offer_artifact(offer_public, 0x42);
+    let sealed = sealed_offer_artifact(&intent, offer_public, 0x42);
     let node_id_hash = intent.node_id.node_id_hash().unwrap();
     let mut provider = storage(genesis_hash);
 
@@ -1215,6 +1285,8 @@ fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
             intent_hash: intent.intent_hash().unwrap(),
             node_id_hash,
             enclave_id: intent.derived_enclave_id().unwrap(),
+            binding_id: intent.binding_id,
+            policy_hash: intent.policy_hash,
             recipient_x25519: intent.recipient_x25519,
             tribute_offer_public: offer_public.0,
             key_epoch: 0,
@@ -1280,76 +1352,6 @@ fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
             .unwrap_err()
     });
     assert!(matches!(error, PrecompileError::Fatal(_)));
-}
-
-#[test]
-fn onboarding_artifact_fails_closed_for_missing_enclave_and_malformed_output() {
-    let offer_public = B256::repeat_byte(0x51);
-    let node_id_hash = B256::repeat_byte(0x52);
-    let recipient = [0x53; 32];
-    let too_small = vec![0x54; outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES - 1];
-    let too_large = vec![0x55; outbe_tee::protocol::MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES + 1];
-    let wrong_prefix = sealed_offer_artifact(B256::repeat_byte(0x56), 0x57);
-    let cases = [
-        ("missing enclave", None, "mandatory enclave is unavailable"),
-        (
-            "below minimum",
-            Some(too_small),
-            "malformed V1 offer-key onboarding artifact",
-        ),
-        (
-            "above maximum",
-            Some(too_large),
-            "malformed V1 offer-key onboarding artifact",
-        ),
-        (
-            "wrong offer prefix",
-            Some(wrong_prefix),
-            "malformed V1 offer-key onboarding artifact",
-        ),
-    ];
-
-    for (case, supplied, expected) in cases {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let error = StorageHandle::enter(&mut provider, |storage| {
-            let mut registry = TeeRegistry::new(storage);
-            registry
-                .tribute_offer_public_key
-                .write(offer_public)
-                .unwrap();
-            registry
-                .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
-                    V1RegistrationOutcome::Created,
-                    node_id_hash,
-                    recipient,
-                    |_| Ok(supplied),
-                )
-                .unwrap_err()
-        });
-        assert!(
-            matches!(error, PrecompileError::Fatal(ref message) if message.contains(expected)),
-            "unexpected {case} outcome: {error:?}"
-        );
-        assert!(provider.get_ordered_events().is_empty(), "{case}");
-    }
-
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let error = StorageHandle::enter(&mut provider, |storage| {
-        TeeRegistry::new(storage)
-            .emit_offer_key_sealed_for_registry_v1_after_sealer_for_test(
-                V1RegistrationOutcome::Created,
-                node_id_hash,
-                recipient,
-                |_| panic!("zero commitment must fail before contacting the enclave"),
-            )
-            .unwrap_err()
-    });
-    assert!(matches!(
-        error,
-        PrecompileError::Fatal(message)
-            if message.contains("requires the OST3 offer-key commitment")
-    ));
-    assert!(provider.get_ordered_events().is_empty());
 }
 
 #[test]
@@ -3556,9 +3558,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         initialization::InitializationState,
         keys::EnclaveKeys,
         seal::EnclaveBootConfig,
-        transport::{
-            serve_connection_with, serve_connection_with_synthetic_dcap, SharedTributeOfferKey,
-        },
+        transport::{serve_connection_with_synthetic_dcap, SharedTributeOfferKey},
     };
 
     let genesis_hash = B256::repeat_byte(0x23);
@@ -3568,8 +3568,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     );
     let node_signer = OutbeEvmSigner::from_secret_bytes([0x75; 32]).unwrap();
     let identity = NodeHostIdentityV1 {
-        chain_id: CHAIN_ID,
-        genesis_hash,
+        network_binding: active_policy.network_binding(),
         reth_p2p_public: reth_p2p_public_for_evm_signer(&node_signer),
     };
     let sign = |hash: B256| {
@@ -3597,10 +3596,14 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     std::fs::create_dir(&boot_b.tee_dir).unwrap();
     let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
     let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
-    let initialization_a =
-        Arc::new(InitializationState::production(boot_a.clone(), &keys_a).unwrap());
-    let initialization_b =
-        Arc::new(InitializationState::production(boot_b.clone(), &keys_b).unwrap());
+    let initialization_a = Arc::new(
+        InitializationState::production_with_synthetic_dcap_for_test(boot_a.clone(), &keys_a)
+            .unwrap(),
+    );
+    let initialization_b = Arc::new(
+        InitializationState::production_with_synthetic_dcap_for_test(boot_b.clone(), &keys_b)
+            .unwrap(),
+    );
 
     let listener_a = UnixListener::bind(&socket_a).unwrap();
     let server_keys_a = keys_a.clone();
@@ -3608,7 +3611,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
         for _ in 0..2 {
             let (stream, _) = listener_a.accept().unwrap();
-            serve_connection_with(
+            serve_connection_with_synthetic_dcap(
                 stream,
                 &server_keys_a,
                 &offer_key,

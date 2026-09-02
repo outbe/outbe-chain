@@ -6,11 +6,11 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-    RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1, SystemGasScheduleV1,
-    TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
-    TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
-    ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
+    NetworkBindingV1, NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1,
+    QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
+    SystemGasScheduleV1, TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
+    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
+    TrustedNetworkDescriptorV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
     MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
     MAX_TEE_BOOTSTRAP_BYTES,
@@ -62,6 +62,7 @@ fn validator_initialization_manifest(key: &SigningKey) -> EnclaveInitializationM
     EnclaveInitializationManifestV1 {
         chain_id: [0x10; 32],
         genesis_hash: B256::repeat_byte(0x11),
+        attestation_mode: AttestationMode::DcapRequired,
         node_id: node_id(key),
         initialization_challenge: [0x41; 32],
         node_host_noise_x25519: [0x42; 32],
@@ -76,7 +77,7 @@ fn intent_for_manifest(manifest: &EnclaveInitializationManifestV1) -> Registrati
         chain_id: manifest.chain_id,
         genesis_hash: manifest.genesis_hash,
         operation: AttestationOperationV1::RegisterEnclave,
-        attestation_mode: AttestationMode::DcapRequired,
+        attestation_mode: manifest.attestation_mode,
         policy_hash: B256::repeat_byte(0x21),
         node_id: manifest.node_id.clone(),
         enclave_id: manifest.enclave_id().unwrap(),
@@ -91,6 +92,150 @@ fn intent_for_manifest(manifest: &EnclaveInitializationManifestV1) -> Registrati
         noise_responder_x25519: manifest.noise_responder_x25519,
         node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
     }
+}
+
+#[test]
+fn network_binding_is_canonical_and_every_field_changes_its_hash() {
+    let binding = NetworkBindingV1 {
+        chain_id: [0x10; 32],
+        genesis_hash: B256::repeat_byte(0x11),
+        attestation_mode: AttestationMode::DcapRequired,
+    };
+    let encoded = binding.encode_canonical().unwrap();
+    assert_eq!(
+        NetworkBindingV1::decode_canonical(&encoded).unwrap(),
+        binding
+    );
+
+    let expected_hash = binding.binding_hash().unwrap();
+    let mut changed_chain = binding;
+    changed_chain.chain_id[31] ^= 1;
+    assert_ne!(changed_chain.binding_hash().unwrap(), expected_hash);
+
+    let mut changed_genesis = binding;
+    changed_genesis.genesis_hash = B256::repeat_byte(0x12);
+    assert_ne!(changed_genesis.binding_hash().unwrap(), expected_hash);
+
+    let mut changed_mode = binding;
+    changed_mode.attestation_mode = AttestationMode::GramineDirectDev;
+    assert_ne!(changed_mode.binding_hash().unwrap(), expected_hash);
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert_eq!(
+        NetworkBindingV1::decode_canonical(&trailing).unwrap_err(),
+        CodecError::TrailingBytes(1)
+    );
+}
+
+#[test]
+fn trusted_network_descriptor_is_canonical_and_dcap_only() {
+    let descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(54322345_u64).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(0x31),
+            attestation_mode: AttestationMode::DcapRequired,
+        },
+        genesis_consensus_keys: vec![[0x51; 48], [0x52; 48]],
+    };
+    let encoded = descriptor.encode_canonical().unwrap();
+    assert_eq!(
+        encoded.len(),
+        TrustedNetworkDescriptorV1::FIXED_CANONICAL_LEN + 2 * 48
+    );
+    assert_eq!(
+        TrustedNetworkDescriptorV1::decode_canonical(&encoded).unwrap(),
+        descriptor
+    );
+
+    let mut changed = descriptor.clone();
+    changed.network_binding.genesis_hash = B256::repeat_byte(0x42);
+    assert_ne!(
+        descriptor.descriptor_hash().unwrap(),
+        changed.descriptor_hash().unwrap()
+    );
+
+    let mut direct = descriptor.clone();
+    direct.network_binding.attestation_mode = AttestationMode::GramineDirectDev;
+    assert_eq!(
+        direct.encode_canonical().unwrap_err(),
+        CodecError::NonCanonical("trusted production network descriptor is not DCAP-required")
+    );
+
+    let mut unsorted = descriptor;
+    unsorted.genesis_consensus_keys.reverse();
+    assert_eq!(
+        unsorted.encode_canonical().unwrap_err(),
+        CodecError::NonCanonical("trusted network descriptor genesis committee order")
+    );
+}
+
+#[test]
+fn dkg_announcement_binding_covers_network_ceremony_round_set_and_recipient() {
+    use outbe_primitives::tee_attestation_v1::{
+        dkg_ceremony_id_v1, dkg_participant_announce_hash_v1, dkg_participant_set_hash_v1,
+    };
+
+    let binding = NetworkBindingV1 {
+        chain_id: [0x10; 32],
+        genesis_hash: B256::repeat_byte(0x20),
+        attestation_mode: AttestationMode::DcapRequired,
+    };
+    let participants = vec![vec![0x01; 48], vec![0x02; 48], vec![0x03; 48]];
+    let set_hash = dkg_participant_set_hash_v1(&participants).unwrap();
+    assert_eq!(
+        set_hash,
+        dkg_participant_set_hash_v1(&[
+            participants[2].clone(),
+            participants[0].clone(),
+            participants[1].clone(),
+        ])
+        .unwrap()
+    );
+    assert!(dkg_participant_set_hash_v1(&[]).is_err());
+    assert!(
+        dkg_participant_set_hash_v1(&[participants[0].clone(), participants[0].clone(),]).is_err()
+    );
+
+    let ceremony_id = dkg_ceremony_id_v1(&binding, 7, set_hash).unwrap();
+    let baseline =
+        dkg_participant_announce_hash_v1(&binding, ceremony_id, 7, set_hash, &[0x30; 32]).unwrap();
+    let mut other_binding = binding;
+    other_binding.genesis_hash = B256::repeat_byte(0x21);
+    let other_set =
+        dkg_participant_set_hash_v1(&[participants[0].clone(), participants[1].clone()]).unwrap();
+
+    assert_ne!(
+        baseline,
+        dkg_participant_announce_hash_v1(
+            &other_binding,
+            dkg_ceremony_id_v1(&other_binding, 7, set_hash).unwrap(),
+            7,
+            set_hash,
+            &[0x30; 32],
+        )
+        .unwrap()
+    );
+    assert_ne!(
+        ceremony_id,
+        dkg_ceremony_id_v1(&binding, 8, set_hash).unwrap()
+    );
+    assert_ne!(
+        ceremony_id,
+        dkg_ceremony_id_v1(&binding, 7, other_set).unwrap()
+    );
+    assert_ne!(
+        baseline,
+        dkg_participant_announce_hash_v1(&binding, ceremony_id, 7, set_hash, &[0x31; 32]).unwrap()
+    );
+    assert!(dkg_participant_announce_hash_v1(
+        &binding,
+        B256::repeat_byte(0x99),
+        7,
+        set_hash,
+        &[0x30; 32],
+    )
+    .is_err());
 }
 
 #[test]
@@ -136,7 +281,7 @@ fn node_host_authorization_survives_fresh_enclave_initialization() {
     );
     assert_eq!(
         original.node_host_authorization_hash().unwrap(),
-        b256!("b13eb9d78b874da96d5a8262fcb2ff1237d2be7ee82c127d3138fb47b653e838")
+        b256!("0fb70b436e5ca523c45c8ffa91c39521d48c83dc0981c4d1279cc5fb05e3cdca")
     );
     let mut another_node_host = original.clone();
     another_node_host.node_host_noise_x25519 = [0x44; 32];
@@ -149,6 +294,7 @@ fn node_host_authorization_survives_fresh_enclave_initialization() {
     intent.operation = AttestationOperationV1::ReplaceEnclaveBinding;
     intent.node_host_authorization_hash = original.node_host_authorization_hash().unwrap();
     replacement.validate_intent_binding(&intent).unwrap();
+    assert_eq!(original.network_binding(), intent.network_binding());
 }
 
 #[test]
@@ -181,6 +327,13 @@ fn initialization_manifest_rejects_wrong_signer_and_intent_keys() {
     wrong_intent.noise_responder_x25519[0] ^= 1;
     assert_eq!(
         manifest.validate_intent_binding(&wrong_intent).unwrap_err(),
+        CodecError::NonCanonical("registration intent does not match initialized enclave")
+    );
+
+    let mut wrong_mode = intent_for_manifest(&manifest);
+    wrong_mode.attestation_mode = AttestationMode::GramineDirectDev;
+    assert_eq!(
+        manifest.validate_intent_binding(&wrong_mode).unwrap_err(),
         CodecError::NonCanonical("registration intent does not match initialized enclave")
     );
 }

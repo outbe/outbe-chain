@@ -996,8 +996,12 @@ where
         my_bls: Vec<u8>,
         my_enc: [u8; 32],
         my_sig: Vec<u8>,
+        ceremony_id: B256,
+        round: u64,
+        participant_set_hash: B256,
         n: usize,
     ) -> eyre::Result<Vec<outbe_tee::protocol::ParticipantAnnounce>> {
+        let require_scoped_announcement = !my_sig.is_empty();
         let mut ids: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)> = BTreeMap::new();
         ids.insert(my_bls.clone(), (my_enc, my_sig.clone()));
 
@@ -1053,6 +1057,9 @@ where
                             match bytes.first().copied() {
                                 Some(DKG_ENV_IDENTITY) => {
                                     if let Some((bls, enc, sig)) = parse_identity(&bytes[1..]) {
+                                        if require_scoped_announcement && sig.is_empty() {
+                                            continue;
+                                        }
                                         self.routing.insert(bls.clone(), from);
                                         ids.insert(bls, (enc, sig));
                                     }
@@ -1094,6 +1101,9 @@ where
                 |(bls, (enc, sig))| outbe_tee::protocol::ParticipantAnnounce {
                     bls_pub: bls,
                     enc_pub: enc,
+                    ceremony_id,
+                    round,
+                    participant_set_hash,
                     enc_sig: sig,
                 },
             )
@@ -1199,23 +1209,6 @@ fn parse_identity(body: &[u8]) -> Option<(Vec<u8>, [u8; 32], Vec<u8>)> {
     Some((bls, enc, sig))
 }
 
-/// Deterministic ceremony id, identical on every node given the same chain and
-/// sorted participant set: `keccak256(chain_id || round || tee_bls_0 || ...)`.
-fn compute_ceremony_id(
-    chain_id: B256,
-    round: u64,
-    identities: &[outbe_tee::protocol::ParticipantAnnounce],
-) -> B256 {
-    let mut preimage = Vec::new();
-    preimage.extend_from_slice(chain_id.as_slice());
-    preimage.extend_from_slice(&round.to_be_bytes());
-    for p in identities {
-        preimage.extend_from_slice(&(p.bls_pub.len() as u32).to_be_bytes());
-        preimage.extend_from_slice(&p.bls_pub);
-    }
-    keccak256(&preimage)
-}
-
 /// Run the one-time TEE DKG ceremony at startup and return the **shared offer
 /// public key** derived from the group threshold signature (Seam F). Connects
 /// this node's enclave, exchanges enclave identities across the committee,
@@ -1232,7 +1225,7 @@ pub async fn run_tee_dkg_at_startup<E, S, R, C>(
     client: &mut E,
     clock: C,
     n: usize,
-    chain_id: B256,
+    network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
     tribute_offer_epoch: u64,
     allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
     sender: S,
@@ -1244,18 +1237,15 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
-    let (my_bls, my_enc, my_sig) = match client
+    let my_bls = match client
         .request(&EnclaveRequest::GetPublicKeys)
         .map_err(|e| eyre::eyre!("TEE DKG GetPublicKeys failed: {e}"))?
     {
-        EnclaveResponse::PublicKeys {
-            tee_bls_pub,
-            dkg_enc_pub,
-            dkg_enc_sig,
-            ..
-        } => (tee_bls_pub, dkg_enc_pub, dkg_enc_sig),
+        EnclaveResponse::PublicKeys { tee_bls_pub, .. } => tee_bls_pub,
         other => return Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
     };
+
+    let chain_id = B256::from(network_binding.chain_id);
 
     let mut dkg_scope = Vec::with_capacity(32 + 8 + 7);
     dkg_scope.extend_from_slice(chain_id.as_slice());
@@ -1268,10 +1258,59 @@ where
         keccak256(dkg_scope),
         allowed_remote_peers,
     );
-    let identities = gossip
-        .exchange_identities(my_bls.clone(), my_enc, my_sig, n)
+    // First exchange only the public BLS identities. The resulting exact set is
+    // then network-bound inside each enclave before any share-recipient key is
+    // trusted.
+    let preliminary = gossip
+        .exchange_identities(
+            my_bls.clone(),
+            [0; 32],
+            Vec::new(),
+            B256::ZERO,
+            0,
+            B256::ZERO,
+            n,
+        )
         .await?;
-    let ceremony_id = compute_ceremony_id(chain_id, 0, &identities);
+    let participant_bls = preliminary
+        .iter()
+        .map(|participant| participant.bls_pub.clone())
+        .collect::<Vec<_>>();
+    let participant_set_hash =
+        outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
+            .map_err(|error| eyre::eyre!("invalid TEE DKG participant set: {error}"))?;
+    let ceremony_id = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
+        &network_binding,
+        0,
+        participant_set_hash,
+    )
+    .map_err(|error| eyre::eyre!("invalid TEE DKG ceremony binding: {error}"))?;
+    let my_announcement = match client
+        .request(&EnclaveRequest::DkgParticipantAnnounceV1 {
+            ceremony_id,
+            round: 0,
+            participant_bls,
+        })
+        .map_err(|error| eyre::eyre!("TEE DKG announcement failed: {error}"))?
+    {
+        EnclaveResponse::DkgParticipantAnnounceV1 { participant } => participant,
+        other => {
+            return Err(eyre::eyre!(
+                "unexpected DKG announcement response: {other:?}"
+            ))
+        }
+    };
+    let identities = gossip
+        .exchange_identities(
+            my_announcement.bls_pub.clone(),
+            my_announcement.enc_pub,
+            my_announcement.enc_sig,
+            ceremony_id,
+            0,
+            participant_set_hash,
+            n,
+        )
+        .await?;
     let coord = CeremonyCoordinator::new(ceremony_id, 0, my_bls, identities);
 
     let outcome = run_tee_dkg_ceremony(

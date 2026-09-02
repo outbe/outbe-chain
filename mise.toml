@@ -340,8 +340,8 @@ description = "Run all Rust/Cucumber e2e features on real SGX hardware"
 run = """
 cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
 cargo build --release --bin outbe-cli --bin outbe-keygen
-cargo build --release --bin outbe-tee-enclave --features native-dcap
-OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
+cargo build --release --bin outbe-tee-enclave --features production-dcap-release
+OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e -- --tee real --validators 4 --all "$@"
 """
 
 [tasks.e2e-radicle-sgx]
@@ -394,7 +394,7 @@ run = 'cargo xtask release sgx manifest "$@"'
 
 [tasks.release-sgx-hardware-e2e]
 description = "Run Rust/Gherkin acceptance against an exact published production SGX image digest"
-run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
+run = 'cargo run --locked -p outbe-e2e-harness --features release-sgx-e2e --bin outbe-release-sgx-e2e -- "$@"'
 
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;

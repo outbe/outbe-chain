@@ -6,7 +6,7 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 ///
 /// Global scalars (slots 0..=8) hold the block-1 OST3 bootstrap result that clients
 /// and verifiers read. Bootstrap committee projections occupy slots 9..=18. Active
-/// V1 policy and leased-binding state occupies slots 19..=53. The layout is
+/// V1 policy and leased-binding state occupies slots 19..=44. The layout is
 /// append-only; new fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
@@ -104,99 +104,99 @@ pub struct TeeRegistry {
     #[attribute(order = 20)]
     pub v1_node_binding_version: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 30: current registration version.
+    /// slot 21: current registration version.
     #[attribute(order = 21)]
     pub v1_node_registration_version: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 31: current renewal nonce.
+    /// slot 22: current renewal nonce.
     #[attribute(order = 22)]
     pub v1_node_renewal_nonce: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 32: current measurement-transition nonce.
+    /// slot 23: current measurement-transition nonce.
     #[attribute(order = 23)]
     pub v1_node_transition_nonce: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 33: binding lease expiry as consensus Unix time.
+    /// slot 24: binding lease expiry as consensus Unix time.
     #[attribute(order = 24)]
     pub v1_node_valid_until: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 34: earliest authenticated collateral expiry returned by QVL.
+    /// slot 25: earliest authenticated collateral expiry returned by QVL.
     #[attribute(order = 25)]
     pub v1_node_collateral_valid_until: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 35: quote-bound recipient X25519 public key.
+    /// slot 26: quote-bound recipient X25519 public key.
     #[attribute(order = 26)]
     pub v1_node_recipient_x25519: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 36: quote-bound Ed25519 attestation public key.
+    /// slot 27: quote-bound Ed25519 attestation public key.
     #[attribute(order = 27)]
     pub v1_node_attestation_ed25519: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 37: quote-bound Noise responder X25519 public key.
+    /// slot 28: quote-bound Noise responder X25519 public key.
     #[attribute(order = 28)]
     pub v1_node_noise_responder_x25519: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 38: QVL-authenticated MRENCLAVE.
+    /// slot 29: QVL-authenticated MRENCLAVE.
     #[attribute(order = 29)]
     pub v1_node_mrenclave: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 39: QVL-authenticated MRSIGNER.
+    /// slot 30: QVL-authenticated MRSIGNER.
     #[attribute(order = 30)]
     pub v1_node_mrsigner: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 40: QVL-authenticated ISV product id.
+    /// slot 31: QVL-authenticated ISV product id.
     #[attribute(order = 31)]
     pub v1_node_isv_prod_id: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 41: QVL-authenticated ISV SVN.
+    /// slot 32: QVL-authenticated ISV SVN.
     #[attribute(order = 32)]
     pub v1_node_isv_svn: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 42: admitted Platform TCB status discriminant.
+    /// slot 33: admitted Platform TCB status discriminant.
     #[attribute(order = 33)]
     pub v1_node_platform_tcb_status: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 43: hash of the complete canonical stable QVL verdict.
+    /// slot 34: hash of the complete canonical stable QVL verdict.
     #[attribute(order = 34)]
     pub v1_node_verdict_hash: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 44: hash of the exact canonical evidence admitted for current replay.
+    /// slot 35: hash of the exact canonical evidence admitted for current replay.
     #[attribute(order = 35)]
     pub v1_node_evidence_hash: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 45: hash of the installed canonical V1 active policy.
+    /// slot 36: hash of the installed canonical V1 active policy.
     #[attribute(order = 36)]
     pub active_v1_policy_hash: outbe_primitives::storage::dsl::Value<B256>,
 
-    /// slot 46: consensus timestamp at which the current lease began.
+    /// slot 37: consensus timestamp at which the current lease began.
     #[attribute(order = 37)]
     pub v1_node_lease_started_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// slot 47: persistent single-NodeHost authorization committed by the quote.
+    /// slot 38: persistent single-NodeHost authorization committed by the quote.
     #[attribute(order = 38)]
     pub v1_node_host_authorization_hash: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    /// slot 48: canonical byte length of the one staged successor V1 policy.
+    /// slot 39: canonical byte length of the one staged successor V1 policy.
     #[attribute(order = 39)]
     pub staged_v1_policy_len: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// slot 49: canonical staged successor policy bytes as 32-byte chunks.
+    /// slot 40: canonical staged successor policy bytes as 32-byte chunks.
     #[attribute(order = 40)]
     pub staged_v1_policy_chunk: outbe_primitives::storage::dsl::Map<u32, B256>,
 
-    /// slot 50: hash of the staged canonical successor policy.
+    /// slot 41: hash of the staged canonical successor policy.
     #[attribute(order = 41)]
     pub staged_v1_policy_hash: outbe_primitives::storage::dsl::Value<B256>,
 
-    /// slot 51: Update vote proposal that exclusively owns the staged policy.
+    /// slot 42: Update vote proposal that exclusively owns the staged policy.
     #[attribute(order = 42)]
     pub staged_v1_policy_proposal_id: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 52: redundant activation anchor authenticated against policy bytes.
+    /// slot 43: redundant activation anchor authenticated against policy bytes.
     #[attribute(order = 43)]
     pub staged_v1_policy_activation_height: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 53: Update proposal that most recently promoted the active policy.
+    /// slot 44: Update proposal that most recently promoted the active policy.
     #[attribute(order = 44)]
     pub active_v1_policy_proposal_id: outbe_primitives::storage::dsl::Value<U256>,
 }

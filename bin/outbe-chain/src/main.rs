@@ -1770,8 +1770,7 @@ fn run_node() -> eyre::Result<()> {
                     endpoint,
                     &node_data_dir,
                     outbe_tee::NodeHostIdentityV1 {
-                        chain_id: builder.config().chain.chain().id(),
-                        genesis_hash: builder.config().chain.genesis_hash(),
+                        network_binding: initial_tee_policy.network_binding(),
                         reth_p2p_public,
                     },
                     |hash| {

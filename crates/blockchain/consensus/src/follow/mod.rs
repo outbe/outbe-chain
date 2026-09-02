@@ -44,8 +44,8 @@ pub mod upstream;
 pub use engine::{run_follow_engine, FollowEngineConfig};
 pub use epocher::FollowerEpocher;
 pub use upstream::{
-    decode_public_finalized_block, CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource,
-    PublicFinalizedBlockDecodeError, TipSource,
+    decode_public_finalization, decode_public_finalized_block, CertifiedFinalizedBlock,
+    FinalizedSource, LocalBlockSource, PublicFinalizedBlockDecodeError, TipSource,
 };
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
@@ -120,6 +120,18 @@ impl CommitteeChain {
     ) -> Result<Set<bls12381::PublicKey>> {
         let output = crate::dkg_manager::decode_boundary_outcome(outcome)
             .ok_or_else(|| eyre::eyre!("boundary outcome is not a decodable full DKG output"))?;
+        let encoded_epoch = u64::from_be_bytes(
+            outcome[5..13]
+                .try_into()
+                .expect("a decoded ODKO outcome contains its fixed epoch field"),
+        );
+        if encoded_epoch != epoch.get() {
+            bail!(
+                "boundary outcome epoch label {} does not match registered epoch {}",
+                encoded_epoch,
+                epoch.get()
+            );
+        }
         let participants = output.players().clone();
         let polynomial = output.public().clone();
         let outcome_hash = keccak256(outcome);
@@ -260,6 +272,22 @@ impl CommitteeChain {
             );
         }
         Ok(())
+    }
+
+    /// Drop every authenticated verifier/outcome except the current epoch.
+    /// Admission streaming uses this after each verified successor so memory is
+    /// independent of network age. It must only be called after the successor
+    /// has been registered successfully.
+    pub fn retain_only_highest(&mut self) {
+        let Some(highest) = self.highest_registered else {
+            return;
+        };
+        for epoch in self.outcome_hashes.keys().copied().collect::<Vec<_>>() {
+            if epoch != highest.get() {
+                self.scheme_provider.remove(&Epoch::new(epoch));
+                self.outcome_hashes.remove(&epoch);
+            }
+        }
     }
 }
 
@@ -1849,6 +1877,38 @@ mod tests {
     }
 
     #[test]
+    fn admission_cursor_has_no_256_epoch_horizon_and_retains_one_verifier() {
+        let committee = committee(10);
+        let mut chain = CommitteeChain::new(Epoch::new(0), committee.participants.clone());
+
+        for raw_epoch in 0..=300_u64 {
+            let epoch = Epoch::new(raw_epoch);
+            chain
+                .register_epoch_from_outcome(epoch, &committee.outcome(epoch))
+                .unwrap();
+            chain.retain_only_highest();
+
+            assert_eq!(chain.highest_registered(), Some(epoch));
+            assert_eq!(chain.outcome_hashes.len(), 1);
+            assert!(commonware_cryptography::certificate::Provider::scoped(
+                chain.scheme_provider(),
+                epoch,
+            )
+            .is_some());
+            if raw_epoch > 0 {
+                assert!(
+                    commonware_cryptography::certificate::Provider::scoped(
+                        chain.scheme_provider(),
+                        Epoch::new(raw_epoch - 1),
+                    )
+                    .is_none(),
+                    "the prior verifier must be pruned after epoch {raw_epoch}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn preannounce_registers_and_self_finalized_boundary_cannot_override() {
         // The D1 fix, end to end at the follower: epoch 6's committee is registered
         // from its E-1 PRE-ANNOUNCE (carried in a block finalized by the trusted
@@ -1898,6 +1958,32 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("anchor mismatch"), "error: {err}");
+    }
+
+    #[test]
+    fn committee_chain_rejects_noncanonical_or_mislabelled_outcomes() {
+        let epoch = Epoch::new(5);
+        let committee = committee(10);
+
+        let mut trailing = committee.outcome(epoch);
+        trailing.push(0);
+        let mut chain = CommitteeChain::new(epoch, committee.participants.clone());
+        assert!(chain.register_epoch_from_outcome(epoch, &trailing).is_err());
+
+        let mut wrong_version = committee.outcome(epoch);
+        wrong_version[4] ^= 1;
+        let mut chain = CommitteeChain::new(epoch, committee.participants.clone());
+        assert!(chain
+            .register_epoch_from_outcome(epoch, &wrong_version)
+            .is_err());
+
+        let wrong_epoch = committee.outcome(Epoch::new(epoch.get() + 1));
+        let mut chain = CommitteeChain::new(epoch, committee.participants.clone());
+        assert!(chain
+            .register_epoch_from_outcome(epoch, &wrong_epoch)
+            .unwrap_err()
+            .to_string()
+            .contains("epoch label"));
     }
 
     #[test]
@@ -2060,5 +2146,28 @@ mod tests {
         chain
             .verify_finalization(epoch, &decoded_fin)
             .expect("the round-tripped certificate must verify against the registered committee");
+    }
+
+    #[test]
+    fn public_finalization_decoder_requires_exact_canonical_record() {
+        use commonware_codec::Encode as _;
+
+        let committee = committee(44);
+        let finalization = committee.finalization(Epoch::new(7));
+        let encoded = finalization.encode();
+
+        let decoded = decode_public_finalization(&encoded, committee.participants.len()).unwrap();
+        assert_eq!(decoded.proposal, finalization.proposal);
+
+        let mut trailing = encoded.to_vec();
+        trailing.push(0);
+        assert!(matches!(
+            decode_public_finalization(&trailing, committee.participants.len()),
+            Err(PublicFinalizedBlockDecodeError::TrailingFinalization)
+        ));
+        assert!(matches!(
+            decode_public_finalization(&encoded, 0),
+            Err(PublicFinalizedBlockDecodeError::ZeroCommitteeBound)
+        ));
     }
 }

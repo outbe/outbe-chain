@@ -17,13 +17,19 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{Ack, DealerBundle, FinalizedLog};
 use outbe_tee::{CeremonyCoordinator, EnclaveClient};
 use outbe_tee_enclave::keys::EnclaveKeys;
-use outbe_tee_enclave::transport::serve_connection;
+use outbe_tee_enclave::transport::serve_connection_for_network_test;
 
 const N: usize = 4;
 
 #[test]
 fn full_dkg_ceremony_over_real_noise_transport() {
     let dir = tempfile::tempdir().unwrap();
+    let network_binding = outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
+        chain_id: alloy_primitives::U256::from(outbe_primitives::chain::TESTNET_CHAIN_ID)
+            .to_be_bytes(),
+        genesis_hash: B256::repeat_byte(0x5b),
+        attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
+    };
 
     // Spin up N enclaves: each a distinct identity, a UDS, and a server thread
     // serving one connection (the whole ceremony) to completion.
@@ -36,7 +42,7 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         servers.push(thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             let offer_key = std::sync::Arc::new(std::sync::OnceLock::new());
-            let _ = serve_connection(stream, &keys, &offer_key);
+            let _ = serve_connection_for_network_test(stream, &keys, &offer_key, network_binding);
         }));
         socks.push(sock);
     }
@@ -47,25 +53,40 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         .map(|s| EnclaveClient::connect(s).unwrap())
         .collect();
 
-    // Announce each enclave's DKG identity (tee_bls_pub, dkg_enc_pub).
-    let identities: Vec<outbe_tee::protocol::ParticipantAnnounce> = clients
+    let participant_bls = clients
         .iter_mut()
         .map(
-            |c| match c.request(&EnclaveRequest::GetPublicKeys).unwrap() {
-                EnclaveResponse::PublicKeys {
-                    tee_bls_pub,
-                    dkg_enc_pub,
-                    dkg_enc_sig,
-                    ..
-                } => outbe_tee::protocol::ParticipantAnnounce {
-                    bls_pub: tee_bls_pub,
-                    enc_pub: dkg_enc_pub,
-                    enc_sig: dkg_enc_sig,
-                },
+            |client| match client.request(&EnclaveRequest::GetPublicKeys).unwrap() {
+                EnclaveResponse::PublicKeys { tee_bls_pub, .. } => tee_bls_pub,
                 other => panic!("unexpected GetPublicKeys: {other:?}"),
             },
         )
-        .collect();
+        .collect::<Vec<_>>();
+    let participant_set_hash =
+        outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
+            .unwrap();
+    let ceremony_id = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
+        &network_binding,
+        0,
+        participant_set_hash,
+    )
+    .unwrap();
+    let identities = clients
+        .iter_mut()
+        .map(|client| {
+            match client
+                .request(&EnclaveRequest::DkgParticipantAnnounceV1 {
+                    ceremony_id,
+                    round: 0,
+                    participant_bls: participant_bls.clone(),
+                })
+                .unwrap()
+            {
+                EnclaveResponse::DkgParticipantAnnounceV1 { participant } => participant,
+                other => panic!("unexpected DKG announcement: {other:?}"),
+            }
+        })
+        .collect::<Vec<_>>();
 
     let index_of: BTreeMap<Vec<u8>, usize> = identities
         .iter()
@@ -73,7 +94,6 @@ fn full_dkg_ceremony_over_real_noise_transport() {
         .map(|(i, p)| (p.bls_pub.clone(), i))
         .collect();
 
-    let ceremony_id = B256::repeat_byte(0x5c);
     let coords: Vec<CeremonyCoordinator> = identities
         .iter()
         .map(|p| CeremonyCoordinator::new(ceremony_id, 0, p.bls_pub.clone(), identities.clone()))

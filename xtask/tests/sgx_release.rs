@@ -1,13 +1,14 @@
 use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256, U256};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_consensus::storage_identity::bind_consensus_storage_identity;
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
-        AttestationMode, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+        AttestationMode, NetworkBindingV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
+        TeePolicyV1, TrustedNetworkDescriptorV1,
     },
     tee_genesis_v1::{
         initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
@@ -27,7 +28,7 @@ const SIGSTRUCT: &str = "Attributes:\n\
     mr_signer: dee850fda5f2fe2b157dbea629d5182e9d3bfef43b0d00ec13e71d500656589f\n\
     mr_enclave: c6f76b702ccb4764f5583bd9ea13c9d2464a90f6513d4931d4674baad816eedf\n\
     isv_prod_id: 1\n\
-    isv_svn: 1\n\
+    isv_svn: 2\n\
     debug_enclave: False\n";
 const PCK_CRL_BYTES: &[u8] = b"synthetic Processor CRL boundary fixture";
 const ROOT_CRL_BYTES: &[u8] = b"synthetic root CRL boundary fixture";
@@ -200,8 +201,17 @@ fn write_release_genesis(
     mrsigner: &str,
     isv_prod_id: u16,
     isv_svn: u16,
-) -> (std::path::PathBuf, TeePolicyV1, TeePolicyScheduleV1) {
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    TeePolicyV1,
+    TeePolicyScheduleV1,
+) {
     let path = root.join(network.genesis_artifact_name());
+    let seeded_path = root.join(format!(
+        "{}-seeded-genesis.json",
+        network.authorization_scope()
+    ));
     let mut genesis = serde_json::json!({
         "config": {
             "chainId": network.chain_id(),
@@ -226,8 +236,55 @@ fn write_release_genesis(
         "coinbase": "0x0000000000000000000000000000000000000000",
         "alloc": {}
     });
-    fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-    let base = reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
+    let direct_slot = |slot: u64| U256::from(slot).to_be_bytes::<32>();
+    let mapping_slot = |key: [u8; 32], slot: u64| {
+        let mut preimage = [0_u8; 64];
+        preimage[..32].copy_from_slice(&key);
+        preimage[32..].copy_from_slice(&direct_slot(slot));
+        keccak256(preimage).0
+    };
+    let storage_word = |word: [u8; 32]| format!("0x{}", hex::encode(word));
+    let validator_address = [0x77_u8; 20];
+    let mut validator_word = [0_u8; 32];
+    validator_word[12..].copy_from_slice(&validator_address);
+    let consensus_key = test_consensus_key(network);
+    let mut consensus_hi = [0_u8; 32];
+    consensus_hi[..16].copy_from_slice(&consensus_key[32..]);
+    let storage = serde_json::Map::from_iter(
+        [
+            (storage_word(direct_slot(20)), storage_word(direct_slot(1))),
+            (
+                storage_word(mapping_slot(direct_slot(1), 17)),
+                storage_word(validator_word),
+            ),
+            (
+                storage_word(mapping_slot(validator_word, 5)),
+                storage_word(consensus_key[..32].try_into().unwrap()),
+            ),
+            (
+                storage_word(mapping_slot(validator_word, 6)),
+                storage_word(consensus_hi),
+            ),
+            (
+                storage_word(mapping_slot(validator_word, 8)),
+                storage_word(direct_slot(2)),
+            ),
+            (
+                storage_word(mapping_slot(validator_word, 24)),
+                storage_word(direct_slot(1)),
+            ),
+        ]
+        .map(|(key, value)| (key, serde_json::Value::String(value))),
+    );
+    genesis["alloc"] = serde_json::json!({
+        "000000000000000000000000000000000000ee00": {
+            "balance": "0x0",
+            "storage": storage
+        }
+    });
+    fs::write(&seeded_path, canonical_json(&genesis).unwrap()).unwrap();
+    let base =
+        reth_ethereum::cli::chainspec::chain_value_parser(seeded_path.to_str().unwrap()).unwrap();
     let parse = |value: &str| {
         let value = value.strip_prefix("0x").unwrap_or(value);
         B256::from_slice(&hex::decode(value).unwrap())
@@ -253,8 +310,48 @@ fn write_release_genesis(
         }],
     };
     genesis["config"]["teeAttestationV1"] = tee_attestation_v1_genesis_field(&policy).unwrap();
-    fs::write(&path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-    (path, policy, schedule)
+    fs::write(&path, canonical_json(&genesis).unwrap()).unwrap();
+    (seeded_path, path, policy, schedule)
+}
+
+fn test_file_digest(path: &std::path::Path) -> serde_json::Value {
+    let bytes = fs::read(path).expect("read digest input");
+    serde_json::json!({
+        "algorithm": "sha256",
+        "value": hex::encode(Sha256::digest(bytes))
+    })
+}
+
+fn write_network_binding_evidence(
+    path: &std::path::Path,
+    network: SgxReleaseNetwork,
+    seeded_genesis: &std::path::Path,
+    final_genesis: &std::path::Path,
+    bundle: &std::path::Path,
+    manifest: &xtask::release::sgx::BundleManifest,
+    policy: &TeePolicyV1,
+) {
+    let binding = DcapChainSpecBindingV1::from_genesis_path(final_genesis)
+        .expect("parse final release binding");
+    let evidence = serde_json::json!({
+        "schema": "outbe-sgx-final-genesis-evidence-v1",
+        "network": network.authorization_scope(),
+        "chain_id": binding.chain_id,
+        "genesis_hash": format!("{:#x}", binding.genesis_hash),
+        "seeded_genesis": test_file_digest(seeded_genesis),
+        "final_genesis": test_file_digest(final_genesis),
+        "bundle_manifest": test_file_digest(&bundle.join(network.bundle_manifest_path())),
+        "measured_descriptor": test_file_digest(&bundle.join("metadata/network-descriptor-v1.bin")),
+        "measurements": manifest.measurements,
+        "minimum_tcb_evaluation_data_number": policy.minimum_tcb_evaluation_data_number,
+        "mutation": "insert-config-teeAttestationV1-only",
+        "result": "passed"
+    });
+    fs::write(
+        path,
+        canonical_json(&evidence).expect("canonical binding evidence"),
+    )
+    .expect("write binding evidence");
 }
 
 #[test]
@@ -345,6 +442,17 @@ fn bundle_spec_rejects_pre_activation_attestation_mode() {
 }
 
 #[test]
+fn bundle_spec_rejects_sealed_state_schema_drift() {
+    let mut spec = repo_spec();
+    spec.sealed_state_schema = u32::from(outbe_tee::SEALED_STATE_SCHEMA_V1) + 1;
+
+    let error = spec
+        .validate()
+        .expect_err("sealed-state schema drift must fail closed");
+    assert!(error.to_string().contains("sealed-state schema"));
+}
+
+#[test]
 fn cli_exposes_typed_sgx_release_commands() {
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["release", "sgx", "--help"])
@@ -370,6 +478,8 @@ fn cli_exposes_typed_sgx_release_commands() {
     assert!(manifest_help.contains("--processor-dcap-archive"));
     assert!(manifest_help.contains("--processor-dcap-evidence"));
     assert!(manifest_help.contains("--network"));
+    assert!(manifest_help.contains("--seeded-genesis"));
+    assert!(manifest_help.contains("--network-binding-evidence"));
     assert!(manifest_help.contains("--genesis"));
     assert!(!manifest_help.contains("--testnet-genesis"));
     assert!(!manifest_help.contains("--platform-dcap-evidence"));
@@ -399,18 +509,30 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
-    assert_eq!(workflow.matches("--network testnet").count(), 9);
-    assert!(workflow.contains("--genesis \"${TESTNET_GENESIS}\""));
+    assert_eq!(workflow.matches("--network testnet").count(), 10);
+    assert!(workflow.contains("--genesis \"${TESTNET_SEEDED_GENESIS}\""));
     assert!(workflow.contains("--expected-pck-ca processor"));
     assert!(workflow.contains("--processor-dcap-archive"));
     assert!(workflow.contains("--processor-dcap-evidence"));
-    assert!(workflow.contains("TESTNET_GENESIS: release/testnet-genesis.json"));
+    assert!(workflow.contains("seeded_genesis_url:"));
+    assert!(workflow.contains("seeded_genesis_sha256:"));
+    assert!(workflow.contains("Fetch and pin the approved seeded Testnet genesis"));
+    assert!(workflow.contains("OUTBE_GENESIS_URL"));
+    assert!(workflow.contains("OUTBE_GENESIS_SHA256"));
     assert_eq!(
-        workflow.matches("--genesis \"${TESTNET_GENESIS}\"").count(),
+        workflow
+            .matches("--genesis \"${TESTNET_SEEDED_GENESIS}\"")
+            .count(),
         2,
-        "both hardware acquisition and finalization must consume the immutable Testnet genesis"
+        "both reproducible bundle builds must consume the immutable seeded Testnet genesis"
     );
-    assert!(workflow.contains("git ls-files --error-unmatch \"${TESTNET_GENESIS}\""));
+    assert!(workflow.contains(
+        "--seeded-genesis \"${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json\""
+    ));
+    assert!(workflow.contains(
+        "--network-binding-evidence \\\n              \"${RUNNER_TEMP}/published/testnet-genesis-binding-evidence.json\""
+    ));
+    assert!(!workflow.contains("git ls-files --error-unmatch \"${TESTNET_SEEDED_GENESIS}\""));
     assert!(workflow.contains("outbe-release-dcap-evidence"));
     assert!(workflow.contains("hardware-dcap-processor-evidence"));
     assert!(!workflow.contains("testnet-release-sgx-platform"));
@@ -433,8 +555,11 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
         .expect("end of release asset list")
         .0;
     assert!(
-        release_assets.contains("\"${TESTNET_GENESIS}\""),
-        "the exact testnet genesis must be a published release asset"
+        release_assets.contains("\"${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json\"")
+            && release_assets.contains("\"${RUNNER_TEMP}/published/testnet-genesis.json\"")
+            && release_assets
+                .contains("\"${RUNNER_TEMP}/published/testnet-genesis-binding-evidence.json\""),
+        "the seeded genesis, final genesis and their binding evidence must be release assets"
     );
     let package_job = workflow
         .split_once("  package-and-sign-image:")
@@ -468,13 +593,15 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
     let workflow = fs::read_to_string(root.join(".github/workflows/mainnet-release.yml"))
         .expect("mainnet release workflow");
     for required in [
-        "genesis_url:",
-        "genesis_sha256:",
+        "seeded_genesis_url:",
+        "seeded_genesis_sha256:",
         "environment: mainnet-release",
         "runs-on: mainnet-release-sgx",
         "OUTBE_MAINNET_SGX_SIGNING_KEY_B64",
         "--network mainnet",
-        "--genesis \"${RUNNER_TEMP}/release-inputs/mainnet-genesis.json\"",
+        "--seeded-genesis \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\"",
+        "--network-binding-evidence \\\n              \"${RUNNER_TEMP}/published/mainnet-genesis-binding-evidence.json\"",
+        "--genesis \"${RUNNER_TEMP}/published/mainnet-genesis.json\"",
         "outbe-tee-enclave-mainnet",
     ] {
         assert!(workflow.contains(required), "missing {required}");
@@ -482,22 +609,40 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
     assert!(workflow.contains("sha256sum --check"));
     assert!(workflow.contains(concat!(
         "test \"$(jq -er '.config.chainId' \\\n",
-        "            \"${RUNNER_TEMP}/release-inputs/mainnet-genesis.json\")\" = '676'"
+        "            \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\")\" = '676'"
     )));
     assert!(!workflow.contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
     assert!(workflow.contains("--draft --prerelease"));
     assert!(workflow.contains("cmp --silent"));
-    assert_eq!(workflow.matches("--network mainnet").count(), 9);
+    assert_eq!(workflow.matches("--network mainnet").count(), 10);
+
+    let release_assets = workflow
+        .split_once("          assets=(")
+        .expect("release asset list")
+        .1
+        .split_once("\n          )")
+        .expect("end of release asset list")
+        .0;
+    assert!(
+        release_assets.contains("\"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\"")
+            && release_assets.contains("\"${RUNNER_TEMP}/published/mainnet-genesis.json\"")
+            && release_assets
+                .contains("\"${RUNNER_TEMP}/published/mainnet-genesis-binding-evidence.json\""),
+        "the seeded genesis, final genesis and their binding evidence must be release assets"
+    );
 
     let dispatcher =
         fs::read_to_string(root.join(".github/workflows/release.yml")).expect("release dispatcher");
     assert!(dispatcher.contains("!contains(github.ref_name, '-mainnet.')"));
     assert!(dispatcher.contains("gh workflow run mainnet-release.yml"));
-    assert!(dispatcher.contains("OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}"));
-    assert!(dispatcher
-        .contains("OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}"));
+    assert!(dispatcher.contains(
+        "OUTBE_MAINNET_SEEDED_GENESIS_URL: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_URL }}"
+    ));
+    assert!(dispatcher.contains(
+        "OUTBE_MAINNET_SEEDED_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_SHA256 }}"
+    ));
 }
 
 #[test]
@@ -537,7 +682,40 @@ fn normalizes_cosign_array_and_ndjson_output() {
     assert!(normalize_cosign_json_output("", "fixture").is_err());
 }
 
-fn signed_fixture() -> TempDir {
+fn write_network_descriptor(
+    root: &std::path::Path,
+    network: SgxReleaseNetwork,
+    genesis_hash: B256,
+) {
+    let genesis_consensus_key = test_consensus_key(network);
+    let descriptor = TrustedNetworkDescriptorV1 {
+        network_binding: NetworkBindingV1 {
+            chain_id: U256::from(network.chain_id()).to_be_bytes(),
+            genesis_hash,
+            attestation_mode: AttestationMode::DcapRequired,
+        },
+        genesis_consensus_keys: vec![genesis_consensus_key],
+    }
+    .encode_canonical()
+    .expect("canonical network descriptor");
+    for relative in [
+        "metadata/network-descriptor-v1.bin",
+        "rootfs/opt/outbe/sgx/network-descriptor-v1.bin",
+    ] {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("descriptor parent")).expect("descriptor dirs");
+        fs::write(path, &descriptor).expect("write network descriptor");
+    }
+}
+
+fn test_consensus_key(network: SgxReleaseNetwork) -> [u8; 48] {
+    blst::min_pk::SecretKey::key_gen(&[network.chain_id() as u8; 32], &[])
+        .expect("deterministic test MinPk secret")
+        .sk_to_pk()
+        .to_bytes()
+}
+
+fn signed_fixture(network: SgxReleaseNetwork) -> TempDir {
     let temp = tempfile::tempdir().expect("tempdir");
     for relative in [
         "rootfs/opt/outbe/sgx/bin/outbe-tee-enclave",
@@ -551,6 +729,7 @@ fn signed_fixture() -> TempDir {
         fs::create_dir_all(path.parent().expect("parent")).expect("create fixture dirs");
         fs::write(path, relative.as_bytes()).expect("write fixture");
     }
+    write_network_descriptor(temp.path(), network, B256::from([0x41; 32]));
     temp
 }
 
@@ -559,7 +738,7 @@ fn parses_sigstruct_into_typed_measurements() {
     let measurements = parse_sigstruct_view(SIGSTRUCT).expect("valid SIGSTRUCT");
     assert!(!measurements.debug);
     assert_eq!(measurements.isv_prod_id, 1);
-    assert_eq!(measurements.isv_svn, 1);
+    assert_eq!(measurements.isv_svn, 2);
     assert_eq!(
         measurements.mrenclave,
         "c6f76b702ccb4764f5583bd9ea13c9d2464a90f6513d4931d4674baad816eedf"
@@ -587,7 +766,7 @@ fn compares_independent_unsigned_trees_and_rejects_drift() {
 
 #[test]
 fn canonical_manifest_binds_identity_measurements_and_every_bundle_file() {
-    let fixture = signed_fixture();
+    let fixture = signed_fixture(SgxReleaseNetwork::Testnet);
     let manifest = build_bundle_manifest(
         fixture.path(),
         &repo_spec(),
@@ -602,7 +781,7 @@ fn canonical_manifest_binds_identity_measurements_and_every_bundle_file() {
 
     assert_eq!(manifest.authorization_scope, "testnet");
     assert_eq!(manifest.sigstruct_date, "2026-07-21");
-    assert_eq!(manifest.files.len(), 6);
+    assert_eq!(manifest.files.len(), 8);
     let bytes = canonical_json(&manifest).expect("canonical JSON");
     assert_eq!(bytes.last(), Some(&b'\n'));
     verify_signed_bundle(fixture.path(), &manifest, &repo_spec(), SIGSTRUCT)
@@ -611,7 +790,7 @@ fn canonical_manifest_binds_identity_measurements_and_every_bundle_file() {
 
 #[test]
 fn signed_bundle_identity_is_not_transferable_between_testnet_and_mainnet() {
-    let fixture = signed_fixture();
+    let fixture = signed_fixture(SgxReleaseNetwork::Mainnet);
     let root = repo_root();
     let testnet = BundleSpec::read(&root.join("release/testnet-sgx-bundle-v1.json")).unwrap();
     let mainnet = BundleSpec::read(&root.join("release/mainnet-sgx-bundle-v1.json")).unwrap();
@@ -633,7 +812,7 @@ fn signed_bundle_identity_is_not_transferable_between_testnet_and_mainnet() {
 
 #[test]
 fn verification_rejects_artifact_substitution() {
-    let fixture = signed_fixture();
+    let fixture = signed_fixture(SgxReleaseNetwork::Testnet);
     let spec = repo_spec();
     let manifest = build_bundle_manifest(
         fixture.path(),
@@ -662,22 +841,31 @@ fn verification_rejects_artifact_substitution() {
 #[test]
 fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() {
     let root = tempfile::tempdir().expect("tempdir");
-    let fixture = signed_fixture();
+    let fixture = signed_fixture(SgxReleaseNetwork::Testnet);
     let source = SourceIdentity {
         source_commit: "a".repeat(40),
         source_date_epoch: 1_784_636_360,
         release_tag: "v0.1.1-testnet.1".to_owned(),
     };
+    let measurements = parse_sigstruct_view(SIGSTRUCT).expect("test SIGSTRUCT");
+    let (testnet_seeded_genesis, testnet_genesis, testnet_policy, testnet_policy_schedule) =
+        write_release_genesis(
+            root.path(),
+            SgxReleaseNetwork::Testnet,
+            &measurements.mrenclave,
+            &measurements.mrsigner,
+            measurements.isv_prod_id,
+            measurements.isv_svn,
+        );
+    let testnet_binding =
+        DcapChainSpecBindingV1::from_genesis_path(&testnet_genesis).expect("testnet binding");
+    write_network_descriptor(
+        fixture.path(),
+        SgxReleaseNetwork::Testnet,
+        testnet_binding.genesis_hash,
+    );
     let bundle_manifest = build_bundle_manifest(fixture.path(), &repo_spec(), &source, SIGSTRUCT)
         .expect("bundle manifest");
-    let (testnet_genesis, testnet_policy, testnet_policy_schedule) = write_release_genesis(
-        root.path(),
-        SgxReleaseNetwork::Testnet,
-        &bundle_manifest.measurements.mrenclave,
-        &bundle_manifest.measurements.mrsigner,
-        bundle_manifest.measurements.isv_prod_id,
-        bundle_manifest.measurements.isv_svn,
-    );
     let testnet_genesis_bytes = fs::read(&testnet_genesis).unwrap();
     let testnet_policy_bytes = testnet_policy.encode_canonical().unwrap();
     let testnet_policy_schedule_bytes = testnet_policy_schedule.encode_canonical().unwrap();
@@ -687,6 +875,17 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         canonical_json(&bundle_manifest).expect("canonical bundle manifest"),
     )
     .expect("write bundle manifest");
+    let testnet_network_binding_evidence =
+        root.path().join("testnet-genesis-binding-evidence.json");
+    write_network_binding_evidence(
+        &testnet_network_binding_evidence,
+        SgxReleaseNetwork::Testnet,
+        &testnet_seeded_genesis,
+        &testnet_genesis,
+        fixture.path(),
+        &bundle_manifest,
+        &testnet_policy,
+    );
     let bundle_manifest_digest = hex::encode(Sha256::digest(
         fs::read(fixture.path().join("metadata/testnet-sgx-bundle.json"))
             .expect("read bundle manifest"),
@@ -941,6 +1140,8 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         oci_evidence,
         sbom,
         sgx_evidence,
+        seeded_genesis: testnet_seeded_genesis,
+        network_binding_evidence: testnet_network_binding_evidence,
         genesis: testnet_genesis,
     };
     let manifest = build_release_manifest_candidate(&inputs).expect("release manifest candidate");
@@ -962,11 +1163,22 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         bundle_manifest.measurements.mrsigner
     );
     let gates = manifest["verification_gates"].as_array().expect("gates");
-    assert_eq!(gates.len(), 7);
+    assert_eq!(gates.len(), 8);
     assert!(gates.iter().all(|gate| gate["status"] == "passed"));
     assert!(gates
         .iter()
         .any(|gate| gate["name"] == "fresh-accepted-processor-dcap"));
+    let genesis_binding_gate = gates
+        .iter()
+        .find(|gate| gate["name"] == "seeded-genesis-to-signed-enclave-policy")
+        .expect("seeded-genesis binding gate");
+    assert_eq!(
+        genesis_binding_gate["evidence"]
+            .as_array()
+            .expect("seeded-genesis gate evidence")
+            .len(),
+        2
+    );
     let processor_gate = gates
         .iter()
         .find(|gate| gate["name"] == "fresh-accepted-processor-dcap")
@@ -988,6 +1200,56 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         .expect("OCI gate");
     assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
 
+    let original_final_genesis = fs::read(&inputs.genesis).expect("read original final genesis");
+    let original_binding_evidence =
+        fs::read(&inputs.network_binding_evidence).expect("read original network-binding evidence");
+    let mut substituted_final: serde_json::Value =
+        serde_json::from_slice(&original_final_genesis).expect("parse final genesis");
+    substituted_final["unapprovedReleaseMetadata"] = serde_json::json!(true);
+    fs::write(
+        &inputs.genesis,
+        canonical_json(&substituted_final).expect("canonical substituted final genesis"),
+    )
+    .expect("write substituted final genesis");
+    let mut substituted_evidence: serde_json::Value =
+        serde_json::from_slice(&original_binding_evidence).expect("parse binding evidence");
+    substituted_evidence["final_genesis"] = test_file_digest(&inputs.genesis);
+    fs::write(
+        &inputs.network_binding_evidence,
+        canonical_json(&substituted_evidence).expect("canonical substituted binding evidence"),
+    )
+    .expect("write substituted binding evidence");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("a final genesis with an additional mutation must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("exact allowed seeded-genesis policy insertion"),
+        "unexpected rejection: {error:?}"
+    );
+    fs::write(&inputs.genesis, original_final_genesis).expect("restore final genesis");
+    fs::write(&inputs.network_binding_evidence, &original_binding_evidence)
+        .expect("restore network-binding evidence");
+
+    let mut forged_binding_evidence: serde_json::Value =
+        serde_json::from_slice(&original_binding_evidence).expect("parse binding evidence");
+    forged_binding_evidence["seeded_genesis"]["value"] = serde_json::json!("00".repeat(32));
+    fs::write(
+        &inputs.network_binding_evidence,
+        canonical_json(&forged_binding_evidence).expect("canonical forged binding evidence"),
+    )
+    .expect("write forged binding evidence");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("network-binding evidence with a forged seed digest must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not exactly bind the seed, final genesis and signed bundle"),
+        "unexpected rejection: {error:?}"
+    );
+    fs::write(&inputs.network_binding_evidence, original_binding_evidence)
+        .expect("restore network-binding evidence");
+
     let mainnet_spec = BundleSpec::read(&repo_root().join("release/mainnet-sgx-bundle-v1.json"))
         .expect("Mainnet bundle spec");
     let mainnet_source = SourceIdentity {
@@ -995,6 +1257,23 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         source_date_epoch: source.source_date_epoch,
         release_tag: "v0.1.1-mainnet.1".to_owned(),
     };
+    let mainnet_measurements = parse_sigstruct_view(SIGSTRUCT).expect("Mainnet measurements");
+    let (mainnet_seeded_genesis, mainnet_genesis, mainnet_policy, mainnet_policy_schedule) =
+        write_release_genesis(
+            root.path(),
+            SgxReleaseNetwork::Mainnet,
+            &mainnet_measurements.mrenclave,
+            &mainnet_measurements.mrsigner,
+            mainnet_measurements.isv_prod_id,
+            mainnet_measurements.isv_svn,
+        );
+    let mainnet_binding = DcapChainSpecBindingV1::from_genesis_path(&mainnet_genesis)
+        .expect("parse Mainnet DCAP ChainSpec binding");
+    write_network_descriptor(
+        fixture.path(),
+        SgxReleaseNetwork::Mainnet,
+        mainnet_binding.genesis_hash,
+    );
     let mainnet_bundle_manifest =
         build_bundle_manifest(fixture.path(), &mainnet_spec, &mainnet_source, SIGSTRUCT)
             .expect("Mainnet bundle manifest");
@@ -1006,19 +1285,20 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         canonical_json(&mainnet_bundle_manifest).expect("canonical Mainnet bundle manifest"),
     )
     .expect("write Mainnet bundle manifest");
+    let mainnet_network_binding_evidence =
+        root.path().join("mainnet-genesis-binding-evidence.json");
+    write_network_binding_evidence(
+        &mainnet_network_binding_evidence,
+        SgxReleaseNetwork::Mainnet,
+        &mainnet_seeded_genesis,
+        &mainnet_genesis,
+        fixture.path(),
+        &mainnet_bundle_manifest,
+        &mainnet_policy,
+    );
     let mainnet_bundle_manifest_digest = hex::encode(Sha256::digest(
         fs::read(&mainnet_bundle_manifest_path).expect("read Mainnet bundle manifest"),
     ));
-    let (mainnet_genesis, mainnet_policy, mainnet_policy_schedule) = write_release_genesis(
-        root.path(),
-        SgxReleaseNetwork::Mainnet,
-        &mainnet_bundle_manifest.measurements.mrenclave,
-        &mainnet_bundle_manifest.measurements.mrsigner,
-        mainnet_bundle_manifest.measurements.isv_prod_id,
-        mainnet_bundle_manifest.measurements.isv_svn,
-    );
-    let mainnet_binding = DcapChainSpecBindingV1::from_genesis_path(&mainnet_genesis)
-        .expect("parse Mainnet DCAP ChainSpec binding");
     assert_eq!(mainnet_binding.chain_id, 676);
     let consensus_storage = root.path().join("mainnet-consensus");
     bind_consensus_storage_identity(
@@ -1126,6 +1406,8 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         oci_evidence: mainnet_oci_evidence,
         processor_dcap_archive: mainnet_processor_archive,
         processor_dcap_evidence: mainnet_processor_evidence.clone(),
+        seeded_genesis: mainnet_seeded_genesis,
+        network_binding_evidence: mainnet_network_binding_evidence,
         genesis: mainnet_genesis,
         ..inputs.clone()
     };
@@ -1186,6 +1468,11 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         "unexpected rejection: {error:?}"
     );
     fs::remove_file(mainnet_bundle_manifest_path).expect("remove Mainnet bundle metadata");
+    write_network_descriptor(
+        fixture.path(),
+        SgxReleaseNetwork::Testnet,
+        testnet_binding.genesis_hash,
+    );
 
     let mut substituted_retained_policy = testnet_policy_bytes.clone();
     substituted_retained_policy[0] ^= 1;
@@ -1200,7 +1487,10 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
     );
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("substituted retained policy must not pass finalization");
-    assert!(error.to_string().contains("archive member digest mismatch"));
+    assert!(
+        error.to_string().contains("archive member digest mismatch"),
+        "unexpected rejection: {error:?}"
+    );
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
@@ -1418,7 +1708,12 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
         .expect("substitute testnet genesis bytes");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("substituted testnet genesis bytes must not pass finalization");
-    assert!(error.to_string().contains("release ChainSpec binding"));
+    assert!(
+        error
+            .to_string()
+            .contains("exact allowed seeded-genesis policy insertion"),
+        "unexpected rejection: {error:?}"
+    );
     fs::write(&inputs.genesis, &testnet_genesis_bytes)
         .expect("restore exact testnet genesis bytes");
 

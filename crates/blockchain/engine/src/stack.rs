@@ -3903,8 +3903,6 @@ where
             let my_validator = proposer_evm_address.ok_or_else(|| {
                 eyre::eyre!("founding validator TEE bootstrap requires its EVM identity")
             })?;
-            let dkg_chain_id =
-                B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
             let n = participants.len();
             let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
                 .iter()
@@ -4027,7 +4025,7 @@ where
                             &mut enclave,
                             dkg_clock,
                             n,
-                            dkg_chain_id,
+                            tee_policy.network_binding(),
                             0,
                             dkg_remote_peers,
                             dkg_sender,

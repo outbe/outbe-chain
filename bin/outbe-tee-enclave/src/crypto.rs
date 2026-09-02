@@ -415,6 +415,8 @@ mod tests {
             intent_hash: B256::repeat_byte(0x23),
             node_id_hash: B256::repeat_byte(0x24),
             enclave_id: B256::repeat_byte(0x25),
+            binding_id: B256::repeat_byte(0x26),
+            policy_hash: B256::repeat_byte(0x27),
             recipient_x25519,
             tribute_offer_public,
             key_epoch: 3,

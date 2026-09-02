@@ -62,15 +62,15 @@ def load_and_validate_build_spec(
     )
     if enclave.get("classification") != "production":
         raise ValueError("production enclave must be a production ELF subject")
-    if enclave.get("features") != ["native-dcap"]:
+    if enclave.get("features") != ["production-dcap-release"]:
         raise ValueError(
-            "production enclave must enable exactly the native-dcap application feature"
+            "production enclave must enable exactly the production-dcap-release application feature"
         )
     for artifact in build_spec["artifacts"]:
-        expected_features = ["native-dcap"] if artifact is enclave else []
+        expected_features = ["production-dcap-release"] if artifact is enclave else []
         if artifact.get("features") != expected_features:
             raise ValueError(
-                "production ELF feature matrix must isolate native-dcap to "
+                "production ELF feature matrix must isolate production-dcap-release to "
                 "outbe-tee-enclave"
             )
     if repo_root is not None:

@@ -319,6 +319,8 @@ mod tests {
                 intent_hash: expected.intent_hash,
                 node_id_hash: expected.node_id_hash,
                 enclave_id: expected.enclave_id,
+                binding_id: B256::repeat_byte(0x1d),
+                policy_hash: B256::repeat_byte(0x1e),
                 recipient_x25519: expected.recipient_x25519,
                 tribute_offer_public: expected.tribute_offer_public,
                 key_epoch: expected.key_epoch,

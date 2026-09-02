@@ -44,6 +44,8 @@ mod shutdown_tests;
 mod telemetry_label_tests;
 
 #[cfg(any(test, feature = "test-utils"))]
+pub mod finalized_admission_test_utils;
+#[cfg(any(test, feature = "test-utils"))]
 #[path = "test_harness.rs"]
 pub mod test_harness;
 

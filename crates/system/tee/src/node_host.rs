@@ -12,10 +12,10 @@ use std::os::unix::fs::{
 };
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    NetworkBindingV1, NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 
 use crate::{
@@ -67,8 +67,7 @@ const FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES: u64 = 1 + (7 * 32) + 8 + 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeHostIdentityV1 {
-    pub chain_id: u64,
-    pub genesis_hash: B256,
+    pub network_binding: NetworkBindingV1,
     pub reth_p2p_public: [u8; 33],
 }
 
@@ -139,10 +138,6 @@ impl FinalizedJoinAdmissionAnchorV1 {
 }
 
 impl NodeHostIdentityV1 {
-    fn chain_id_word(&self) -> [u8; 32] {
-        U256::from(self.chain_id).to_be_bytes()
-    }
-
     fn node_id(&self) -> NodeIdV1 {
         NodeIdV1 {
             reth_p2p_public: self.reth_p2p_public,
@@ -617,6 +612,69 @@ impl ReplacementCandidateEnclaveV1 {
         request: &crate::protocol::EnclaveRequest,
     ) -> Result<crate::protocol::EnclaveResponse, TransportError> {
         self.client.request(request)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_finalized_admission_v1(
+        &mut self,
+        artifact: &[u8],
+        anchor_outcome: &[u8],
+        committee_transitions: &[Vec<u8>],
+        finalized_admission_witness: &[u8],
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    ) -> Result<[u8; 32], TransportError> {
+        self.client.ingest_finalized_admission_v1(
+            artifact,
+            anchor_outcome,
+            committee_transitions,
+            finalized_admission_witness,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_finalized_admission_v1(
+        &mut self,
+        artifact: &[u8],
+        anchor_outcome: &[u8],
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    ) -> Result<B256, TransportError> {
+        self.client.begin_finalized_admission_v1(
+            artifact,
+            anchor_outcome,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        )
+    }
+
+    pub fn upload_finalized_admission_record_v1(
+        &mut self,
+        request_hash: B256,
+        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
+        record: &[u8],
+    ) -> Result<(), TransportError> {
+        self.client
+            .upload_finalized_admission_record_v1(request_hash, kind, record)
+    }
+
+    pub fn finish_finalized_admission_v1(
+        &mut self,
+        request_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+    ) -> Result<[u8; 32], TransportError> {
+        self.client
+            .finish_finalized_admission_v1(request_hash, expected_tribute_offer_public)
     }
 
     pub fn sign_registration_intent_dev_v1(
@@ -1435,8 +1493,9 @@ where
         }
         let challenge = AuthorizedEnclaveClient::discover_endpoint(endpoint)?;
         let refreshed_manifest = EnclaveInitializationManifestV1 {
-            chain_id: identity.chain_id_word(),
-            genesis_hash: identity.genesis_hash,
+            chain_id: identity.network_binding.chain_id,
+            genesis_hash: identity.network_binding.genesis_hash,
+            attestation_mode: identity.network_binding.attestation_mode,
             node_id: identity.node_id(),
             initialization_challenge: challenge.challenge,
             node_host_noise_x25519: node_host.public(),
@@ -1479,8 +1538,9 @@ where
 
     let challenge = AuthorizedEnclaveClient::discover_endpoint(endpoint)?;
     let manifest = EnclaveInitializationManifestV1 {
-        chain_id: identity.chain_id_word(),
-        genesis_hash: identity.genesis_hash,
+        chain_id: identity.network_binding.chain_id,
+        genesis_hash: identity.network_binding.genesis_hash,
+        attestation_mode: identity.network_binding.attestation_mode,
         node_id: identity.node_id(),
         initialization_challenge: challenge.challenge,
         node_host_noise_x25519: node_host.public(),
@@ -1625,8 +1685,9 @@ where
 
     let challenge = AuthorizedEnclaveClient::discover_endpoint(endpoint)?;
     let manifest = EnclaveInitializationManifestV1 {
-        chain_id: identity.chain_id_word(),
-        genesis_hash: identity.genesis_hash,
+        chain_id: identity.network_binding.chain_id,
+        genesis_hash: identity.network_binding.genesis_hash,
+        attestation_mode: identity.network_binding.attestation_mode,
         node_id: identity.node_id(),
         initialization_challenge: challenge.challenge,
         node_host_noise_x25519: node_host.public(),
@@ -1644,11 +1705,10 @@ where
 }
 
 fn validate_identity(identity: &NodeHostIdentityV1) -> Result<(), TransportError> {
-    if identity.chain_id == 0 || identity.genesis_hash.is_zero() {
-        return Err(TransportError::Codec(
-            "NodeHost identity contains a zero chain identity".into(),
-        ));
-    }
+    identity
+        .network_binding
+        .encode_canonical()
+        .map_err(|error| TransportError::Codec(error.to_string()))?;
     identity
         .node_id()
         .node_id_hash()
@@ -1664,8 +1724,7 @@ fn validate_manifest_identity(
     manifest
         .encode_canonical()
         .map_err(|error| TransportError::Codec(error.to_string()))?;
-    if manifest.chain_id != identity.chain_id_word()
-        || manifest.genesis_hash != identity.genesis_hash
+    if manifest.network_binding() != identity.network_binding
         || manifest.node_id != identity.node_id()
         || manifest.node_host_noise_x25519 != node_host.public()
     {
@@ -2739,8 +2798,9 @@ mod tests {
         let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x62; 32]);
         let node_id = NodeIdV1 { reth_p2p_public };
         let active = EnclaveInitializationManifestV1 {
-            chain_id: U256::from(19_u64).to_be_bytes(),
+            chain_id: alloy_primitives::U256::from(19_u64).to_be_bytes(),
             genesis_hash: B256::repeat_byte(0x14),
+            attestation_mode,
             node_id: node_id.clone(),
             initialization_challenge: [0x41; 32],
             node_host_noise_x25519: node_host.public(),

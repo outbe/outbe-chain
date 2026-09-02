@@ -13,6 +13,9 @@ mock = []
 # Production DCAP verifier feasibility path. This forwards the exact-pinned
 # native QVL feature into the enclave crate without enabling it in dev builds.
 native-dcap = ["outbe-tee/native-dcap"]
+# Release-only profile: the measured network descriptor is mandatory and the
+# process refuses every runtime except real DCAP before any protocol command.
+production-dcap-release = ["native-dcap"]
 # Hardware-fixture capture exists only in the separate required-feature binary
 # below. The production `outbe-tee-enclave` target never routes capture commands.
 dcap-fixture-capture = ["outbe-primitives/tee-attestation-v1"]
@@ -46,7 +49,12 @@ outbe-tee.workspace = true
 # change vs. today); declared directly only to name `tee_bootstrap::recover_signer`,
 # reused so the enclave and host recover EIP-191 signers with one identical impl.
 outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
+outbe-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+reth-primitives-traits.workspace = true
+reth-trie.workspace = true
 ring.workspace = true
 x25519-dalek.workspace = true
 ed25519-dalek.workspace = true
@@ -82,6 +90,7 @@ commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 commonware-parallel.workspace = true
 commonware-codec.workspace = true
+commonware-consensus.workspace = true
 rand_core.workspace = true
 
 [dev-dependencies]
@@ -89,9 +98,12 @@ tempfile.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true }
 commonware-runtime.workspace = true
+outbe-consensus = { workspace = true, features = ["test-utils"] }
 criterion.workspace = true
 # Test-only: sign EIP-191 owner proofs for the DeriveAccountKeys ownership gate.
 k256.workspace = true
+alloy-trie.workspace = true
+reth-ethereum.workspace = true
 
 # Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).
 # The CPU ceiling the network can sustain inside the enclave during block

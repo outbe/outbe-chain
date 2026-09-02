@@ -34,6 +34,9 @@ pub struct ReleaseSgxCli {
     /// Extracted signed SGX bundle downloaded from the protected release job.
     #[arg(long)]
     bundle: PathBuf,
+    /// Exact final network genesis generated from the approved seed and bundle measurements.
+    #[arg(long)]
+    genesis: PathBuf,
     /// Canonical JSON evidence written only after the complete scenario passes.
     #[arg(long)]
     evidence: PathBuf,
@@ -49,6 +52,7 @@ pub struct ReleaseSgxCli {
 struct ReleaseConfig {
     bundle: PathBuf,
     evidence: PathBuf,
+    genesis: PathBuf,
     image: String,
     image_digest: String,
     keep_work_dir: bool,
@@ -63,6 +67,7 @@ impl ReleaseConfig {
         let repo = fs::canonicalize(cli.repo.clone().unwrap_or_else(default_repo))
             .wrap_err("resolve repository checkout")?;
         let bundle = fs::canonicalize(&cli.bundle).wrap_err("resolve signed SGX bundle")?;
+        let genesis = fs::canonicalize(&cli.genesis).wrap_err("resolve exact final genesis")?;
         let evidence = absolute_path(&cli.evidence)?;
         if evidence.starts_with(&bundle) {
             bail!("hardware evidence must be outside the signed bundle");
@@ -76,6 +81,7 @@ impl ReleaseConfig {
         Ok(Self {
             bundle,
             evidence,
+            genesis,
             image: cli.image.clone(),
             image_digest,
             keep_work_dir: cli.keep_work_dir,
@@ -211,7 +217,8 @@ fn exact_release(world: &mut ReleaseSgxWorld) {
         world.cfg.network.label()
     );
     assert!(!world.manifest.measurements.debug);
-    assert_eq!(world.manifest.sealed_state_schema, 1);
+    assert_eq!(world.manifest.sealed_state_schema, 3);
+    assert_eq!(world.manifest.measurements.isv_svn, 2);
     command_ok(
         Command::new("docker")
             .args(["image", "inspect", &world.cfg.image])
@@ -235,6 +242,8 @@ fn verify_bundle_and_runtime(world: &mut ReleaseSgxWorld) {
                 "--bundle",
             ])
             .arg(&world.cfg.bundle)
+            .arg("--genesis")
+            .arg(&world.cfg.genesis)
             .current_dir(&world.cfg.repo),
         "verify exact signed SGX bundle",
     )
@@ -292,10 +301,13 @@ fn probe_hardware(world: &mut ReleaseSgxWorld) {
     command.arg("run").arg("--rm");
     add_sgx_devices(&mut command).expect("SGX devices");
     command.args([&world.cfg.image, "--probe-attestation"]);
-    world.probe = Some(
-        command_combined_output(&mut command, "probe release image")
-            .expect("release hardware probe"),
+    let probe = command_combined_output(&mut command, "probe release image")
+        .expect("release hardware probe");
+    assert!(
+        !probe.contains("dcap_quote: UNAVAILABLE"),
+        "release hardware probe has no DCAP quote:\n{probe}"
     );
+    world.probe = Some(probe);
 }
 
 #[cucumber::then("the hardware report matches the signed enclave measurements")]
@@ -371,7 +383,8 @@ fn substitute_artifact(world: &mut ReleaseSgxWorld) {
 
 #[cucumber::then("release verification rejects the substituted artifact")]
 fn substitution_rejected(world: &mut ReleaseSgxWorld) {
-    let status = Command::new("cargo")
+    let tampered_bundle = world.cfg.work_dir.join("tampered-bundle");
+    let output = Command::new("cargo")
         .args([
             "xtask",
             "release",
@@ -381,15 +394,22 @@ fn substitution_rejected(world: &mut ReleaseSgxWorld) {
             world.cfg.network.label(),
             "--bundle",
         ])
-        .arg(world.cfg.work_dir.join("tampered-bundle"))
+        .arg(&tampered_bundle)
+        .arg("--genesis")
+        .arg(&world.cfg.genesis)
         .current_dir(&world.cfg.repo)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .expect("run tampered verification");
     assert!(
-        !status.success(),
+        !output.status.success(),
         "substituted release artifact was accepted"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let tampered_signature = tampered_bundle.join("rootfs/opt/outbe/sgx/outbe-tee-enclave.sig");
+    assert!(
+        stderr.contains("checksum mismatch")
+            && stderr.contains(&tampered_signature.display().to_string()),
+        "verification failed for an unexpected reason: {stderr}"
     );
 }
 
@@ -824,6 +844,8 @@ mod tests {
             "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--bundle",
             "/tmp/bundle",
+            "--genesis",
+            "/tmp/genesis.json",
             "--evidence",
             "/tmp/evidence.json",
         ])
@@ -838,6 +860,8 @@ mod tests {
             "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--bundle",
             "/tmp/bundle",
+            "--genesis",
+            "/tmp/genesis.json",
             "--evidence",
             "/tmp/evidence.json",
         ])
@@ -850,6 +874,8 @@ mod tests {
             "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--bundle",
             "/tmp/bundle",
+            "--genesis",
+            "/tmp/genesis.json",
             "--evidence",
             "/tmp/evidence.json",
         ])

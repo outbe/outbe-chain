@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     chain::{MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
@@ -21,9 +21,131 @@ use outbe_primitives::{
 };
 use reth_ethereum::chainspec::ChainSpec;
 use serde::Deserialize;
+use serde_json::Value;
 
 pub const TEE_ATTESTATION_V1_CONFIG_FIELD: &str = "teeAttestationV1";
 pub const TEE_ATTESTATION_V1_ACTIVATION_HEIGHT: u64 = 1;
+
+/// Pre-measurement network authority derived from the seeded genesis. It is
+/// intentionally independent of `teeAttestationV1`, because that policy is
+/// created only after the descriptor has contributed to `MRENCLAVE`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DcapSeededChainSpecBindingV1 {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub genesis_consensus_keys: Vec<[u8; 48]>,
+}
+
+impl DcapSeededChainSpecBindingV1 {
+    pub fn from_genesis_path(path: &std::path::Path) -> Result<Self, String> {
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "seeded genesis path is not UTF-8".to_owned())?;
+        let spec = reth_ethereum::cli::chainspec::chain_value_parser(path_text)
+            .map_err(|error| format!("parse seeded genesis ChainSpec: {error}"))?;
+        let value: Value = serde_json::from_slice(
+            &std::fs::read(path)
+                .map_err(|error| format!("read seeded genesis {}: {error}", path.display()))?,
+        )
+        .map_err(|error| format!("parse seeded genesis JSON: {error}"))?;
+        Ok(Self {
+            chain_id: spec.chain().id(),
+            genesis_hash: spec.genesis_hash(),
+            genesis_consensus_keys: genesis_consensus_keys_v1(&value)?,
+        })
+    }
+}
+
+fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
+    use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
+
+    let alloc = genesis
+        .get("alloc")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "seeded genesis has no alloc object".to_owned())?;
+    let validator_address = format!("{VALIDATOR_SET_ADDRESS:x}");
+    let entry = alloc
+        .iter()
+        .find(|(address, _)| {
+            address
+                .trim_start_matches("0x")
+                .eq_ignore_ascii_case(&validator_address)
+        })
+        .map(|(_, entry)| entry)
+        .ok_or_else(|| "seeded genesis has no ValidatorSet allocation".to_owned())?;
+    let storage = entry
+        .get("storage")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "seeded genesis ValidatorSet has no storage".to_owned())?;
+    let read = |slot: [u8; 32], label: &str| -> Result<U256, String> {
+        let wanted = hex::encode(slot);
+        let raw = storage
+            .iter()
+            .find(|(key, _)| key.trim_start_matches("0x").eq_ignore_ascii_case(&wanted))
+            .and_then(|(_, value)| value.as_str())
+            .ok_or_else(|| format!("seeded genesis lacks ValidatorSet {label}"))?;
+        let bytes = hex::decode(raw.trim_start_matches("0x"))
+            .map_err(|error| format!("decode ValidatorSet {label}: {error}"))?;
+        if bytes.len() > 32 {
+            return Err(format!(
+                "seeded genesis ValidatorSet {label} exceeds one word"
+            ));
+        }
+        Ok(U256::from_be_slice(&bytes))
+    };
+    let direct_slot = |slot: u64| U256::from(slot).to_be_bytes();
+    let mapping_slot = |key: [u8; 32], slot: u64| {
+        let mut preimage = [0_u8; 64];
+        preimage[..32].copy_from_slice(&key);
+        preimage[32..].copy_from_slice(&direct_slot(slot));
+        keccak256(preimage).0
+    };
+    let count = usize::try_from(read(direct_slot(20), "validator_count")?)
+        .map_err(|_| "seeded genesis validator count does not fit usize".to_owned())?;
+    if count == 0 || count > 256 {
+        return Err("seeded genesis validator count is outside 1..=256".into());
+    }
+    let mut keys = Vec::with_capacity(count);
+    for index in 1..=count {
+        let address_word = read(
+            mapping_slot(U256::from(index).to_be_bytes(), 17),
+            "index_to_address",
+        )?;
+        let address_key = address_word.to_be_bytes::<32>();
+        if address_word.is_zero() || address_key[..12] != [0; 12] {
+            return Err("seeded genesis contains an invalid validator address".into());
+        }
+        if read(mapping_slot(address_key, 8), "validator status")? != U256::from(2_u8)
+            || read(mapping_slot(address_key, 24), "validator BLS-share flag")? != U256::from(1_u8)
+        {
+            return Err("seeded genesis committee member is not ACTIVE with a BLS share".into());
+        }
+        let lo = read(
+            mapping_slot(address_key, 5),
+            "validator consensus key low word",
+        )?
+        .to_be_bytes::<32>();
+        let hi = read(
+            mapping_slot(address_key, 6),
+            "validator consensus key high word",
+        )?
+        .to_be_bytes::<32>();
+        if hi[16..] != [0; 16] {
+            return Err("seeded genesis consensus key high word is not right-padded".into());
+        }
+        let mut key = [0_u8; 48];
+        key[..32].copy_from_slice(&lo);
+        key[32..].copy_from_slice(&hi[..16]);
+        blst::min_pk::PublicKey::from_bytes(&key)
+            .map_err(|_| "seeded genesis contains an invalid MinPk consensus key".to_owned())?;
+        keys.push(key);
+    }
+    keys.sort_unstable();
+    if keys.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("seeded genesis contains duplicate consensus keys".into());
+    }
+    Ok(keys)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeAttestationActivationV1 {
