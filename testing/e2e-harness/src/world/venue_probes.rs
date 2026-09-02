@@ -704,6 +704,17 @@ pub(crate) fn series_state(
         .map(|data| data.state)
 }
 
+/// Units the series was issued across every chain. A forfeit is measured against
+/// this, not against what one chain happens to hold.
+pub(crate) fn series_issued_count(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u32> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.issuedIntexCount)
+}
+
 /// When the series was Called, as both chains recorded it.
 pub(crate) fn series_called_at(
     url: &str,

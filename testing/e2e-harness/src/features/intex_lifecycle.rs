@@ -35,8 +35,6 @@ const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 const REFERENCE_BYTE: u8 = b'U';
 /// The DEV profile qualifies a series a day after issuance; overshoot so the
 /// sweep sees the period closed rather than exactly met.
-const QUALIFICATION_PERIOD_SECS: u64 = 120;
-const QUALIFICATION_MARGIN_SECS: u64 = 30;
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// The sweep runs in begin-block; a handful of blocks is plenty.
@@ -247,20 +245,6 @@ fn holder_holds_issued_units(world: &mut World) {
             sleep(Duration::from_secs(2));
         }
     }
-}
-
-#[when("the day advances past the qualification period")]
-fn advance_past_qualification(world: &mut World) {
-    // Under the test build the period is seconds, not a day: jumping a day would
-    // crash the metadosis day machine, and the sweep's decision is what matters.
-    let port = world.validators.primary_port();
-    let target = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("committee head timestamp")
-        + QUALIFICATION_PERIOD_SECS
-        + QUALIFICATION_MARGIN_SECS;
-    wait_for_chain_time(world, port, target);
 }
 
 #[when("the reference rate stands above the series floor")]
@@ -909,12 +893,19 @@ fn forfeited_load_returns(world: &mut World) {
 
     let load = venue_probes::series_promis_load(&url, nft, series)
         .expect("the expiring series carries a PROMIS load");
-    let (issued, settled) = venue_probes::series_balances(&url, nft, series, holder)
+    // The forfeit is measured against the series' whole tirage, not one chain's
+    // balance: the units live on both chains and none of them were ever settled.
+    let tirage = venue_probes::series_issued_count(&url, nft, series)
+        .expect("the expiring series carries an issued count");
+    let (_, settled) = venue_probes::series_balances(&url, nft, series, holder)
         .expect("read what the holder still holds of the expiring series");
+    assert_eq!(
+        settled, 0,
+        "series {series} was settled after all, so it forfeits less than its tirage"
+    );
     // The two settled series forfeit nothing and this scenario parks nothing into
     // gems, so the whole credit is this series' unsettled units.
-    let want = alloy_primitives::U256::from(load)
-        * alloy_primitives::U256::from(issued.saturating_sub(settled));
+    let want = alloy_primitives::U256::from(load) * alloy_primitives::U256::from(tirage);
     assert!(
         want > alloy_primitives::U256::ZERO,
         "series {series} held nothing at the deadline, so the forfeit proves nothing"
