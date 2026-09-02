@@ -218,18 +218,22 @@ fn process_local_terminal_outcome(
             day_limit,
         } => {
             let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, U256::ZERO)?;
+            // A day with no tributes allocates nothing, so its whole limit stays on the warehouse.
+            let returned = to_promis.checked_add(day_limit).ok_or_else(|| {
+                crate::errors::storage_corruption("Metadosis day limit return overflow".into())
+            })?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             TributeContract::new(metadosis.storage.clone())
                 .retire_completed_partition(scope, wwd)?;
             metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
                 worldwideDay: wwd.into(),
                 dayMetadosisLimit: day_limit,
-                dayMetadosisLimitRemainder: to_promis,
+                dayMetadosisLimitRemainder: returned,
                 status: "COMPLETED".into(),
                 dayState: wwd_state_label(day_type).into(),
                 action: "no tributes".into(),
             })?;
-            promis_limit.add_to_total_unallocated(to_promis)
+            promis_limit.add_to_total_unallocated(returned)
         }
         LocalTerminalOutcome::ZeroGratisAllocation {
             day_type,
@@ -238,7 +242,19 @@ fn process_local_terminal_outcome(
         } => {
             let auction_base = calculation.auction_base;
             let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, auction_base)?;
-            promis_limit.add_to_total_unallocated(to_promis)?;
+            // The limit headroom above the day's own nominal is issued by nobody, so it stays on
+            // the warehouse together with whatever the brief did not take.
+            let returned = current
+                .metadosis_limit_amount
+                .checked_sub(calculation.gratis_allocation)
+                .and_then(|rest| rest.checked_sub(auction_base))
+                .and_then(|headroom| headroom.checked_add(to_promis))
+                .ok_or_else(|| {
+                    crate::errors::storage_corruption(
+                        "Metadosis split exceeds the day limit".into(),
+                    )
+                })?;
+            promis_limit.add_to_total_unallocated(returned)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),
@@ -248,7 +264,7 @@ fn process_local_terminal_outcome(
                 dayGratisAllocation: U256::ZERO,
                 dayGratisAllocationRemainder: U256::ZERO,
                 netDayGratisAllocation: U256::ZERO,
-                dayMetadosisLimitRemainder: auction_base,
+                dayMetadosisLimitRemainder: returned,
                 status: "COMPLETED".into(),
                 blockNumber: ctx.block.block_number,
             })
