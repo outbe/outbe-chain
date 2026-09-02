@@ -58,7 +58,7 @@ concurrency:
 jobs:
   ocm-task-progress:
     name: OCM task progress
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

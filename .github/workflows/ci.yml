@@ -28,7 +28,7 @@ concurrency:
 jobs:
   fmt:
     name: fmt
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v2
@@ -44,7 +44,7 @@ jobs:
   clippy:
     name: clippy
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -72,7 +72,7 @@ jobs:
   test:
     name: test
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -171,7 +171,7 @@ jobs:
   doctests:
     name: doctests
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -203,7 +203,7 @@ jobs:
     # The REQUIRED regression gate is the daily `localnet-nightly.yml` workflow,
     # which runs the same smoke non-advisory (M-24).
     if: contains(github.event.head_commit.message, '[localnet]')
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 40
     continue-on-error: true
     env:
@@ -237,7 +237,7 @@ jobs:
   udeps:
     name: udeps
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 30
     env:
       RUSTC_WRAPPER: "sccache"
@@ -257,7 +257,7 @@ jobs:
   no-test-deps:
     name: no-test-deps
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -281,7 +281,7 @@ jobs:
   deny:
     name: cargo deny
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 15
     continue-on-error: true
     steps:
@@ -300,7 +300,7 @@ jobs:
   machete:
     name: cargo machete
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -315,7 +315,7 @@ jobs:
   miri:
     name: cargo miri
     if: contains(github.event.head_commit.message, '[miri]')
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 60
     continue-on-error: true
     steps:
@@ -332,7 +332,7 @@ jobs:
 
   ci-success:
     name: ci success
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     if: always()
     needs:
       - fmt
@@ -362,7 +362,7 @@ jobs:
   preview-version:
     name: preview next version
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -401,7 +401,7 @@ jobs:
     name: bump version & tag
     needs: [ci-success]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

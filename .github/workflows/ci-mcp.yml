@@ -33,7 +33,7 @@ concurrency:
 jobs:
   build:
     name: Typecheck + Build
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
     defaults:
       run:
         working-directory: mcp

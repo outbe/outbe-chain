@@ -24,7 +24,7 @@ concurrency:
 jobs:
   localnet-smoke:
     name: localnet smoke (fresh-start + restart recovery)
-    runs-on: depot-ubuntu-latest
+    runs-on: testnet-release-sgx
     timeout-minutes: 40
     env:
       RUSTC_WRAPPER: "sccache"
