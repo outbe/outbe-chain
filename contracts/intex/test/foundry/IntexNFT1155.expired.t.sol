@@ -31,7 +31,7 @@ contract IntexNFT1155ExpiredTest is Test {
         token = DeployProxy.intexNFT1155(admin, relayer);
         vm.startPrank(relayer);
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
-        token.mint(user, 10, SERIES_ID);
+        token.issue(user, 10, SERIES_ID);
         token.markQualified(SERIES_ID);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();

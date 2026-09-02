@@ -9,7 +9,7 @@
 //! initialization challenge. A node-signed manifest installs one persistent
 //! `NodeHost` initiator; every later command, including quote generation, is
 //! accepted only after that initiator is authenticated by Noise message 1.
-//! Legacy `GetQuote` exists only for the separate development transport.
+//! `GetQuote` exists only for the separate development transport.
 //!
 //! Opaque byte fields (`Vec<u8>`) intentionally hide DKG wire internals: the
 //! host parses only the public envelope and forwards the encrypted
@@ -22,11 +22,11 @@ pub use outbe_common::WorldwideDay;
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
 /// malformed enclave response from creating an unbounded consensus log.
-pub const MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 512;
+pub const MAX_ONBOARDING_ARTIFACT_BYTES: usize = 512;
 
 /// Minimum canonical framing: the committed 32-byte offer public key plus the
 /// ephemeral public key, nonce and authenticated ciphertext framing.
-pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
+pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 
 /// A single offer handed to the enclave.
 ///
@@ -153,18 +153,19 @@ pub struct TributeOfferResult {
 ///
 /// DKG secret-seam variants carry opaque bytes: the host never sees plaintext
 /// shares.
-/// One DKG participant's announced identity, structurally bound so the untrusted
-/// host cannot mis-pair a BLS identity with a different X25519 enc key or collapse
-/// two participants onto one enc key. `enc_sig` is the owner's TEE-BLS signature
-/// over the `(chain_id, enc_pub)` binding, verified at `DkgOpen` before the enc key
-/// is trusted as that identity's share recipient.
+/// One DKG participant's ceremony-scoped identity. `enc_sig` authenticates the
+/// full network binding, ceremony id, round, exact participant-set hash and
+/// X25519 share-recipient key.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ParticipantAnnounce {
     /// Encoded TEE-BLS public key (the participant's DKG identity).
     pub bls_pub: Vec<u8>,
     /// Announced X25519 share-encryption public key.
     pub enc_pub: [u8; 32],
-    /// TEE-BLS signature over the `(chain_id, enc_pub)` binding.
+    pub ceremony_id: B256,
+    pub round: u64,
+    pub participant_set_hash: B256,
+    /// TEE-BLS signature over the complete ceremony-scoped announcement.
     pub enc_sig: Vec<u8>,
 }
 
@@ -576,7 +577,7 @@ pub struct FidelityQueryResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
-    /// Development-only legacy pre-handshake quote. The production server
+    /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
     GetQuote { nonce: [u8; 32] },
     /// Production pre-handshake discovery for an uninitialized enclave. Returns
@@ -726,39 +727,34 @@ pub enum EnclaveRequest {
     /// Poseidon `token_id`, and returns `TributeOfferResult`).
     ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
 
-    /// One-time on-chain onboarding: ingest the deterministic sealed offer-key
-    /// artifact committed by `TeeRegistry`. This is not a peer handoff or a lost-key
-    /// recovery path. The enclave decrypts with its recipient key, derives the offer
-    /// keypair and accepts it only when the public key equals the chain commitment.
-    /// The resident key is write-once and sealed for restart.
-    IngestSealedOfferKeyForRegistry {
-        /// Opaque deterministic `EncryptedShare` from `TeeRegistry`.
-        sealed: Vec<u8>,
-        /// The on-chain offer public key to verify the installed key against.
-        expected_tribute_offer_public: [u8; 32],
-        chain_id: B256,
-        tribute_offer_epoch: u64,
-    },
-
-    /// Install one purpose-bound onboarding artifact into an initialized,
-    /// keyless enclave. Finalized Registry values are repeated explicitly so
-    /// the enclave can require exact intent/offer/epoch equality.
-    IngestDcapOnboardingArtifactV1 {
+    /// Start one streaming finalized-admission verification rooted in the
+    /// measured genesis committee. The enclave retains only the current
+    /// committee; transition records follow on this authenticated session.
+    BeginDcapOnboardingArtifactIngestV1 {
+        request_hash: B256,
         artifact: Vec<u8>,
+        anchor_outcome: Vec<u8>,
         expected_intent_hash: B256,
         expected_tribute_offer_public: [u8; 32],
         expected_key_epoch: u64,
         expected_tribute_offer_epoch: u64,
     },
-
-    /// On-chain key delivery, SERVER side: DETERMINISTICALLY
-    /// seal this enclave's resident group signature to `recipient_x25519` so the
-    /// sealed blob can be committed on-chain. Every committee enclave returns a
-    /// byte-identical blob for the same recipient, which lets `TeeRegistry` retain
-    /// it as a consensus-validated onboarding artifact. Returns
-    /// `SealedOfferKeyForRegistry`; the recipient opens it exactly once with
-    /// `IngestSealedOfferKeyForRegistry`.
-    SealOfferKeyForRegistry { recipient_x25519: [u8; 32] },
+    /// Append bytes to the current transition or admission record.
+    DcapOnboardingArtifactChunkV1 {
+        request_hash: B256,
+        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
+        offset: u32,
+        bytes: Vec<u8>,
+    },
+    /// Verify the current complete record. Transition records advance and prune
+    /// the committee cursor; the admission record authenticates Registry state.
+    CommitDcapOnboardingArtifactRecordV1 {
+        request_hash: B256,
+        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
+    },
+    /// After a verified admission record, decrypt,
+    /// durably seal, and only finally activate the resident offer key.
+    FinishDcapOnboardingArtifactIngestV1 { request_hash: B256 },
 
     /// Apply a Gratis write op over encrypted per-account state. The enclave
     /// derives the resident `gratis_state_key` from the same group signature as
@@ -819,6 +815,14 @@ pub enum EnclaveRequest {
     /// are never added, removed or reordered. Deployment order for a new
     /// variant: enclave binary first, node second.
     Health,
+    /// Ask this initialized enclave to produce its exact ceremony-scoped DKG
+    /// participant announcement. `participant_bls` is canonicalized and bound
+    /// into both the ceremony id and signature inside the enclave.
+    DkgParticipantAnnounceV1 {
+        ceremony_id: B256,
+        round: u64,
+        participant_bls: Vec<Vec<u8>>,
+    },
 }
 
 impl EnclaveRequest {
@@ -843,6 +847,7 @@ impl EnclaveRequest {
             Self::DcapVerificationChunkV1 { .. } => "dcap_verification_chunk_v1",
             Self::FinishDcapVerificationV1 { .. } => "finish_dcap_verification_v1",
             Self::DkgOpen { .. } => "dkg_open",
+            Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
             Self::DkgStartDealer { .. } => "dkg_start_dealer",
             Self::DkgPlayerIngest { .. } => "dkg_player_ingest",
             Self::DkgDealerReceiveAck { .. } => "dkg_dealer_receive_ack",
@@ -851,9 +856,16 @@ impl EnclaveRequest {
             Self::DkgTributeOfferPartial { .. } => "dkg_tribute_offer_partial",
             Self::DkgFinalizeTributeOffer { .. } => "dkg_finalize_tribute_offer",
             Self::ProcessTributeOfferBatch { .. } => "process_tribute_offer_batch",
-            Self::IngestSealedOfferKeyForRegistry { .. } => "ingest_sealed_offer_key_for_registry",
-            Self::IngestDcapOnboardingArtifactV1 { .. } => "ingest_dcap_onboarding_artifact_v1",
-            Self::SealOfferKeyForRegistry { .. } => "seal_offer_key_for_registry",
+            Self::BeginDcapOnboardingArtifactIngestV1 { .. } => {
+                "begin_dcap_onboarding_artifact_ingest_v1"
+            }
+            Self::DcapOnboardingArtifactChunkV1 { .. } => "dcap_onboarding_artifact_chunk_v1",
+            Self::CommitDcapOnboardingArtifactRecordV1 { .. } => {
+                "commit_dcap_onboarding_artifact_record_v1"
+            }
+            Self::FinishDcapOnboardingArtifactIngestV1 { .. } => {
+                "finish_dcap_onboarding_artifact_ingest_v1"
+            }
             Self::ApplyGratisOp { .. } => "apply_gratis_op",
             Self::ApplyPromisOp { .. } => "apply_promis_op",
             Self::DeriveAccountKeys { .. } => "derive_account_keys",
@@ -877,7 +889,6 @@ impl EnclaveRequest {
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
             | Self::ProcessTributeOfferBatch { .. }
-            | Self::SealOfferKeyForRegistry { .. }
             | Self::ApplyGratisOp { .. }
             | Self::ApplyPromisOp { .. }
             | Self::DeriveAccountKeys { .. }
@@ -895,6 +906,7 @@ impl EnclaveRequest {
             | Self::BeginDcapOnboardingVerificationV1 { .. }
             | Self::DcapVerificationChunkV1 { .. }
             | Self::FinishDcapVerificationV1 { .. }
+            | Self::DkgParticipantAnnounceV1 { .. }
             | Self::DkgOpen { .. }
             | Self::DkgStartDealer { .. }
             | Self::DkgPlayerIngest { .. }
@@ -903,8 +915,10 @@ impl EnclaveRequest {
             | Self::DkgPlayerFinalize { .. }
             | Self::DkgTributeOfferPartial { .. }
             | Self::DkgFinalizeTributeOffer { .. }
-            | Self::IngestSealedOfferKeyForRegistry { .. }
-            | Self::IngestDcapOnboardingArtifactV1 { .. } => false,
+            | Self::BeginDcapOnboardingArtifactIngestV1 { .. }
+            | Self::DcapOnboardingArtifactChunkV1 { .. }
+            | Self::CommitDcapOnboardingArtifactRecordV1 { .. }
+            | Self::FinishDcapOnboardingArtifactIngestV1 { .. } => false,
         }
     }
 }
@@ -1109,6 +1123,17 @@ pub enum EnclaveResponse {
         request_hash: B256,
         next_offset: u32,
     },
+    DcapOnboardingArtifactIngestStartedV1 {
+        request_hash: B256,
+    },
+    DcapOnboardingArtifactChunkAcceptedV1 {
+        request_hash: B256,
+        next_offset: u32,
+    },
+    DcapOnboardingArtifactRecordAcceptedV1 {
+        request_hash: B256,
+        kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1,
+    },
     /// Canonical accepted verdict or stable reject code, authenticated by the
     /// persistent quote-bound Ed25519 key over the exact request commitment.
     DcapVerificationFinishedV1 {
@@ -1192,15 +1217,10 @@ pub enum EnclaveResponse {
         /// verified on-chain against this committee's key.
         group_public_key: Vec<u8>,
     },
-    /// On-chain key delivery SERVER result: the resident group signature
-    /// DETERMINISTICALLY sealed to `recipient_x25519` - byte-identical across all
-    /// committee enclaves, for committing to `TeeRegistry`.
-    SealedOfferKeyForRegistry {
-        sealed: Vec<u8>,
-    },
     /// One-time onboarding result: the installed offer public key matched the
     /// on-chain commitment.
-    OfferKeyForRegistryIngested {
+    FinalizedAdmissionIngestedV1 {
+        request_hash: B256,
         tribute_offer_public: [u8; 32],
     },
     TributeOfferBatch {
@@ -1253,6 +1273,11 @@ pub enum EnclaveResponse {
     /// wire-compat law on [`EnclaveRequest`].
     HealthStatus {
         status: Box<EnclaveHealthStatusV1>,
+    },
+    /// Ceremony-scoped DKG participant identity created by the enclave after it
+    /// validates the exact participant set and derived ceremony id.
+    DkgParticipantAnnounceV1 {
+        participant: ParticipantAnnounce,
     },
 }
 

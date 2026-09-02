@@ -39,9 +39,9 @@ impl CredisState {
 
 /// Position record. Keyed by `position_id = keccak256(pledge_handle || smart_account)`.
 ///
-/// Every term is sealed at opening and never changes afterwards; only
-/// `outstanding`, `collateral_locked`, `last_settled_at`, `called_at` and
-/// `state` move over the position's life.
+/// Every term - both currency codes included - is sealed at opening and never
+/// changes afterwards; only `outstanding`, `collateral_locked`,
+/// `last_settled_at`, `called_at` and `state` move over the position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = smart_account)]
 pub struct Position {
@@ -62,6 +62,8 @@ pub struct Position {
     pub asset: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
+    /// Denominates the position and keys its policy rate. NOT the call
+    /// threshold anchor - see [`Self::reference_currency`].
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
@@ -81,7 +83,8 @@ pub struct Position {
     #[attribute(order = 6)]
     pub outstanding: U256,
 
-    /// `G` - pledged Gratis, valued 1:1 against principal at the entry price. Fixed.
+    /// `G` - pledged Gratis, valued 1:1 against principal at the pledge quote
+    /// rate (COEN/`issuance_currency`, sealed into the ticket). Fixed.
     #[attribute(order = 7)]
     pub collateral: U256,
 
@@ -94,12 +97,14 @@ pub struct Position {
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
-    /// `P0` - COEN price in the position's currency (scale `1e6`), quoted
-    /// at pledge time and carried in from the pledge ticket.
+    /// `P0` - COEN price in the position's **reference** currency (scale `1e6`),
+    /// snapshotted at origination. The threshold geometry is measured here, not
+    /// in the issuance currency the position is denominated in.
     #[attribute(order = 10)]
     pub entry_price: U256,
 
-    /// `P0 + 64%`. The price whose sustained breach triggers the call.
+    /// `P0 + 64%`. The price whose sustained breach on the
+    /// COEN/`reference_currency` daily series triggers the call.
     #[attribute(order = 11)]
     pub call_price: U256,
 
@@ -120,6 +125,14 @@ pub struct Position {
     /// Lifecycle state as `u8`; decode via [`CredisState::from_u8`].
     #[attribute(order = 15)]
     pub state: u8,
+
+    /// ISO 4217 numeric code of the reference currency elected at origination
+    /// and fixed for the position's life. Its sole function is to anchor the
+    /// threshold: `entry_price` / `call_price` are quoted here and the daily
+    /// breach scan reads the COEN/`reference_currency` series. It does not
+    /// denominate the position and carries no FX exposure.
+    #[attribute(order = 16)]
+    pub reference_currency: u16,
 }
 
 impl Position {
@@ -169,8 +182,8 @@ pub struct CredisContract {
     #[attribute(order = 6)]
     pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Per-account count of positions currently `Called`. An owner with a
-    /// non-zero count cannot open new positions.
+    /// Per-account count of positions currently `Called`, backing the
+    /// `hasCalledPosition` view.
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 }

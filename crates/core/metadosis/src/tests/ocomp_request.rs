@@ -371,8 +371,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            next_ocomp_snapshot.member_count, 1,
-            "the five validators that missed the expired attempt are jailed before the next boundary"
+            next_ocomp_snapshot.member_count, 6,
+            "the five validators remain active during their OCOMP recovery window"
         );
 
         let retry_height = expiry_height + 1;
@@ -414,8 +414,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             retried_record.intent.result_ocomp_binding_hash,
             next_ocomp_snapshot.ocomp_binding_hash
         );
-        assert_eq!(retried_record.intent.result_member_count, 1);
-        assert_eq!(retried_record.intent.result_quorum_threshold, 1);
+        assert_eq!(retried_record.intent.result_member_count, 6);
+        assert_eq!(retried_record.intent.result_quorum_threshold, 5);
         assert_eq!(terminal.intent.result_member_count, 5);
         assert_eq!(terminal.intent.result_quorum_threshold, 4);
         assert_eq!(
@@ -483,7 +483,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     assert_ne!(requests[0].data.intentId, requests[1].data.intentId);
     assert!(logs.iter().all(|log| log.address != METADOSIS_ADDRESS
         || log.data.topics().first() == Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
-        || log.data.topics().first() == Some(&IMetadosis::OffchainJobExpired::SIGNATURE_HASH)));
+        || log.data.topics().first() == Some(&IMetadosis::OffchainJobExpired::SIGNATURE_HASH)
+        || log.data.topics().first() == Some(&IMetadosis::OcompVoteMissed::SIGNATURE_HASH)));
 }
 
 #[test]

@@ -25,6 +25,10 @@ import { findLatestTicket, readTicket, writeTicket, type Ticket } from "./ticket
 
 const SALT = 0n;
 
+// ISO 4217 code of the threshold anchor the CCA elects for the position. It gates
+// only the call - the loan stays denominated in the disbursed asset's currency.
+const REFERENCE_CURRENCY = 840; // USD
+
 // The CCA calls requestCredis with the confidential pledge handle + a spend
 // authorization that binds it to the user's smart account. The CCA holds the
 // `pledgeSecret` the user handed over (in the ticket for the demo); it does NOT
@@ -138,10 +142,16 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("\nSending requestCredis(smartAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend, {
-    value: stake,
-  });
+  console.log(
+    "\nSending requestCredis(smartAccount, pledgeHandle, spendAuth, referenceCurrency)...",
+  );
+  const tx = await credisFactory.requestCredis(
+    smartAccount,
+    ticket.pledgeHandle,
+    spend,
+    REFERENCE_CURRENCY,
+    { value: stake },
+  );
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");
@@ -193,6 +203,7 @@ async function main() {
   console.log(`  entryPrice:        ${position.entryPrice}`);
   console.log(`  callPrice:         ${position.callPrice}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
+  console.log(`  referenceCurrency: ${position.referenceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 
   // Persist the position + bundle for settlement.

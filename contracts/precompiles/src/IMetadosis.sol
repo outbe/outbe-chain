@@ -105,6 +105,15 @@ interface IMetadosis {
         uint64 expiredAtHeight
     );
 
+    event OcompVoteMissed(
+        address indexed validator,
+        bytes32 indexed jobId,
+        uint64 missCount,
+        uint256 slashedBonded,
+        uint64 recoveryDeadline,
+        bool firstInWindow
+    );
+
     event OffchainJobConflicted(
         bytes32 indexed intentId,
         bytes32 indexed jobId,

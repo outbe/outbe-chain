@@ -76,6 +76,7 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         cca: p.cca,
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
+        referenceCurrency: p.reference_currency,
         eoaCiphertext: p.eoa_ct.clone().into(),
         principal: p.principal,
         outstanding: p.outstanding,

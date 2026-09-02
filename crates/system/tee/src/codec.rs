@@ -122,6 +122,19 @@ mod tests {
     }
 
     #[test]
+    fn maximum_onboarding_proof_chunk_round_trips_below_the_frame_cap() {
+        let req = EnclaveRequest::DcapOnboardingArtifactChunkV1 {
+            request_hash: alloy_primitives::B256::repeat_byte(0x61),
+            kind: crate::finalized_admission::FinalizedAdmissionRecordKindV1::Admission,
+            offset: 0,
+            bytes: vec![0x62; crate::finalized_admission::MAX_ONBOARDING_INGEST_CHUNK_BYTES],
+        };
+        let plaintext = encode_request(&req).unwrap();
+        assert!(plaintext.len() + 64 <= MAX_FRAME_LEN);
+        assert_eq!(decode_request(&plaintext).unwrap(), req);
+    }
+
+    #[test]
     fn frame_rejects_oversize() {
         let big = vec![0u8; MAX_FRAME_LEN + 1];
         let mut buf = Vec::new();

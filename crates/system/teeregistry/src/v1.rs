@@ -812,69 +812,6 @@ impl TeeRegistry<'_> {
         }
     }
 
-    /// Emit the bounded deterministic offer-key artifact for one newly created
-    /// V1 binding. Missing local enclave state is a fatal execution invariant,
-    /// never a reason to omit a consensus-visible log.
-    pub(crate) fn emit_offer_key_sealed_for_registry_v1(
-        &mut self,
-        outcome: V1RegistrationOutcome,
-        node_id_hash: B256,
-        recipient_x25519: [u8; 32],
-    ) -> Result<()> {
-        self.emit_offer_key_sealed_for_registry_v1_with(
-            outcome,
-            node_id_hash,
-            recipient_x25519,
-            |recipient| {
-                outbe_tee::seal_offer_key_for_registry(recipient).map_err(|error| error.to_string())
-            },
-        )
-    }
-
-    fn emit_offer_key_sealed_for_registry_v1_with<F>(
-        &mut self,
-        outcome: V1RegistrationOutcome,
-        node_id_hash: B256,
-        recipient_x25519: [u8; 32],
-        seal: F,
-    ) -> Result<()>
-    where
-        F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
-    {
-        if outcome == V1RegistrationOutcome::Idempotent {
-            return Ok(());
-        }
-        let offer_public = self.offer_public_key()?;
-        if offer_public.is_zero() {
-            return Err(PrecompileError::Fatal(
-                "V1 registration requires the OST3 offer-key commitment".into(),
-            ));
-        }
-        let sealed = seal(recipient_x25519)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "mandatory V1 offer-key onboarding seal failed: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                PrecompileError::Fatal(
-                    "mandatory enclave is unavailable during V1 offer-key onboarding".into(),
-                )
-            })?;
-        if sealed.len() < outbe_tee::protocol::MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES
-            || sealed.len() > outbe_tee::protocol::MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES
-            || sealed.get(..32) != Some(offer_public.as_slice())
-        {
-            return Err(PrecompileError::Fatal(
-                "enclave returned a malformed V1 offer-key onboarding artifact".into(),
-            ));
-        }
-        self.emit(OfferKeySealedForRegistryV1 {
-            nodeIdHash: node_id_hash,
-            sealedOfferKey: sealed.into(),
-        })
-    }
-
     /// Emit only the artifact produced by the same purpose-bound enclave
     /// verification capability that accepted this registration. No second raw
     /// host-selected sealing request exists on the production path.
@@ -920,27 +857,6 @@ impl TeeRegistry<'_> {
             nodeIdHash: node_id_hash,
             sealedOfferKey: encoded.into(),
         })
-    }
-
-    /// Test-only seam around the enclave call. Production and tests share all
-    /// Created/Idempotent, commitment, size, prefix and event logic.
-    #[cfg(test)]
-    pub(crate) fn emit_offer_key_sealed_for_registry_v1_after_sealer_for_test<F>(
-        &mut self,
-        outcome: V1RegistrationOutcome,
-        node_id_hash: B256,
-        recipient_x25519: [u8; 32],
-        seal: F,
-    ) -> Result<()>
-    where
-        F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
-    {
-        self.emit_offer_key_sealed_for_registry_v1_with(
-            outcome,
-            node_id_hash,
-            recipient_x25519,
-            seal,
-        )
     }
 
     /// Production verifier boundary. The transaction caller is part of the

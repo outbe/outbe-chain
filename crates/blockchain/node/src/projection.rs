@@ -3,20 +3,27 @@
 //! Canonical-chain notifications are deliberately only drained here. The provider's finalized
 //! block signal is the sole authority that permits projection writes.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::{transaction::TxHashRef, BlockHeader, TxReceipt};
-use alloy_primitives::{Sealable, B256};
+#[cfg(test)]
+use std::sync::Mutex;
+
+use alloy_consensus::transaction::TxHashRef;
+#[cfg(test)]
+use alloy_consensus::BlockHeader;
+#[cfg(test)]
+use alloy_primitives::Sealable;
+use alloy_primitives::B256;
 use eyre::{bail, Context};
+#[cfg(test)]
 use futures::{FutureExt, Stream, StreamExt};
-use metrics::{counter, gauge};
+#[cfg(test)]
+use metrics::counter;
+use metrics::gauge;
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
     ProjectionFailure, ProjectionFailureClass, ProjectionOutcome, ProjectionReadinessHandle,
-    ProjectionReadinessPublisher, ProjectionStatus, RuntimeBodyFailure, RuntimeBodyReaders,
+    ProjectionReadinessPublisher, ProjectionStatus, RuntimeBodyReaders, TributeRetentionSelector,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, MongoStorage, MongoStorageConfig, MongoWriterLease, PendingOverlayStorage,
@@ -26,16 +33,34 @@ use outbe_primitives::{
     chain::network_for_chain_id,
     projection::{projection_readiness, ProjectionCheckpoint},
 };
-use reth_chain_state::ForkChoiceSubscriptions;
-use reth_ethereum::exex::{ExExContext, ExExEvent};
-use reth_node_builder::FullNodeComponents;
-use reth_primitives_traits::{Block, BlockBody};
-use reth_provider::{BlockHashReader, BlockIdReader, BlockReader};
+use outbe_tribute::RetainedTributeWriter;
+#[cfg(test)]
+use reth_ethereum::exex::ExExEvent;
+use reth_primitives_traits::{Block, BlockBody, Receipt as RethReceipt};
+#[cfg(test)]
+use reth_provider::BlockReader;
+use reth_provider::{BlockHashReader, BlockIdReader};
+#[cfg(test)]
 use tokio::time::MissedTickBehavior;
-use tracing::{error, info, warn};
+#[cfg(test)]
+use tracing::error;
+use tracing::{info, warn};
+
+use crate::finalized_frame::FinalizedFrame;
+
+pub use outbe_offchain_data::RuntimeBodyFailure;
 
 const PROJECTION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
-const MONGO_RECONNECT_DEADLINE: Duration = Duration::from_secs(8);
+pub const PROJECTION_RECOVERY_DEADLINE: Duration = Duration::from_secs(8);
+
+#[derive(Debug, thiserror::Error)]
+#[error("MongoDB projection reconnect deadline expired for block {block_number} ({block_hash})")]
+pub struct ProjectionWriteDeadlineError {
+    block_number: u64,
+    block_hash: B256,
+    #[source]
+    source: Option<StorageError>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FinalizedTarget {
@@ -43,6 +68,7 @@ struct FinalizedTarget {
     hash: B256,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FinalizedTargetDisposition {
     Attempt,
@@ -56,6 +82,7 @@ impl FinalizedTarget {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, thiserror::Error)]
 enum HistoricalProjectionDataError {
     #[error("canonical block {block_number} is unavailable")]
@@ -66,6 +93,7 @@ enum HistoricalProjectionDataError {
     Receipts { block_number: u64 },
 }
 
+#[cfg(test)]
 type ProjectionAttempt = tokio::sync::oneshot::Receiver<eyre::Result<Option<FinalizedTarget>>>;
 
 struct DurableProjectionWrite {
@@ -74,6 +102,7 @@ struct DurableProjectionWrite {
     overlay_ack: Option<(Arc<PendingOverlayStorage>, u64)>,
 }
 
+#[cfg(test)]
 fn spawn_detached_projection_work<T: Send + 'static>(
     name: &str,
     work: impl FnOnce() -> T + Send + 'static,
@@ -133,6 +162,14 @@ impl PreparedOffchainDataProjection {
     pub fn readiness(&self) -> ProjectionReadinessHandle {
         self.readiness.clone()
     }
+
+    /// Durable release capability backed by the exact Mongo storage owned by this projection.
+    #[must_use]
+    pub fn retained_tribute_writer(&self) -> Arc<RetainedTributeWriter> {
+        let reader: StorageReaderHandle = self.storage.clone();
+        let writer: StorageWriterHandle = self.storage.clone();
+        Arc::new(RetainedTributeWriter::new(reader, writer))
+    }
 }
 
 /// Projection instance whose available canonical checkpoint identity passed startup checks.
@@ -144,12 +181,368 @@ pub struct ReadyOffchainDataProjection {
     overlay: Arc<PendingOverlayStorage>,
     writer: StorageWriterHandle,
     writer_lease: MongoWriterLease,
+    runtime_failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     runtime_failure_receiver: tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+}
+
+#[derive(Clone)]
+pub struct ProjectionRuntimeRecoveryHandle {
+    writer: StorageWriterHandle,
+    failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectionRuntimeRecoveryV1 {
+    Recovered,
+    Unavailable,
+    Fatal(ProjectionFailure),
+}
+
+impl ProjectionRuntimeRecoveryHandle {
+    /// Proves that the shared MongoDB backend can start transactions again, then closes only the
+    /// transient runtime-read outage. A fatal body failure is sticky and is never cleared here.
+    pub fn reconcile(&self, generation: u64) -> ProjectionRuntimeRecoveryV1 {
+        if let Err(error) = self.writer.verify_transaction_capability() {
+            return if error.kind() == StorageErrorKind::Unavailable {
+                ProjectionRuntimeRecoveryV1::Unavailable
+            } else {
+                ProjectionRuntimeRecoveryV1::Fatal(ProjectionFailure::new(
+                    storage_failure_class(&error),
+                    format!("offchain runtime-body storage recovery failed: {error}"),
+                ))
+            };
+        }
+        let cleared = self.failure_sender.send_if_modified(|current| {
+            if matches!(
+                current,
+                Some(RuntimeBodyFailure::Unavailable {
+                    generation: current_generation,
+                    ..
+                }) if *current_generation == generation
+            ) {
+                *current = None;
+                true
+            } else {
+                false
+            }
+        });
+        if cleared {
+            return ProjectionRuntimeRecoveryV1::Recovered;
+        }
+        match self.failure_sender.borrow().clone() {
+            Some(RuntimeBodyFailure::Unavailable { .. }) => {
+                ProjectionRuntimeRecoveryV1::Unavailable
+            }
+            Some(RuntimeBodyFailure::Fatal(failure)) => ProjectionRuntimeRecoveryV1::Fatal(failure),
+            None => ProjectionRuntimeRecoveryV1::Recovered,
+        }
+    }
+}
+
+/// Deep sink for projecting an already-read finalized frame into durable Mongo state.
+///
+/// The sink owns the logical overlay and the single-writer lease inherited from
+/// [`ReadyOffchainDataProjection`]. [`Self::project_frame`] does not return a new checkpoint until
+/// the exact atomic batch has committed through the durable writer. Frames below the durable
+/// checkpoint are accepted as restart replay; a replay at the checkpoint height must have the
+/// exact durable hash.
+pub struct FinalizedProjectionSink {
+    runtime: ProjectionRuntime,
+    durable_checkpoint: Option<ProjectionCheckpoint>,
+}
+
+impl FinalizedProjectionSink {
+    #[must_use]
+    pub fn new(ready: ReadyOffchainDataProjection) -> Self {
+        Self::from_runtime(ProjectionRuntime::new(ready))
+    }
+
+    #[must_use]
+    pub const fn durable_checkpoint(&self) -> Option<ProjectionCheckpoint> {
+        self.durable_checkpoint
+    }
+
+    pub fn runtime_failure_receiver(
+        &self,
+    ) -> eyre::Result<tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>> {
+        self.runtime
+            .runtime_failure_receiver
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))
+    }
+
+    #[must_use]
+    pub fn runtime_recovery_handle(&self) -> eyre::Result<ProjectionRuntimeRecoveryHandle> {
+        Ok(ProjectionRuntimeRecoveryHandle {
+            writer: self.runtime.writer.clone(),
+            failure_sender: self
+                .runtime
+                .runtime_failure_sender
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| {
+                    eyre::eyre!("projection body-read recovery sender is unavailable")
+                })?,
+        })
+    }
+
+    pub fn publish_failure(&self, failure: ProjectionFailure) {
+        self.runtime
+            .readiness_publisher
+            .publish(ProjectionStatus::Fatal {
+                checkpoint: self.durable_checkpoint,
+                error: failure,
+            });
+    }
+
+    /// Publishes projection readiness against the coordinator's sampled finalized target.
+    pub fn publish_progress(&self, target: ProjectionCheckpoint) -> eyre::Result<()> {
+        let durable = self.durable_checkpoint.unwrap_or(ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: self.runtime.projection_config.genesis_hash,
+        });
+        if durable.block_number > target.block_number
+            || (durable.block_number == target.block_number
+                && durable.block_hash != target.block_hash)
+        {
+            bail!("durable projection checkpoint is ahead of or conflicts with finalized target");
+        }
+        self.runtime
+            .readiness_publisher
+            .publish(if durable == target {
+                ProjectionStatus::Ready {
+                    checkpoint: durable,
+                }
+            } else {
+                ProjectionStatus::CatchingUp {
+                    checkpoint: Some(durable),
+                }
+            });
+        Ok(())
+    }
+
+    /// Projects one shared finalized frame and returns the exact durable projection checkpoint.
+    ///
+    /// This method is synchronous because the configured storage interface is synchronous. An
+    /// async coordinator should call it on its blocking worker. Durable write failures retry the
+    /// same atomic batch and never expose logical progress as durable P.
+    pub fn project_frame(&mut self, frame: &FinalizedFrame) -> eyre::Result<ProjectionCheckpoint> {
+        self.project_frame_until(
+            frame,
+            std::time::Instant::now() + PROJECTION_RECOVERY_DEADLINE,
+        )
+    }
+
+    pub fn project_frame_until(
+        &mut self,
+        frame: &FinalizedFrame,
+        deadline: std::time::Instant,
+    ) -> eyre::Result<ProjectionCheckpoint> {
+        let identity = frame.identity();
+        if let Some(checkpoint) = self.durable_checkpoint {
+            if identity.number < checkpoint.block_number {
+                return Ok(checkpoint);
+            }
+            if identity.number == checkpoint.block_number {
+                if identity.hash != checkpoint.block_hash {
+                    bail!(
+                        "finalized frame hash {} conflicts with durable projection hash {} at height {}",
+                        identity.hash,
+                        checkpoint.block_hash,
+                        identity.number
+                    );
+                }
+                return Ok(checkpoint);
+            }
+        }
+
+        let normalized = normalize_finalized_block(
+            identity.number,
+            identity.hash,
+            frame.block(),
+            frame.receipts(),
+        )?;
+        let overlay = self.runtime.overlay.clone();
+        let prepared = self
+            .runtime
+            .projector
+            .prepare_block(&normalized)
+            .wrap_err_with(|| format!("project finalized frame {}", identity.number))?;
+        let (projected, durable_batch) = self
+            .runtime
+            .projector
+            .apply_prepared_with_batch(prepared)
+            .wrap_err_with(|| format!("apply logical finalized frame {}", identity.number))?;
+        let projected = match projected {
+            ProjectionOutcome::Applied { checkpoint, .. } => checkpoint,
+            ProjectionOutcome::AlreadyApplied(checkpoint) => {
+                bail!(
+                    "logical projection checkpoint {} ({}) is ahead of durable frame-sink authority",
+                    checkpoint.block_number,
+                    checkpoint.block_hash
+                );
+            }
+        };
+        if projected.block_number != identity.number || projected.block_hash != identity.hash {
+            bail!(
+                "projector returned checkpoint {} ({}) after projecting shared frame {} ({})",
+                projected.block_number,
+                projected.block_hash,
+                identity.number,
+                identity.hash
+            );
+        }
+        let overlay_ack = overlay
+            .as_ref()
+            .map(|overlay| (Arc::clone(overlay), overlay.current_generation()));
+        apply_durable_projection_write_before(
+            &self.runtime.writer,
+            &DurableProjectionWrite {
+                checkpoint: FinalizedTarget::new(projected.block_number, projected.block_hash),
+                batch: durable_batch,
+                overlay_ack,
+            },
+            deadline,
+        )?;
+        self.durable_checkpoint = Some(projected);
+        Ok(projected)
+    }
+
+    fn from_runtime(runtime: ProjectionRuntime) -> Self {
+        let durable_checkpoint = runtime.projector.state().checkpoint;
+        Self {
+            runtime,
+            durable_checkpoint,
+        }
+    }
+}
+
+#[cfg(test)]
+fn apply_durable_projection_write_until(
+    writer: &StorageWriterHandle,
+    write: &DurableProjectionWrite,
+    deadline: Duration,
+) -> eyre::Result<()> {
+    apply_durable_projection_write_before(writer, write, std::time::Instant::now() + deadline)
+}
+
+fn apply_durable_projection_write_before(
+    writer: &StorageWriterHandle,
+    write: &DurableProjectionWrite,
+    deadline: std::time::Instant,
+) -> eyre::Result<()> {
+    let mut last_unavailable = None;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            if let Some(source) = last_unavailable.take() {
+                return Err(ProjectionWriteDeadlineError {
+                    block_number: write.checkpoint.number,
+                    block_hash: write.checkpoint.hash,
+                    source: Some(source),
+                }
+                .into());
+            }
+        }
+        match writer.apply_atomic(&write.batch) {
+            Ok(()) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ProjectionWriteDeadlineError {
+                        block_number: write.checkpoint.number,
+                        block_hash: write.checkpoint.hash,
+                        source: None,
+                    }
+                    .into());
+                }
+                if let Some((overlay, generation)) = &write.overlay_ack {
+                    overlay.acknowledge(*generation);
+                }
+                return Ok(());
+            }
+            Err(error)
+                if error.kind() == StorageErrorKind::Unavailable
+                    && std::time::Instant::now() < deadline =>
+            {
+                warn!(
+                    %error,
+                    block_number = write.checkpoint.number,
+                    block_hash = %write.checkpoint.hash,
+                    "MongoDB projection write failed; retrying exact atomic batch"
+                );
+                std::thread::sleep(
+                    PROJECTION_RETRY_INTERVAL
+                        .min(deadline.saturating_duration_since(std::time::Instant::now())),
+                );
+                last_unavailable = Some(error);
+            }
+            Err(source) if source.kind() == StorageErrorKind::Unavailable => {
+                return Err(ProjectionWriteDeadlineError {
+                    block_number: write.checkpoint.number,
+                    block_hash: write.checkpoint.hash,
+                    source: Some(source),
+                }
+                .into());
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[must_use]
+pub fn projection_frame_failure_class(error: &eyre::Report) -> ProjectionFailureClass {
+    if error
+        .chain()
+        .any(|cause| cause.is::<ProjectionWriteDeadlineError>())
+    {
+        return ProjectionFailureClass::MongoReconnectDeadline;
+    }
+    if let Some(storage) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<StorageError>())
+    {
+        return storage_failure_class(storage);
+    }
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<outbe_offchain_data::ProjectionError>()
+            .is_some()
+    }) {
+        ProjectionFailureClass::MalformedEvent
+    } else {
+        ProjectionFailureClass::Other
+    }
+}
+
+fn storage_failure_class(error: &StorageError) -> ProjectionFailureClass {
+    match error.kind() {
+        StorageErrorKind::Corruption => ProjectionFailureClass::CorruptBody,
+        StorageErrorKind::WriterLeaseLost => ProjectionFailureClass::WriterLeaseLost,
+        StorageErrorKind::InvalidArgument => ProjectionFailureClass::StorageInvalidArgument,
+        StorageErrorKind::Unavailable => ProjectionFailureClass::StorageUnavailable,
+        StorageErrorKind::Backend => ProjectionFailureClass::StorageBackend,
+        StorageErrorKind::RequestDeadline => ProjectionFailureClass::StorageRequestDeadline,
+    }
 }
 
 /// Connects to MongoDB and validates storage prerequisites before Reth component initialization.
 pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
+) -> eyre::Result<PreparedOffchainDataProjection> {
+    prepare_offchain_data_projection_inner(config, None)
+}
+
+/// Prepares projection with the node-owned OCOMP retention selector installed on both the
+/// durable preflight and logical frame sink.
+pub fn prepare_offchain_data_projection_with_retention(
+    config: OffchainDataProjectionConfig,
+    selector: Arc<dyn TributeRetentionSelector>,
+) -> eyre::Result<PreparedOffchainDataProjection> {
+    prepare_offchain_data_projection_inner(config, Some(selector))
+}
+
+fn prepare_offchain_data_projection_inner(
+    config: OffchainDataProjectionConfig,
+    selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
     validate_projection_network(config.chain_id)?;
     if config.start_block != 1 {
@@ -161,16 +554,20 @@ pub fn prepare_offchain_data_projection(
 
     let started = std::time::Instant::now();
     loop {
-        let remaining = MONGO_RECONNECT_DEADLINE.saturating_sub(started.elapsed());
+        let remaining = PROJECTION_RECOVERY_DEADLINE.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             bail!("MongoDB startup recovery exceeded the eight-second total deadline");
         }
         let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
         let attempt_config = config.clone();
+        let attempt_selector = selector.clone();
         std::thread::Builder::new()
             .name("offchain-startup".to_owned())
             .spawn(move || {
-                let _ = attempt_tx.send(prepare_projection_attempt(&attempt_config));
+                let _ = attempt_tx.send(prepare_projection_attempt(
+                    &attempt_config,
+                    attempt_selector,
+                ));
             })
             .wrap_err("spawn MongoDB startup validation worker")?;
         let attempt = match attempt_rx.recv_timeout(remaining) {
@@ -211,9 +608,9 @@ pub fn prepare_offchain_data_projection(
                 });
             }
             Err(error)
-                if error.is_unavailable() && started.elapsed() < MONGO_RECONNECT_DEADLINE =>
+                if error.is_unavailable() && started.elapsed() < PROJECTION_RECOVERY_DEADLINE =>
             {
-                let remaining = MONGO_RECONNECT_DEADLINE.saturating_sub(started.elapsed());
+                let remaining = PROJECTION_RECOVERY_DEADLINE.saturating_sub(started.elapsed());
                 std::thread::sleep(PROJECTION_RETRY_INTERVAL.min(remaining));
             }
             Err(error) => return Err(error.into_eyre()),
@@ -254,6 +651,7 @@ impl PrepareProjectionError {
 
 fn prepare_projection_attempt(
     config: &OffchainDataProjectionConfig,
+    selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> Result<
     (
         Arc<MongoStorage>,
@@ -283,12 +681,20 @@ fn prepare_projection_attempt(
         .map_err(PrepareProjectionError::Storage)?;
     gauge!("outbe_projection_mongo_topology_capable").set(1.0);
     let reader: StorageReaderHandle = storage.clone();
-    OffchainDataProjection::open(projection_config, reader.clone(), storage.clone())
-        .map_err(PrepareProjectionError::Projection)?;
+    match selector.as_ref() {
+        Some(selector) => OffchainDataProjection::open_with_retention_selector(
+            projection_config,
+            reader.clone(),
+            storage.clone(),
+            Arc::clone(selector),
+        ),
+        None => OffchainDataProjection::open(projection_config, reader.clone(), storage.clone()),
+    }
+    .map_err(PrepareProjectionError::Projection)?;
     storage
         .verify_acknowledged_transaction()
         .map_err(PrepareProjectionError::Storage)?;
-    let (overlay, projector) = open_logical_projection(projection_config, reader)
+    let (overlay, projector) = open_logical_projection(projection_config, reader, selector)
         .map_err(PrepareProjectionError::Projection)?;
     Ok((storage, overlay, projector, writer_lease))
 }
@@ -296,13 +702,21 @@ fn prepare_projection_attempt(
 fn open_logical_projection(
     projection_config: ProjectionConfig,
     durable_reader: StorageReaderHandle,
+    selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> Result<
     (Arc<PendingOverlayStorage>, OffchainDataProjection),
     outbe_offchain_data::ProjectionError,
 > {
     let overlay = Arc::new(PendingOverlayStorage::new(durable_reader));
-    let projector =
-        OffchainDataProjection::open(projection_config, overlay.clone(), overlay.clone())?;
+    let projector = match selector {
+        Some(selector) => OffchainDataProjection::open_with_retention_selector(
+            projection_config,
+            overlay.clone(),
+            overlay.clone(),
+            selector,
+        )?,
+        None => OffchainDataProjection::open(projection_config, overlay.clone(), overlay.clone())?,
+    };
     Ok((overlay, projector))
 }
 
@@ -324,6 +738,7 @@ where
     let reader: StorageReaderHandle = overlay.clone();
     let writer: StorageWriterHandle = prepared.storage;
     let readiness_publisher = prepared.readiness_publisher;
+    let runtime_failure_sender = prepared.runtime_failure_sender;
     let runtime_failure_receiver = prepared.runtime_failure_receiver;
     let writer_lease = prepared.writer_lease;
     let local_finalized = canonical_hashes
@@ -400,6 +815,7 @@ where
         overlay,
         writer,
         writer_lease,
+        runtime_failure_sender,
         runtime_failure_receiver,
     })
 }
@@ -566,6 +982,7 @@ struct ProjectionRuntime {
     overlay: Option<Arc<PendingOverlayStorage>>,
     writer: StorageWriterHandle,
     _writer_lease: Option<MongoWriterLease>,
+    runtime_failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     runtime_failure_receiver: Option<tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>>,
 }
 
@@ -579,93 +996,50 @@ impl ProjectionRuntime {
             overlay: Some(ready.overlay),
             writer: ready.writer,
             _writer_lease: Some(ready.writer_lease),
+            runtime_failure_sender: Some(ready.runtime_failure_sender),
             runtime_failure_receiver: Some(ready.runtime_failure_receiver),
         }
     }
 }
 
+#[cfg(test)]
 fn run_durable_projection_writer(
     writer: StorageWriterHandle,
     mut writes: tokio::sync::mpsc::UnboundedReceiver<DurableProjectionWrite>,
     durable_checkpoint_tx: tokio::sync::mpsc::UnboundedSender<FinalizedTarget>,
 ) {
     while let Some(write) = writes.blocking_recv() {
-        loop {
-            match writer.apply_atomic(&write.batch) {
-                Ok(()) => {
-                    if let Some((overlay, generation)) = &write.overlay_ack {
-                        overlay.acknowledge(*generation);
-                    }
-                    if durable_checkpoint_tx.send(write.checkpoint).is_err() {
-                        return;
-                    }
-                    break;
+        apply_durable_projection_write(&writer, &write);
+        if durable_checkpoint_tx.send(write.checkpoint).is_err() {
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+fn apply_durable_projection_write(writer: &StorageWriterHandle, write: &DurableProjectionWrite) {
+    loop {
+        match writer.apply_atomic(&write.batch) {
+            Ok(()) => {
+                if let Some((overlay, generation)) = &write.overlay_ack {
+                    overlay.acknowledge(*generation);
                 }
-                Err(error) => {
-                    warn!(
-                        %error,
-                        block_number = write.checkpoint.number,
-                        block_hash = %write.checkpoint.hash,
-                        "MongoDB projection write failed; retrying without blocking logical projection"
-                    );
-                    std::thread::sleep(PROJECTION_RETRY_INTERVAL);
-                }
+                return;
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    block_number = write.checkpoint.number,
+                    block_hash = %write.checkpoint.hash,
+                    "MongoDB projection write failed; retrying exact atomic batch"
+                );
+                std::thread::sleep(PROJECTION_RETRY_INTERVAL);
             }
         }
     }
 }
 
-/// Runs finalized offchain-data projection as a Reth execution extension.
-///
-/// Projection and provider reads run on a blocking worker because the configured storage backend
-/// is synchronous. The async task remains available to drain ordinary ExEx notifications while
-/// that work is in flight.
-pub async fn run_offchain_data_projection<Node>(
-    ctx: ExExContext<Node>,
-    ready: ReadyOffchainDataProjection,
-    projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
-) -> eyre::Result<()>
-where
-    Node: FullNodeComponents,
-{
-    let provider = ctx.provider().clone();
-    let finalized_blocks = provider.finalized_block_stream().map(|header| {
-        let block = header.num_hash();
-        FinalizedTarget::new(block.number, block.hash)
-    });
-    let notifications = ctx
-        .notifications
-        .map(|notification| notification.map(|_| ()).map_err(|error| error.to_string()));
-    run_projection_loop(
-        provider,
-        notifications,
-        finalized_blocks,
-        ctx.events,
-        ProjectionRuntime::new(ready),
-        projection_exit,
-    )
-    .await
-}
-
-/// Keeps the installed ExEx future alive and converts an unexpected return or panic into the
-/// projection supervisor's structured shutdown path.
-pub async fn supervise_offchain_data_projection<Node>(
-    ctx: ExExContext<Node>,
-    ready: ReadyOffchainDataProjection,
-    projection_exit: tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
-) -> eyre::Result<()>
-where
-    Node: FullNodeComponents,
-{
-    let publisher = ready.readiness_publisher.clone();
-    supervise_projection_future(
-        run_offchain_data_projection(ctx, ready, projection_exit.clone()),
-        publisher,
-        projection_exit,
-    )
-    .await
-}
-
+#[cfg(test)]
 async fn supervise_projection_future<F>(
     future: F,
     publisher: ProjectionReadinessPublisher,
@@ -688,6 +1062,7 @@ where
     std::future::pending().await
 }
 
+#[cfg(test)]
 async fn run_projection_loop<P, N, F>(
     provider: P,
     mut notifications: N,
@@ -855,7 +1230,7 @@ where
             changed = runtime_failures.changed(), if runtime_failures_open && !finality_stalled => {
                 match changed {
                     Ok(()) => match runtime_failures.borrow_and_update().clone() {
-                    Some(RuntimeBodyFailure::Unavailable) => {
+                    Some(RuntimeBodyFailure::Unavailable { .. }) => {
                         let since = *mongo_unavailable_since
                             .get_or_insert_with(tokio::time::Instant::now);
                         publish_status(
@@ -868,7 +1243,7 @@ where
                         );
                         gauge!("outbe_projection_mongo_reconnect_active").set(1.0);
                         gauge!("outbe_projection_mongo_reconnect_remaining_seconds")
-                            .set(MONGO_RECONNECT_DEADLINE.as_secs_f64());
+                            .set(PROJECTION_RECOVERY_DEADLINE.as_secs_f64());
                         let recovery_target = latest_target.unwrap_or(recovery_baseline);
                         pending_target = Some(match pending_target {
                             Some(pending) if pending.number > recovery_target.number => pending,
@@ -948,11 +1323,11 @@ where
                             );
                             gauge!("outbe_projection_mongo_reconnect_active").set(1.0);
                             gauge!("outbe_projection_mongo_reconnect_remaining_seconds").set(
-                                MONGO_RECONNECT_DEADLINE
+                                PROJECTION_RECOVERY_DEADLINE
                                     .saturating_sub(since.elapsed())
                                     .as_secs_f64(),
                             );
-                            if since.elapsed() >= MONGO_RECONNECT_DEADLINE {
+                            if since.elapsed() >= PROJECTION_RECOVERY_DEADLINE {
                                 publish_fatal(
                                     &readiness_publisher,
                                     &projection_exit,
@@ -1047,7 +1422,9 @@ where
 
             _ = async {
                 match mongo_unavailable_since {
-                    Some(since) => tokio::time::sleep_until(since + MONGO_RECONNECT_DEADLINE).await,
+                    Some(since) => {
+                        tokio::time::sleep_until(since + PROJECTION_RECOVERY_DEADLINE).await
+                    }
                     None => std::future::pending().await,
                 }
             }, if !finality_stalled => {
@@ -1126,6 +1503,7 @@ fn readiness_checkpoint(status: &ProjectionStatus) -> Option<ProjectionCheckpoin
     }
 }
 
+#[cfg(test)]
 fn publish_progress(
     publisher: &ProjectionReadinessPublisher,
     checkpoint: Option<ProjectionCheckpoint>,
@@ -1148,6 +1526,7 @@ fn publish_progress(
     );
 }
 
+#[cfg(test)]
 fn publish_fatal(
     publisher: &ProjectionReadinessPublisher,
     exit: &tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
@@ -1158,6 +1537,7 @@ fn publish_fatal(
     publish_projection_failure(publisher, exit, failure);
 }
 
+#[cfg(test)]
 fn publish_projection_failure(
     publisher: &ProjectionReadinessPublisher,
     exit: &tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
@@ -1206,6 +1586,7 @@ fn publish_status(
     publisher.publish(status);
 }
 
+#[cfg(test)]
 fn projection_is_unavailable(error: &eyre::Report) -> bool {
     error.chain().any(|source| {
         source
@@ -1214,6 +1595,7 @@ fn projection_is_unavailable(error: &eyre::Report) -> bool {
     })
 }
 
+#[cfg(test)]
 fn projection_failure_class(error: &eyre::Report) -> ProjectionFailureClass {
     if let Some(storage) = error
         .chain()
@@ -1222,10 +1604,10 @@ fn projection_failure_class(error: &eyre::Report) -> ProjectionFailureClass {
         return match storage.kind() {
             StorageErrorKind::Corruption => ProjectionFailureClass::CorruptBody,
             StorageErrorKind::WriterLeaseLost => ProjectionFailureClass::WriterLeaseLost,
-            StorageErrorKind::InvalidArgument
-            | StorageErrorKind::Unavailable
-            | StorageErrorKind::Backend
-            | StorageErrorKind::RequestDeadline => ProjectionFailureClass::Other,
+            StorageErrorKind::InvalidArgument => ProjectionFailureClass::StorageInvalidArgument,
+            StorageErrorKind::Unavailable => ProjectionFailureClass::StorageUnavailable,
+            StorageErrorKind::Backend => ProjectionFailureClass::StorageBackend,
+            StorageErrorKind::RequestDeadline => ProjectionFailureClass::StorageRequestDeadline,
         };
     }
     if error.chain().any(|source| {
@@ -1245,6 +1627,7 @@ fn projection_failure_class(error: &eyre::Report) -> ProjectionFailureClass {
     }
 }
 
+#[cfg(test)]
 fn record_finalized_target(
     latest: &mut Option<FinalizedTarget>,
     pending: &mut Option<FinalizedTarget>,
@@ -1279,6 +1662,7 @@ fn record_finalized_target(
 /// Reth persists its finalized marker for N. Ignore the stale N-1 marker until
 /// Reth reaches the already-canonical Mongo checkpoint; never accept a conflict
 /// at the checkpoint height.
+#[cfg(test)]
 fn admit_startup_finalized_target(
     startup_floor: &mut Option<FinalizedTarget>,
     incoming: FinalizedTarget,
@@ -1301,6 +1685,7 @@ fn admit_startup_finalized_target(
     Ok(true)
 }
 
+#[cfg(test)]
 fn record_or_publish_finalized_target(
     latest: &mut Option<FinalizedTarget>,
     pending: &mut Option<FinalizedTarget>,
@@ -1324,6 +1709,7 @@ fn record_or_publish_finalized_target(
     }
 }
 
+#[cfg(test)]
 fn project_through_target<P>(
     provider: P,
     runtime: &Mutex<ProjectionRuntime>,
@@ -1457,50 +1843,10 @@ where
             .receipts_by_block(block_hash.into())
             .wrap_err_with(|| format!("load receipts for canonical block {block_number}"))?
             .ok_or(HistoricalProjectionDataError::Receipts { block_number })?;
-        let transactions = block.body().transactions();
-        if transactions.len() != receipts.len() {
-            bail!(
-                "canonical block {} has {} transactions but {} receipts",
-                block_number,
-                transactions.len(),
-                receipts.len()
-            );
-        }
-
-        let mut normalized_receipts = Vec::with_capacity(receipts.len());
-        let mut next_log_index = 0_u64;
-        for (transaction_index, (transaction, receipt)) in
-            transactions.iter().zip(receipts).enumerate()
-        {
-            let transaction_index = u64::try_from(transaction_index)
-                .map_err(|_| eyre::eyre!("transaction index does not fit u64"))?;
-            let mut logs = Vec::with_capacity(receipt.logs().len());
-            for log in receipt.logs() {
-                logs.push(FinalizedLog {
-                    log_index: next_log_index,
-                    emitter: log.address,
-                    data: log.data.clone(),
-                });
-                next_log_index = next_log_index
-                    .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("block-global log index overflow"))?;
-            }
-            normalized_receipts.push(FinalizedReceipt {
-                tx_hash: *transaction.tx_hash(),
-                transaction_index,
-                success: receipt.status(),
-                // Every log is retained in receipt order, including unrelated logs, so these
-                // indices remain the canonical block-global indices.
-                logs,
-            });
-        }
+        let normalized = normalize_finalized_block(block_number, block_hash, &block, &receipts)?;
 
         let prepared = projector
-            .prepare_block(&FinalizedBlock {
-                number: block_number,
-                hash: block_hash,
-                receipts: normalized_receipts,
-            })
+            .prepare_block(&normalized)
             .wrap_err_with(|| format!("project finalized block {block_number}"))?;
         let (projected, durable_batch) = projector
             .apply_prepared_with_batch(prepared)
@@ -1543,6 +1889,60 @@ where
     Ok(durable_checkpoint)
 }
 
+fn normalize_finalized_block<B, R>(
+    block_number: u64,
+    block_hash: B256,
+    block: &B,
+    receipts: &[R],
+) -> eyre::Result<FinalizedBlock>
+where
+    B: Block,
+    R: RethReceipt,
+{
+    let transactions = block.body().transactions();
+    if transactions.len() != receipts.len() {
+        bail!(
+            "canonical block {} has {} transactions but {} receipts",
+            block_number,
+            transactions.len(),
+            receipts.len()
+        );
+    }
+
+    let mut normalized_receipts = Vec::with_capacity(receipts.len());
+    let mut next_log_index = 0_u64;
+    for (transaction_index, (transaction, receipt)) in transactions.iter().zip(receipts).enumerate()
+    {
+        let transaction_index = u64::try_from(transaction_index)
+            .map_err(|_| eyre::eyre!("transaction index does not fit u64"))?;
+        let mut logs = Vec::with_capacity(receipt.logs().len());
+        for log in receipt.logs() {
+            logs.push(FinalizedLog {
+                log_index: next_log_index,
+                emitter: log.address,
+                data: log.data.clone(),
+            });
+            next_log_index = next_log_index
+                .checked_add(1)
+                .ok_or_else(|| eyre::eyre!("block-global log index overflow"))?;
+        }
+        normalized_receipts.push(FinalizedReceipt {
+            tx_hash: *transaction.tx_hash(),
+            transaction_index,
+            success: receipt.status(),
+            // Every log is retained in receipt order, including unrelated logs, so these indices
+            // remain the canonical block-global indices.
+            logs,
+        });
+    }
+
+    Ok(FinalizedBlock {
+        number: block_number,
+        hash: block_hash,
+        receipts: normalized_receipts,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1554,14 +1954,18 @@ mod tests {
     };
 
     use super::{
+        apply_durable_projection_write_before, apply_durable_projection_write_until,
         evaluate_ocomp_projection_containment, prepare_offchain_data_projection,
-        project_through_target, projection_failure_class, record_finalized_target,
-        record_or_publish_finalized_target, require_finalized_checkpoint, run_projection_loop,
-        spawn_detached_projection_work, supervise_projection_future, validate_projection_network,
+        project_through_target, projection_failure_class, projection_frame_failure_class,
+        record_finalized_target, record_or_publish_finalized_target, require_finalized_checkpoint,
+        run_projection_loop, spawn_detached_projection_work, supervise_projection_future,
+        validate_projection_network, DurableProjectionWrite, FinalizedProjectionSink,
         FinalizedTarget, OcompProjectionContainment, OffchainDataProjectionConfig,
-        ProjectionRuntime, MONGO_RECONNECT_DEADLINE,
+        ProjectionRuntime, ProjectionRuntimeRecoveryHandle, ProjectionRuntimeRecoveryV1,
+        ProjectionWriteDeadlineError, RuntimeBodyFailure, PROJECTION_RECOVERY_DEADLINE,
     };
     use alloy_consensus::Header;
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use outbe_offchain_data::{
         FinalizedBlock, OffchainDataProjection, ProjectionConfig, ProjectionFailure,
@@ -1574,6 +1978,8 @@ mod tests {
     };
     use reth_ethereum::{exex::ExExEvent, Block};
     use reth_provider::test_utils::MockEthProvider;
+
+    use crate::finalized_frame::{read_bounded_finalized_frames, RethFinalizedFrameSource};
 
     use outbe_primitives::projection::{
         projection_readiness, ProjectionCheckpoint, ProjectionStatus, WaitOutcome,
@@ -1712,11 +2118,11 @@ mod tests {
             .expect("unavailable MongoDB must fail startup preparation"),
         );
         assert!(
-            started.elapsed() >= MONGO_RECONNECT_DEADLINE,
+            started.elapsed() >= PROJECTION_RECOVERY_DEADLINE,
             "startup returned before the shared reconnect deadline"
         );
         assert!(
-            started.elapsed() <= MONGO_RECONNECT_DEADLINE + Duration::from_millis(250),
+            started.elapsed() <= PROJECTION_RECOVERY_DEADLINE + Duration::from_millis(250),
             "startup exceeded the shared reconnect deadline"
         );
     }
@@ -1905,7 +2311,7 @@ mod tests {
         OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
         let durable_reader: StorageReaderHandle = durable.clone();
         let (overlay, mut projector) =
-            super::open_logical_projection(projection_config, durable_reader).unwrap();
+            super::open_logical_projection(projection_config, durable_reader, None).unwrap();
         let block = FinalizedBlock {
             number: 1,
             hash: B256::repeat_byte(0x22),
@@ -1976,6 +2382,141 @@ mod tests {
         let checkpoint = state.projector.state().checkpoint.unwrap();
         assert_eq!(checkpoint.block_number, 2);
         assert_eq!(checkpoint.block_hash, second);
+    }
+
+    #[test]
+    fn frame_sink_returns_only_after_the_exact_durable_write_finishes() {
+        let (durable, write_started, release_write, _write_finished) = BlockingWriteStorage::new();
+        let projection_config = ProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+        };
+        OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
+        let overlay = Arc::new(PendingOverlayStorage::new(durable.clone()));
+        let reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let durable_writer: StorageWriterHandle = durable.clone();
+        let projector =
+            OffchainDataProjection::open(projection_config, reader.clone(), logical_writer)
+                .unwrap();
+        let (readiness_publisher, _readiness) = projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: projection_config.genesis_hash,
+            },
+            ProjectionStatus::Starting,
+        );
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let mut sink = FinalizedProjectionSink::from_runtime(ProjectionRuntime {
+            projector,
+            readiness_publisher,
+            projection_config,
+            _reader: reader,
+            overlay: Some(overlay),
+            writer: durable_writer,
+            _writer_lease: None,
+            runtime_failure_sender: Some(runtime_failure_tx),
+            runtime_failure_receiver: Some(runtime_failure_rx),
+        });
+        let frame = empty_finalized_frame(1, 1);
+        durable.block_next_write.store(true, Ordering::Release);
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        let sink_thread = std::thread::spawn(move || {
+            let result = sink.project_frame(&frame);
+            let _ = result_tx.send(result);
+        });
+
+        write_started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the sink must submit the exact durable batch");
+        assert!(matches!(
+            result_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        release_write.send(()).unwrap();
+        let checkpoint = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the sink must return after durable commit")
+            .unwrap();
+        sink_thread.join().unwrap();
+
+        assert_eq!(checkpoint.block_number, 1);
+        assert_eq!(
+            outbe_offchain_data::read_projection_state(projection_config, durable)
+                .unwrap()
+                .unwrap()
+                .checkpoint,
+            Some(checkpoint)
+        );
+    }
+
+    #[test]
+    fn frame_sink_accepts_restart_replay_below_durable_p_and_rejects_conflicting_p() {
+        let storage = Arc::new(MemoryStorage::new());
+        let projection_config = ProjectionConfig {
+            chain_id: 1,
+            genesis_hash: B256::repeat_byte(0x11),
+            start_block: 1,
+        };
+        OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
+        let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+        let reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let durable_writer: StorageWriterHandle = storage;
+        let projector =
+            OffchainDataProjection::open(projection_config, reader.clone(), logical_writer)
+                .unwrap();
+        let (readiness_publisher, readiness) = projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: projection_config.genesis_hash,
+            },
+            ProjectionStatus::Starting,
+        );
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let mut sink = FinalizedProjectionSink::from_runtime(ProjectionRuntime {
+            projector,
+            readiness_publisher,
+            projection_config,
+            _reader: reader,
+            overlay: Some(overlay),
+            writer: durable_writer,
+            _writer_lease: None,
+            runtime_failure_sender: Some(runtime_failure_tx),
+            runtime_failure_receiver: Some(runtime_failure_rx),
+        });
+        let first = empty_finalized_frame(1, 1);
+        let second = empty_finalized_frame(2, 2);
+        let conflicting_second = empty_finalized_frame(2, 3);
+
+        let first_checkpoint = sink.project_frame(&first).unwrap();
+        sink.publish_progress(ProjectionCheckpoint {
+            block_number: second.identity().number,
+            block_hash: second.identity().hash,
+        })
+        .unwrap();
+        assert_eq!(
+            readiness.current(),
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(first_checkpoint),
+            }
+        );
+        let durable_p = sink.project_frame(&second).unwrap();
+        sink.publish_progress(durable_p).unwrap();
+        assert_eq!(
+            readiness.current(),
+            ProjectionStatus::Ready {
+                checkpoint: durable_p,
+            }
+        );
+
+        assert_eq!(sink.project_frame(&first).unwrap(), durable_p);
+        let error = sink.project_frame(&conflicting_second).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("conflicts with durable projection hash"));
+        assert_eq!(sink.durable_checkpoint(), Some(durable_p));
     }
 
     #[test]
@@ -2082,6 +2623,245 @@ mod tests {
     }
 
     #[test]
+    fn durable_write_deadline_has_a_typed_error_for_lifecycle_classification() {
+        let storage = Arc::new(FailAfterStartupStorage::default());
+        storage
+            .fail_writes_unavailable
+            .store(true, Ordering::SeqCst);
+        let writer: StorageWriterHandle = storage;
+        let checkpoint = FinalizedTarget::new(7, B256::repeat_byte(0x77));
+        let batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
+            Namespace::new("records").unwrap(),
+            Key::new(b"key".to_vec()).unwrap(),
+            outbe_offchain_storage::Value::new(b"value".to_vec()).unwrap(),
+        )]);
+
+        let report = apply_durable_projection_write_until(
+            &writer,
+            &DurableProjectionWrite {
+                checkpoint,
+                batch,
+                overlay_ack: None,
+            },
+            Duration::ZERO,
+        )
+        .unwrap_err();
+        let error = report
+            .downcast_ref::<ProjectionWriteDeadlineError>()
+            .expect("unavailable storage must preserve the typed recovery deadline");
+
+        assert_eq!(error.block_number, checkpoint.number);
+        assert_eq!(error.block_hash, checkpoint.hash);
+    }
+
+    #[test]
+    fn transient_runtime_read_failure_clears_only_after_a_successful_probe() {
+        let storage = Arc::new(FailAfterStartupStorage::default());
+        storage
+            .fail_writes_unavailable
+            .store(true, Ordering::SeqCst);
+        let writer: StorageWriterHandle = storage.clone();
+        let since = std::time::Instant::now();
+        let (failure_sender, failure_receiver) =
+            tokio::sync::watch::channel(Some(RuntimeBodyFailure::Unavailable {
+                generation: 7,
+                since,
+            }));
+        let recovery = ProjectionRuntimeRecoveryHandle {
+            writer,
+            failure_sender,
+        };
+
+        assert_eq!(
+            recovery.reconcile(7),
+            ProjectionRuntimeRecoveryV1::Unavailable
+        );
+        assert_eq!(
+            *failure_receiver.borrow(),
+            Some(RuntimeBodyFailure::Unavailable {
+                generation: 7,
+                since,
+            })
+        );
+
+        storage
+            .fail_writes_unavailable
+            .store(false, Ordering::SeqCst);
+        assert_eq!(
+            recovery.reconcile(7),
+            ProjectionRuntimeRecoveryV1::Recovered
+        );
+        assert_eq!(*failure_receiver.borrow(), None);
+    }
+
+    #[test]
+    fn successful_probe_never_clears_a_newer_runtime_outage() {
+        struct BlockingProbeStorage {
+            entered: Arc<std::sync::Barrier>,
+            release: Arc<std::sync::Barrier>,
+        }
+
+        impl StorageWriter for BlockingProbeStorage {
+            fn verify_transaction_capability(&self) -> Result<(), StorageError> {
+                self.entered.wait();
+                self.release.wait();
+                Ok(())
+            }
+
+            fn apply_atomic(&self, _batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+                Ok(())
+            }
+        }
+
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let writer: StorageWriterHandle = Arc::new(BlockingProbeStorage {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let since = std::time::Instant::now();
+        let (failure_sender, failure_receiver) =
+            tokio::sync::watch::channel(Some(RuntimeBodyFailure::Unavailable {
+                generation: 7,
+                since,
+            }));
+        let recovery = ProjectionRuntimeRecoveryHandle {
+            writer,
+            failure_sender: failure_sender.clone(),
+        };
+        let task = std::thread::spawn(move || recovery.reconcile(7));
+        entered.wait();
+        failure_sender.send_replace(Some(RuntimeBodyFailure::Unavailable {
+            generation: 8,
+            since,
+        }));
+        release.wait();
+
+        assert_eq!(
+            task.join().unwrap(),
+            ProjectionRuntimeRecoveryV1::Unavailable
+        );
+        assert_eq!(
+            *failure_receiver.borrow(),
+            Some(RuntimeBodyFailure::Unavailable {
+                generation: 8,
+                since,
+            })
+        );
+    }
+
+    #[test]
+    fn successful_write_after_the_absolute_deadline_never_publishes_progress() {
+        struct SlowSuccessfulStorage;
+
+        impl StorageWriter for SlowSuccessfulStorage {
+            fn apply_atomic(&self, _batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+                std::thread::sleep(Duration::from_millis(10));
+                Ok(())
+            }
+        }
+
+        let writer: StorageWriterHandle = Arc::new(SlowSuccessfulStorage);
+        let checkpoint = FinalizedTarget::new(7, B256::repeat_byte(0x78));
+        let batch = AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
+            Namespace::new("records").unwrap(),
+            Key::new(b"key".to_vec()).unwrap(),
+            outbe_offchain_storage::Value::new(b"value".to_vec()).unwrap(),
+        )]);
+        let report = apply_durable_projection_write_before(
+            &writer,
+            &DurableProjectionWrite {
+                checkpoint,
+                batch,
+                overlay_ack: None,
+            },
+            std::time::Instant::now() + Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            projection_frame_failure_class(&report),
+            ProjectionFailureClass::MongoReconnectDeadline
+        );
+    }
+
+    #[test]
+    fn deterministic_projection_storage_failures_are_immediate_and_typed() {
+        let checkpoint = FinalizedTarget::new(7, B256::repeat_byte(0x77));
+        let batch = || {
+            AtomicWriteBatch::from_operations(vec![AtomicWriteOperation::put(
+                Namespace::new("records").unwrap(),
+                Key::new(b"key".to_vec()).unwrap(),
+                outbe_offchain_storage::Value::new(b"value".to_vec()).unwrap(),
+            )])
+        };
+
+        for (lease_lost, expected) in [
+            (false, ProjectionFailureClass::CorruptBody),
+            (true, ProjectionFailureClass::WriterLeaseLost),
+        ] {
+            let storage = Arc::new(FailAfterStartupStorage::default());
+            if lease_lost {
+                storage.lose_writer_lease.store(true, Ordering::SeqCst);
+            } else {
+                storage.fail_writes.store(true, Ordering::SeqCst);
+            }
+            let writer: StorageWriterHandle = storage;
+            let started = std::time::Instant::now();
+            let report = apply_durable_projection_write_until(
+                &writer,
+                &DurableProjectionWrite {
+                    checkpoint,
+                    batch: batch(),
+                    overlay_ack: None,
+                },
+                PROJECTION_RECOVERY_DEADLINE,
+            )
+            .unwrap_err();
+            assert!(started.elapsed() < Duration::from_millis(100));
+            assert_eq!(projection_frame_failure_class(&report), expected);
+        }
+    }
+
+    #[test]
+    fn every_storage_failure_kind_has_a_stable_projection_class() {
+        let cases = [
+            (
+                StorageError::InvalidArgument("invalid".to_owned()),
+                ProjectionFailureClass::StorageInvalidArgument,
+            ),
+            (
+                StorageError::Unavailable {
+                    source: Box::new(std::io::Error::other("unavailable")),
+                },
+                ProjectionFailureClass::StorageUnavailable,
+            ),
+            (
+                StorageError::Corruption("corrupt".to_owned()),
+                ProjectionFailureClass::CorruptBody,
+            ),
+            (
+                StorageError::Backend {
+                    source: Box::new(std::io::Error::other("backend")),
+                },
+                ProjectionFailureClass::StorageBackend,
+            ),
+            (
+                StorageError::RequestDeadline,
+                ProjectionFailureClass::StorageRequestDeadline,
+            ),
+            (
+                StorageError::WriterLeaseLost,
+                ProjectionFailureClass::WriterLeaseLost,
+            ),
+        ];
+        for (error, expected) in cases {
+            let report = eyre::Report::new(error);
+            assert_eq!(projection_frame_failure_class(&report), expected);
+        }
+    }
+
+    #[test]
     fn writer_lease_loss_has_a_distinct_failure_class() {
         let error = eyre::Report::new(StorageError::WriterLeaseLost);
 
@@ -2168,7 +2948,7 @@ mod tests {
             outbe_offchain_data::ProjectionStatus::Starting,
         );
         let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
         let task = tokio::spawn(run_projection_loop(
             provider,
             notification_rx,
@@ -2182,6 +2962,7 @@ mod tests {
                 overlay: None,
                 writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2260,6 +3041,7 @@ mod tests {
                 overlay: None,
                 writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx.clone()),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2368,13 +3150,19 @@ mod tests {
                 overlay: None,
                 writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx.clone()),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
         ));
 
         storage.fail_reads.store(true, Ordering::SeqCst);
-        runtime_failure_tx.send_replace(Some(outbe_offchain_data::RuntimeBodyFailure::Unavailable));
+        runtime_failure_tx.send_replace(Some(
+            outbe_offchain_data::RuntimeBodyFailure::Unavailable {
+                generation: 1,
+                since: std::time::Instant::now(),
+            },
+        ));
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if matches!(
@@ -2441,7 +3229,7 @@ mod tests {
                 },
             },
         );
-        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
         let (_notification_tx, notification_rx) = mpsc::channel(1);
         let (finality_tx, finality_rx) = mpsc::unbounded();
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2459,6 +3247,7 @@ mod tests {
                 overlay: Some(overlay.clone()),
                 writer: durable_writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2532,7 +3321,7 @@ mod tests {
         };
         let (readiness_publisher, readiness) =
             projection_readiness(checkpoint, ProjectionStatus::Ready { checkpoint });
-        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
         let (_notification_tx, notification_rx) = mpsc::channel(1);
         let (finality_tx, finality_rx) = mpsc::unbounded();
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2551,6 +3340,7 @@ mod tests {
                 overlay: Some(overlay.clone()),
                 writer: durable_writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2674,7 +3464,7 @@ mod tests {
                 checkpoint: durable_checkpoint,
             },
         );
-        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
         let (_notification_tx, notification_rx) = mpsc::channel(1);
         let (finality_tx, finality_rx) = mpsc::unbounded();
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2693,6 +3483,7 @@ mod tests {
                 overlay: Some(overlay.clone()),
                 writer: durable.clone(),
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2785,6 +3576,7 @@ mod tests {
                 overlay: None,
                 writer,
                 _writer_lease: None,
+                runtime_failure_sender: Some(runtime_failure_tx.clone()),
                 runtime_failure_receiver: Some(runtime_failure_rx),
             },
             exit_tx,
@@ -2834,6 +3626,27 @@ mod tests {
         hash
     }
 
+    fn empty_finalized_frame(
+        number: u64,
+        timestamp: u64,
+    ) -> crate::finalized_frame::FinalizedFrame {
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new();
+        let header = Header {
+            number,
+            timestamp,
+            ..Default::default()
+        };
+        let hash = header.hash_slow();
+        provider.add_block(hash, Block::new(header, Default::default()));
+        provider.add_receipts(number, Vec::new());
+        let source = RethFinalizedFrameSource::new(provider);
+        read_bounded_finalized_frames(&source, number, BlockNumHash::new(number, hash))
+            .unwrap()
+            .unwrap()
+            .frames()[0]
+            .clone()
+    }
+
     fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> {
         let storage = Arc::new(MemoryStorage::new());
         let reader: StorageReaderHandle = storage.clone();
@@ -2853,7 +3666,7 @@ mod tests {
             },
             outbe_offchain_data::ProjectionStatus::Starting,
         );
-        let (_runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
         Mutex::new(ProjectionRuntime {
             projector,
             readiness_publisher,
@@ -2862,6 +3675,7 @@ mod tests {
             overlay: None,
             writer,
             _writer_lease: None,
+            runtime_failure_sender: Some(runtime_failure_tx),
             runtime_failure_receiver: Some(runtime_failure_rx),
         })
     }
@@ -2970,6 +3784,7 @@ mod tests {
         fail_reads: AtomicBool,
         fail_writes: AtomicBool,
         fail_writes_unavailable: AtomicBool,
+        lose_writer_lease: AtomicBool,
         failed_writes: AtomicUsize,
     }
 
@@ -3028,6 +3843,9 @@ mod tests {
 
     impl StorageWriter for FailAfterStartupStorage {
         fn verify_transaction_capability(&self) -> Result<(), StorageError> {
+            if self.lose_writer_lease.load(Ordering::SeqCst) {
+                return Err(StorageError::WriterLeaseLost);
+            }
             if self.fail_reads.load(Ordering::SeqCst)
                 || self.fail_writes_unavailable.load(Ordering::SeqCst)
             {
@@ -3041,6 +3859,9 @@ mod tests {
         }
 
         fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+            if self.lose_writer_lease.load(Ordering::SeqCst) {
+                return Err(StorageError::WriterLeaseLost);
+            }
             if self.fail_writes_unavailable.load(Ordering::SeqCst) {
                 self.failed_writes.fetch_add(1, Ordering::SeqCst);
                 return Err(StorageError::Unavailable {

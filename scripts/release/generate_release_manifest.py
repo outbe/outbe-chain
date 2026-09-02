@@ -162,14 +162,14 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
     ):
         raise ValueError("production enclave package and binary must be outbe-tee-enclave")
     enclave_features = enclave.get("features")
-    if enclave_features != ["native-dcap"]:
+    if enclave_features != ["production-dcap-release"]:
         feature_list = (
             ", ".join(str(feature) for feature in enclave_features)
             if isinstance(enclave_features, list)
             else "missing"
         )
         raise ValueError(
-            "production enclave feature set must be exactly native-dcap "
+            "production enclave feature set must be exactly production-dcap-release "
             f"(got: {feature_list or 'empty'})"
         )
     for artifact in artifacts:

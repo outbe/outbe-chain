@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use alloy_primitives::{hex, Address, Bytes, B256};
-use eyre::{eyre, Result};
+use eyre::{bail, eyre, Result, WrapErr as _};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::TransportError;
 use serde::Deserialize;
@@ -528,6 +528,8 @@ impl Localnet {
             sock,
             "--reth-p2p-secret-key",
             vd.join("reth-p2p-secret.hex").display(),
+            "--genesis",
+            self.cfg.dir.join("genesis.json").display(),
             "--binding-id",
             binding_id,
             "--valid-until",
@@ -644,6 +646,65 @@ impl Localnet {
         self.start_node_enclave(index)
     }
 
+    /// Attempt to reopen one already-keyed DCAP enclave with remote attestation
+    /// disabled but the same disposable E2E signer and sealed directory.
+    pub fn attempt_no_attest_sealed_restart(&mut self, index: usize) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
+        let port = self.cfg.tee_port(index);
+        self.enclaves.remove(&index);
+        self.ensure_enclave_image_once()?;
+        let log_path = vd.join("enclave-no-attest-downgrade.log");
+        if log_path.exists() {
+            fs::remove_file(&log_path)?;
+        }
+        let guard = proc::spawn_enclave(proc::EnclaveSpec {
+            name: format!("{}-no-attest-downgrade", self.cfg.tee_container(index)),
+            tee_port: port,
+            enclave_bin: self.real_enclave_bin()?,
+            signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+            network_descriptor: None,
+            launch: self.enclave_launch()?,
+            sudo: self.cfg.sudo,
+            pass_sgx_devices: true,
+            remote_attestation: proc::TestRemoteAttestation::None,
+            dkg_seed: None,
+            seal: Some(SealSpec {
+                tee_dir: vd.join("tee"),
+                chain_id_hex: self.chain_id_hex()?,
+            }),
+            log_path,
+            debug: self.cfg.debug,
+        })?;
+        if wait_tcp(port, 50) {
+            drop(guard);
+            return Err(eyre!(
+                "SGX no-attestation runtime reopened a DCAP-bound enclave listener"
+            ));
+        }
+        drop(guard);
+        Ok(())
+    }
+
+    pub fn assert_no_attest_restart_rejected(&self, index: usize) -> Result<()> {
+        let log_path = self
+            .cfg
+            .validator_dir(index)
+            .join("enclave-no-attest-downgrade.log");
+        let log = fs::read_to_string(&log_path)
+            .wrap_err_with(|| format!("read downgrade log {}", log_path.display()))?;
+        if !log.contains("production DCAP release refuses runtime attestation sgx-no-attest")
+            && !log.contains("does not satisfy DcapRequired")
+        {
+            bail!("downgrade runtime did not report a fail-closed DCAP policy rejection");
+        }
+        if log.contains("unsealed offer key + group signature")
+            || log.contains("FinalizedAdmissionIngestedV1")
+        {
+            bail!("downgrade runtime exposed or activated the permanent offer key");
+        }
+        Ok(())
+    }
+
     pub fn stop_node_enclave(&mut self, index: usize) {
         self.enclaves.remove(&index);
     }
@@ -670,14 +731,6 @@ impl Localnet {
         let node_data_dir = self.cfg.validator_dir(index).join("data");
         let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
             .map_err(|error| eyre!("load joiner NodeHost manifest: {error}"))?;
-        if manifest.chain_id[..24] != [0_u8; 24] {
-            return Err(eyre!("node manifest chain id does not fit u64"));
-        }
-        let chain_id = u64::from_be_bytes(
-            manifest.chain_id[24..]
-                .try_into()
-                .map_err(|_| eyre!("node manifest chain id has invalid width"))?,
-        );
         let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
         let real_sgx = self.cfg.tee_mode.passes_sgx_devices();
         let attempts = if real_sgx {
@@ -692,8 +745,7 @@ impl Localnet {
                 &endpoint,
                 &node_data_dir,
                 outbe_tee::NodeHostIdentityV1 {
-                    chain_id,
-                    genesis_hash: manifest.genesis_hash,
+                    network_binding: manifest.network_binding(),
                     reth_p2p_public: manifest.node_id.reth_p2p_public,
                 },
                 unexpected_reinitialize,
@@ -745,6 +797,8 @@ impl Localnet {
             tee_port: port,
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+            network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
+                .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
             launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),

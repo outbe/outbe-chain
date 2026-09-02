@@ -7,7 +7,7 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_sparse_merkle_tree_v061::{
     error::Error as VendorError,
-    merge::MergeValue,
+    merge::{merge, MergeValue},
     traits::{StoreReadOps, StoreWriteOps},
     BranchKey, BranchNode, CompiledMerkleProof, SparseMerkleTree, H256,
 };
@@ -118,6 +118,12 @@ pub(crate) enum TreeError {
     TreeHashError,
     #[error("duplicate tree key in one update batch")]
     DuplicateKey,
+    #[error("tree keys must be supplied in strict ascending order")]
+    NonAscendingKey,
+    #[error("present tree leaf must be non-zero")]
+    ZeroLeaf,
+    #[error("sorted SMT reducer invariant failed: {0}")]
+    ReducerInvariant(&'static str),
     #[error("invalid CKB membership or non-membership proof")]
     InvalidProof,
     #[error("vendored CKB SMT failure: {0}")]
@@ -174,6 +180,126 @@ impl StoreWriteOps<H256> for MemoryStore {
 /// Private, single-engine facade. Persistence adapters use the same CKB Store seams.
 pub(crate) struct PoseidonSmt<S = MemoryStore> {
     inner: SparseMerkleTree<PoseidonCkbHasher, H256, S>,
+}
+
+/// Reduces strictly ordered non-zero leaves to the canonical CKB SMT root
+/// while retaining at most one pending subtree per tree level.
+pub(crate) struct SortedPoseidonRootReducer {
+    frontier: Vec<Option<PendingSortedNode>>,
+    current: Option<PendingSortedNode>,
+}
+
+struct PendingSortedNode {
+    key: TreeKey,
+    value: MergeValue,
+}
+
+impl SortedPoseidonRootReducer {
+    pub(crate) fn new() -> Self {
+        Self {
+            frontier: std::iter::repeat_with(|| None).take(256).collect(),
+            current: None,
+        }
+    }
+
+    pub(crate) fn push(&mut self, key: TreeKey, leaf: TreeLeaf) -> Result<(), TreeError> {
+        if leaf == TreeLeaf::ZERO {
+            return Err(TreeError::ZeroLeaf);
+        }
+        if let Some(current) = self.current.as_ref() {
+            match key.cmp(&current.key) {
+                Ordering::Less => return Err(TreeError::NonAscendingKey),
+                Ordering::Equal => return Err(TreeError::DuplicateKey),
+                Ordering::Greater => {}
+            }
+            let fork_height = current.key.ckb().fork_height(&key.ckb());
+            self.lift_current(fork_height)?;
+            let completed = self
+                .current
+                .take()
+                .ok_or(TreeError::ReducerInvariant("current subtree disappeared"))?;
+            if completed.key.ckb().is_right(fork_height) {
+                return Err(TreeError::ReducerInvariant(
+                    "ordered subtree is not the left fork child",
+                ));
+            }
+            let slot = self
+                .frontier
+                .get_mut(usize::from(fork_height))
+                .ok_or(TreeError::ReducerInvariant("fork height outside frontier"))?;
+            if slot.is_some() {
+                return Err(TreeError::ReducerInvariant(
+                    "fork frontier already contains a subtree",
+                ));
+            }
+            *slot = Some(completed);
+        }
+        self.current = Some(PendingSortedNode {
+            key,
+            value: MergeValue::from_h256(leaf.ckb()),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn finish(mut self) -> Result<TreeRoot, TreeError> {
+        if self.current.is_none() {
+            if self.frontier.iter().any(Option::is_some) {
+                return Err(TreeError::ReducerInvariant(
+                    "empty reducer retains a pending subtree",
+                ));
+            }
+            return Ok(TreeRoot::EMPTY);
+        }
+        self.lift_current(u8::MAX)?;
+        self.merge_current_level(u8::MAX)?;
+        if self.frontier.iter().any(Option::is_some) {
+            return Err(TreeError::ReducerInvariant(
+                "finished reducer retains a pending subtree",
+            ));
+        }
+        let root = self
+            .current
+            .take()
+            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?
+            .value
+            .hash::<PoseidonCkbHasher>();
+        checked_root(root)
+    }
+
+    fn lift_current(&mut self, target_height: u8) -> Result<(), TreeError> {
+        for height in 0..target_height {
+            self.merge_current_level(height)?;
+        }
+        Ok(())
+    }
+
+    fn merge_current_level(&mut self, height: u8) -> Result<(), TreeError> {
+        let mut current = self
+            .current
+            .take()
+            .ok_or(TreeError::ReducerInvariant("current subtree is missing"))?;
+        let ckb_key = current.key.ckb();
+        let parent_key = ckb_key.parent_path(height);
+        let left = self.frontier[usize::from(height)].take();
+        current.value = if let Some(left) = left {
+            let left_key = left.key.ckb();
+            if left_key.is_right(height)
+                || !ckb_key.is_right(height)
+                || left_key.parent_path(height) != parent_key
+            {
+                return Err(TreeError::ReducerInvariant(
+                    "pending subtrees are not ordered siblings",
+                ));
+            }
+            merge::<PoseidonCkbHasher>(height, &parent_key, &left.value, &current.value)
+        } else if ckb_key.is_right(height) {
+            merge::<PoseidonCkbHasher>(height, &parent_key, &MergeValue::zero(), &current.value)
+        } else {
+            merge::<PoseidonCkbHasher>(height, &parent_key, &current.value, &MergeValue::zero())
+        };
+        self.current = Some(current);
+        Ok(())
+    }
 }
 
 impl Default for PoseidonSmt<MemoryStore> {

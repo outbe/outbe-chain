@@ -32,6 +32,7 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
             alice(),
             handle,
             spend,
+            REFERENCE_ISO,
             pledge_stake(),
         )
         .unwrap();
@@ -58,12 +59,16 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(position.outstanding, amount_stables);
         assert_eq!(position.collateral, pledge_cost());
         assert_eq!(position.collateral_locked, pledge_cost());
-        // The entry price is the rate the PLEDGE was quoted at, not a later read;
-        // the call price derives from it, so the whole geometry follows the quote.
+        // The entry price is the COEN quote in the ELECTED reference currency, read at
+        // origination; the call price derives from it. Both legs are seeded at the same
+        // rate here, so this fixture cannot tell them apart - see
+        // `the_entry_price_is_struck_from_the_reference_leg` for the case that can.
         assert_eq!(position.entry_price, oracle_rate());
         assert_eq!(position.call_price, U256::from(3_280_000u64));
         assert_eq!(position.policy_rate, policy_rate());
+        // Both codes are sealed, and the policy rate follows the ISSUANCE one.
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
+        assert_eq!(position.reference_currency, REFERENCE_ISO);
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
         assert_eq!(position.last_settled_at, position.originated_at);
     });
@@ -245,7 +250,7 @@ fn settle_accepts_a_third_party_payer() {
 }
 
 #[test]
-fn request_credis_rejects_an_owner_with_an_unresolved_call() {
+fn request_credis_allows_an_owner_with_an_unresolved_call() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
@@ -261,6 +266,7 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
             alice(),
             first_handle,
             first_spend,
+            REFERENCE_ISO,
             pledge_stake(),
         )
         .unwrap();
@@ -271,30 +277,39 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
             assert!(credis.mark_called(first, now_of(&storage)).unwrap());
         }
 
+        // The called position does not gate origination: the second one opens
+        // while the first is still unresolved, and both stand on their own.
         let spend = credis_spend_auth(alice(), second_handle, alice());
-        let err = runtime::request_credis(
-            storage.clone(),
-            cca(),
-            alice(),
-            second_handle,
-            spend,
-            pledge_stake(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("called position"), "got: {err}");
-
-        // Settling the call in full clears the block.
-        settle_principal(&storage, alice(), first, pledge_stables());
         fund_stake(&storage, pledge_stake());
-        runtime::request_credis(
+        let (second, _) = runtime::request_credis(
             storage.clone(),
             cca(),
             alice(),
             second_handle,
             spend,
+            REFERENCE_ISO,
             pledge_stake(),
         )
         .unwrap();
+
+        assert_ne!(second, first);
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(
+            credis
+                .get_position(first)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Called
+        );
+        assert_eq!(
+            credis
+                .get_position(second)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Open
+        );
     });
     teardown();
 }
@@ -310,6 +325,7 @@ fn request_credis_rejects_zero_smart_account() {
             Address::ZERO,
             B256::ZERO,
             [0u8; 32],
+            REFERENCE_ISO,
             U256::ZERO,
         )
         .unwrap_err();
@@ -504,9 +520,16 @@ fn request_credis_requires_the_stake_to_equal_the_collateral() {
             // Each pledge consumes the next op nonce.
             let handle = pledge(&storage, alice(), i as u64 + 1);
             let spend = credis_spend_auth(alice(), handle, alice());
-            let err =
-                runtime::request_credis(storage.clone(), cca(), alice(), handle, spend, wrong)
-                    .unwrap_err();
+            let err = runtime::request_credis(
+                storage.clone(),
+                cca(),
+                alice(),
+                handle,
+                spend,
+                REFERENCE_ISO,
+                wrong,
+            )
+            .unwrap_err();
             assert!(
                 err.to_string().contains("attached COEN"),
                 "stake {wrong} should be rejected, got: {err}"
@@ -610,10 +633,130 @@ fn request_credis_rejects_an_undeployed_smart_account() {
         let spend = credis_spend_auth(alice(), handle, bob());
 
         // bob was never bootstrapped, so it has no code.
-        let err =
-            runtime::request_credis(storage.clone(), cca(), bob(), handle, spend, pledge_stake())
-                .unwrap_err();
+        let err = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            bob(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("not deployed"), "got: {err}");
+    });
+    teardown();
+}
+
+/// The threshold is struck from the reference leg, not from the rate the pledge was
+/// quoted at. Proven by moving the two legs apart after the pledge is parked: the
+/// loan still follows the sealed quote, the call price follows the reference.
+#[test]
+fn the_entry_price_is_struck_from_the_reference_leg() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        // Priced and sealed at COEN/840 = 2.0.
+        let handle = pledge(&storage, alice(), 1);
+
+        // The reference leg moves to 3.0 before the CCA presents the ticket.
+        set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
+
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, amount_stables) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap();
+
+        // The loan is untouched by the move - it was sealed into the ticket.
+        assert_eq!(amount_stables, pledge_stables());
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(position.collateral, pledge_cost());
+        // 3.0, the reference leg - not 2.0, the pledge quote.
+        assert_eq!(position.entry_price, U256::from(3_000_000u64));
+        // 3.0 + 64% = 4.92.
+        assert_eq!(position.call_price, U256::from(4_920_000u64));
+    });
+    teardown();
+}
+
+#[test]
+fn request_credis_rejects_an_unregistered_reference_currency() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
+
+        // 392 (JPY) has no COEN pair and is not in the reference registry: electing it
+        // would seal a threshold the daily scan can never evaluate.
+        let err = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            392,
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not a registered reference currency"),
+            "got: {err}"
+        );
+    });
+    teardown();
+}
+
+/// Anchoring to the issuance currency reuses the rate sealed into the pledge ticket
+/// instead of re-reading the oracle, so the threshold cannot drift between pledge and
+/// origination. Proven by moving the COEN/840 spot away after the pledge is parked:
+/// the position must ignore the move.
+#[test]
+fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        // Admit the issuance currency as an anchor; its COEN pair is already seeded.
+        register_reference_pair(&storage, ISSUANCE_ISO);
+
+        // Priced and sealed at COEN/840 = 2.0.
+        let handle = pledge(&storage, alice(), 1);
+
+        // The spot moves before the CCA presents the ticket. A re-quote would seal 3.0.
+        set_coen_rate_for(&storage, ISSUANCE_ISO, U256::from(3_000_000u64));
+
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let (position_id, _) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            ISSUANCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap();
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(position.reference_currency, ISSUANCE_ISO);
+        // 2.0, the sealed quote - not 3.0, the rate the oracle reads now.
+        assert_eq!(position.entry_price, oracle_rate());
+        // 2.0 + 64% = 3.28.
+        assert_eq!(position.call_price, U256::from(3_280_000u64));
     });
     teardown();
 }

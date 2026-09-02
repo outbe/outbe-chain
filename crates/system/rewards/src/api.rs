@@ -515,7 +515,7 @@ fn deliver_oldest_reward_gem_batch_inner(
     };
 
     for (owner, load) in recipients {
-        outbe_gemfactory::api::mint_gem(
+        outbe_gemfactory::api::issue_gem(
             &ctx.storage,
             owner,
             gem_type,
@@ -683,7 +683,7 @@ mod tests {
     }
 
     /// Seeds COEN/840 oracle pair at `rate_6`. Required because
-    /// `deliver_oldest_reward_gem_batch` -> `mint_gem` resolves `coen_rate` for floor
+    /// `deliver_oldest_reward_gem_batch` -> `issue_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
@@ -697,7 +697,7 @@ mod tests {
             ctx.block.timestamp,
         )
         .unwrap();
-        // Register ISO 840 (USD) so mint_gem currency-validation passes.
+        // Register ISO 840 (USD) so issue_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
         // Close every reward day these tests use: none carries a VWAP, so

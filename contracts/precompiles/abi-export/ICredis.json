@@ -103,6 +103,11 @@
             "internalType": "uint16"
           },
           {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
             "name": "eoaCiphertext",
             "type": "bytes",
             "internalType": "bytes"
@@ -247,6 +252,11 @@
             "internalType": "uint16"
           },
           {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
             "name": "eoaCiphertext",
             "type": "bytes",
             "internalType": "bytes"
@@ -354,6 +364,11 @@
           },
           {
             "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceCurrency",
             "type": "uint16",
             "internalType": "uint16"
           },

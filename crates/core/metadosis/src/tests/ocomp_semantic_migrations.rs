@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_ocomp_protocol::{
     receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
 };
@@ -15,6 +15,7 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 use outbe_validatorset::{
     contract::ValidatorSet, runtime::status as validator_status, ValidatorHistory,
+    ValidatorLifecycle,
 };
 
 use crate::{
@@ -155,8 +156,9 @@ fn finalized_attempt_uses_exact_1800_block_compute_vote_window() {
 }
 
 #[test]
-fn deadline_jails_only_the_missing_pinned_validator_after_early_quorum() {
+fn deadline_opens_recovery_only_for_the_missing_pinned_validator_after_early_quorum() {
     let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -183,8 +185,20 @@ fn deadline_jails_only_the_missing_pinned_validator_after_early_quorum() {
             .get_validator(Address::repeat_byte(0xB3))
             .unwrap()
             .unwrap();
-        assert_eq!(missing.status, validator_status::JAILED);
-        assert_eq!(missing.slash_count, 1);
+        assert_eq!(missing.status, validator_status::ACTIVE);
+        assert_eq!(missing.slash_count, 0);
+        let window = validators
+            .ocomp_recovery_window(Address::repeat_byte(0xB3))
+            .unwrap()
+            .unwrap();
+        assert_eq!(window.miss_count, 1);
+        assert_eq!(window.recovery_deadline, finalized.deadline_height + 43_200);
+        assert_eq!(
+            outbe_staking::contract::Staking::new(storage.clone())
+                .get_stake(Address::repeat_byte(0xB3))
+                .unwrap(),
+            U256::from(900)
+        );
 
         let accountability = MetadosisContract::new(storage)
             .result_vote_accountability(finalized.job_id, &fixture.limits)
@@ -198,6 +212,54 @@ fn deadline_jails_only_the_missing_pinned_validator_after_early_quorum() {
     let after_first_close = fixture.rollback_snapshot();
     close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
     assert_eq!(fixture.rollback_snapshot(), after_first_close);
+}
+
+#[test]
+fn missing_vote_slashes_bonded_once_and_opens_recovery() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.seed_ocomp_recovery_stake_for_test();
+    assert_eq!(fixture.apply().unwrap(), Bytes::new());
+    let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+    });
+
+    close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
+
+    let missed = fixture
+        .provider
+        .get_ordered_events()
+        .iter()
+        .find_map(|log| IMetadosis::OcompVoteMissed::decode_log(log).ok())
+        .expect("OCOMP miss event");
+    assert_eq!(missed.validator, Address::repeat_byte(0xB3));
+    assert_eq!(missed.jobId, finalized.job_id);
+    assert_eq!(missed.missCount, 1);
+    assert_eq!(missed.slashedBonded, U256::from(100));
+    assert_eq!(missed.recoveryDeadline, finalized.deadline_height + 43_200);
+    assert!(missed.firstInWindow);
+
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let missing = Address::repeat_byte(0xB3);
+        let validators = ValidatorSet::new(storage.clone());
+        assert!(matches!(
+            validators.validator_lifecycle(missing).unwrap(),
+            ValidatorLifecycle::Active(_)
+        ));
+        let window = validators.ocomp_recovery_window(missing).unwrap().unwrap();
+        assert_eq!(window.miss_count, 1);
+        assert_eq!(window.recovery_deadline, finalized.deadline_height + 43_200);
+        assert_eq!(
+            outbe_staking::contract::Staking::new(storage)
+                .get_stake(missing)
+                .unwrap(),
+            U256::from(900)
+        );
+    });
 }
 
 #[test]
@@ -271,8 +333,9 @@ fn q_forming_validator_quorum_is_canonical_without_node_local_result() {
 }
 
 #[test]
-fn no_quorum_deadline_jails_every_missing_pinned_validator_and_expires_attempt() {
+fn no_quorum_deadline_opens_recovery_for_every_missing_validator_and_expires_attempt() {
     let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -292,12 +355,19 @@ fn no_quorum_deadline_jails_every_missing_pinned_validator_and_expires_attempt()
                 .get_validator(Address::repeat_byte(0xB0 + index))
                 .unwrap()
                 .unwrap();
+            assert_eq!(record.status, validator_status::ACTIVE);
+            assert_eq!(record.slash_count, 0);
+            let validator = Address::repeat_byte(0xB0 + index);
+            let window = validators.ocomp_recovery_window(validator).unwrap();
+            let stake = outbe_staking::contract::Staking::new(storage.clone())
+                .get_stake(validator)
+                .unwrap();
             if index == 2 {
-                assert_eq!(record.status, validator_status::ACTIVE);
-                assert_eq!(record.slash_count, 0);
+                assert!(window.is_none());
+                assert_eq!(stake, U256::from(1_000));
             } else {
-                assert_eq!(record.status, validator_status::JAILED);
-                assert_eq!(record.slash_count, 1);
+                assert_eq!(window.unwrap().miss_count, 1);
+                assert_eq!(stake, U256::from(900));
             }
         }
         let contract = MetadosisContract::new(storage);
@@ -355,6 +425,7 @@ fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_
 #[test]
 fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
     let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -380,7 +451,7 @@ fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
     close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        let validators = ValidatorSet::new(storage);
+        let validators = ValidatorSet::new(storage.clone());
         let already_jailed = validators
             .get_validator(Address::repeat_byte(0xB0))
             .unwrap()
@@ -399,12 +470,26 @@ fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
             .unwrap();
         assert_eq!(timely.status, validator_status::ACTIVE);
         assert_eq!(timely.slash_count, 0);
-        let newly_jailed = validators
+        let newly_recovering = validators
             .get_validator(Address::repeat_byte(0xB3))
             .unwrap()
             .unwrap();
-        assert_eq!(newly_jailed.status, validator_status::JAILED);
-        assert_eq!(newly_jailed.slash_count, 1);
+        assert_eq!(newly_recovering.status, validator_status::ACTIVE);
+        assert_eq!(newly_recovering.slash_count, 0);
+        assert_eq!(
+            validators
+                .ocomp_recovery_window(Address::repeat_byte(0xB3))
+                .unwrap()
+                .unwrap()
+                .miss_count,
+            1
+        );
+        assert_eq!(
+            outbe_staking::contract::Staking::new(storage)
+                .get_stake(Address::repeat_byte(0xB3))
+                .unwrap(),
+            U256::from(900)
+        );
     });
 
     let after_first_close = fixture.rollback_snapshot();

@@ -77,6 +77,7 @@ fn params(handle_id: U256, owner: Address) -> OpenPositionParams {
         eoa_ct: eoa_ct(),
         asset: asset(),
         issuance_currency: 840,
+        reference_currency: 978,
         policy_rate: policy_rate(),
         principal: U256::from(PRINCIPAL),
         entry_price: entry_price(),
@@ -108,7 +109,7 @@ fn position_id_matches_keccak() {
 }
 
 #[test]
-fn open_position_seals_the_call_price_from_the_entry_price() {
+fn open_position_seals_the_call_price_from_the_reference_entry_price() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.open_position(params(handle(1), alice())).unwrap();
@@ -117,6 +118,12 @@ fn open_position_seals_the_call_price_from_the_entry_price() {
         // $0.50 + 64% = $0.82.
         assert_eq!(p.call_price, U256::from(820_000u64));
         assert_eq!(p.call_price, calc_call_price(entry_price()).unwrap());
+
+        // Both codes are sealed, and they are distinct: the threshold anchor is
+        // the reference currency, never the issuance one the position is
+        // denominated in.
+        assert_eq!(p.issuance_currency, 840);
+        assert_eq!(p.reference_currency, 978);
 
         // Collateral starts fully locked; accrual anchors at origination.
         assert_eq!(p.outstanding, p.principal);
@@ -1003,6 +1010,7 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.cca, cca());
         assert_eq!(decoded.asset, asset());
         assert_eq!(decoded.issuanceCurrency, 840);
+        assert_eq!(decoded.referenceCurrency, 978);
         assert_eq!(decoded.principal, U256::from(PRINCIPAL));
         assert_eq!(decoded.collateral, collateral());
         assert_eq!(decoded.entryPrice, entry_price());

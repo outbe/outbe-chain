@@ -1068,15 +1068,25 @@ pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381
     use commonware_cryptography::bls12381::primitives::sharing::ModeVersion;
     // ODKO || version(1) || epoch(8) || is_full_dkg(1) || len(4 BE) || Output
     const HEADER_LEN: usize = 4 + 1 + 8 + 1 + 4;
-    if outcome.len() < HEADER_LEN || &outcome[0..4] != b"ODKO" {
+    if outcome.len() < HEADER_LEN
+        || &outcome[0..4] != b"ODKO"
+        || outcome[4] != 0x02
+        || outcome[13] > 1
+    {
         return None;
     }
     let len_bytes = <[u8; 4]>::try_from(&outcome[14..18]).ok()?;
     let len = u32::from_be_bytes(len_bytes) as usize;
-    let body = outcome.get(HEADER_LEN..HEADER_LEN + len)?;
+    let end = HEADER_LEN.checked_add(len)?;
+    if end != outcome.len() {
+        return None;
+    }
+    let body = outcome.get(HEADER_LEN..end)?;
     let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)?;
     let cfg = (max, ModeVersion::v0());
-    Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).ok()
+    let mut reader = body;
+    let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg).ok()?;
+    reader.is_empty().then_some(output)
 }
 
 #[cfg(test)]

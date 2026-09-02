@@ -353,7 +353,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
 }
 
 #[test]
-fn the_sra_pool_mints_an_sra_gem() {
+fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
     let backing = native(1_000_000);
@@ -372,9 +372,8 @@ fn the_sra_pool_mints_an_sra_gem() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO)
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
-        // The type is what this side owes. gemfactory derives the cost from the
-        // record on demand and charges an Sra Gem SRA_RATE = 64, i.e. 0.64 of the
-        // full agent cost.
+        // The SRA share of the cost is derived, not stored; gemfactory pins the 64%
+        // coefficient. What this pool owes is the Sra type and the whole load.
         assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
         assert_eq!(sra_gem.promis_load_minor, load);
     });

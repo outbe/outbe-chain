@@ -28,6 +28,8 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const CREATED_AT: u64 = 1_700_000_000;
 const BLOCK_NUMBER: u64 = 42;
 const ISSUANCE_ISO: u16 = 840;
+/// Threshold anchor elected by the benchmarked `requestCredis`.
+const REFERENCE_ISO: u16 = ISSUANCE_ISO;
 const ALICE: Address = Address::repeat_byte(0xaa);
 const CCA: Address = Address::repeat_byte(0xcc);
 const ASSET: Address = Address::new([
@@ -114,6 +116,13 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<(B256, [u8; 32]), String> {
         .policy_rate
         .write(&ISSUANCE_ISO, U256::from(43_000))
         .map_err(|error| error.to_string())?;
+    // The elected threshold anchor must be a registered reference currency. This
+    // scenario anchors to the issuance currency, whose COEN pair is already seeded
+    // above, so the measured path stays one origination without extra oracle setup.
+    OracleContract::new(storage.clone())
+        .reference_currencies
+        .push(REFERENCE_ISO)
+        .map_err(|error| error.to_string())?;
     storage
         .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
         .map_err(|error| error.to_string())?;
@@ -179,6 +188,7 @@ impl BenchmarkScenario for CredisScenario {
             smartAccount: ALICE,
             pledgeHandle: prepared.pledge_handle,
             spendAuth: B256::from(prepared.spend_auth),
+            referenceCurrency: REFERENCE_ISO,
         }
         .abi_encode();
 

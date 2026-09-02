@@ -71,31 +71,6 @@ impl PublicOcompRpcClientV1 {
         normalize_block_receipts(block, value)
     }
 
-    pub fn logs(
-        &self,
-        address: Address,
-        topic0: B256,
-        from_block: u64,
-        to_block: u64,
-    ) -> Result<Vec<Value>, PublicRpcError> {
-        if from_block > to_block {
-            return Ok(Vec::new());
-        }
-        let value = self.call(
-            "eth_getLogs",
-            json!([{
-                "address": format!("{address:#x}"),
-                "fromBlock": format!("0x{from_block:x}"),
-                "toBlock": format!("0x{to_block:x}"),
-                "topics": [format!("{topic0:#x}")],
-            }]),
-        )?;
-        serde_json::from_value(value).map_err(|error| PublicRpcError::Malformed {
-            method: "eth_getLogs",
-            detail: error.to_string(),
-        })
-    }
-
     pub fn job_record_at_hash(
         &self,
         intent_id: B256,

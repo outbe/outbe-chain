@@ -189,9 +189,13 @@ impl EnclaveSession {
                 | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
                 | EnclaveRequest::DcapVerificationChunkV1 { .. }
                 | EnclaveRequest::FinishDcapVerificationV1 { .. }
+                | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
+                | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
+                | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
+                | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
         ) {
             return Err(TransportError::DcapVerification(
-                "multi-frame DCAP requests must use the whole-operation session API".into(),
+                "multi-frame enclave requests must use a whole-operation session API".into(),
             ));
         }
         if let Some(reason) = self.revoked {
@@ -820,9 +824,7 @@ mod tests {
         let mut session = connect_session(&server);
         let generation = session.generation();
         let error = session
-            .request(&EnclaveRequest::SealOfferKeyForRegistry {
-                recipient_x25519: [0x44; 32],
-            })
+            .request(&EnclaveRequest::Health)
             .expect_err("scripted error");
         assert!(matches!(error, TransportError::EnclaveError(_)));
         assert_eq!(session.generation(), generation, "no reconnect");
