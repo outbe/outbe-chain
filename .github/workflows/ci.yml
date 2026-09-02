@@ -73,10 +73,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      # NOTE: the image always carries /usr/include/sgx_dcap_quoteverify.h, so
-      # `mise run lint` now also runs its native-dcap clippy pass. On the host
-      # that header only existed if the DCAP job had happened to run on the same
-      # machine first, so that pass fired at random.
+      # The image always carries /usr/include/sgx_dcap_quoteverify.h, so
+      # `mise run lint` also runs its native-dcap clippy pass. On the host that
+      # header was only present when something else had installed the Intel
+      # stack on the same machine first, so the pass fired at random. With
+      # dcap-replay gone this is the only lane that compiles native-dcap at all.
       - run: mise run lint
 
   test:
@@ -108,30 +109,6 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: code-coverage-results.md
-
-  dcap-replay:
-    name: DCAP replay (x86_64)
-    if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: testnet-release-sgx
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
-    timeout-minutes: 30
-    env:
-      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
-      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
-      # Point it back inside HOME so the cache is what the build reads.
-      CARGO_HOME: /github/home/.cargo
-      RUSTC_WRAPPER: "sccache"
-    steps:
-      - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      # Populate only the Cargo source cache. The verifier itself then runs
-      # offline with caller-supplied collateral and no QPL/PCCS package.
-      - run: cargo fetch --locked
-      - name: Replay immutable DCAP evidence offline
-        run: bash scripts/release/test_dcap_replay_ci.sh
 
   doctests:
     name: doctests
