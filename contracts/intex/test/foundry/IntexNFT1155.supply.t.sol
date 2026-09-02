@@ -46,7 +46,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
-    function test_Mint_AtCap_Succeeds() public {
+    function test_Issue_AtCap_Succeeds() public {
         uint32 cap = 100;
         _createSeries(cap);
 
@@ -58,7 +58,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.balanceOf(holderA, TOKEN_ID), cap);
     }
 
-    function test_Mint_OverCap_Reverts() public {
+    function test_Issue_OverCap_Reverts() public {
         uint32 cap = 100;
         _createSeries(cap);
 
@@ -67,7 +67,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issue(holderA, cap + 1, SERIES_ID);
     }
 
-    function test_Mint_OneOverAfterPartial_Reverts() public {
+    function test_Issue_OneOverAfterPartial_Reverts() public {
         uint32 cap = 100;
         _createSeries(cap);
 
@@ -81,7 +81,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     // --- burnSettled state gate (state in {Qualified, Called}) ---
 
-    function _mintAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
+    function _issueAndSettle(uint32 cap, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle) internal {
         _createSeries(cap);
         vm.prank(bridger);
         nft.issue(holderA, mintAmount, SERIES_ID);
@@ -120,7 +120,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_OnQualifiedState_Succeeds() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         // Series is in Qualified, holder has 4 Settled.
         vm.prank(promis);
         nft.burnSettled(holderA, SERIES_ID, 3);
@@ -128,7 +128,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_OnCalledState_Succeeds() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: true});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: true});
         // Series is in Called, holder has 4 Settled.
         vm.prank(promis);
         nft.burnSettled(holderA, SERIES_ID, 4);
@@ -148,7 +148,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_BurnSettled_ZeroAmount_Reverts() public {
-        _mintAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
+        _issueAndSettle({cap: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
         vm.prank(promis);
         vm.expectRevert(IIntexNFT1155.ZeroAmount.selector);
         nft.burnSettled(holderA, SERIES_ID, 0);
@@ -156,7 +156,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     // --- Live-supply cap (a burn frees cap room; cap is `totalSupply <= issuedIntexCount`) ---
 
-    function test_Cap_Mint_AfterSettle_FreesCapRoom() public {
+    function test_Cap_Issue_AfterSettle_FreesCapRoom() public {
         // Mint to cap, settle (burns 4 Issued -> totalSupply 6): the freed room is reusable, so a
         // mint of 4 succeeds back up to the cap, and only the unit past the cap reverts.
         uint32 cap = 10;
@@ -237,7 +237,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }
 
-    function test_Cap_Mint_OverCap_SurfacesTypedRevertNotPanic() public {
+    function test_Cap_Issue_OverCap_SurfacesTypedRevertNotPanic() public {
         // The cap-check intermediate is widened to uint256 so `totalSupply + qty` cannot wrap
         // uint32 - even at `issuedIntexCount == type(uint32).max`. We can't drive `totalSupply`
         // all the way to 2^32 in a test (per-mint capped at uint16.max would need 65k+ calls),

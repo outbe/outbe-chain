@@ -835,7 +835,7 @@ pub fn settle(
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
 
-    // Burn Issued from holder, mint Settled to the settler.
+    // Burn Issued from holder, issue Settled to the settler.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,

@@ -19,7 +19,7 @@ use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
-/// Mints one agent-class gem priced at `entry_price`, the COEN rate in
+/// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
 pub fn issue_gem(
     storage: &StorageHandle<'_>,
@@ -93,10 +93,10 @@ pub fn issue_gem(
     Ok(gem_id)
 }
 
-/// Park a merchant's whole Intex series and mint a GemPosition NFT. Burns the
+/// Park a merchant's whole Intex series and issue a GemPosition NFT. Burns the
 /// merchant's entire Issued holding on IntexNFT1155 (`parkIntex`, GEM_ROLE)
 /// and records the position with a snapshot of the source entry/floor and the
-/// resulting Promis capacity. Returns the minted `position_id`.
+/// resulting Promis capacity. Returns the issued `position_id`.
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -607,7 +607,7 @@ fn compute_params(
             compute_cost(coen_rate, promis_load, 100)?;
             (derived_floor(coen_rate)?, GemState::Issued)
         }
-        // Merchant gems are minted via `issue_merchant_gem` against a GemPosition,
+        // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
         // not through this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };

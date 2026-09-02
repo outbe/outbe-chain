@@ -604,12 +604,12 @@ fn cleared_day_issues_intex(world: &mut World) {
     // The day issues to every chain it opened on, so every chain has to show the
     // series and the units its own bidders won.
     for side in venue_sides(world) {
-        mints_landed_on(&side, &bidders, worldwide_day);
+        issuances_landed_on(&side, &bidders, worldwide_day);
     }
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
     let url = side.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {

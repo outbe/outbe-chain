@@ -164,7 +164,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
-    function test_handleIssuanceInstructions_createsSeriesAndMints() public {
+    function test_handleIssuanceInstructions_createsSeriesAndIssues() public {
         address[] memory recipients = new address[](1);
         recipients[0] = bidder;
         uint256[] memory quantities = new uint256[](1);
@@ -225,7 +225,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         );
     }
 
-    function test_handleIssuanceInstructions_RevertingRecipient_OthersMinted() public {
+    function test_handleIssuanceInstructions_RevertingRecipient_OthersIssued() public {
         RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
         address[] memory recipients = new address[](2);
         recipients[0] = bidder;

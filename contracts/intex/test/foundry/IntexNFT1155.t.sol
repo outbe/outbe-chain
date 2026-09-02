@@ -142,7 +142,7 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.seriesIdsByWorldwideDay(20250505).length, 0, "the id's own day is not a provenance key");
     }
 
-    function test_Mint() public {
+    function test_Issue() public {
         uint256 quantity = 10;
 
         _createSeries(SERIES_ID_1_DAY, 0);
@@ -153,7 +153,7 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.readData(SERIES_ID_1).totalSupply, quantity);
     }
 
-    function test_OnlyBridgeCanMint() public {
+    function test_OnlyBridgeCanIssue() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(user);
@@ -161,7 +161,7 @@ contract IntexNFT1155Test is Test {
         nft.issue(user, 10, SERIES_ID_1);
     }
 
-    function test_MintToZeroAddress() public {
+    function test_IssueToZeroAddress() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(bridger);
@@ -169,13 +169,13 @@ contract IntexNFT1155Test is Test {
         nft.issue(address(0), 10, SERIES_ID_1);
     }
 
-    function test_MintNonexistentSeries() public {
+    function test_IssueNonexistentSeries() public {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
         nft.issue(user, 10, SERIES_ID_1);
     }
 
-    function test_MintQuantityTooLarge() public {
+    function test_IssueQuantityTooLarge() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
         uint256 tooLarge = uint256(type(uint16).max) + 1;
@@ -184,7 +184,7 @@ contract IntexNFT1155Test is Test {
         nft.issue(user, tooLarge, SERIES_ID_1);
     }
 
-    function test_AuctionWonCount_SingleMint() public {
+    function test_AuctionWonCount_SingleIssue() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
@@ -632,7 +632,7 @@ contract IntexNFT1155Test is Test {
         nft.grantRole(role, account);
     }
 
-    function test_Settle_BurnsIssued_MintsSettled() public {
+    function test_Settle_BurnsIssued_IssuesSettled() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
@@ -1117,7 +1117,7 @@ contract IntexNFT1155Test is Test {
         }
     }
 
-    function test_EnumerableMultiHolderMint() public {
+    function test_EnumerableMultiHolderIssue() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
         vm.startPrank(bridger);
@@ -1271,7 +1271,7 @@ contract IntexNFT1155Test is Test {
     // totalSupply mid-callback consistency (read-only-reentrancy)
     // ============================================================
 
-    function test_Mint_TotalSupplyConsistentMidCallback() public {
+    function test_Issue_TotalSupplyConsistentMidCallback() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
 

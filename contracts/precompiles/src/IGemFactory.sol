@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 interface IGemFactory {
     /// @notice Park the caller's Intex series `sourceIntexId` (burning `amount`
-    ///         units via IntexNFT1155) and mint a GemPosition NFT to the caller.
+    ///         units via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
     function issueGemPosition(bytes14 sourceIntexId, uint256 amount) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner`, draining the position's
@@ -61,7 +61,7 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A new gem was minted (agent reward, merchant, or genesis flow).
+    /// @notice A new gem was issued (agent reward, merchant, or genesis flow).
     event GemIssued(
         uint256 indexed gemId,
         uint8 gemType,

@@ -103,7 +103,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
 
-    // idempotency guard. This handler mints the CCA agent pool
+    // idempotency guard. This handler issues the CCA agent pool
     // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
     // validator topup is independently idempotent via `daily_topup_settled`), so
     // a second invocation for an already-settled `prev_day` would double-mint

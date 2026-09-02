@@ -52,7 +52,7 @@ pub struct AgentRewardContract {
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim mints, so WAA and SRA balances are kept apart.
+/// claim issues, so WAA and SRA balances are kept apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {

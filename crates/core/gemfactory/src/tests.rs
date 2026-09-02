@@ -309,7 +309,7 @@ fn issue_zero_owner_rejected() {
 #[test]
 fn issue_no_oracle_setup_rejected() {
     // The reference currency is registered but its COEN pair is not, so the gem
-    // has no price to anchor its entry, floor and call to and minting reverts.
+    // has no price to anchor its entry, floor and call to and issuing reverts.
     with_storage(None, |storage| {
         let res = issue_at_live_rate(
             storage,
@@ -413,7 +413,7 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
     assert_eq!(event.settlementCurrency, 840);
 }
 
-/// Mints at the fixture's live COEN/reference rate. The production caller
+/// Issues at the fixture's live COEN/reference rate. The production caller
 /// resolves the price for the gem's own day; these tests only need a price that
 /// matches the rate the fixture published.
 fn issue_at_live_rate(
@@ -960,7 +960,7 @@ fn statistics_track_mint_count() {
     with_storage(Some(rate), |storage| {
         let base = U256::from(1u64) * six_decimal_unit();
         // `gem_id = keccak(owner || amount || block_number)` - vary `load`
-        // per mint so the same (owner, block) pair doesn't collide.
+        // per issue so the same (owner, block) pair doesn't collide.
         for i in 0..3 {
             let load = base + U256::from(i as u64);
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
@@ -1028,7 +1028,7 @@ fn issue_gem_position_burns_parks_and_issues_nft() {
         assert_eq!(rec.source_entry_price, six_decimal_unit());
         assert_eq!(factory.total_intex_parked.read().unwrap(), capacity);
 
-        // Position NFT minted to the merchant.
+        // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
         assert_eq!(factory.balance_of(ALICE).unwrap(), 1);
         assert_eq!(factory.token_of_owner_by_index(ALICE, 0).unwrap(), id);

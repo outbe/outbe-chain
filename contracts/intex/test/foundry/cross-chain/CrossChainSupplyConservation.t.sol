@@ -169,8 +169,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterB.reclaimToSource(receiveId, 0);
     }
 
-    function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 mintedSeed, uint256 bridgedSeed) public {
-        uint256 minted = bound(mintedSeed, 1, ISSUED_INTEX_COUNT);
+    function testFuzz_Hop_TotalSupplyAlwaysAtCap(uint256 issuedSeed, uint256 bridgedSeed) public {
+        uint256 minted = bound(issuedSeed, 1, ISSUED_INTEX_COUNT);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
         tokenA.issue(user, minted, SERIES_ID);
