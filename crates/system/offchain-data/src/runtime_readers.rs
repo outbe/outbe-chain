@@ -51,7 +51,10 @@ impl Drop for ExecutionReadPermit {
 /// Read-side infrastructure incident sent to the projection supervisor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeBodyFailure {
-    Unavailable,
+    Unavailable {
+        generation: u64,
+        since: std::time::Instant,
+    },
     Fatal(ProjectionFailure),
 }
 
@@ -275,11 +278,24 @@ impl RuntimeBodyReaders {
     /// Reports a technical read failure without exposing readiness write authority to domains.
     pub fn report_unavailable(&self) {
         if let Some(sender) = &self.failure_sender {
-            sender.send_if_modified(|current| {
-                if matches!(current, Some(RuntimeBodyFailure::Fatal(_))) {
-                    false
-                } else {
-                    *current = Some(RuntimeBodyFailure::Unavailable);
+            sender.send_if_modified(|current| match current {
+                Some(RuntimeBodyFailure::Fatal(_)) => false,
+                Some(RuntimeBodyFailure::Unavailable { generation, .. }) => {
+                    let Some(next) = generation.checked_add(1) else {
+                        *current = Some(RuntimeBodyFailure::Fatal(ProjectionFailure::new(
+                            ProjectionFailureClass::Other,
+                            "runtime-body outage generation overflow",
+                        )));
+                        return true;
+                    };
+                    *generation = next;
+                    true
+                }
+                None => {
+                    *current = Some(RuntimeBodyFailure::Unavailable {
+                        generation: 1,
+                        since: std::time::Instant::now(),
+                    });
                     true
                 }
             });

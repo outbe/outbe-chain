@@ -24,6 +24,7 @@ use crate::{
         caller_rejection as reject, result_vote_rejection as vote_reject,
         storage_corruption_message, vote_rejection_code::*,
     },
+    precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent},
     schema::MetadosisContract,
 };
@@ -49,6 +50,64 @@ pub(crate) enum ResponseWindowCloseV1 {
     NotDue,
     NoQuorum { intent_id: alloy_primitives::B256 },
     QuorumPreserved { intent_id: alloy_primitives::B256 },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct OcompPenaltyMetrics {
+    recovery_resolutions: Vec<(Address, &'static str)>,
+    misses: Vec<(Address, bool, u64)>,
+    punishments: Vec<outbe_validatorset::runtime::DeferredValidatorPunishment>,
+}
+
+impl OcompPenaltyMetrics {
+    pub(crate) fn record(self) {
+        for punishment in self.punishments {
+            punishment.record();
+        }
+        for (validator, outcome) in self.recovery_resolutions {
+            outbe_validatorset::metrics::record_ocomp_recovery_resolution(validator, outcome);
+            match outcome {
+                "jailed" => tracing::warn!(
+                    %validator,
+                    outcome,
+                    "OCOMP recovery window expired below minimum bonded stake"
+                ),
+                _ => tracing::info!(
+                    %validator,
+                    outcome,
+                    "OCOMP recovery window closed"
+                ),
+            }
+        }
+        for (validator, first_in_window, recovery_deadline) in self.misses {
+            outbe_validatorset::metrics::record_ocomp_miss(
+                validator,
+                first_in_window,
+                recovery_deadline,
+            );
+            tracing::warn!(
+                %validator,
+                first_in_window,
+                recovery_deadline,
+                "validator missed an OCOMP result vote"
+            );
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResponseWindowCloseReport {
+    pub(crate) close: ResponseWindowCloseV1,
+    pub(crate) metrics: OcompPenaltyMetrics,
+}
+
+impl ResponseWindowCloseReport {
+    fn not_due() -> Self {
+        Self {
+            close: ResponseWindowCloseV1::NotDue,
+            metrics: OcompPenaltyMetrics::default(),
+        }
+    }
 }
 
 /// Dispatches one normal public EVM transaction containing a canonical signed
@@ -506,14 +565,14 @@ impl MetadosisContract<'_> {
         &mut self,
         at_height: u64,
         limits: &SchemaLimits,
-    ) -> Result<ResponseWindowCloseV1> {
+    ) -> Result<ResponseWindowCloseReport> {
         (|| {
             let mut index = self.read_response_deadline_index()?;
             let Some(key) = index.first().copied() else {
-                return Ok(ResponseWindowCloseV1::NotDue);
+                return Ok(ResponseWindowCloseReport::not_due());
             };
             if at_height < key.deadline_height {
-                return Ok(ResponseWindowCloseV1::NotDue);
+                return Ok(ResponseWindowCloseReport::not_due());
             }
             if at_height > key.deadline_height {
                 return Err(storage_corruption_message(
@@ -561,8 +620,9 @@ impl MetadosisContract<'_> {
                 snapshot.epoch,
                 snapshot.committee_set_hash,
             );
-            let mut validators =
-                outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+            let validators = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+            let mut staking = outbe_staking::contract::Staking::new(self.storage.clone());
+            let mut metrics = OcompPenaltyMetrics::default();
             for (index, slot) in accountability.slots.iter().enumerate() {
                 if slot.is_some() {
                     continue;
@@ -578,43 +638,90 @@ impl MetadosisContract<'_> {
                 .ok_or_else(|| {
                     storage_corruption_message("OCOMP deadline snapshot member is missing")
                 })?;
+                let resolution = staking
+                    .resolve_due_ocomp_recovery_window(member.validator_address)
+                    .map_err(|error| match error {
+                        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
+                            storage_corruption_message(format!(
+                                "resolve due OCOMP recovery for participant {participant_index}: {error}"
+                            ))
+                        }
+                        other => other,
+                    })?;
+                let outcome = match resolution {
+                    outbe_staking::logic::OcompRecoveryResolution::Restored { .. } => {
+                        Some("restored")
+                    }
+                    outbe_staking::logic::OcompRecoveryResolution::Jailed {
+                        observability, ..
+                    } => {
+                        metrics.punishments.push(observability);
+                        Some("jailed")
+                    }
+                    outbe_staking::logic::OcompRecoveryResolution::ClosedNonActive { .. } => {
+                        Some("non_active")
+                    }
+                    outbe_staking::logic::OcompRecoveryResolution::NotOpen
+                    | outbe_staking::logic::OcompRecoveryResolution::NotDue { .. } => None,
+                };
+                if let Some(outcome) = outcome {
+                    metrics
+                        .recovery_resolutions
+                        .push((member.validator_address, outcome));
+                }
                 let current = validators.get_validator(member.validator_address)?;
                 if current.is_some_and(|record| {
                     record.status == outbe_validatorset::runtime::status::ACTIVE
                 }) {
-                    validators
-                        .jail_validator(member.validator_address)
+                    let penalty = staking
+                        .record_ocomp_miss(member.validator_address)
                         .map_err(|error| match error {
-                            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
-                                format!(
-                                    "jail ACTIVE missing OCOMP validator {participant_index}: {error}"
-                                ),
-                            ),
+                            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
+                                storage_corruption_message(format!(
+                                    "record ACTIVE missing OCOMP validator {participant_index}: {error}"
+                                ))
+                            }
                             other => other,
                         })?;
+                    self.emit(IMetadosis::OcompVoteMissed {
+                        validator: member.validator_address,
+                        jobId: key.job_id,
+                        missCount: penalty.miss_count,
+                        slashedBonded: penalty.slashed_bonded,
+                        recoveryDeadline: penalty.recovery_deadline,
+                        firstInWindow: penalty.first_in_window,
+                    })?;
+                    metrics.misses.push((
+                        member.validator_address,
+                        penalty.first_in_window,
+                        penalty.recovery_deadline,
+                    ));
                 }
             }
             self.write_result_vote_accountability(&accountability, limits)?;
             remove_response_deadline_key(&mut index, key)?;
             self.write_response_deadline_index(&index)?;
 
-            match record.status {
+            let close = match record.status {
                 OcompJobStatus::VotingOpen if finalized.quorum.is_none() => {
-                    Ok(ResponseWindowCloseV1::NoQuorum {
+                    ResponseWindowCloseV1::NoQuorum {
                         intent_id: key.intent_id,
-                    })
+                    }
                 }
                 OcompJobStatus::Completed | OcompJobStatus::Conflicted
                     if finalized.quorum.is_some() =>
                 {
-                    Ok(ResponseWindowCloseV1::QuorumPreserved {
+                    ResponseWindowCloseV1::QuorumPreserved {
                         intent_id: key.intent_id,
-                    })
+                    }
                 }
-                _ => Err(storage_corruption_message(
-                    "OCOMP response close found an invalid job status",
-                )),
-            }
+                _ => {
+                    return Err(storage_corruption_message(
+                        "OCOMP response close found an invalid job status",
+                    ))
+                }
+            };
+            Ok(ResponseWindowCloseReport { close, metrics })
         })()
     }
 }

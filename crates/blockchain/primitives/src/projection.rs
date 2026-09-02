@@ -65,6 +65,10 @@ pub enum ProjectionFailureClass {
     ReadinessChannelClosed,
     MongoReconnectDeadline,
     WriterLeaseLost,
+    StorageInvalidArgument,
+    StorageUnavailable,
+    StorageBackend,
+    StorageRequestDeadline,
     Other,
 }
 

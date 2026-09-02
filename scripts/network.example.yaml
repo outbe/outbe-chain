@@ -62,6 +62,7 @@ tee:
 
 # Ports. Founders sit on separate machines, so they all share one layout;
 # pin a single validator's consensus port inline instead (`- 10.0.0.3:31555`).
+ocomp_discovery_control_port: 30414
 # consensus_p2p_port: 30400
 # reth_p2p_port: 30303
 # reth_discv5_port: 31303

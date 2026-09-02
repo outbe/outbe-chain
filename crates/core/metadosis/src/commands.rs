@@ -149,11 +149,13 @@ pub fn run_ocomp_lifecycle_begin_with_scope(
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    with_ce_checkpoint(scope, || {
+    let metrics = with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
             crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx, scope)
         })
-    })
+    })?;
+    metrics.record();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -163,9 +165,12 @@ pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::ocomp::expiry::run_lifecycle_begin(ctx)
-    })
+    let metrics =
+        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
+            crate::ocomp::expiry::run_lifecycle_begin(ctx)
+        })?;
+    metrics.record();
+    Ok(())
 }
 
 #[cfg(test)]

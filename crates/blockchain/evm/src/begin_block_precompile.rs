@@ -607,7 +607,8 @@ fn run_cycle_tick_at_activation(
         <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
             &compressed,
         )
-        .map(|_| ())
+        .map(|_| ())?;
+        run_ocomp_recovery_sweep(ctx)
     }
 
     #[cfg(not(test))]
@@ -632,7 +633,20 @@ fn run_cycle_tick_with_readers_at_activation(
     let cycle_lifecycle =
         outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
             .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
+    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)?;
+    // Keep non-transactional punishment observability behind every other
+    // fallible CycleTick lifecycle. Once this succeeds, the precompile returns
+    // immediately and the critical system transaction can commit as one unit.
+    run_ocomp_recovery_sweep(ctx)
+}
+
+/// Resolve due OCOMP recovery windows in the mandatory per-block `CycleTick`.
+/// `CycleTick` is consensus-critical, so every accepted block at height >= 1
+/// has executed this sweep successfully.
+fn run_ocomp_recovery_sweep(ctx: &BlockRuntimeContext) -> Result<()> {
+    outbe_staking::contract::Staking::new(ctx.storage.clone())
+        .close_due_ocomp_recovery_windows()
+        .map(|_| ())
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
@@ -1218,6 +1232,57 @@ mod tests {
                 active_set_hash: active_set_hash(&[VALIDATOR]),
             },
         }
+    }
+
+    #[test]
+    fn mandatory_cycle_tick_sweep_closes_due_ocomp_recovery_when_lifecycle_is_disabled() {
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators.config_owner.write(OWNER).unwrap();
+            validators.set_config_max_validators(1).unwrap();
+            validators
+                .register_validator(OWNER, VALIDATOR, &[0x41; 48])
+                .unwrap();
+            validators
+                .test_activate_validator_canonically(
+                    VALIDATOR,
+                    outbe_validatorset::StakeProjection::new(U256::from(1_000), None),
+                    U256::from(1_000),
+                )
+                .unwrap();
+
+            let mut staking = outbe_staking::contract::Staking::new(storage.clone());
+            staking.config_min_stake.write(U256::from(1_000)).unwrap();
+            staking
+                .stake_amount
+                .write(&VALIDATOR, U256::from(1_000))
+                .unwrap();
+            staking.total_staked.write(U256::from(1_000)).unwrap();
+            storage
+                .set_balance(
+                    outbe_primitives::addresses::STAKING_ADDRESS,
+                    U256::from(1_000),
+                )
+                .unwrap();
+            staking.record_ocomp_miss(VALIDATOR).unwrap();
+        });
+
+        provider.set_block_number(43_201);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(43_201, 1_000, CHAIN_ID),
+                storage.clone(),
+            );
+            run_ocomp_recovery_sweep(&ctx).unwrap();
+            assert!(matches!(
+                outbe_validatorset::contract::ValidatorSet::new(storage)
+                    .validator_lifecycle(VALIDATOR)
+                    .unwrap(),
+                outbe_validatorset::ValidatorLifecycle::JailRetained(_)
+            ));
+        });
     }
 
     fn configured_storage(block_number: u64, timestamp: u64) -> HashMapStorageProvider {

@@ -27,10 +27,7 @@ use alloy_primitives::B256;
 use outbe_node::ocomp::local_result::{
     CommittedLocalLysisResultV1, LoadedLocalLysisResultV1, LocalLysisResultStore,
 };
-use outbe_ocomp_protocol::{
-    capacity::OCOMP_POC_CAS_QUOTA_BYTES, local_control::EndpointIdentity, result::LysisResultV1,
-    SchemaLimits,
-};
+use outbe_ocomp_protocol::{local_control::EndpointIdentity, result::LysisResultV1, SchemaLimits};
 use outbe_primitives::signer::OutbeEvmSigner;
 use thiserror::Error;
 
@@ -238,7 +235,9 @@ impl EmbeddedOcompDomainV1 {
         }
         let cas_limits = CasLimits {
             max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            max_total_bytes: OCOMP_POC_CAS_QUOTA_BYTES,
+            // CAS is disk-backed and chunked. Capacity is governed by the
+            // filesystem/operator, never by a product-level total-job cap.
+            max_total_bytes: u64::MAX,
         };
         let local_results = Arc::new(
             LocalLysisResultStore::open(&layout.local_result_root, config.limits)

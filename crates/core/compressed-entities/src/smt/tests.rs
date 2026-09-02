@@ -470,6 +470,80 @@ fn batch_root_is_order_independent_and_duplicate_input_is_rejected() {
 }
 
 #[test]
+fn sorted_reducer_matches_the_canonical_batch_tree() {
+    let mut leaves = vec![
+        (key(1), leaf(101)),
+        (key(2), leaf(102)),
+        (key(3), leaf(103)),
+        (key(9), leaf(109)),
+        (key(257), leaf(357)),
+    ];
+    leaves.sort_by_key(|(key, _)| *key);
+
+    let mut canonical = PoseidonSmt::empty();
+    let expected = canonical.update_all(leaves.clone()).unwrap();
+    let mut reduced = SortedPoseidonRootReducer::new();
+    for (key, leaf) in leaves {
+        reduced.push(key, leaf).unwrap();
+    }
+
+    assert_eq!(reduced.finish().unwrap(), expected);
+}
+
+#[test]
+fn sorted_reducer_matches_canonical_roots_across_random_sets() {
+    assert_eq!(
+        SortedPoseidonRootReducer::new().finish().unwrap(),
+        TreeRoot::EMPTY
+    );
+    let mut random = 0x517c_c1b7_2722_0a95_u64;
+    for count in [1_usize, 2, 3, 15, 16, 17, 63, 257] {
+        let mut unique = BTreeMap::new();
+        while unique.len() < count {
+            random = random
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let key = (random % 1_000_003) + 1;
+            unique.insert(key, key.wrapping_mul(17).wrapping_add(1));
+        }
+        let mut leaves = unique
+            .into_iter()
+            .map(|(key_number, leaf_number)| (key(key_number), leaf(leaf_number)))
+            .collect::<Vec<_>>();
+        leaves.sort_by_key(|(key, _)| *key);
+        let mut canonical = PoseidonSmt::empty();
+        let expected = canonical.update_all(leaves.clone()).unwrap();
+        let mut reduced = SortedPoseidonRootReducer::new();
+        for (key, leaf) in leaves {
+            reduced.push(key, leaf).unwrap();
+        }
+        assert_eq!(reduced.finish().unwrap(), expected, "count={count}");
+    }
+}
+
+#[test]
+fn sorted_reducer_rejects_duplicate_regressing_and_zero_leaves() {
+    let mut duplicate = SortedPoseidonRootReducer::new();
+    duplicate.push(key(1), leaf(1)).unwrap();
+    assert_eq!(
+        duplicate.push(key(1), leaf(2)),
+        Err(TreeError::DuplicateKey)
+    );
+
+    let mut regressing = SortedPoseidonRootReducer::new();
+    regressing.push(key(2), leaf(2)).unwrap();
+    assert_eq!(
+        regressing.push(key(1), leaf(1)),
+        Err(TreeError::NonAscendingKey)
+    );
+
+    assert_eq!(
+        SortedPoseidonRootReducer::new().push(key(1), TreeLeaf::ZERO),
+        Err(TreeError::ZeroLeaf)
+    );
+}
+
+#[test]
 fn membership_non_membership_and_tampered_proofs_are_checked_behaviorally() {
     let mut tree = PoseidonSmt::empty();
     tree.update_all(vec![

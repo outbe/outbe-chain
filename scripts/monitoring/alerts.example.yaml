@@ -392,3 +392,172 @@ groups:
           subsystem: txpool
         annotations:
           summary: "pending pool backlog above 1000 for 15 minutes"
+
+  # --- Standalone OCOMP processes ---
+  #
+  # Scrape the existing Salvo `/metrics` endpoint of every process. With the
+  # default Supervisor port 30401, Workers use 30403..30406 and the
+  # SnapshotExporter uses 30413 (after both six-port bundle-lane windows).
+  # All endpoints intentionally bind loopback;
+  # Prometheus therefore runs on the validator host (or reaches them through
+  # an explicitly configured local proxy).
+  - name: outbe-chain.ocomp
+    interval: 15s
+    rules:
+      - alert: OutbeOcompProcessDown
+        expr: up{job=~"outbe-ocomp-(worker|snapshot-exporter)"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP process {{ $labels.instance }} is not scrapeable"
+          description: |
+            Prometheus cannot reach a configured OCOMP process. The scrape
+            jobs must be named `outbe-ocomp-worker` and
+            `outbe-ocomp-snapshot-exporter`, or this selector must be adjusted
+            to the operator's equivalent static labels.
+
+      - alert: OutbeOcompSnapshotExporterUnhealthy
+        expr: outbe_ocomp_snapshot_exporter_healthy == 0 or absent(outbe_ocomp_snapshot_exporter_healthy)
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP SnapshotExporter is unavailable or making no progress"
+          description: |
+            The exporter is starting, failed its reconcile cycle, or has not
+            completed a reconcile cycle for 30 seconds. Check `/status` and
+            process logs before an open OCOMP response window reaches its
+            deadline. The unified reader and durable-control alerts below show
+            whether the failure is before or after exporter handoff.
+
+      - alert: OutbeOcompFinalizedReaderStalled
+        expr: outbe_ocomp_finalized_reader_lag_blocks > 0 and changes(outbe_ocomp_finalized_reader_checkpoint_number[2m]) == 0
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP unified finalized reader is stalled"
+          description: |
+            The node has finalized blocks waiting, but the single shared
+            projection/discovery checkpoint has not advanced for two minutes.
+
+      - alert: OutbeOcompFinalizedLoopErrors
+        expr: increase(outbe_ocomp_finalized_loop_errors_total[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP unified finalized loop failed"
+
+      - alert: OutbeOcompFinalizedLoopFatal
+        expr: outbe_ocomp_finalized_loop_fatal == 1
+        for: 15s
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP unified finalized loop is latched fatal"
+          description: |
+            The node-side OCOMP reader has stopped and will not resume without
+            operator recovery. This state is sticky, so the alert remains red
+            after the one-shot error counter ages out of its query window.
+
+      - alert: OutbeOcompDiscoveryControlErrors
+        expr: increase(outbe_ocomp_discovery_control_errors_total[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP durable offer could not reach SnapshotExporter"
+          description: |
+            The offer remains durable and is retried every tick. Restore the
+            SnapshotExporter control endpoint and verify pending offers drain.
+
+      - alert: OutbeOcompDiscoveryOfferPending
+        expr: outbe_ocomp_discovery_pending_offers > 0
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP durable discovery offer has no exporter ACK"
+
+      - alert: OutbeOcompDiscoveryErrors
+        expr: increase(outbe_ocomp_snapshot_exporter_discovery_errors_total[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP finalized-job discovery is failing"
+          description: |
+            SnapshotExporter discovery errors occurred during the last five
+            minutes. This catches persistent RPC/query failures such as the
+            historical max-block-range failure without relying on journald.
+
+      - alert: OutbeOcompSnapshotExportErrors
+        expr: increase(outbe_ocomp_snapshot_exporter_export_errors_total[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP snapshot input export is failing"
+
+      - alert: OutbeOcompSnapshotPending
+        expr: outbe_ocomp_snapshot_exporter_pending_jobs > 0
+        for: 5m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP finalized job has remained unexported for five minutes"
+
+      - alert: OutbeOcompWorkerUnhealthy
+        expr: outbe_ocomp_worker_healthy == 0
+        for: 2m
+        labels:
+          severity: warning
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP Worker {{ $labels.instance }} is disconnected or its loop is stale"
+
+      - alert: OutbeOcompVoteSubmissionFailures
+        expr: increase(outbe_ocomp_vote_submission_failures_total[5m]) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP result-vote submission is failing"
+
+      - alert: OutbeOcompRecoveryWindowOpen
+        expr: (outbe_ocomp_recovery_deadline - on(job, instance) group_left outbe_ocomp_recovery_block_number) > 0
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "Validator {{ $labels.addr }} missed OCOMP and lost 10% bonded stake"
+          description: |
+            A fixed 43,200-block recovery window is open with {{ $value }} blocks
+            remaining. Restore OCOMP and replenish bonded stake before the
+            per-validator deadline.
+
+      - alert: OutbeOcompRecoveryDeadlineApproaching
+        expr: outbe_ocomp_recovery_deadline > 0 and (outbe_ocomp_recovery_deadline - on(job, instance) group_left outbe_ocomp_recovery_block_number) < 3600
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "Validator {{ $labels.addr }} is within 3,600 blocks of OCOMP jail"
+
+      - alert: OutbeOcompRecoveryWindowsOpen
+        expr: outbe_ocomp_recovery_open_windows > 0
+        for: 5m
+        labels:
+          severity: warning
+          subsystem: ocomp
+        annotations:
+          summary: "One or more OCOMP recovery windows remain open"
