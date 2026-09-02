@@ -2575,15 +2575,13 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         "the settlement fixture only registers an asset for USD"
     );
     let fixture = crate::features::settlement::deploy_settlement_fixture(world);
-    let cost = u128::try_from(body.costAmountMinor)
-        .expect("capacity Nod cost fits a PayNote spend amount");
     let proof = crate::features::paynote::deposit_and_prove(
         world,
         port,
         &private_key,
         owner,
         fixture.asset,
-        cost,
+        body.costAmountMinor,
     );
     world
         .rpc

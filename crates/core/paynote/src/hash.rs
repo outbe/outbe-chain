@@ -22,9 +22,11 @@
 //! user-supplied and unverifiable, letting a depositor fund a note in a cheap
 //! token and spend it as an expensive one.
 
+use alloy_primitives::U256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon2, PoseidonHasher};
+use outbe_protocol::codec::u256_limbs_be;
 
 use crate::errors::PayNoteError;
 
@@ -96,22 +98,26 @@ pub fn note_sn(note_spend_key: Field) -> Result<Field, PayNoteError> {
     p(tag(TAG_NOTE_SN)?, &[note_spend_key])
 }
 
-/// `C = P(COMMITMENT, [chain_id, note_sn, asset, note_amount])` — the Merkle
-/// leaf, and the only commitment form the runtime ever appends. Binds the
-/// asset and the amount, both filled in from the transfer the pool performed.
+/// `C = P(COMMITMENT, [chain_id, note_sn, asset, amount_limb_0,
+/// amount_limb_1, amount_limb_2])` — the Merkle leaf and the only commitment
+/// form the runtime appends. Hashing all canonical radix-2^120 limbs binds the
+/// full uint256 amount without field-modulus aliases.
 pub fn note_commitment(
     chain_id: u64,
     note_sn: Field,
     asset: [u8; 20],
-    note_amount: u128,
+    note_amount: U256,
 ) -> Result<Field, PayNoteError> {
+    let limbs = u256_limbs_be(&note_amount.to_be_bytes::<32>());
     p(
         tag(TAG_COMMITMENT)?,
         &[
             Field::from(chain_id),
             note_sn,
             address_field(asset),
-            Field::from(note_amount),
+            Field::from(limbs[0]),
+            Field::from(limbs[1]),
+            Field::from(limbs[2]),
         ],
     )
 }

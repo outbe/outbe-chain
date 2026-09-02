@@ -179,6 +179,21 @@ impl World {
         note_amount: u128,
         spend_amount: u128,
     ) -> (Vec<u8>, B256) {
+        self.fund_note_u256(
+            asset,
+            spender,
+            U256::from(note_amount),
+            U256::from(spend_amount),
+        )
+    }
+
+    fn fund_note_u256(
+        &mut self,
+        asset: Address,
+        spender: Address,
+        note_amount: U256,
+        spend_amount: U256,
+    ) -> (Vec<u8>, B256) {
         let fixture = paynote_support::note_and_spend_proof(
             CHAIN_ID,
             asset,
@@ -561,8 +576,8 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::PayNoteUndercoversCost {
-                covered: cost - 1,
-                required: cost,
+                covered: U256::from(cost - 1),
+                required: U256::from(cost),
             }
             .to_string()),
         "unexpected error: {error:?}"
@@ -735,11 +750,9 @@ fn one_note_cannot_pay_two_nods() {
 }
 
 #[test]
-fn a_nod_cost_wider_than_a_paynote_amount_is_rejected_not_truncated() {
+fn a_paynote_can_cover_a_nod_cost_above_u128() {
     let mut world = World::new();
-    let cost = U256::from(u128::MAX) + U256::ONE;
-    // The cost is derived as entry_price x gratis_load / 1e6, so a load of
-    // exactly 1e6 makes the entry price the cost.
+    let cost = (U256::from(1) << 200) + U256::from(17);
     let input = NodIssueParams {
         gratis_load_minor: U256::from(1_000_000),
         entry_price_minor: cost,
@@ -748,29 +761,35 @@ fn a_nod_cost_wider_than_a_paynote_amount_is_rejected_not_truncated() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
+    let (proof, nullifier) = world.fund_note_u256(NOTE_ASSET, input.owner, cost, cost);
     let nonce = find_valid_nonce(nod_id);
 
-    let error = world
+    let minted = world
         .try_mine(
             nod_id,
             input.owner,
             nonce,
             mine_auth(input.owner, input.gratis_load_minor),
-            &[0x00],
+            &proof,
         )
-        .unwrap_err();
-    assert!(
-        matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::SettlementCostTooLarge { cost }.to_string()),
-        "unexpected error: {error:?}"
-    );
+        .expect("U256 PayNote covers U256 Nod cost");
+    assert_eq!(minted, input.gratis_load_minor);
+    assert!(world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap()));
+    let paid = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .last()
+        .expect("NodPaid event");
+    assert_eq!(paid.amountCovered, cost);
 }
 
 #[test]
 fn mine_gratis_charges_zk_verification_base_gas() {
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
-        outbe_zkproof::constants::ZK_VERIFY_GAS
+        outbe_primitives::storage::gas::ZK_VERIFY_GAS
     );
     assert_eq!(
         crate::precompile::base_gas(&INodFactory::materializationHeadCall::SELECTOR),

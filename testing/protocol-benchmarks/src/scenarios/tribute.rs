@@ -62,8 +62,12 @@ use outbe_tee_enclave::{
 };
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
-use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
 use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
+use outbe_zk_canonical::full_proof::{
+    decode_public_inputs as decode_full_proof_public_inputs, PublicInputs as FullProofPublicInputs,
+    COMBINED_LEN as FULL_PROOF_COMBINED_LEN,
+};
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
@@ -164,7 +168,7 @@ struct Fixture {
     nonce: Bytes,
     ephemeral_pubkey: U256,
     proof: Bytes,
-    public_inputs: outbe_zkproof::FullProofPublicInputs,
+    public_inputs: FullProofPublicInputs,
     l2_public_key: Vec<u8>,
     signature: Bytes,
     crs_init_ms: f64,
@@ -218,7 +222,7 @@ fn build_payload() -> Vec<u8> {
 
 fn build_fixture() -> Fixture {
     let crs_started = Instant::now();
-    outbe_zkproof::init_crs().expect("pinned CRS initializes");
+    init_crs().expect("pinned CRS initializes");
     let crs_init_ms = crs_started.elapsed().as_secs_f64() * 1_000.0;
 
     let plaintext = build_payload();
@@ -249,12 +253,13 @@ fn build_fixture() -> Fixture {
         atto: 0,
         su_ids: vec![SU_HASH],
     };
-    let binding = OutbeV1::binding(&CALLER.into_array(), &draft_id.0, CHAIN_ID).unwrap();
+    let binding = OutbeV1::binding(&CALLER.into_array(), draft_id.as_ref(), CHAIN_ID).unwrap();
     let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
-    let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
-    let path = tree.empty_inclusion_path(0);
 
     let proof_started = Instant::now();
+    let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+        .unwrap()
+        .empty_inclusion_path(0);
     let (witness, public) = draft
         .derive_full_witness(&mut proof_rng, &signer, binding, &path)
         .unwrap();
@@ -264,7 +269,7 @@ fn build_fixture() -> Fixture {
     let proof_generation_ms = proof_started.elapsed().as_secs_f64() * 1_000.0;
 
     let public_fields = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
-    let mut generated_combined = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+    let mut generated_combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
     generated_combined.extend_from_slice(&(public_fields.len() as u32).to_be_bytes());
     for value in public_fields {
         generated_combined.extend_from_slice(&field_bytes(&value));
@@ -272,25 +277,20 @@ fn build_fixture() -> Fixture {
     for field in generated_proof.proof {
         generated_combined.extend_from_slice(&field);
     }
-    assert_eq!(
-        generated_combined.len(),
-        outbe_zkproof::FULL_PROOF_COMBINED_LEN
-    );
-    assert!(outbe_zkproof::verify_full_proof(&generated_combined).unwrap());
-    let generated_public_inputs =
-        outbe_zkproof::decode_full_proof_public_inputs(&generated_combined).unwrap();
+    assert_eq!(generated_combined.len(), FULL_PROOF_COMBINED_LEN);
+    let generated_public_inputs = decode_full_proof_public_inputs(&generated_combined).unwrap();
+    assert!(verify_circuit::<FullProof>(&generated_combined).unwrap());
 
     assert_eq!(
         FIXED_FULL_PROOF_V1.len(),
-        outbe_zkproof::FULL_PROOF_COMBINED_LEN,
+        FULL_PROOF_COMBINED_LEN,
         "versioned benchmark proof has the wrong size"
     );
+    let public_inputs = decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1).unwrap();
     assert!(
-        outbe_zkproof::verify_full_proof(FIXED_FULL_PROOF_V1).unwrap(),
+        verify_circuit::<FullProof>(FIXED_FULL_PROOF_V1).unwrap(),
         "versioned benchmark proof no longer verifies"
     );
-    let public_inputs =
-        outbe_zkproof::decode_full_proof_public_inputs(FIXED_FULL_PROOF_V1).unwrap();
     assert_eq!(
         generated_public_inputs, public_inputs,
         "versioned benchmark proof public inputs drifted from the deterministic witness"
@@ -524,7 +524,8 @@ fn measure_pairing_ms(input: &[u8]) -> f64 {
 
 fn measure_verify_ms(proof: &[u8]) -> f64 {
     let started = Instant::now();
-    assert!(outbe_zkproof::verify_full_proof(black_box(proof)).unwrap());
+    decode_full_proof_public_inputs(black_box(proof)).unwrap();
+    assert!(verify_circuit::<FullProof>(black_box(proof)).unwrap());
     started.elapsed().as_secs_f64() * 1_000.0
 }
 

@@ -31,10 +31,7 @@ pub enum NodFactoryError {
     },
 
     #[error("PayNote covers {covered}, nod cost is {required}")]
-    PayNoteUndercoversCost { covered: u128, required: u128 },
-
-    #[error("nod cost {cost} exceeds the maximum a PayNote can cover")]
-    SettlementCostTooLarge { cost: U256 },
+    PayNoteUndercoversCost { covered: U256, required: U256 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,

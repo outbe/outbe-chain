@@ -3,7 +3,7 @@
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
 //! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real `outbe.full_proof@1.0.0` whose root is signed with the registered key
+//! a real external `outbe.full_proof@1.0.0` whose root is signed with the registered key
 //! must pass the full gate and issue the canonical Tribute through the normal
 //! enclave path.
 
@@ -24,8 +24,9 @@ use outbe_protocol::protocol::key::{NftSecret, Signer};
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::{Codec, OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
-use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
 use outbe_zk_canonical::full::{full_circuit_domain, FullProvable};
+use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
@@ -88,7 +89,7 @@ fn generate_zk_offer_fixture(
     // CRS setup uses a blocking download/read path. Generate on a plain thread
     // rather than inside cucumber's Tokio runtime.
     std::thread::spawn(move || {
-        outbe_zkproof::init_crs().expect("pinned CRS initializes for e2e proof generation");
+        init_crs().expect("pinned CRS initializes for e2e proof generation");
 
         let tribute_draft_id = low_b256(0x11);
         let su_hash = low_b256(0x22);
@@ -106,10 +107,11 @@ fn generate_zk_offer_fixture(
             su_ids: vec![su_hash],
         };
         let binding =
-            OutbeV1::binding(&l1_owner.into_array(), &tribute_draft_id.0, chain_id).unwrap();
+            OutbeV1::binding(&l1_owner.into_array(), tribute_draft_id.as_ref(), chain_id).unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let tree = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH).unwrap();
-        let path = tree.empty_inclusion_path(0);
+        let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+            .unwrap()
+            .empty_inclusion_path(0);
         let (witness, public) = draft
             .derive_full_witness(&mut rng, &signer, binding, &path)
             .unwrap();
@@ -123,7 +125,7 @@ fn generate_zk_offer_fixture(
         let public_inputs = <FullProof as Circuit<OutbeV1>>::public_inputs(&public);
         assert_eq!(public_inputs.len(), 4);
         let merkle_root = field_bytes(&public_inputs[3]);
-        let mut combined = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+        let mut combined = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
         combined.extend_from_slice(&(public_inputs.len() as u32).to_be_bytes());
         for value in public_inputs {
             combined.extend_from_slice(&field_bytes(&value));
@@ -131,7 +133,7 @@ fn generate_zk_offer_fixture(
         for field in proof.proof {
             combined.extend_from_slice(&field);
         }
-        assert_eq!(combined.len(), outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+        assert_eq!(combined.len(), FULL_PROOF_COMBINED_LEN);
 
         ZkOfferFixture {
             tribute_draft_id_hex: format!("0x{}", hex::encode(tribute_draft_id)),
@@ -346,6 +348,8 @@ fn offer_rejected_supply_zero(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_zk_backend::barretenberg::verify_circuit;
+    use outbe_zk_canonical::full_proof::decode_public_inputs as decode_full_proof_public_inputs;
 
     #[test]
     #[ignore = "generates and verifies a real Barretenberg FullProof"]
@@ -359,9 +363,8 @@ mod tests {
         )
         .expect("fixture proof is hex");
 
-        assert!(outbe_zkproof::verify_full_proof(&proof).expect("proof verifier succeeds"));
-        let public =
-            outbe_zkproof::decode_full_proof_public_inputs(&proof).expect("public inputs decode");
+        let public = decode_full_proof_public_inputs(&proof).expect("public inputs decode");
+        assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, fixture.merkle_root);
     }
 }

@@ -38,10 +38,10 @@ pub(crate) struct CanonicalAmount {
 }
 
 /// Poseidon-BN254 over N BE-encoded field elements packed into `input`
-/// (multiple of 32 bytes). Byte-identical to
-/// `outbe_zkproof::poseidon::poseidon_hash` (same crates, same circom params);
-/// replicated here so the enclave does not pull zkproof's heavy Barretenberg
-/// FFI. Each 32-byte chunk is reduced mod the BN254 scalar order.
+/// The raw input format is the chain's `outbe_evm::zk::poseidon_hash` format
+/// (multiple of 32 bytes). The implementation uses the same crate and Circom
+/// parameters, but stays local so the enclave does not pull the EVM and
+/// Barretenberg backend. Each chunk is reduced mod the BN254 scalar order.
 fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], String> {
     if input.is_empty() {
         return Err("poseidon: empty input".to_string());
@@ -318,8 +318,8 @@ mod tests {
     }
 
     /// Proves our replicated `poseidon_hash` matches a fresh circom hasher (the
-    /// same self-consistency check zkproof uses), guaranteeing byte-identity
-    /// with the chain's `outbe_zkproof::poseidon::poseidon_hash`.
+    /// same self-consistency check as `outbe_evm::zk::poseidon_hash` uses),
+    /// guaranteeing byte-identity with the chain.
     #[test]
     fn poseidon_matches_fresh_circom_hasher() {
         fn fr_be(f: &Fr) -> [u8; 32] {

@@ -78,7 +78,6 @@ outbe-protocol-derive.workspace = true
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
-outbe-zkproof.workspace = true
 outbe-common = { workspace = true, optional = true }
 outbe-consensus.workspace = true
 outbe-fidelity = { workspace = true, optional = true }

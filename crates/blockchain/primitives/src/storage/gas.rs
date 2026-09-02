@@ -8,8 +8,8 @@
 //! accesses and does not implement SSTORE refunds, so every read is billed
 //! at the warm price and every write at the reset price.
 //!
-//! The only Outbe-specific constant lives here: [`PRECOMPILE_BASE_GAS`] -
-//! a flat per-dispatch entry cost with no direct EIP-2929 counterpart.
+//! The Outbe-specific constants live here: [`PRECOMPILE_BASE_GAS`] for flat
+//! dispatch entry and [`ZK_VERIFY_GAS`] for one proof verification.
 
 use crate::error::{PrecompileError, Result};
 
@@ -20,6 +20,9 @@ use crate::error::{PrecompileError, Result};
 /// cheapest metered op so dispatch is cheap but not free, which is adequate
 /// DoS protection in Outbe's permissioned model.
 pub const PRECOMPILE_BASE_GAS: u64 = 200;
+
+/// Flat gas cost for one UltraHonkKeccak verification.
+pub const ZK_VERIFY_GAS: u64 = 3_000_000;
 
 /// Deterministic gas meter used by [`EvmStorageProvider`](super::evm::EvmStorageProvider).
 ///

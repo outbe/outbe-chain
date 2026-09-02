@@ -1273,7 +1273,14 @@ fn run_node() -> eyre::Result<()> {
     // This still runs before `Cli::run` creates the Tokio runtime because
     // `setup_srs` uses `reqwest::blocking` internally.
     initialize_crs_for_command(&cli.command, || {
-        outbe_zkproof::init_crs().map_err(eyre::Report::from)
+        let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
+        outbe_zk_backend::barretenberg::init_crs().map_err(eyre::Report::from)?;
+        tracing::info!(
+            num_points = outbe_zk_backend::barretenberg::CANONICAL_SRS_POINTS,
+            path = ?srs_path,
+            "Barretenberg SRS initialized"
+        );
+        Ok(())
     })?;
 
     let bridge = ConsensusExecutionBridge::new();

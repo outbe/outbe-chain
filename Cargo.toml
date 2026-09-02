@@ -24,7 +24,6 @@ members = [
     "crates/system/emissionlimit",
     "crates/system/cycle",
     "crates/system/accounting",
-    "crates/system/zkproof",
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
@@ -32,6 +31,7 @@ members = [
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
+    "crates/system/emit",
     "crates/system/ocomp-protocol",
     "crates/system/ocompregistry",
     "crates/core/compressed-entities",
@@ -130,7 +130,7 @@ outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emissionlimit = { path = "crates/system/emissionlimit" }
 outbe-cycle = { path = "crates/system/cycle" }
 outbe-accounting = { path = "crates/system/accounting" }
-outbe-zkproof = { path = "crates/system/zkproof" }
+outbe-emit = { path = "crates/system/emit" }
 outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
@@ -274,10 +274,10 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.13.0" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.14.0" }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.14.0" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.14.0", features = ["alloy"] }
+outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.14.0" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 
