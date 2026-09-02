@@ -67,7 +67,6 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: mozilla-actions/sccache-action@v0.0.9
       # Caches ~/.cargo/registry (crate downloads) and target/ (dep artifacts),
       # keyed on Cargo.lock + rustc version. sccache still helps on lockfile
       # changes (per-crate granularity).
@@ -92,13 +91,9 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      # rust-src is in the image (the trybuild compile-fail tests need it for
-      # rustc to render std source snippets), as is the rest of the toolchain.
-      - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --cobertura --output-path cobertura.xml
       - uses: irongut/CodeCoverageSummary@v1.3.0
         with:
@@ -118,51 +113,17 @@ jobs:
     name: DCAP replay (x86_64)
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 30
     env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
-      - name: Install exact-pinned Intel DCAP stack
-        shell: bash
-        run: |
-          set -euo pipefail
-          intel_key="${RUNNER_TEMP}/intel-sgx-deb.asc"
-          curl -fsSL \
-            https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \
-            -o "${intel_key}"
-          echo \
-            "92f96f84281031d889deb81060c44325f0481aee621ae47a15ae1df4431b4a23  ${intel_key}" \
-            | sha256sum --check -
-          sudo install -d -m 0755 /etc/apt/keyrings
-          sudo install -m 0644 "${intel_key}" /etc/apt/keyrings/intel-sgx-deb.asc
-          echo \
-            'deb [arch=amd64 signed-by=/etc/apt/keyrings/intel-sgx-deb.asc] https://download.01.org/intel-sgx/sgx_repo/ubuntu noble main' \
-            | sudo tee /etc/apt/sources.list.d/intel-sgx.list >/dev/null
-          sudo apt-get update
-
-          pin=release/project-toolchain-v1.json
-          qvl_runtime="$(jq -er '.system_packages["libsgx-dcap-quote-verify"]' "${pin}")"
-          qvl_devel="$(jq -er '.system_packages["libsgx-dcap-quote-verify-dev"]' "${pin}")"
-          sgx_headers="$(jq -er '.system_packages["libsgx-headers"]' "${pin}")"
-          cxx_runtime="$(jq -er '.system_packages["libstdc++6"]' "${pin}")"
-          gcc_runtime="$(jq -er '.system_packages["libgcc-s1"]' "${pin}")"
-          libcxx_devel="$(jq -er '.system_packages["libc++-dev"]' "${pin}")"
-          libcxxabi_devel="$(jq -er '.system_packages["libc++abi-dev"]' "${pin}")"
-          sudo apt-get install -y --no-install-recommends --allow-downgrades \
-            "libsgx-dcap-quote-verify=${qvl_runtime}" \
-            "libsgx-dcap-quote-verify-dev=${qvl_devel}" \
-            "libsgx-headers=${sgx_headers}" \
-            "libstdc++6=${cxx_runtime}" \
-            "libgcc-s1=${gcc_runtime}" \
-            "libc++-dev=${libcxx_devel}" \
-            "libc++abi-dev=${libcxxabi_devel}"
-      - uses: rui314/setup-mold@v1
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -176,21 +137,17 @@ jobs:
     name: doctests
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 30
     env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
-      - uses: rui314/setup-mold@v1
-      # sccache must precede mise so mise's from-source tool installs (run
-      # under RUSTC_WRAPPER=sccache) find the wrapper on a cold cache.
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -202,16 +159,18 @@ jobs:
     name: udeps
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 30
     env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
-      - uses: rui314/setup-mold@v1
-      # udeps requires the nightly toolchain, which the pinned mise stable
-      # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -222,15 +181,16 @@ jobs:
     name: no-test-deps
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 10
+    env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      # cargo tree resolves the full dep graph (downloads every crate manifest);
-      # cache the registry only - nothing is built here.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -246,15 +206,17 @@ jobs:
     name: cargo deny
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 15
     continue-on-error: true
+    env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      # cargo-deny fetches the registry index + advisory DBs; no build output.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -265,14 +227,12 @@ jobs:
     name: cargo machete
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
       - uses: taiki-e/install-action@cargo-machete
       - run: mise run audit-machete
 
@@ -280,8 +240,15 @@ jobs:
     name: cargo miri
     if: contains(github.event.head_commit.message, '[miri]')
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 60
     continue-on-error: true
+    env:
+      # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
+      # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
+      # Point it back inside HOME so the cache is what the build reads.
+      CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
       # miri requires the nightly toolchain, which the pinned mise stable
@@ -297,6 +264,8 @@ jobs:
   ci-success:
     name: ci success
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     if: always()
     needs:
       - fmt
@@ -326,15 +295,14 @@ jobs:
     name: preview next version
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # cog reads the full history + tags
           persist-credentials: false
-      - uses: jdx/mise-action@v2
-        with:
-          install: false
       - run: mise install cocogitto
       - name: Validate PR commits (Conventional Commits)
         run: >-
@@ -365,15 +333,14 @@ jobs:
     needs: [ci-success]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }} # PAT in the ruleset bypass -> push to protected main + trigger release.yml
-      - uses: jdx/mise-action@v2
-        with:
-          install: false
       - run: mise install cocogitto
       - name: Configure git identity
         run: |

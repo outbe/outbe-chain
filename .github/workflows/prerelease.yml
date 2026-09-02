@@ -17,6 +17,8 @@ jobs:
   cve-scan:
     name: CVE scan (Cargo.lock)
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     steps:
       - uses: actions/checkout@v6
       - uses: rustsec/audit-check@v2.0.0
@@ -26,12 +28,10 @@ jobs:
   vet:
     name: supply chain review
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-vet
@@ -40,15 +40,10 @@ jobs:
   build:
     name: build & audit binaries
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     steps:
       - uses: actions/checkout@v6
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-          cache: true
-      # cargo-auditable + cargo-audit are provided by mise.toml [tools].
       - run: mise run build-release
       - run: cargo test --verbose
       - name: CVE scan (binaries)

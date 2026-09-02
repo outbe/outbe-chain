@@ -26,6 +26,8 @@ jobs:
   format:
     name: Forge Format
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -35,15 +37,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
       - name: Check formatting
         run: forge fmt --check
 
   compile:
     name: Compile Contracts
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -65,6 +66,8 @@ jobs:
     name: Foundry Tests
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -85,6 +88,8 @@ jobs:
   lint:
     name: Forge Lint
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -109,6 +114,8 @@ jobs:
     name: ABI Export Check
     if: ${{ inputs.abi-check }}
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -127,14 +134,6 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
-      - name: Install mise
-        uses: jdx/mise-action@v2
-        with:
-          install: false
-
-      - name: Ensure jq is installed
-        run: jq --version || (sudo apt-get update && sudo apt-get install -y jq)
-
       - name: Export ABI
         run: mise run export-abi
 
@@ -149,6 +148,8 @@ jobs:
   ci-success:
     name: ci success
     runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:REPLACE_WITH_PUBLISHED_DIGEST
     if: always()
     needs:
       - format
