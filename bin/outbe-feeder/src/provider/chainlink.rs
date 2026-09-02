@@ -9,6 +9,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{CandlePrice, Provider, TickerPrice};
+use crate::fixed::{FixedValue, JsonDecimal};
 
 const CRYPTOCOMPARE_BASE_URL: &str = "https://min-api.cryptocompare.com";
 
@@ -49,9 +50,9 @@ struct CryptoCompareTickerResponse {
 #[derive(Debug, Deserialize)]
 struct CryptoCompareRawTicker {
     #[serde(rename = "PRICE")]
-    price: Option<f64>,
+    price: Option<JsonDecimal>,
     #[serde(rename = "VOLUME24HOUR")]
-    volume_24h: Option<f64>,
+    volume_24h: Option<JsonDecimal>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,8 +70,8 @@ struct CryptoCompareCandleData {
 #[derive(Debug, Deserialize)]
 struct CryptoCompareCandle {
     time: u64,
-    close: f64,
-    volumeto: f64,
+    close: JsonDecimal,
+    volumeto: JsonDecimal,
 }
 
 #[async_trait]
@@ -135,14 +136,18 @@ impl Provider for ChainlinkProvider {
             for (base, quote, fsym, tsym) in &mapped {
                 if let Some(tsym_map) = raw.get(fsym.as_str()) {
                     if let Some(ticker) = tsym_map.get(tsym.as_str()) {
-                        if let Some(price) = ticker.price {
-                            if price > 0.0 {
+                        if let Some(price) = ticker.price.as_ref().and_then(JsonDecimal::fixed) {
+                            if !price.is_zero() {
                                 let key = format!("{base}/{quote}");
                                 result.insert(
                                     key,
                                     TickerPrice {
                                         price,
-                                        volume: ticker.volume_24h.unwrap_or(0.0),
+                                        volume: ticker
+                                            .volume_24h
+                                            .as_ref()
+                                            .and_then(JsonDecimal::fixed)
+                                            .unwrap_or(FixedValue::ZERO),
                                     },
                                 );
                             }
@@ -204,11 +209,13 @@ impl Provider for ChainlinkProvider {
                     let key = format!("{base}/{quote}");
                     let entries: Vec<CandlePrice> = candles
                         .into_iter()
-                        .filter(|c| c.close > 0.0)
-                        .map(|c| CandlePrice {
-                            price: c.close,
-                            volume: c.volumeto,
-                            timestamp: c.time,
+                        .filter_map(|c| {
+                            let price = c.close.fixed()?;
+                            (!price.is_zero()).then(|| CandlePrice {
+                                price,
+                                volume: c.volumeto.fixed().unwrap_or(FixedValue::ZERO),
+                                timestamp: c.time,
+                            })
                         })
                         .collect();
                     if !entries.is_empty() {

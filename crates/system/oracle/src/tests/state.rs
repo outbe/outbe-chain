@@ -78,27 +78,60 @@ fn register_pair_rejects_an_asset_paired_with_itself() {
 }
 
 #[test]
-fn register_pair_rejects_a_non_canonical_quote() {
+fn register_pair_preserves_a_generic_market_orientation() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        // The ISO address sorts below every token stand-in, so ETH/USD is the
-        // backwards way to name this market.
+        // The ISO address sorts below every token stand-in, so this proves the
+        // registry value is the configured orientation rather than the sorted
+        // storage-key orientation.
         let backwards = AddressPair::from_addresses(ETH, usd());
         assert!(
             !backwards.is_canonical(),
             "fixture is not a backwards quote"
         );
 
-        let err = oracle.register_pair(backwards).unwrap_err();
-        assert!(
-            format!("{err:?}").contains("canonical"),
-            "expected a canonical-form revert, got {err:?}"
-        );
+        assert_eq!(oracle.register_pair(backwards).unwrap(), 1);
+        assert_eq!(oracle.pair_at(1).unwrap(), backwards);
+        assert_eq!(oracle.require_pair(backwards).unwrap(), backwards);
+        assert!(oracle.require_pair(backwards.to_canonical()).is_err());
+    });
+}
+
+#[test]
+fn register_pair_rejects_iso_to_coen_but_accepts_coen_to_iso() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let reverse = AddressPair::from_addresses(usd(), COEN);
+
+        assert!(oracle.register_pair(reverse).is_err());
         assert_eq!(oracle.pair_count.read().unwrap(), 0);
 
+        let forward = AddressPair::new_coen_to(840);
+        assert_eq!(oracle.register_pair(forward).unwrap(), 1);
+        assert_eq!(oracle.pair_at(1).unwrap(), forward);
+    });
+}
+
+#[test]
+fn reciprocal_read_is_relative_to_the_registered_generic_orientation() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let registered = AddressPair::from_addresses(ETH, usd());
+        let rate = fixed18(4);
+        oracle.register_pair(registered).unwrap();
         oracle
-            .register_pair(backwards.to_canonical())
-            .expect("the canonical orientation registers");
+            .set_exchange_rate(Address::ZERO, registered, rate, 7, 11)
+            .unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(ETH, usd()).unwrap(), rate);
+        assert_eq!(
+            oracle.get_exchange_rate(usd(), ETH).unwrap(),
+            fixed18(1) / U256::from(4u64)
+        );
+        assert_eq!(
+            oracle.get_exchange_rate_data(usd(), ETH).unwrap(),
+            (fixed18(1) / U256::from(4u64), 7, 11)
+        );
     });
 }
 
@@ -120,16 +153,15 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
         // spot rate has a reciprocal.
         let err = oracle.require_pair_from(USDT, COEN).unwrap_err();
         assert!(
-            format!("{err:?}").contains("canonical"),
-            "expected a canonical-form revert, got {err:?}"
+            format!("{err:?}").contains("registered orientation"),
+            "expected a registered-orientation revert, got {err:?}"
         );
         assert!(oracle.get_exchange_rate(USDT, COEN).is_ok());
     });
 }
 
-/// The load-bearing property of a canonical-only registry: one market is one
-/// registration, reachable from either quote, and the entry always reads back
-/// canonical so nothing downstream has to remember which way it was written.
+/// One unordered market key identifies one registration, while the registry
+/// entry preserves exactly the configured orientation.
 #[test]
 fn one_market_is_one_registration_reachable_from_either_quote() {
     with_storage(|storage| {
@@ -187,8 +219,8 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
             fixed18(1) / U256::from(4u64)
         );
 
-        // Writes stay canonical-only: a backwards quote has no direction-free
-        // reading on the way in.
+        // Writes stay in registered orientation: a backwards quote has no
+        // direction-free reading on the way in.
         assert!(oracle
             .set_exchange_rate(
                 Address::ZERO,

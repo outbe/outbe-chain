@@ -1,5 +1,6 @@
 //! Harness-owned mock price source and production `outbe-feeder` lifecycle.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -37,8 +38,8 @@ pub(crate) struct PriceQuote<'a> {
 pub struct PriceOracleEvidenceV1 {
     pub feeder_binary: String,
     pub feeder_binary_sha256: String,
-    pub feeder_pid: Option<u32>,
-    pub feeder_log: String,
+    pub feeder_pids: Vec<u32>,
+    pub feeder_logs: Vec<String>,
     pub mock_generation: u64,
     pub mock_price: String,
     pub mock_volume: String,
@@ -260,7 +261,7 @@ fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> 
 pub struct PriceOracleTopology {
     cfg: Config,
     mock: Option<MockPriceServer>,
-    feeder: Option<ChildGuard>,
+    feeders: BTreeMap<usize, ChildGuard>,
     evidence: PriceOracleEvidenceV1,
 }
 
@@ -269,13 +270,14 @@ impl PriceOracleTopology {
         Self {
             cfg,
             mock: None,
-            feeder: None,
+            feeders: BTreeMap::new(),
             evidence: PriceOracleEvidenceV1::default(),
         }
     }
 
     pub(crate) fn start(
         &mut self,
+        validator_index: usize,
         rpc_url: &str,
         chain_id: u64,
         private_key: &str,
@@ -283,8 +285,8 @@ impl PriceOracleTopology {
         quote: PriceQuote<'_>,
         vote_period: u64,
     ) -> Result<()> {
-        if self.feeder.is_some() {
-            bail!("price feeder is already running")
+        if self.feeders.contains_key(&validator_index) {
+            bail!("validator-{validator_index} price feeder is already running")
         }
         if self.mock.is_none() {
             let book = PriceBook {
@@ -309,8 +311,8 @@ impl PriceOracleTopology {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
-        let config_path = directory.join("validator-0-feeder.toml");
-        let log_path = directory.join("validator-0-feeder.log");
+        let config_path = directory.join(format!("validator-{validator_index}-feeder.toml"));
+        let log_path = directory.join(format!("validator-{validator_index}-feeder.log"));
         let mock_url = self
             .mock
             .as_ref()
@@ -343,7 +345,8 @@ impl PriceOracleTopology {
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        let mut feeder = ChildGuard::spawn("validator-0 price feeder", command)?;
+        let mut feeder =
+            ChildGuard::spawn(format!("validator-{validator_index} price feeder"), command)?;
         let deadline = Instant::now() + FEEDER_START_TIMEOUT;
         loop {
             if feeder.exited() {
@@ -368,33 +371,37 @@ impl PriceOracleTopology {
         let book = self.mock.as_ref().expect("mock exists").book();
         self.evidence.feeder_binary = self.cfg.bin_feeder.display().to_string();
         self.evidence.feeder_binary_sha256 = sha256_file(&self.cfg.bin_feeder)?;
-        self.evidence.feeder_pid = Some(feeder.pid());
-        self.evidence.feeder_log = log_path.display().to_string();
+        let feeder_pid = feeder.pid();
+        let feeder_log = log_path.display().to_string();
+        self.evidence.feeder_pids.push(feeder_pid);
+        self.evidence.feeder_logs.push(feeder_log);
         self.evidence.mock_generation = book.generation;
         self.evidence.mock_price = book.price;
         self.evidence.mock_volume = book.volume;
-        self.feeder = Some(feeder);
+        self.feeders.insert(validator_index, feeder);
         Ok(())
     }
 
     pub fn stop_feeder(&mut self) {
-        self.feeder = None;
-        self.evidence.feeder_pid = None;
+        self.feeders.clear();
+        self.evidence.feeder_pids.clear();
+        self.evidence.feeder_logs.clear();
     }
 
     pub fn ensure_feeder_alive(&mut self) -> Result<()> {
-        let Some(feeder) = self.feeder.as_mut() else {
+        if self.feeders.is_empty() {
             bail!("price feeder is not running")
-        };
-        if feeder.exited() {
-            bail!("owned price feeder exited")
-        } else {
-            Ok(())
         }
+        for (index, feeder) in &mut self.feeders {
+            if feeder.exited() {
+                bail!("owned price feeder {index} exited")
+            }
+        }
+        Ok(())
     }
 
     pub fn is_feeder_running(&mut self) -> bool {
-        self.feeder.as_mut().is_some_and(|feeder| !feeder.exited())
+        !self.feeders.is_empty() && self.feeders.values_mut().all(|feeder| !feeder.exited())
     }
 
     pub fn last_oracle_block(&self) -> Option<u64> {
@@ -412,7 +419,7 @@ impl PriceOracleTopology {
     }
 
     pub fn publish_quote(&mut self, price: &str, volume: &str) -> Result<u64> {
-        if self.feeder.is_none() {
+        if self.feeders.is_empty() {
             bail!("price feeder must be running before changing the controlled quote")
         }
         let mock = self

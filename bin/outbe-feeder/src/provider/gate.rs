@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Gate.io currency pair.
 /// Returns `None` for pairs Gate.io doesn't support.
@@ -101,10 +102,10 @@ impl Provider for GateProvider {
             };
 
             if let Some(ticker) = data.first() {
-                let price: f64 = ticker.last.parse().unwrap_or(0.0);
-                let volume: f64 = ticker.base_volume.parse().unwrap_or(0.0);
+                let price = FixedValue::parse(&ticker.last).unwrap_or(FixedValue::ZERO);
+                let volume = FixedValue::parse(&ticker.base_volume).unwrap_or(FixedValue::ZERO);
 
-                if price > 0.0 {
+                if !price.is_zero() {
                     let key = format!("{base}/{quote}");
                     result.insert(key, TickerPrice { price, volume });
                 }

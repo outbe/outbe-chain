@@ -93,6 +93,39 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
 }
 
 #[test]
+fn genesis_round_trip_preserves_a_reverse_generic_orientation() {
+    let configured = AddressPair::from_addresses(ETH, usd());
+    let mut config = crate::genesis::OracleGenesisConfig::default_config();
+    config.pairs = vec![(configured.address1(), configured.address2())];
+    config.initial_rates = vec![(configured.address1(), configured.address2(), fixed18(2_000))];
+
+    let exported = {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+            assert_eq!(oracle.pair_at(1).unwrap(), configured);
+            crate::genesis::export_genesis(&oracle, &[]).unwrap()
+        })
+    };
+    assert_eq!(exported.pairs, config.pairs);
+    assert_eq!(exported.initial_rates, config.initial_rates);
+
+    let mut provider = HashMapStorageProvider::new(2);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage);
+        crate::genesis::init_from_genesis(&mut oracle, &exported).unwrap();
+        assert_eq!(oracle.pair_at(1).unwrap(), configured);
+        assert_eq!(
+            oracle
+                .get_exchange_rate(configured.address1(), configured.address2())
+                .unwrap(),
+            fixed18(2_000)
+        );
+    });
+}
+
+#[test]
 fn init_from_genesis_imports_every_custom_config_collection() {
     with_storage(|storage| {
         register_validator(storage.clone(), Address::new([0x11; 20]), native_coen(100));

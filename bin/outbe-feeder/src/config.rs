@@ -1,7 +1,11 @@
 //! TOML configuration for the price-feeder daemon.
 
+use alloy_primitives::U256;
 use eyre::{Context, Result};
 use serde::Deserialize;
+
+use crate::fixed::FixedValue;
+use outbe_primitives::units::SCALE_1E18;
 
 /// Top-level feeder configuration.
 #[derive(Debug, Deserialize)]
@@ -73,27 +77,22 @@ pub struct OracleConfig {
 
 /// A currency pair to feed prices for.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CurrencyPairConfig {
     pub base: String,
     pub quote: String,
-    /// Cosmos/test config compatibility. The Reth feeder signs pair hashes from
-    /// base/quote and does not need the bank denom while submitting votes.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub chain_denom: Option<String>,
     pub providers: Vec<String>,
 }
 
-/// Optional REST/WebSocket endpoint override for a provider.
+/// Optional REST/WebSocket endpoint overrides for a provider.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderEndpointConfig {
     pub name: String,
     #[serde(default)]
     pub rest: String,
-    /// Retained for Cosmos/test config compatibility. The current Rust
-    /// `mock_http` provider uses REST only.
+    /// Exchange market-stream endpoint. Empty selects the exchange default.
     #[serde(default)]
-    #[allow(dead_code)]
     pub websocket: String,
 }
 
@@ -103,7 +102,7 @@ pub struct DeviationThreshold {
     pub base: String,
     /// Maximum standard deviations from median to accept.
     #[serde(default = "default_deviation")]
-    pub threshold: f64,
+    pub threshold: FixedValue,
 }
 
 fn default_vote_period() -> u64 {
@@ -112,8 +111,8 @@ fn default_vote_period() -> u64 {
 fn default_poll_interval() -> u64 {
     2
 }
-fn default_deviation() -> f64 {
-    2.0
+fn default_deviation() -> FixedValue {
+    FixedValue::from_raw(U256::from_limbs([2_000_000_000_000_000_000u64, 0, 0, 0]))
 }
 
 impl FeederConfig {
@@ -159,6 +158,13 @@ impl FeederConfig {
 
         // Each pair must have at least 1 provider
         for pair in &self.currency_pairs {
+            if pair.quote.eq_ignore_ascii_case("COEN") && is_iso_symbol(&pair.base) {
+                return Err(eyre::eyre!(
+                    "ISO/COEN pair {}/{} is invalid; configure COEN/ISO",
+                    pair.base,
+                    pair.quote
+                ));
+            }
             if pair.providers.is_empty() {
                 return Err(eyre::eyre!(
                     "currency pair {}/{} has no providers configured",
@@ -180,6 +186,7 @@ impl FeederConfig {
             }
         }
 
+        let mut endpoint_names = std::collections::BTreeSet::new();
         for endpoint in &self.provider_endpoints {
             if !Self::KNOWN_PROVIDERS.contains(&endpoint.name.as_str()) {
                 return Err(eyre::eyre!(
@@ -188,19 +195,55 @@ impl FeederConfig {
                     Self::KNOWN_PROVIDERS
                 ));
             }
+            if !endpoint_names.insert(endpoint.name.as_str()) {
+                return Err(eyre::eyre!(
+                    "duplicate provider endpoint '{}'",
+                    endpoint.name
+                ));
+            }
+            if !endpoint.websocket.is_empty() {
+                if !matches!(
+                    endpoint.name.as_str(),
+                    "binance" | "kraken" | "okx" | "gate" | "huobi" | "mexc" | "coinbase"
+                ) {
+                    return Err(eyre::eyre!(
+                        "provider '{}' does not support websocket market streams",
+                        endpoint.name
+                    ));
+                }
+                let websocket = endpoint.websocket.trim();
+                if websocket.is_empty()
+                    || websocket.contains(char::is_whitespace)
+                    || (websocket.contains("://")
+                        && !websocket.starts_with("ws://")
+                        && !websocket.starts_with("wss://"))
+                {
+                    return Err(eyre::eyre!(
+                        "provider '{}' has invalid websocket endpoint '{}'",
+                        endpoint.name,
+                        endpoint.websocket
+                    ));
+                }
+            }
         }
 
         Ok(())
     }
 
     /// Returns the deviation threshold for a given base asset, or the default.
-    pub fn deviation_for(&self, base: &str) -> f64 {
+    pub fn deviation_for(&self, base: &str) -> FixedValue {
         self.deviation_thresholds
             .iter()
             .find(|d| d.base == base)
             .map(|d| d.threshold)
-            .unwrap_or(2.0)
+            .unwrap_or_else(|| FixedValue::from_raw(U256::from(2u64) * SCALE_1E18))
     }
+}
+
+pub(crate) fn is_iso_symbol(value: &str) -> bool {
+    value
+        .parse::<u16>()
+        .is_ok_and(|code| (1..=999).contains(&code))
 }
 
 #[cfg(test)]
@@ -260,7 +303,6 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            chain_denom: None,
             providers: vec![],
         });
         assert!(cfg.validate().is_err());
@@ -272,7 +314,6 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            chain_denom: None,
             providers: vec!["nonexistent_exchange".to_string()],
         });
         assert!(cfg.validate().is_err());
@@ -284,10 +325,17 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            chain_denom: None,
             providers: vec!["mock".to_string()],
         });
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn currency_pair_rejects_removed_chain_denom() {
+        let result = toml::from_str::<CurrencyPairConfig>(
+            "base = 'COEN'\nquote = '840'\nproviders = ['mock']\nchain_denom = 'unit'",
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -296,15 +344,88 @@ mod tests {
         cfg.provider_endpoints.push(ProviderEndpointConfig {
             name: "mock_http".to_string(),
             rest: "http://localhost:8000".to_string(),
-            websocket: "localhost:8000".to_string(),
+            websocket: String::new(),
         });
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            chain_denom: Some("unit".to_string()),
             providers: vec!["mock_http".to_string()],
         });
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_accepts_exchange_websocket_endpoint() {
+        let mut cfg = minimal_config(2);
+        cfg.provider_endpoints.push(ProviderEndpointConfig {
+            name: "binance".to_string(),
+            rest: String::new(),
+            websocket: "wss://stream.binance.com:9443/ws".to_string(),
+        });
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_websocket_for_rest_only_provider() {
+        let mut cfg = minimal_config(2);
+        cfg.provider_endpoints.push(ProviderEndpointConfig {
+            name: "mock_http".to_string(),
+            rest: "http://localhost:8000".to_string(),
+            websocket: "ws://localhost:8001".to_string(),
+        });
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("does not support websocket"));
+    }
+
+    #[test]
+    fn test_validate_rejects_duplicate_provider_endpoints() {
+        let mut cfg = minimal_config(2);
+        for _ in 0..2 {
+            cfg.provider_endpoints.push(ProviderEndpointConfig {
+                name: "binance".to_string(),
+                rest: String::new(),
+                websocket: String::new(),
+            });
+        }
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate provider endpoint"));
+    }
+
+    #[test]
+    fn test_validate_rejects_iso_coen_but_preserves_generic_orientation() {
+        let mut cfg = minimal_config(2);
+        cfg.currency_pairs.push(CurrencyPairConfig {
+            base: "840".to_string(),
+            quote: "COEN".to_string(),
+            providers: vec!["mock".to_string()],
+        });
+        assert!(cfg.validate().unwrap_err().to_string().contains("COEN/ISO"));
+
+        cfg.currency_pairs[0].base = "999".to_string();
+        assert!(cfg.validate().unwrap_err().to_string().contains("COEN/ISO"));
+
+        cfg.currency_pairs[0].base = "840".to_string();
+        cfg.currency_pairs[0].quote = "BTC".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn deviation_threshold_requires_an_exact_decimal_string() {
+        let quoted: DeviationThreshold =
+            toml::from_str("base = 'ETH'\nthreshold = '2.000000000000000001'").unwrap();
+        assert_eq!(
+            quoted.threshold.raw(),
+            U256::from(2u64) * SCALE_1E18 + U256::ONE
+        );
+
+        let numeric = toml::from_str::<DeviationThreshold>("base = 'ETH'\nthreshold = 2.0");
+        assert!(numeric.is_err());
     }
 
     #[test]

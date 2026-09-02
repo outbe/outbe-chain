@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Coinbase price path segment.
 /// Returns `None` for pairs Coinbase doesn't support.
@@ -103,15 +104,15 @@ impl Provider for CoinbaseProvider {
                 }
             };
 
-            let price: f64 = data.data.amount.parse().unwrap_or(0.0);
+            let price = FixedValue::parse(&data.data.amount).unwrap_or(FixedValue::ZERO);
 
-            if price > 0.0 {
+            if !price.is_zero() {
                 let key = format!("{base}/{quote}");
                 result.insert(
                     key,
                     TickerPrice {
                         price,
-                        volume: 0.0, // Coinbase spot endpoint doesn't provide volume
+                        volume: FixedValue::ZERO, // Coinbase spot endpoint doesn't provide volume
                     },
                 );
             }

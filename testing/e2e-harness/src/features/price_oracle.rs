@@ -33,6 +33,13 @@ fn controlled_quote_is_finalized(world: &mut World) {
     let evidence = world.price_oracle.evidence_snapshot();
     assert!(evidence.ticker_requests > 0);
     assert!(evidence.candle_requests > 0);
+    let quorum = oracle_quorum(world.validators.size());
+    assert_eq!(evidence.feeder_pids.len(), quorum);
+    assert_eq!(evidence.feeder_logs.len(), quorum);
+    let mut distinct_pids = evidence.feeder_pids.clone();
+    distinct_pids.sort_unstable();
+    distinct_pids.dedup();
+    assert_eq!(distinct_pids.len(), quorum);
 }
 
 /// Stop the feeder before a controlled-time restart and retain the last
@@ -104,13 +111,8 @@ pub(crate) fn publish_controlled_quote(world: &mut World, expected_rate: U256) {
 
 fn start_feeder(world: &mut World) {
     let (price, volume) = feeder_start_quote(world.price_oracle.read_controlled_quote());
-    let validator = world.validators.get(0);
-    let private_key = validator.evm_key().expect("validator-0 EVM key for feeder");
-    let validator_address = world
-        .rpc
-        .address_of(&private_key)
-        .expect("derive validator-0 feeder address");
-    let rpc_url = world.rpc.url(world.validators.primary_port());
+    let validator_count = world.validators.size();
+    let quorum = oracle_quorum(validator_count);
     let chain_id = world
         .rpc
         .chain_id(world.validators.primary_port())
@@ -119,20 +121,45 @@ fn start_feeder(world: &mut World) {
         .rpc
         .oracle_vote_period(world.validators.primary_port())
         .expect("read canonical Oracle vote period for feeder");
-    world
-        .price_oracle
-        .start(
-            &rpc_url,
-            chain_id,
-            &private_key,
-            &validator_address,
-            crate::world::price_oracle::PriceQuote {
-                price: &price,
-                volume: &volume,
-            },
-            vote_period,
-        )
-        .expect("start production price feeder against controlled source");
+
+    let feeders = (0..quorum)
+        .map(|validator_index| {
+            let validator = world.validators.get(validator_index);
+            let private_key = validator.evm_key().unwrap_or_else(|error| {
+                panic!("validator-{validator_index} EVM key for feeder: {error:#}")
+            });
+            let validator_address = world
+                .rpc
+                .address_of(&private_key)
+                .unwrap_or_else(|| panic!("derive validator-{validator_index} feeder address"));
+            let rpc_url = world.rpc.url(world.validators.http_port(validator_index));
+            (validator_index, rpc_url, private_key, validator_address)
+        })
+        .collect::<Vec<_>>();
+
+    for (validator_index, rpc_url, private_key, validator_address) in feeders {
+        world
+            .price_oracle
+            .start(
+                validator_index,
+                &rpc_url,
+                chain_id,
+                &private_key,
+                &validator_address,
+                crate::world::price_oracle::PriceQuote {
+                    price: &price,
+                    volume: &volume,
+                },
+                vote_period,
+            )
+            .unwrap_or_else(|error| {
+                panic!("start validator-{validator_index} production price feeder: {error:#}")
+            });
+    }
+}
+
+fn oracle_quorum(active_validators: usize) -> usize {
+    active_validators - active_validators / 3
 }
 
 fn feeder_start_quote(current: Option<(String, String)>) -> (String, String) {
@@ -286,5 +313,13 @@ mod tests {
             U256::from(1_080_001_u64)
         );
         assert_eq!(feeder_restart_expected_rate(None), EXPECTED_RATE);
+    }
+
+    #[test]
+    fn process_feeder_count_is_ceiling_two_thirds() {
+        let expected = [0usize, 1, 2, 2, 3, 4, 4, 5, 6, 6, 7];
+        for (active, expected_quorum) in expected.into_iter().enumerate() {
+            assert_eq!(oracle_quorum(active), expected_quorum, "N={active}");
+        }
     }
 }

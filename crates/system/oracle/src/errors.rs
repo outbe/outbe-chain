@@ -22,7 +22,7 @@ pub enum OracleError {
     // -- pair registry ------------------------------------------------------
     #[error("pair base and quote must differ")]
     PairBaseQuoteIdentical,
-    #[error("pair {pair} should be in the canonical form")]
+    #[error("pair {pair} does not match the registered orientation")]
     PairNotCanonical { pair: AddressPair },
     #[error("pair {pair} already registered")]
     PairAlreadyRegistered { pair: AddressPair },
@@ -62,6 +62,8 @@ pub enum OracleError {
     TwapOverflow,
     #[error("cross-currency conversion overflow")]
     CrossRateOverflow,
+    #[error("tally arithmetic overflow: {0}")]
+    TallyArithmeticOverflow(&'static str),
     #[error("COEN rate for currency {iso_code} is stale")]
     StaleCoenRate { iso_code: u16 },
     #[error("lookback_seconds must be > 0 and <= lookback_duration")]
@@ -169,6 +171,7 @@ impl From<OracleError> for PrecompileError {
             | VwapOverflow(_)
             | TwapOverflow
             | CrossRateOverflow
+            | TallyArithmeticOverflow(_)
             | StaleCoenRate { .. }
             | InvalidLookbackSeconds
             | InvalidVwapRange

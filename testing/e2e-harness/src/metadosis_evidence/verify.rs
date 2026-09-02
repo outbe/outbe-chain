@@ -589,6 +589,29 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
             .is_some_and(|digest| digest.len() == 64 && hex::decode(digest).is_ok()),
         "fresh-devnet price evidence has no exact feeder digest"
     );
+    let validator_count = scenario["environment"]["validators"]
+        .as_u64()
+        .ok_or_else(|| eyre::eyre!("fresh-devnet evidence has no validator count"))?;
+    let quorum = validator_count - validator_count / 3;
+    let feeder_pids = price_oracle["feeder_pids"]
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("fresh-devnet price evidence has no feeder PID set"))?;
+    let feeder_logs = price_oracle["feeder_logs"]
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("fresh-devnet price evidence has no feeder log set"))?;
+    let distinct_pids = feeder_pids
+        .iter()
+        .filter_map(serde_json::Value::as_u64)
+        .collect::<std::collections::BTreeSet<_>>();
+    ensure!(
+        feeder_pids.len() == usize::try_from(quorum)?
+            && feeder_logs.len() == feeder_pids.len()
+            && distinct_pids.len() == feeder_pids.len()
+            && feeder_logs.iter().all(|path| path
+                .as_str()
+                .is_some_and(|path| path.ends_with("-feeder.log"))),
+        "fresh-devnet price evidence does not prove one independent feeder per quorum validator"
+    );
     ensure!(
         price_oracle["mock_generation"].as_u64() == Some(2)
             && final_mock_rate > 1_000_000
@@ -1301,8 +1324,12 @@ mod tests {
             "price_oracle": {
                 "feeder_binary": artifacts.join("outbe-feeder"),
                 "feeder_binary_sha256": exact_binaries["outbe_feeder"]["sha256"],
-                "feeder_pid": 12345,
-                "feeder_log": "fresh-devnet/evidence/price-oracle/validator-0-feeder.log",
+                "feeder_pids": [12345, 12346, 12347],
+                "feeder_logs": [
+                    "fresh-devnet/evidence/price-oracle/validator-0-feeder.log",
+                    "fresh-devnet/evidence/price-oracle/validator-1-feeder.log",
+                    "fresh-devnet/evidence/price-oracle/validator-2-feeder.log"
+                ],
                 "mock_generation": 2,
                 "mock_price": "1.080001",
                 "mock_volume": "1000.000000",

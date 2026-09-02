@@ -37,8 +37,8 @@ interface IOracle {
 
     /// @notice Returns the current exchange rate for a market, quoted in the
     ///         caller's direction.
-    /// @dev Only the canonical orientation (`base < quote` by address) is
-    ///      stored, so quoting the market backwards returns `scale^2 / rate`:
+    /// @dev Generic pairs preserve their registered orientation; COEN/ISO uses
+    ///      COEN as base. Quoting a market backwards returns `scale^2 / rate`:
     ///      `1e12 / rate` for COEN/ISO and `1e36 / rate` for generic pairs. An
     ///      unpublished rate is `0` from either side. Reverts
     ///      if the market is not registered. Unlike the other pair-scoped reads,
@@ -65,10 +65,10 @@ interface IOracle {
         view
         returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
 
-    /// @notice Returns VWAP in the pair's canonical scale over a lookback period.
+    /// @notice Returns VWAP in the pair's registered scale over a lookback period.
     function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAP in the pair's canonical scale for an explicit range.
+    /// @notice Returns VWAP in the pair's registered scale for an explicit range.
     function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime)
         external
         view
@@ -106,7 +106,7 @@ interface IOracle {
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
 
-    /// @notice The pair at a 1-based registry index, in canonical orientation,
+    /// @notice The pair at a 1-based registry index, in registered orientation,
     ///         with the decimals each side is quoted in.
     /// @dev Together with `getPairCount` this is how the whole registry is
     ///      enumerated. Reverts outside `1..getPairCount()`.

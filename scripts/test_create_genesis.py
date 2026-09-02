@@ -194,7 +194,6 @@ class ConfigValidationTests(unittest.TestCase):
             "tee": {"mode": "dcap-required"},
             "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
             "price_feed_rest": "https://prices.outbe.net",
-            "price_feed_websocket": "prices.outbe.net",
         }
         CG.validate_config(mainnet)
 
@@ -232,7 +231,6 @@ class ConfigValidationTests(unittest.TestCase):
             "tee": {"mode": "dcap-required"},
             "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
             "price_feed_rest": "https://prices.outbe.net",
-            "price_feed_websocket": "prices.outbe.net",
         }
 
         CG.validate_config(config)
@@ -248,7 +246,6 @@ class ConfigValidationTests(unittest.TestCase):
             "tee": {"mode": "dcap-required"},
             "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
             "price_feed_rest": "https://prc.testnet.outbe.net",
-            "price_feed_websocket": "prc.testnet.outbe.net",
         }
         with self.assertRaisesRegex(ValueError, "mainnet.*676"):
             CG.validate_config(config)
@@ -258,7 +255,6 @@ class ConfigValidationTests(unittest.TestCase):
             CG.validate_config(config)
 
         config["price_feed_rest"] = "https://prices.outbe.net"
-        config["price_feed_websocket"] = "prices.outbe.net"
         config["protocol_constants"] = {"schemaVersion": 1}
         with self.assertRaisesRegex(ValueError, "protocol_constants"):
             CG.validate_config(config)
@@ -508,7 +504,6 @@ class SeedStageTests(unittest.TestCase):
                 "tee": {"mode": "dcap-required"},
                 "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
                 "price_feed_rest": "https://prices.outbe.net",
-                "price_feed_websocket": "prices.outbe.net",
             }
             CG.validate_config(config)
             seeded = self.seed_once(pathlib.Path(tmp), config)
@@ -871,6 +866,27 @@ class LaunchBundleTests(unittest.TestCase):
                 self.assertIn(value, known, f"{value} is not a provider the feeder knows")
             # And the two must agree, or the pair references a missing endpoint.
             self.assertEqual(set(names), set(providers))
+            self.assertNotIn("chain_denom", toml)
+            self.assertNotIn("websocket =", toml)
+
+    def test_exchange_feeder_emits_websocket_override_without_legacy_pair_fields(self):
+        config = minimal_config("/keys") | {
+            "price_provider": "binance",
+            "price_feed_websocket": "wss://stream.binance.com:9443/ws",
+        }
+        toml = LB.feeder_config(
+            config=config,
+            index=0,
+            validator={"address": "0x" + "11" * 20},
+            signer_key="22" * 32,
+        )
+        self.assertIn('name = "binance"', toml)
+        self.assertIn(
+            'websocket = "wss://stream.binance.com:9443/ws"',
+            toml,
+        )
+        self.assertNotIn("chain_denom", toml)
+        self.assertNotIn("rest =", toml)
 
     def test_distribution_is_one_self_contained_archive_per_machine(self):
         """The whole point: after one run there is nothing left to assemble by

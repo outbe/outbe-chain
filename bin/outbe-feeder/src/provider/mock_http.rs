@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::ProviderEndpointConfig;
+use crate::fixed::JsonDecimal;
 
 use super::{CandlePrice, Provider, TickerPrice};
 
@@ -58,8 +59,8 @@ struct TickerResponse {
 #[derive(Debug, Deserialize)]
 struct TickerEntry {
     symbol: String,
-    price: NumberLike,
-    volume: NumberLike,
+    price: JsonDecimal,
+    volume: JsonDecimal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,28 +72,10 @@ struct CandleResponse {
 #[derive(Debug, Deserialize)]
 struct CandleEntry {
     symbol: String,
-    price: NumberLike,
-    volume: NumberLike,
+    price: JsonDecimal,
+    volume: JsonDecimal,
     #[serde(default)]
     timestamp: i64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum NumberLike {
-    String(String),
-    Number(f64),
-}
-
-impl NumberLike {
-    fn as_f64(&self) -> Result<f64> {
-        match self {
-            Self::String(value) => value
-                .parse::<f64>()
-                .with_context(|| format!("failed to parse numeric string `{value}`")),
-            Self::Number(value) => Ok(*value),
-        }
-    }
 }
 
 #[async_trait]
@@ -139,10 +122,16 @@ impl Provider for MockHttpProvider {
                 return Err(eyre!("duplicate mock_http ticker for {symbol}"));
             }
 
-            let price = ticker.price.as_f64()?;
-            let volume = ticker.volume.as_f64()?;
-            tracing::info!(symbol = %symbol, price, volume, "mock_http ticker received");
-            if price > 0.0 {
+            let price = ticker
+                .price
+                .fixed()
+                .ok_or_else(|| eyre!("invalid mock_http ticker price for {symbol}"))?;
+            let volume = ticker
+                .volume
+                .fixed()
+                .ok_or_else(|| eyre!("invalid mock_http ticker volume for {symbol}"))?;
+            tracing::info!(symbol = %symbol, price = %price.raw(), volume = %volume.raw(), "mock_http ticker received");
+            if !price.is_zero() {
                 prices.insert(key.clone(), TickerPrice { price, volume });
             }
         }
@@ -191,9 +180,13 @@ impl Provider for MockHttpProvider {
                 continue;
             };
 
-            let price = candle.price.as_f64()?;
-            let volume = candle.volume.as_f64()?;
-            if price <= 0.0 || volume <= 0.0 {
+            let Some(price) = candle.price.fixed() else {
+                continue;
+            };
+            let Some(volume) = candle.volume.fixed() else {
+                continue;
+            };
+            if price.is_zero() || volume.is_zero() {
                 continue;
             }
 

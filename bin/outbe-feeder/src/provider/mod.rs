@@ -11,37 +11,34 @@ pub mod mock;
 pub mod mock_http;
 pub mod okx;
 pub mod pyth;
+mod websocket;
 
 use eyre::{eyre, Result};
 use std::collections::HashMap;
 
 use crate::config::{FeederConfig, ProviderEndpointConfig};
+use crate::fixed::FixedValue;
 
 /// A price data point from a provider.
 ///
-/// Uses `f64` intentionally: provider REST APIs return JSON floats.
-/// This is the off-chain ingestion boundary. Values are converted to
-/// `U256` at 1e18 scale in the aggregator before building the on-chain
-/// vote payload. The on-chain oracle (`crates/system/oracle/`) uses
-/// only `U256` - no `f64` crosses the precompile boundary.
+/// Provider decimals are parsed directly from their decimal lexemes into FP18.
 #[derive(Debug, Clone)]
 pub struct TickerPrice {
-    /// Last trade price (off-chain f64 from provider API).
-    pub price: f64,
-    /// 24-hour trading volume (off-chain f64 from provider API).
-    pub volume: f64,
+    /// Last trade price at FP18.
+    pub price: FixedValue,
+    /// 24-hour trading volume at FP18.
+    pub volume: FixedValue,
 }
 
 /// A single candle (OHLCV bar) from a provider.
 ///
-/// Same `f64` boundary rationale as [`TickerPrice`]. Converted to
-/// `U256` fixed-point by the aggregator's TVWAP computation.
+/// Same deterministic FP18 representation as [`TickerPrice`].
 #[derive(Debug, Clone)]
 pub struct CandlePrice {
-    /// Close price of the candle (off-chain f64).
-    pub price: f64,
-    /// Volume during the candle period (off-chain f64).
-    pub volume: f64,
+    /// Close price of the candle at FP18.
+    pub price: FixedValue,
+    /// Volume during the candle period at FP18.
+    pub volume: FixedValue,
     /// Unix timestamp (seconds) of the candle open.
     /// Currently unused by the aggregator's TVWAP (which treats all candles as
     /// equal-duration), but retained for future time-duration weighting where
@@ -95,7 +92,7 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
         .collect();
 
     for name in &provider_names {
-        let provider: Box<dyn Provider> = match name.as_str() {
+        let fallback: Box<dyn Provider> = match name.as_str() {
             "mock" => Box::new(mock::MockProvider::new()),
             "mock_http" => {
                 let endpoint = endpoints.get("mock_http").ok_or_else(|| {
@@ -116,6 +113,26 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 tracing::warn!(provider = other, "unknown provider, skipping");
                 continue;
             }
+        };
+        let configured_pairs = config
+            .currency_pairs
+            .iter()
+            .filter(|pair| pair.providers.iter().any(|provider| provider == name))
+            .map(|pair| (pair.base.clone(), pair.quote.clone()))
+            .collect::<Vec<_>>();
+        let provider = if let Some(kind) = websocket::ExchangeKind::for_name(name)
+            .filter(|kind| kind.supports_any(&configured_pairs))
+        {
+            let streaming = websocket::StreamingProvider::new(
+                kind,
+                endpoints.get(name.as_str()).copied(),
+                &configured_pairs,
+                fallback,
+            )
+            .expect("supports_any guarantees at least one WebSocket route");
+            Box::new(streaming) as Box<dyn Provider>
+        } else {
+            fallback
         };
         providers.push(provider);
     }

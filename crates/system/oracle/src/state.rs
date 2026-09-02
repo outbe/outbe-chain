@@ -7,6 +7,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
 
@@ -85,16 +86,18 @@ impl OracleContract<'_> {
 
     /// Registers a new trading pair and marks it as a vote target.
     ///
-    /// Only the canonical orientation is accepted, so every column keyed by a
-    /// pair holds exactly one direction and a backwards quote has a single
-    /// well-defined reading. The storage key sorts regardless, so registering
-    /// the inverse of an existing pair is rejected as a duplicate. Returns the
-    /// assigned enumeration index (1-based).
+    /// The configured orientation is preserved in `pair_by_index`; the storage
+    /// key sorts independently, so registering the inverse of an existing pair
+    /// is rejected as a duplicate. COEN/ISO markets are the sole directional
+    /// exception and must be registered as COEN base, ISO quote.
     pub(crate) fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.address1() == pair.address2() {
             return Err(OracleError::PairBaseQuoteIdentical.into());
         }
-        if !pair.is_canonical() {
+        if matches!(
+            (pair.asset1(), pair.asset2()),
+            (AssetType::IsoCurrency(_), AssetType::Native)
+        ) {
             return Err(OracleError::PairNotCanonical { pair }.into());
         }
 
@@ -113,7 +116,7 @@ impl OracleContract<'_> {
         Ok(new_index)
     }
 
-    /// The pair registered at `index`, in canonical orientation.
+    /// The pair registered at `index`, in its configured orientation.
     ///
     /// Reads back as the zero pair for an index that was never written, which is
     /// why membership is decided by [`Self::pair_index_of`] and never by a zero
@@ -189,12 +192,10 @@ impl OracleContract<'_> {
 
     /// Resolves an ABI-quoted pair that has to be quoted the way it is stored.
     ///
-    /// The registry only ever holds canonical pairs - [`Self::register_pair`]
-    /// rejects anything else - so a non-canonical quote names a direction no
-    /// storage column is keyed for. Every value read through this resolver is a
-    /// bare scalar with no direction of its own (a VWAP, an S-curve peak, a
-    /// median input), and none of them is its own reciprocal, so a flipped quote
-    /// reverts rather than being reinterpreted.
+    /// Every value read through this resolver is a bare scalar with no direction
+    /// of its own (a VWAP, an S-curve peak, a median input). The quote therefore
+    /// has to match the configured orientation exactly; only spot-rate reads may
+    /// ask for the reciprocal.
     pub fn require_pair_from(&self, base: Address, quote: Address) -> Result<AddressPair> {
         let pair = AddressPair::from_addresses(base, quote);
         self.require_pair(pair)
@@ -206,12 +207,12 @@ impl OracleContract<'_> {
     }
 
     pub fn require_pair_index(&self, pair: AddressPair) -> Result<PairIndex> {
-        if !pair.is_canonical() {
-            return Err(OracleError::PairNotCanonical { pair }.into());
-        }
         let index = self.pair_to_index.read(&pair)?;
         if index == 0 {
             return Err(OracleError::PairNotRegistered { pair }.into());
+        }
+        if self.pair_at(index)? != pair {
+            return Err(OracleError::PairNotCanonical { pair }.into());
         }
         Ok(index)
     }
@@ -235,21 +236,25 @@ impl OracleContract<'_> {
     // Exchange Rate Read/Write
     // -----------------------------------------------------------------------
 
-    /// Returns the current exchange rate in the market's canonical scale,
+    /// Returns the current exchange rate in the market's configured scale,
     /// quoted in the caller's direction. COEN/ISO uses six decimals; generic
     /// markets retain their decimal18 contract.
     ///
-    /// Only the canonical direction is stored, so quoting the market backwards
+    /// Only the configured direction is stored, so quoting the market backwards
     /// returns the reciprocal. This is the one read that answers either quote
     /// direction; everything else resolves through [`Self::require_pair_from`].
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<U256> {
         let pair = AddressPair::from_addresses(base, quote);
-        let index = self.require_pair_index(pair.to_canonical())?;
+        let index = self.pair_to_index.read(&pair)?;
+        if index == 0 {
+            return Err(OracleError::PairNotRegistered { pair }.into());
+        }
+        let registered = self.pair_at(index)?;
         let stored = self.exchange_rate.read(&index)?;
-        let rate = if pair.is_canonical() {
+        let rate = if pair == registered {
             stored
         } else {
-            invert_rate(pair, stored)
+            invert_rate(registered, stored)
         };
         Ok(rate)
     }
@@ -262,8 +267,11 @@ impl OracleContract<'_> {
         quote: Address,
     ) -> Result<(U256, u64, u64)> {
         // Both quote directions read the same slot, matching `get_exchange_rate`.
-        let index =
-            self.require_pair_index(AddressPair::from_addresses(base, quote).to_canonical())?;
+        let pair = AddressPair::from_addresses(base, quote);
+        let index = self.pair_to_index.read(&pair)?;
+        if index == 0 {
+            return Err(OracleError::PairNotRegistered { pair }.into());
+        }
         let rate = self.get_exchange_rate(base, quote)?;
         let block = self.exchange_rate_block.read(&index)?;
         let ts = self.exchange_rate_timestamp.read(&index)?;
@@ -300,7 +308,7 @@ impl OracleContract<'_> {
     /// Updates the exchange rate from tally results (internal, no caller check).
     ///
     /// `index` is the registry index of an already-registered pair; the rate is
-    /// stored in that pair's canonical orientation.
+    /// stored in that pair's registered orientation.
     pub fn update_exchange_rate(
         &mut self,
         index: PairIndex,

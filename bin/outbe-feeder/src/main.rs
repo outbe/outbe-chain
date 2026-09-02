@@ -6,6 +6,7 @@
 mod abi;
 mod aggregator;
 mod config;
+mod fixed;
 mod health;
 mod oracle_client;
 mod provider;

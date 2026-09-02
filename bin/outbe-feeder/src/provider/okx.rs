@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to an OKX instrument ID.
 /// Returns `None` for pairs OKX doesn't support.
@@ -106,10 +107,10 @@ impl Provider for OkxProvider {
             };
 
             if let Some(ticker) = data.data.first() {
-                let price: f64 = ticker.last.parse().unwrap_or(0.0);
-                let volume: f64 = ticker.vol_24h.parse().unwrap_or(0.0);
+                let price = FixedValue::parse(&ticker.last).unwrap_or(FixedValue::ZERO);
+                let volume = FixedValue::parse(&ticker.vol_24h).unwrap_or(FixedValue::ZERO);
 
-                if price > 0.0 {
+                if !price.is_zero() {
                     let key = format!("{base}/{quote}");
                     result.insert(key, TickerPrice { price, volume });
                 }

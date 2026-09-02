@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{Provider, TickerPrice};
+use crate::fixed::JsonDecimal;
 
 /// Maps a (base, quote) pair to a Huobi symbol (lowercase).
 /// Returns `None` for pairs Huobi doesn't support.
@@ -42,8 +43,8 @@ struct HuobiResponse {
 
 #[derive(Debug, Deserialize)]
 struct HuobiTick {
-    close: f64,
-    vol: f64,
+    close: JsonDecimal,
+    vol: JsonDecimal,
 }
 
 #[async_trait]
@@ -115,13 +116,13 @@ impl Provider for HuobiProvider {
             }
 
             if let Some(tick) = data.tick {
-                if tick.close > 0.0 {
+                if let Some(price) = tick.close.fixed().filter(|price| !price.is_zero()) {
                     let key = format!("{base}/{quote}");
                     result.insert(
                         key,
                         TickerPrice {
-                            price: tick.close,
-                            volume: tick.vol,
+                            price,
+                            volume: tick.vol.fixed().unwrap_or_default(),
                         },
                     );
                 }

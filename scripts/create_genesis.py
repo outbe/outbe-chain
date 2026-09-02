@@ -391,13 +391,10 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 "Mainnet forbids protocol_constants overrides and uses canonical production defaults"
             )
-        endpoints = [
-            str(config.get("price_feed_rest", "")),
-            str(config.get("price_feed_websocket", "")),
-        ]
-        if not all(endpoints):
-            raise ValueError("Mainnet requires explicit production price feed endpoints")
-        if any("testnet" in endpoint.lower() for endpoint in endpoints):
+        endpoint = str(config.get("price_feed_rest", ""))
+        if not endpoint:
+            raise ValueError("Mainnet requires an explicit production price feed REST endpoint")
+        if "testnet" in endpoint.lower():
             raise ValueError("Mainnet may not use a testnet price endpoint")
     if mode == "gramine-direct-dev" and chain_id not in (
         DEVNET_CHAIN_ID,

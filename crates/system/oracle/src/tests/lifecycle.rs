@@ -341,11 +341,16 @@ fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
             .unwrap();
 
         let valid = Address::new([0x11; 20]);
-        let invalid = Address::new([0x22; 20]);
+        let valid2 = Address::new([0x22; 20]);
+        let invalid = Address::new([0x33; 20]);
         register_validator(storage.clone(), valid, native_coen(100));
+        register_validator(storage.clone(), valid2, native_coen(100));
         register_validator(storage.clone(), invalid, native_coen(100));
         oracle
             .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
+            .unwrap();
+        oracle
+            .submit_vote(valid2, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
             .unwrap();
         oracle
             .submit_vote(invalid, &[(COEN, USDT, U256::ZERO, SCALE_1E18)])
@@ -355,13 +360,14 @@ fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
 
         assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), fixed18(50));
         assert_eq!(oracle.penalty_success_count.read(&valid).unwrap(), 1);
+        assert_eq!(oracle.penalty_success_count.read(&valid2).unwrap(), 1);
         assert_eq!(oracle.penalty_miss_count.read(&invalid).unwrap(), 1);
         assert_eq!(oracle.penalty_abstain_count.read(&invalid).unwrap(), 0);
     });
 }
 
 #[test]
-fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
+fn run_tally_breaks_equal_reference_power_ties_by_registry_order() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -370,25 +376,36 @@ fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
         oracle.register_pair(lower).unwrap();
         oracle.register_pair(higher).unwrap();
 
-        let lower_voter = Address::new([0x11; 20]);
-        let higher_voter = Address::new([0x22; 20]);
-        register_validator(storage.clone(), lower_voter, native_coen(100));
-        register_validator(storage.clone(), higher_voter, native_coen(100));
+        let voter1 = Address::new([0x11; 20]);
+        let voter2 = Address::new([0x22; 20]);
+        register_validator(storage.clone(), voter1, native_coen(100));
+        register_validator(storage.clone(), voter2, native_coen(100));
         oracle
             .submit_vote(
-                lower_voter,
-                &[(lower.address1(), lower.address2(), fixed18(50), SCALE_1E18)],
+                voter1,
+                &[
+                    (lower.address1(), lower.address2(), fixed18(50), SCALE_1E18),
+                    (
+                        higher.address1(),
+                        higher.address2(),
+                        fixed18(2_000),
+                        SCALE_1E18,
+                    ),
+                ],
             )
             .unwrap();
         oracle
             .submit_vote(
-                higher_voter,
-                &[(
-                    higher.address1(),
-                    higher.address2(),
-                    fixed18(2_000),
-                    SCALE_1E18,
-                )],
+                voter2,
+                &[
+                    (lower.address1(), lower.address2(), fixed18(50), SCALE_1E18),
+                    (
+                        higher.address1(),
+                        higher.address2(),
+                        fixed18(2_000),
+                        SCALE_1E18,
+                    ),
+                ],
             )
             .unwrap();
 
@@ -396,16 +413,143 @@ fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
 
         assert_eq!(
             oracle
+                .get_exchange_rate(lower.address1(), lower.address2())
+                .unwrap(),
+            fixed18(50)
+        );
+        assert_eq!(
+            oracle
                 .get_exchange_rate(higher.address1(), higher.address2())
                 .unwrap(),
             fixed18(2_000)
         );
+        let (_, _, bases, quotes, _, _) = oracle.get_all_price_snapshot_history(1).unwrap();
+        assert_eq!((bases[0], quotes[0]), (lower.address1(), lower.address2()));
+    });
+}
+
+#[test]
+fn two_large_stakes_cannot_replace_the_third_vote_required_for_four_validator_quorum() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let pair = AddressPair::from_addresses(COEN, USDT);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .set_exchange_rate(Address::ZERO, pair, fixed18(40), 1, 12)
+            .unwrap();
+
+        let v1 = Address::new([0x11; 20]);
+        let v2 = Address::new([0x22; 20]);
+        let v3 = Address::new([0x33; 20]);
+        let v4 = Address::new([0x44; 20]);
+        register_validator(storage.clone(), v1, U256::MAX / U256::from(4u64));
+        register_validator(storage.clone(), v2, U256::MAX / U256::from(4u64));
+        register_validator(storage.clone(), v3, native_coen(1));
+        register_validator(storage.clone(), v4, native_coen(1));
+
+        for voter in [v1, v2] {
+            oracle
+                .submit_vote(voter, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
+                .unwrap();
+        }
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle.get_exchange_rate_data(COEN, USDT).unwrap(),
+            (fixed18(40), 1, 12)
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 1);
+        assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
+        assert_eq!(oracle.penalty_abstain_count.read(&v3).unwrap(), 1);
+        assert_eq!(oracle.penalty_abstain_count.read(&v4).unwrap(), 1);
+    });
+}
+
+#[test]
+fn partial_pair_votes_use_independent_quorum_and_no_cross_intersection_quorum() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let reference = AddressPair::from_addresses(COEN, USDT);
+        let target = AddressPair::from_addresses(USDT, ETH).to_canonical();
+        oracle.register_pair(reference).unwrap();
+        oracle.register_pair(target).unwrap();
+
+        let v1 = Address::new([0x11; 20]);
+        let v2 = Address::new([0x22; 20]);
+        let v3 = Address::new([0x33; 20]);
+        let v4 = Address::new([0x44; 20]);
+        for voter in [v1, v2, v3, v4] {
+            register_validator(storage.clone(), voter, native_coen(100));
+        }
+
+        oracle
+            .submit_vote(v1, &[(COEN, USDT, fixed18(50), fixed18(10))])
+            .unwrap();
+        oracle
+            .submit_vote(
+                v2,
+                &[
+                    (COEN, USDT, fixed18(50), fixed18(10)),
+                    (
+                        target.address1(),
+                        target.address2(),
+                        fixed18(2_000),
+                        fixed18(20),
+                    ),
+                ],
+            )
+            .unwrap();
+        oracle
+            .submit_vote(
+                v3,
+                &[
+                    (COEN, USDT, fixed18(50), fixed18(10)),
+                    (
+                        target.address1(),
+                        target.address2(),
+                        fixed18(2_000),
+                        fixed18(30),
+                    ),
+                ],
+            )
+            .unwrap();
+        oracle
+            .submit_vote(
+                v4,
+                &[(
+                    target.address1(),
+                    target.address2(),
+                    fixed18(2_000),
+                    fixed18(40),
+                )],
+            )
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), fixed18(50));
         assert_eq!(
             oracle
-                .get_exchange_rate(lower.address1(), lower.address2())
+                .get_exchange_rate(target.address1(), target.address2())
                 .unwrap(),
-            U256::ZERO
+            fixed18(2_000)
         );
+        let (_, _, bases, quotes, _, volumes) = oracle.get_all_price_snapshot_history(1).unwrap();
+        let target_row = bases
+            .iter()
+            .zip(&quotes)
+            .position(|(base, quote)| (*base, *quote) == (target.address1(), target.address2()))
+            .unwrap();
+        assert_eq!(volumes[target_row], fixed18(90));
+
+        assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 1);
+        assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
+        assert_eq!(oracle.penalty_success_count.read(&v3).unwrap(), 1);
+        assert_eq!(oracle.penalty_miss_count.read(&v4).unwrap(), 1);
     });
 }
 
@@ -416,8 +560,10 @@ fn run_tally_cross_rate_overflow_rolls_back_every_tally_effect() {
         init_oracle(&mut oracle);
         let lower = AddressPair::from_addresses(COEN, USDT).to_canonical();
         let higher = AddressPair::from_addresses(USDT, ETH).to_canonical();
-        oracle.register_pair(lower).unwrap();
+        // Registry-order tie-break makes the first pair the reference. Put the
+        // overflowing leg first so the cross conversion is exercised.
         oracle.register_pair(higher).unwrap();
+        oracle.register_pair(lower).unwrap();
 
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, native_coen(100));

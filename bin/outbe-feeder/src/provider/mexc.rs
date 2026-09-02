@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a MEXC symbol.
 /// Returns `None` for pairs MEXC doesn't support.
@@ -100,10 +101,10 @@ impl Provider for MexcProvider {
                 }
             };
 
-            let price: f64 = data.last_price.parse().unwrap_or(0.0);
-            let volume: f64 = data.volume.parse().unwrap_or(0.0);
+            let price = FixedValue::parse(&data.last_price).unwrap_or(FixedValue::ZERO);
+            let volume = FixedValue::parse(&data.volume).unwrap_or(FixedValue::ZERO);
 
-            if price > 0.0 {
+            if !price.is_zero() {
                 let key = format!("{base}/{quote}");
                 result.insert(key, TickerPrice { price, volume });
             }

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{CandlePrice, Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Binance symbol.
 /// Returns `None` for pairs Binance doesn't support (e.g. custom tokens).
@@ -101,10 +102,10 @@ impl Provider for BinanceProvider {
                 }
             };
 
-            let price: f64 = data.last_price.parse().unwrap_or(0.0);
-            let volume: f64 = data.volume.parse().unwrap_or(0.0);
+            let price = FixedValue::parse(&data.last_price).unwrap_or(FixedValue::ZERO);
+            let volume = FixedValue::parse(&data.volume).unwrap_or(FixedValue::ZERO);
 
-            if price > 0.0 {
+            if !price.is_zero() {
                 let key = format!("{base}/{quote}");
                 result.insert(key, TickerPrice { price, volume });
             }
@@ -175,16 +176,16 @@ impl Provider for BinanceProvider {
                     continue;
                 }
                 let timestamp = kline[0].as_u64().unwrap_or(0) / 1000; // ms -> s
-                let close: f64 = kline[4]
+                let close = kline[4]
                     .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-                let volume: f64 = kline[5]
+                    .and_then(FixedValue::parse)
+                    .unwrap_or(FixedValue::ZERO);
+                let volume = kline[5]
                     .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
+                    .and_then(FixedValue::parse)
+                    .unwrap_or(FixedValue::ZERO);
 
-                if close > 0.0 {
+                if !close.is_zero() {
                     candles.push(CandlePrice {
                         price: close,
                         volume,
