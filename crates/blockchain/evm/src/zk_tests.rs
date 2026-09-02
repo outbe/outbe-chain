@@ -5,12 +5,15 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_zk_canonical::{
+    emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
+    full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
+};
 
-use crate::constants::{MAX_INPUTS, POSEIDON_GAS_BASE, POSEIDON_GAS_PER_INPUT, ZK_VERIFY_GAS};
-use crate::errors::ZkProofError;
-use crate::poseidon::poseidon_hash;
-use crate::precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
-use crate::verify::{decode_full_proof_public_inputs, verify_full_proof, zk_verify};
+use crate::zk::{
+    dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas, poseidon_hash,
+    zk_verify, MAX_INPUTS, POSEIDON_GAS_BASE, POSEIDON_GAS_PER_INPUT, ZK_VERIFY_GAS,
+};
 
 const CHAIN_ID: u64 = 19_280_501;
 
@@ -31,34 +34,50 @@ fn fr_be(f: &Fr) -> [u8; 32] {
 
 #[test]
 fn poseidon_empty_input_errors() {
-    assert!(matches!(poseidon_hash(&[]), Err(ZkProofError::EmptyInput)));
+    assert!(matches!(
+        poseidon_hash(&[]),
+        Err(PrecompileError::Revert(message)) if message == "poseidon: empty input"
+    ));
 }
 
 #[test]
 fn poseidon_unaligned_input_errors() {
-    assert!(matches!(
-        poseidon_hash(&[0u8; 31]),
-        Err(ZkProofError::UnalignedInput(31))
-    ));
-    assert!(matches!(
-        poseidon_hash(&[0u8; 33]),
-        Err(ZkProofError::UnalignedInput(33))
-    ));
+    for length in [31, 33] {
+        assert!(matches!(
+            poseidon_hash(&vec![0u8; length]),
+            Err(PrecompileError::Revert(message))
+                if message == format!(
+                    "poseidon: input length {length} is not a multiple of 32"
+                )
+        ));
+    }
 }
 
 #[test]
 fn poseidon_too_many_inputs_errors() {
     let buf = vec![0u8; (MAX_INPUTS + 1) * 32];
-    match poseidon_hash(&buf) {
-        Err(ZkProofError::TooManyInputs(n)) => assert_eq!(n, MAX_INPUTS + 1),
-        other => panic!("expected TooManyInputs, got {other:?}"),
-    }
+    assert!(matches!(
+        poseidon_hash(&buf),
+        Err(PrecompileError::Revert(message))
+            if message
+                == format!(
+                    "poseidon: {} inputs exceeds maximum supported ({MAX_INPUTS})",
+                    MAX_INPUTS + 1
+                )
+    ));
 }
 
 #[test]
 fn poseidon_n1_matches_offchain_reference() {
     let x = Fr::from(42u64);
     let on_chain = poseidon_hash(&fr_be(&x)).unwrap();
+    assert_eq!(
+        on_chain,
+        [
+            27, 64, 141, 175, 235, 237, 223, 8, 113, 56, 131, 153, 177, 229, 59, 208, 101, 253,
+            112, 241, 133, 128, 190, 92, 221, 225, 93, 126, 178, 197, 39, 67,
+        ]
+    );
     let mut hasher = Poseidon::<Fr>::new_circom(1).unwrap();
     let off_chain = hasher.hash(&[x]).unwrap();
     assert_eq!(on_chain, fr_be(&off_chain));
@@ -141,84 +160,16 @@ fn combined_full_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<
 }
 
 #[test]
-fn full_proof_public_inputs_are_decoded_in_circuit_order() {
-    let words = [
-        fr_be(&Fr::from(11u64)),
-        fr_be(&Fr::from(22u64)),
-        fr_be(&Fr::from(33u64)),
-        fr_be(&Fr::from(44u64)),
-    ];
-    let proof = combined_full_proof(words, 274);
-
-    let decoded = decode_full_proof_public_inputs(&proof).unwrap();
-
-    assert_eq!(decoded.derived_owner, words[0]);
-    assert_eq!(decoded.nft_hash, words[1]);
-    assert_eq!(decoded.binding_hash, words[2]);
-    assert_eq!(decoded.merkle_root, words[3]);
-}
-
-#[test]
-fn full_proof_rejects_wrong_public_input_count() {
-    let mut proof = combined_full_proof([[0u8; 32]; 4], 274);
-    proof[..4].copy_from_slice(&3u32.to_be_bytes());
-
-    assert!(matches!(
-        decode_full_proof_public_inputs(&proof),
-        Err(ZkProofError::WrongPublicInputCount {
-            expected: 4,
-            actual: 3
-        })
-    ));
-}
-
-#[test]
-fn full_proof_rejects_truncated_public_inputs() {
-    let proof = [4u32.to_be_bytes().as_slice(), &[0u8; 64]].concat();
-
-    assert!(matches!(
-        decode_full_proof_public_inputs(&proof),
-        Err(ZkProofError::TruncatedPublicInputs { .. })
-    ));
-}
-
-#[test]
-fn full_proof_rejects_non_canonical_public_input() {
-    let modulus = Fr::MODULUS.to_bytes_be();
-    let mut non_canonical = [0u8; 32];
-    non_canonical[32 - modulus.len()..].copy_from_slice(&modulus);
-    let mut words = [[0u8; 32]; 4];
-    words[2] = non_canonical;
-    let proof = combined_full_proof(words, 274);
-
-    assert!(matches!(
-        decode_full_proof_public_inputs(&proof),
-        Err(ZkProofError::NonCanonicalPublicInput(2))
-    ));
-}
-
-#[test]
-fn full_proof_rejects_wrong_proof_section_length() {
-    let empty = combined_full_proof([[0u8; 32]; 4], 0);
-    assert!(matches!(
-        decode_full_proof_public_inputs(&empty),
-        Err(ZkProofError::WrongCombinedProofLength { .. })
-    ));
-
-    let oversized = combined_full_proof([[0u8; 32]; 4], 275);
-    assert!(matches!(
-        decode_full_proof_public_inputs(&oversized),
-        Err(ZkProofError::WrongCombinedProofLength { .. })
-    ));
-}
-
-#[test]
 fn full_proof_with_invalid_curve_points_returns_backend_error() {
-    let proof = combined_full_proof([[0u8; 32]; 4], 274);
+    use outbe_zk_canonical::noir::full_proof::FullProof;
+    use outbe_zk_canonical::CircuitId as _;
 
+    let proof = combined_full_proof([[0u8; 32]; 4], FULL_PROOF_PROOF_WORDS);
+    let input = abi_encode(&FullProof::CIRCUIT_HASH, &proof);
     assert!(matches!(
-        verify_full_proof(&proof),
-        Err(ZkProofError::VerificationBackend(_))
+        zk_verify(&input),
+        Err(PrecompileError::Revert(message))
+            if message.starts_with("zk verification backend failed: ")
     ));
 }
 
@@ -226,7 +177,8 @@ fn full_proof_with_invalid_curve_points_returns_backend_error() {
 fn zk_verify_input_too_short_errors() {
     assert!(matches!(
         zk_verify(&[0u8; 32]),
-        Err(ZkProofError::InputTooShort(32))
+        Err(PrecompileError::Revert(message))
+            if message == "zk_verify: input too short (32 < 64 bytes)"
     ));
 }
 
@@ -243,7 +195,8 @@ fn zk_verify_truncated_payload_errors() {
     buf.truncate(70);
     assert!(matches!(
         zk_verify(&buf),
-        Err(ZkProofError::MalformedAbi(_))
+        Err(PrecompileError::Revert(message))
+            if message == "zk_verify: malformed ABI input (offset past end)"
     ));
 }
 
@@ -257,7 +210,8 @@ fn zk_verify_max_offset_is_rejected_not_panicking() {
     input[56..64].copy_from_slice(&u64::MAX.to_be_bytes());
     assert!(matches!(
         zk_verify(&input),
-        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+        Err(PrecompileError::Revert(message))
+            if message == "zk_verify: malformed ABI input (non-canonical offset)"
     ));
 }
 
@@ -267,7 +221,8 @@ fn zk_verify_offset_just_past_canonical_is_rejected() {
     buf[56..64].copy_from_slice(&65u64.to_be_bytes());
     assert!(matches!(
         zk_verify(&buf),
-        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+        Err(PrecompileError::Revert(message))
+            if message == "zk_verify: malformed ABI input (non-canonical offset)"
     ));
 }
 
@@ -280,7 +235,8 @@ fn zk_verify_shifted_offset_is_rejected() {
     buf[56..64].copy_from_slice(&96u64.to_be_bytes());
     assert!(matches!(
         zk_verify(&buf),
-        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+        Err(PrecompileError::Revert(message))
+            if message == "zk_verify: malformed ABI input (non-canonical offset)"
     ));
 }
 
@@ -326,226 +282,6 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
     assert_eq!(out.as_ref(), &[0u8; 32]);
 }
 
-// ---- emit mint -----------------------------------------------------------
-
-use crate::verify::{
-    decode_emit_mint_public_inputs, verify_emit_mint, EMIT_MINT_COMBINED_LEN, EMIT_MINT_PROOF_WORDS,
-};
-
-const EMIT_MINT_FIELD_WORDS: usize = 8;
-
-/// The owner word: the 20 address bytes, big-endian, in the low 160 bits of
-/// one canonical field element.
-fn owner_word(byte: u8) -> [u8; 32] {
-    let mut word = [0u8; 32];
-    word[12..].fill(byte);
-    word
-}
-
-fn u64_word(value: u64) -> [u8; 32] {
-    let mut word = [0u8; 32];
-    word[24..32].copy_from_slice(&value.to_be_bytes());
-    word
-}
-
-fn u128_word(value: u128) -> [u8; 32] {
-    let mut word = [0u8; 32];
-    word[16..32].copy_from_slice(&value.to_be_bytes());
-    word
-}
-
-fn valid_emit_words() -> [[u8; 32]; EMIT_MINT_FIELD_WORDS] {
-    let mut words = [[0u8; 32]; EMIT_MINT_FIELD_WORDS];
-    words[0] = u64_word(31_337);
-    words[1] = fr_be(&Fr::from(102u64));
-    words[2] = fr_be(&Fr::from(103u64));
-    words[3] = owner_word(0x22);
-    words[4] = u128_word(40);
-    words[7] = fr_be(&Fr::from(104u64));
-    words
-}
-
-fn combined_emit_proof(words: &[[u8; 32]; EMIT_MINT_FIELD_WORDS], proof_words: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 32 * (EMIT_MINT_FIELD_WORDS + proof_words));
-    out.extend_from_slice(&(EMIT_MINT_FIELD_WORDS as u32).to_be_bytes());
-    for word in words {
-        out.extend_from_slice(word);
-    }
-    out.resize(out.len() + proof_words * 32, 0);
-    out
-}
-
-#[test]
-fn emit_mint_public_inputs_are_decoded_in_circuit_order() {
-    let words = valid_emit_words();
-    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-
-    let decoded = decode_emit_mint_public_inputs(&proof).unwrap();
-
-    assert_eq!(decoded.chain_id, 31_337);
-    assert_eq!(decoded.root, words[1]);
-    assert_eq!(decoded.nullifier, words[2]);
-    assert_eq!(decoded.note_owner, [0x22; 20]);
-    assert_eq!(decoded.mint_units, [40, 0, 0]);
-    assert_eq!(decoded.change_commitment, words[7]);
-}
-
-#[test]
-fn emit_mint_rejects_wrong_public_input_count() {
-    for count in [7u32, 9u32] {
-        let mut proof = combined_emit_proof(&valid_emit_words(), EMIT_MINT_PROOF_WORDS);
-        proof[..4].copy_from_slice(&count.to_be_bytes());
-        assert!(matches!(
-            decode_emit_mint_public_inputs(&proof),
-            Err(ZkProofError::WrongPublicInputCount { actual, .. }) if actual == count as usize
-        ));
-    }
-}
-
-#[test]
-fn emit_mint_rejects_truncated_public_inputs() {
-    let proof = combined_emit_proof(&valid_emit_words(), EMIT_MINT_PROOF_WORDS);
-    // The exact-length gate fires first for anything that is not the frozen
-    // wire format — including blobs shorter than the public prefix.
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof[..500]),
-        Err(ZkProofError::WrongCombinedProofLength { actual: 500, .. })
-    ));
-}
-
-#[test]
-fn emit_mint_accepts_exactly_the_frozen_length() {
-    let words = valid_emit_words();
-    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-    assert_eq!(proof.len(), EMIT_MINT_COMBINED_LEN);
-    assert!(decode_emit_mint_public_inputs(&proof).is_ok());
-}
-
-#[test]
-fn emit_mint_rejects_any_non_frozen_length() {
-    let words = valid_emit_words();
-    // Empty, short, unaligned, one-word-over — every deviation from the
-    // frozen transcript length is the same error.
-    for tail_words in [
-        0usize,
-        1,
-        EMIT_MINT_PROOF_WORDS - 1,
-        EMIT_MINT_PROOF_WORDS + 1,
-    ] {
-        let proof = combined_emit_proof(&words, tail_words);
-        assert!(
-            matches!(
-                decode_emit_mint_public_inputs(&proof),
-                Err(ZkProofError::WrongCombinedProofLength { expected, actual })
-                    if expected == EMIT_MINT_COMBINED_LEN && actual == proof.len()
-            ),
-            "tail {tail_words} words must fail the exact-length gate"
-        );
-    }
-    let mut unaligned = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-    unaligned.push(0);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&unaligned),
-        Err(ZkProofError::WrongCombinedProofLength { .. })
-    ));
-}
-
-#[test]
-fn emit_mint_rejects_non_canonical_field_word() {
-    let modulus_bytes: [u8; 32] =
-        alloy_primitives::hex!("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
-    for slot in [1usize, 2, 3, 7] {
-        let mut words = valid_emit_words();
-        words[slot] = modulus_bytes;
-        let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-        assert!(matches!(
-            decode_emit_mint_public_inputs(&proof),
-            Err(ZkProofError::NonCanonicalPublicInput(index)) if index == slot
-        ));
-    }
-}
-
-#[test]
-fn emit_mint_rejects_invalid_chain_id_word() {
-    let mut words = valid_emit_words();
-    words[0][0] = 1;
-    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::InvalidEmitChainId)
-    ));
-}
-
-#[test]
-fn emit_mint_rejects_owner_field_above_the_160_bit_bound() {
-    // `2^160` is the first value above the address range and still a
-    // canonical field element: byte 11 (the thirteenth big-endian byte) set
-    // with the rest of the high half zero.
-    let mut words = valid_emit_words();
-    words[3][11] = 1;
-    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::InvalidEmitOwnerField)
-    ));
-}
-
-#[test]
-fn emit_mint_rejects_non_canonical_u256_limbs() {
-    let mut low_overflow = valid_emit_words();
-    low_overflow[4] = u128_word(1u128 << 120);
-    let proof = combined_emit_proof(&low_overflow, EMIT_MINT_PROOF_WORDS);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::InvalidEmitMintLimb(0))
-    ));
-
-    let mut top_overflow = valid_emit_words();
-    top_overflow[6] = u128_word(1u128 << 16);
-    let proof = combined_emit_proof(&top_overflow, EMIT_MINT_PROOF_WORDS);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::InvalidEmitMintLimb(2))
-    ));
-}
-
-#[test]
-fn emit_mint_accepts_units_across_the_full_u256_range() {
-    use outbe_zk_canonical::u256;
-
-    let expected = u256::to_limbs(U256::MAX);
-    let mut words = valid_emit_words();
-    for (word, limb) in words[4..7].iter_mut().zip(expected) {
-        *word = u128_word(limb);
-    }
-    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
-    assert_eq!(
-        decode_emit_mint_public_inputs(&proof).unwrap().mint_units,
-        expected
-    );
-}
-
-#[test]
-fn emit_mint_rejects_short_header() {
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&[0u8; 3]),
-        Err(ZkProofError::CombinedProofTooShort(3))
-    ));
-}
-
-#[test]
-fn emit_mint_combined_wrong_count_text_is_circuit_generic() {
-    let mut proof = combined_emit_proof(&valid_emit_words(), 1);
-    proof[..4].copy_from_slice(&7u32.to_be_bytes());
-    let error = decode_emit_mint_public_inputs(&proof)
-        .unwrap_err()
-        .to_string();
-    assert_eq!(
-        error,
-        "zk_verify: combined proof public input count is 7, expected 8"
-    );
-}
-
 /// Real prove→verify round trip through the pinned Emit mint VK. The proof
 /// must verify as submitted and stop verifying when any public input word is
 /// changed, binding the combined wire to the frozen circuit identity.
@@ -569,7 +305,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         alloy_primitives::hex!("6105e42a708334bce001960c942c2cfcce78aea59016d0fa5df015bab41cc84c")
     );
 
-    crate::verify::init_crs().expect("CRS init");
+    outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     type Field = <OutbeV1 as Suite>::Field;
 
     let h2 = |left: Field, right: Field| -> Field {
@@ -672,8 +408,12 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         combined.extend_from_slice(word);
     }
 
-    assert!(
-        verify_emit_mint(&combined).expect("emit verify executes"),
+    let encoded = abi_encode(&EmitMint::CIRCUIT_HASH, &combined);
+    let mut one = [0u8; 32];
+    one[31] = 1;
+    assert_eq!(
+        zk_verify(&encoded).expect("emit verify executes"),
+        one,
         "real emit mint proof must verify through the pinned VK"
     );
 
@@ -683,8 +423,10 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         let mut tampered = combined.clone();
         let start = 4 + slot * 32;
         tampered[start + 31] ^= 1;
-        assert!(
-            !verify_emit_mint(&tampered).expect("tampered emit verify executes"),
+        let encoded = abi_encode(&EmitMint::CIRCUIT_HASH, &tampered);
+        assert_eq!(
+            zk_verify(&encoded).expect("tampered emit verify executes"),
+            [0u8; 32],
             "mutating public word {slot} must invalidate the proof"
         );
     }

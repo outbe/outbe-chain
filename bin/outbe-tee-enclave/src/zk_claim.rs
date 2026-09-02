@@ -16,10 +16,9 @@ use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_protocol::protocol::entity::Entity as EntityTrait;
-use outbe_protocol::OutbeV1;
+use outbe_protocol::{OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
-use outbe_tee::zk_claim::tribute_binding;
 
 use crate::compute::CanonicalAmount;
 use crate::payload::TributeInputPayload;
@@ -71,7 +70,7 @@ pub(crate) fn derive_expected_hashes(
     };
     let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft)
         .map_err(|error| format!("invalid canonical TributeDraft: {error}"))?;
-    let binding_hash = tribute_binding(&offer.owner.into_array(), &id.0, context.chain_id)
+    let binding_hash = OutbeV1::binding(&offer.owner.into_array(), id.as_ref(), context.chain_id)
         .map_err(|error| format!("failed to derive binding_hash: {error}"))?;
 
     Ok(Some(TributeZkExpectedHashes {

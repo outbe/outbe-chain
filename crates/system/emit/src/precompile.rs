@@ -22,7 +22,7 @@ pub const EMIT_BURN_BASE_GAS: u64 = 530_000;
 
 /// Base gas for `mint`: one UltraHonkKeccak verification plus chain-ID
 /// absorption, the zero ladder, and a worst-case change append.
-pub const EMIT_MINT_BASE_GAS: u64 = outbe_zkproof::constants::ZK_VERIFY_GAS + 517_500;
+pub const EMIT_MINT_BASE_GAS: u64 = outbe_primitives::storage::gas::ZK_VERIFY_GAS + 517_500;
 
 sol! {
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -40,7 +40,7 @@ pub fn dispatch(
     // refuses value here, so only `burn` can carry it.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     // Alloy performs all ABI framing validation; the frozen circuit's exact
-    // proof length is enforced by the zkproof decoder (`EMIT_MINT_COMBINED_LEN`).
+    // proof length is enforced by the canonical layout decoder (`COMBINED_LEN`).
     dispatch_call(data, IEmit::IEmitCalls::abi_decode, |call| {
         use IEmit::IEmitCalls::*;
         match call {

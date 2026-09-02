@@ -12,7 +12,11 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zkproof::{decode_paynote_public_inputs, verify_paynote, ZkProofError};
+use outbe_zk_backend::barretenberg::verify_circuit;
+use outbe_zk_canonical::noir::paynote::Paynote;
+use outbe_zk_canonical::paynote::{
+    decode_public_inputs as decode_paynote_public_inputs, PublicInputs as PayNotePublicInputs,
+};
 
 use crate::errors::PayNoteError;
 use crate::hash::{
@@ -200,7 +204,7 @@ fn root_after_word(root: Field) -> B256 {
 /// spender.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
-    let claim = decode_paynote_public_inputs(proof)
+    let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
         .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;
@@ -245,21 +249,14 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::NullifierSpent.into());
     }
 
-    match verify_paynote(proof) {
+    match verify_circuit::<Paynote>(proof) {
         Ok(true) => {}
         Ok(false) => return Err(PayNoteError::InvalidInput("proof is invalid".into()).into()),
-        // CRS initialization is the distinguishable infrastructure signal and
-        // stays fatal.
-        Err(ZkProofError::CrsInitialization(message)) => {
-            return Err(PayNoteError::VerifierUnavailable(message).into())
-        }
-        // Every other verifier error is raised while verifying
-        // attacker-controllable material and fails closed as a user revert.
-        // The backend cannot distinguish rejected input from a genuine FFI
-        // failure at this seam; promoting attacker input to a fatal error
-        // would be an unprivileged consensus-visible DoS.
         Err(error) => {
-            return Err(PayNoteError::InvalidInput(format!("proof is malformed: {error}")).into())
+            return Err(PayNoteError::InvalidInput(format!(
+                "proof is malformed: zk verification backend failed: {error}"
+            ))
+            .into())
         }
     }
 

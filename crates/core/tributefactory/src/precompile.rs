@@ -26,7 +26,7 @@ pub fn base_gas(input: &[u8]) -> u64 {
         return PRECOMPILE_BASE_GAS;
     };
     if selector == ITributeFactory::offerTributeCall::SELECTOR {
-        outbe_zkproof::constants::ZK_VERIFY_GAS
+        outbe_primitives::storage::gas::ZK_VERIFY_GAS
     } else {
         PRECOMPILE_BASE_GAS
     }
@@ -83,7 +83,7 @@ mod gas_tests {
     fn offer_tribute_charges_zk_verification_base_gas() {
         assert_eq!(
             base_gas(&ITributeFactory::offerTributeCall::SELECTOR),
-            outbe_zkproof::constants::ZK_VERIFY_GAS
+            outbe_primitives::storage::gas::ZK_VERIFY_GAS
         );
         assert_eq!(base_gas(&[]), PRECOMPILE_BASE_GAS);
         assert_eq!(base_gas(&[0xde, 0xad, 0xbe, 0xef]), PRECOMPILE_BASE_GAS);

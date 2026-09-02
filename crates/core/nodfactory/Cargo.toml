@@ -14,7 +14,6 @@ outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-paynote.workspace = true
-outbe-zkproof.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
