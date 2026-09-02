@@ -59,7 +59,6 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
-      RUSTC_WRAPPER: "sccache"
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain is reachable
       # regardless of HOME, but Swatinem/rust-cache saves and restores the Cargo
       # directories under HOME. Point CARGO_HOME back inside the container's HOME
@@ -88,22 +87,31 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
     timeout-minutes: 30
     env:
-      RUSTC_WRAPPER: "sccache"
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo llvm-cov --workspace --cobertura --output-path cobertura.xml
-      - uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: cobertura.xml
-          format: markdown
-          output: both
-          badge: true
-      - name: Coverage to step summary
-        run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
+      - name: Install LLVM coverage tools
+        run: rustup component add llvm-tools-preview --toolchain 1.96.0-x86_64-unknown-linux-gnu
+      - name: Run tests with coverage
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --no-report
+      - name: Render coverage summary
+        run: |
+          cargo llvm-cov report --json --summary-only --output-path coverage-summary.json
+          jq -r '
+            .data[0].totals as $totals |
+            "## Code coverage\n\n" +
+            "| Metric | Covered | Total | Coverage |\n" +
+            "|---|---:|---:|---:|\n" +
+            "| Lines | \($totals.lines.covered) | \($totals.lines.count) | \($totals.lines.percent)% |\n" +
+            "| Functions | \($totals.functions.covered) | \($totals.functions.count) | \($totals.functions.percent)% |\n" +
+            "| Regions | \($totals.regions.covered) | \($totals.regions.count) | \($totals.regions.percent)% |\n" +
+            "| Branches | \($totals.branches.covered) | \($totals.branches.count) | \($totals.branches.percent)% |"
+          ' coverage-summary.json | tee code-coverage-results.md >> "$GITHUB_STEP_SUMMARY"
       - name: Coverage PR comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
@@ -122,7 +130,6 @@ jobs:
       # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
       # Point it back inside HOME so the cache is what the build reads.
       CARGO_HOME: /github/home/.cargo
-      RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
@@ -144,7 +151,6 @@ jobs:
       # regardless of HOME; Swatinem/rust-cache saves and restores under HOME.
       # Point it back inside HOME so the cache is what the build reads.
       CARGO_HOME: /github/home/.cargo
-      RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -280,12 +286,15 @@ jobs:
         with:
           fetch-depth: 0 # cog reads the full history + tags
           persist-credentials: false
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: mise install cocogitto
       - name: Validate PR commits (Conventional Commits)
         run: >-
           mise exec -- cog check --ignore-merge-commits
           "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
       - name: Preview bump
+        shell: bash
         run: |
           set -euo pipefail
           # Neutralise cog.toml's branch_whitelist for this read-only preview so
@@ -318,6 +327,8 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }} # PAT in the ruleset bypass -> push to protected main + trigger release.yml
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: mise install cocogitto
       - name: Configure git identity
         run: |
@@ -327,6 +338,7 @@ jobs:
         run: mise exec -- cog check --ignore-merge-commits "HEAD^..HEAD"
       - name: Cocogitto bump
         id: bump
+        shell: bash
         run: |
           set -euo pipefail
           # Neutralise branch_whitelist: cog doesn't see the CI checkout as the

@@ -145,7 +145,9 @@ impl SgxReleaseNetwork {
         let network = match spec.network.as_str() {
             "testnet" => Self::Testnet,
             "mainnet" => Self::Mainnet,
-            _ => bail!("unsupported SGX release network {}", spec.network),
+            _ => {
+                bail!("unsupported SGX release network {}", spec.network);
+            }
         };
         if spec.chain_id != network.chain_id()
             || spec.network_name != network.chain_name()

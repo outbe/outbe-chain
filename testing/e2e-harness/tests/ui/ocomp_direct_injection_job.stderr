@@ -1,5 +1,0 @@
-error[E0599]: no associated function or constant named `inject_job` found for struct `OcompTopology` in the current scope
- --> tests/ui/ocomp_direct_injection_job.rs:4:67
-  |
-4 |     let inject: fn(&mut OcompTopology, [u8; 32]) = OcompTopology::inject_job;
-  |                                                                   ^^^^^^^^^^ associated function or constant not found in `OcompTopology`

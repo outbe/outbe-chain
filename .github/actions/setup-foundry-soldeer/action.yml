@@ -13,6 +13,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Trust the container checkout
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
     - name: Restore soldeer dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}

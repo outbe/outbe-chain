@@ -175,12 +175,10 @@ contract AuctionTest is Test {
 
         // Protocol-scale lock converted into 18-decimal WCOEN.
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)),
-            uint256(30) * PROMIS_LOAD_MINOR * 80 / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / SCALE_1E6 * 1e12
         );
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba2)),
-            uint256(40) * PROMIS_LOAD_MINOR * 70 / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / SCALE_1E6 * 1e12
         );
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(worldwideDay);
@@ -384,8 +382,7 @@ contract AuctionTest is Test {
 
         assertTrue(auction.revealedBidsByBidder(worldwideDay, iba1));
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)),
-            uint256(qty) * PROMIS_LOAD_MINOR * rate / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / SCALE_1E6 * 1e12
         );
     }
 

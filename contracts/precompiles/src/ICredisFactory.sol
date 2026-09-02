@@ -44,12 +44,10 @@ interface ICredisFactory {
     ///        not denominate the position.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
-    function requestCredis(
-        address smartAccount,
-        bytes32 pledgeHandle,
-        bytes32 spendAuth,
-        uint16 referenceCurrency
-    ) external payable returns (uint256 positionId, uint256 amountStables);
+    function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth, uint16 referenceCurrency)
+        external
+        payable
+        returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.

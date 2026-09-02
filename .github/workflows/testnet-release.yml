@@ -31,7 +31,6 @@ concurrency:
 env:
   IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/outbe-tee-enclave-testnet
   RELEASE_TAG: ${{ inputs.release_tag }}
-  TESTNET_SEEDED_GENESIS: ${{ runner.temp }}/release-inputs/testnet-seeded-genesis.json
 
 jobs:
   build-and-compare:
@@ -86,6 +85,7 @@ jobs:
           OUTBE_GENESIS_URL: ${{ inputs.seeded_genesis_url }}
         run: |
           set -euo pipefail
+          TESTNET_SEEDED_GENESIS="${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json"
           [[ "${OUTBE_GENESIS_URL}" == https://* ]] || {
             echo "Testnet genesis URL must use HTTPS" >&2
             exit 2
@@ -130,6 +130,7 @@ jobs:
       - name: Prepare and compare two unsigned Gramine bundles
         run: |
           set -euo pipefail
+          TESTNET_SEEDED_GENESIS="${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json"
           cargo xtask release sgx prepare \
             --network testnet \
             --genesis "${TESTNET_SEEDED_GENESIS}" \
@@ -213,6 +214,7 @@ jobs:
           TESTNET_SGX_SIGNING_KEY_B64: ${{ secrets.TESTNET_SGX_SIGNING_KEY_B64 }}
         run: |
           set -euo pipefail
+          TESTNET_SEEDED_GENESIS="${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json"
           umask 077
           cleanup_key() {
             shred -u "${RUNNER_TEMP}/testnet-sgx-key.pem" 2>/dev/null \

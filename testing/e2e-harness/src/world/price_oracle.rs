@@ -72,7 +72,7 @@ struct MockResponse<'a> {
 
 fn mock_response(path: &str, symbols: &str, book: &PriceBook) -> Result<String> {
     if symbols != COEN_USD_SYMBOL {
-        bail!("unsupported mock price symbols `{symbols}`")
+        bail!("unsupported mock price symbols `{symbols}`");
     }
     let response = match path {
         "/api/tickers" => MockResponse {
@@ -85,7 +85,9 @@ fn mock_response(path: &str, symbols: &str, book: &PriceBook) -> Result<String> 
         // An empty candle set deliberately exercises the production provider's
         // documented ticker-VWAP fallback.
         "/api/candles" => MockResponse { data: Vec::new() },
-        other => bail!("unsupported mock price path `{other}`"),
+        other => {
+            bail!("unsupported mock price path `{other}`");
+        }
     };
     serde_json::to_string(&response).map_err(Into::into)
 }
@@ -153,7 +155,7 @@ impl MockPriceServer {
 
     fn publish(&self, price: &str, volume: &str) -> Result<u64> {
         if price.is_empty() || volume.is_empty() {
-            bail!("controlled price and volume must be non-empty")
+            bail!("controlled price and volume must be non-empty");
         }
         let mut book = self
             .state
@@ -211,7 +213,23 @@ fn serve_mock_prices(listener: TcpListener, state: &MockServerState) {
 fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = [0_u8; 8_192];
-    let size = stream.read(&mut request)?;
+    let mut size = 0;
+    loop {
+        if size == request.len() {
+            bail!("mock HTTP request headers exceed {} bytes", request.len());
+        }
+        let read = stream.read(&mut request[size..])?;
+        if read == 0 {
+            bail!("mock HTTP request ended before its headers were complete");
+        }
+        size += read;
+        if request[..size]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n")
+        {
+            break;
+        }
+    }
     let request =
         std::str::from_utf8(&request[..size]).wrap_err("mock HTTP request is not UTF-8")?;
     let target = request
@@ -284,7 +302,7 @@ impl PriceOracleTopology {
         vote_period: u64,
     ) -> Result<()> {
         if self.feeder.is_some() {
-            bail!("price feeder is already running")
+            bail!("price feeder is already running");
         }
         if self.mock.is_none() {
             let book = PriceBook {
@@ -299,7 +317,7 @@ impl PriceOracleTopology {
             .map(MockPriceServer::book)
             .is_some_and(|book| book.price != quote.price || book.volume != quote.volume)
         {
-            bail!("price mock generation changed during one feeder acceptance window")
+            bail!("price mock generation changed during one feeder acceptance window");
         }
 
         let directory = self.cfg.dir.join("price-oracle");
@@ -351,7 +369,7 @@ impl PriceOracleTopology {
                 bail!(
                     "price feeder exited during startup; see {}",
                     log_path.display()
-                )
+                );
             }
             let started = log_suffix_contains(&log_path, log_start, "starting outbe-feeder");
             if started {
@@ -359,7 +377,7 @@ impl PriceOracleTopology {
             }
             if Instant::now() >= deadline {
                 let _ = fs::remove_file(&config_path);
-                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}")
+                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}");
             }
             thread::sleep(Duration::from_millis(50));
         }
@@ -384,10 +402,10 @@ impl PriceOracleTopology {
 
     pub fn ensure_feeder_alive(&mut self) -> Result<()> {
         let Some(feeder) = self.feeder.as_mut() else {
-            bail!("price feeder is not running")
+            bail!("price feeder is not running");
         };
         if feeder.exited() {
-            bail!("owned price feeder exited")
+            bail!("owned price feeder exited");
         } else {
             Ok(())
         }
@@ -413,7 +431,7 @@ impl PriceOracleTopology {
 
     pub fn publish_quote(&mut self, price: &str, volume: &str) -> Result<u64> {
         if self.feeder.is_none() {
-            bail!("price feeder must be running before changing the controlled quote")
+            bail!("price feeder must be running before changing the controlled quote");
         }
         let mock = self
             .mock
@@ -621,7 +639,7 @@ mod tests {
             volume: "4.000000".into(),
         }) {
             Ok(server) => server,
-            Err(error) if error.to_string().contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
@@ -642,7 +660,7 @@ mod tests {
             volume: "4.000000".into(),
         }) {
             Ok(server) => server,
-            Err(error) if error.to_string().contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
 
@@ -659,9 +677,21 @@ mod tests {
             }
         );
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
-        assert!(ticker
-            .contains(r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#));
+        assert!(
+            ticker.contains(
+                r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#
+            ),
+            "unexpected ticker response: {ticker:?}"
+        );
         server.stop();
+    }
+
+    fn bind_permission_denied(error: &eyre::Report) -> bool {
+        error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        })
     }
 
     fn raw_get(addr: SocketAddr, target: &str) -> String {

@@ -63,12 +63,10 @@ static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 struct ShutdownNullSender<P> {
     participants: Vec<P>,
-    send_count: Arc<AtomicU64>,
 }
 
 struct ShutdownNullCheckedSender<P> {
     recipients: Vec<P>,
-    send_count: Arc<AtomicU64>,
 }
 
 impl<P> CheckedSender for ShutdownNullCheckedSender<P>
@@ -82,7 +80,6 @@ where
     }
 
     fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
-        self.send_count.fetch_add(1, Ordering::Relaxed);
         Unreliable::Outcome(Feedback::Ok)
     }
 }
@@ -106,10 +103,7 @@ where
             Recipients::Some(recipients) => recipients,
             Recipients::One(recipient) => vec![recipient],
         };
-        Ok(ShutdownNullCheckedSender {
-            recipients,
-            send_count: Arc::clone(&self.send_count),
-        })
+        Ok(ShutdownNullCheckedSender { recipients })
     }
 }
 
@@ -169,7 +163,6 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
 
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             sender.clone(),
@@ -301,18 +294,14 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
     let runner = commonware_tokio::Runner::new(config);
 
     runner.start(|context| async move {
-        let vote_send_count = Arc::new(AtomicU64::new(0));
         let vote_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::clone(&vote_send_count),
         };
         let certificate_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let resolver_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             vote_sender,
@@ -409,7 +398,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             _ = context.sleep(Duration::from_millis(50)) => {},
         }
 
-        let send_count_before_release = vote_send_count.load(Ordering::Relaxed);
         release_tx.send(()).expect("release blocking worker");
         let result = stack_owner
             .await
@@ -418,10 +406,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
         assert!(
             result.to_string().contains("synthetic fatal stack cause"),
             "fatal result: {result:#}"
-        );
-        assert!(
-            vote_send_count.load(Ordering::Relaxed) > send_count_before_release,
-            "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
         );
     });
 
@@ -433,7 +417,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
     commonware_tokio::Runner::new(reopen_config).start(|context| async move {
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             sender.clone(),

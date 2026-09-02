@@ -1113,7 +1113,7 @@ fn journal_successor_is_exact(current: &JobRegistryV1, pending: &JobRegistryV1) 
     current.records.iter().all(|(key, record)| {
         *key == pending.last_updated
             || pending.records.get(key) == Some(record)
-            || (pending.records.get(key).is_none()
+            || (!pending.records.contains_key(key)
                 && matches!(record.state, PinStateV1::Released { .. }))
     }) && pending
         .records

@@ -26,7 +26,6 @@ outbe-validatorset.workspace = true
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
-reth-chain-state.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-consensus-common.workspace = true
 reth-node-builder.workspace = true

@@ -27,12 +27,7 @@ interface IValidatorSet {
 
     /// Emitted when an OCOMP recovery deadline is resolved. outcome:
     /// 1 = restored, 2 = jailed, 3 = lifecycle already non-active.
-    event OcompRecoveryResolved(
-        address indexed validator,
-        uint64 recoveryDeadline,
-        uint256 bondedStake,
-        uint8 outcome
-    );
+    event OcompRecoveryResolved(address indexed validator, uint64 recoveryDeadline, uint256 bondedStake, uint8 outcome);
 
     /// Emitted on epoch transition.
     event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);

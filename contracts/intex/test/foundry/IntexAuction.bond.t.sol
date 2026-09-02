@@ -41,8 +41,7 @@ contract IntexAuctionBondTest is Test {
     // Protocol-scale basis/rate cross into 18-decimal WCOEN, well below BOND.
     uint16 internal constant QTY = 1;
     uint32 internal constant RATE = 1;
-    uint128 internal constant LOCK_AMOUNT =
-        uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / 1_000_000 * 1e12);
+    uint128 internal constant LOCK_AMOUNT = uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / 1_000_000 * 1e12);
 
     uint32 constant COMMIT_OFFSET = 100;
     uint32 constant REVEAL_OFFSET = 200;

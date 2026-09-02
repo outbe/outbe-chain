@@ -271,13 +271,13 @@ impl TeeLeaseGuardGateV1 {
                 Ok(())
             }
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
-                eyre::bail!("TEE admission anchor unexpectedly has bootstrap-pending TEE state")
+                eyre::bail!("TEE admission anchor unexpectedly has bootstrap-pending TEE state");
             }
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
                 eyre::bail!(
                     "TEE admission anchor rejected the local identity: {}",
                     local_tee_rejection_message(reason)
-                )
+                );
             }
         }
     }
@@ -300,7 +300,7 @@ fn require_validator_tee_recovery_complete_v1(
         anchor.finalized_height,
         anchor.finalized_hash,
         node_data_dir.display(),
-    )
+    );
 }
 
 fn validator_admission_anchor_from_durable_v1(
@@ -2201,10 +2201,10 @@ fn run_node() -> eyre::Result<()> {
             {
                 None => {}
                 Some(candidate) if candidate.node_id.is_none() => {
-                    eyre::bail!("active validator has no Radicle NodeId binding")
+                    eyre::bail!("active validator has no Radicle NodeId binding");
                 }
                 Some(candidate) if candidate.node_id != Some(sidecar.node_id) => {
-                    eyre::bail!("local Radicle NodeId does not match finalized validator binding")
+                    eyre::bail!("local Radicle NodeId does not match finalized validator binding");
                 }
                 Some(_) => publisher.mark_startup_ready(),
             }
