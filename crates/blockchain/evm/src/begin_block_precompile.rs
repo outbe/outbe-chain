@@ -1153,7 +1153,7 @@ mod tests {
     use alloy_primitives::{address, keccak256, B256};
     use outbe_primitives::{consensus::ReshareResult, storage::hashmap::HashMapStorageProvider};
 
-    const CHAIN_ID: u64 = 2026;
+    const CHAIN_ID: u64 = outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");

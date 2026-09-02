@@ -769,13 +769,15 @@ fn plan_missing_committed_relay(
 ) -> Result<MissingCommittedRelayPlan> {
     match (resumes_finalized_target, offer_key_state) {
         (_, JoinOfferKeyState::ReadyMismatch) => {
-            eyre::bail!("resident permanent offer key does not match finalized TeeRegistry")
+            eyre::bail!("resident permanent offer key does not match finalized TeeRegistry");
         }
         (false, _) => Ok(MissingCommittedRelayPlan::ConstructAndPersist),
         (true, JoinOfferKeyState::ReadyExact) => Ok(MissingCommittedRelayPlan::CleanupReadyExact),
-        (true, JoinOfferKeyState::Keyless) => eyre::bail!(
-            "finalized committed binding has no durable pre-relay transaction checkpoint"
-        ),
+        (true, JoinOfferKeyState::Keyless) => {
+            eyre::bail!(
+                "finalized committed binding has no durable pre-relay transaction checkpoint"
+            );
+        }
     }
 }
 
@@ -785,7 +787,7 @@ async fn relay_exact_join_transaction(
     resumes_finalized_target: bool,
 ) -> Result<String> {
     if keccak256(&relay.raw_transaction) != relay.transaction_hash {
-        eyre::bail!("durable join relay transaction hash mismatch")
+        eyre::bail!("durable join relay transaction hash mismatch");
     }
     let encoded_hash = format!("0x{}", hex::encode(relay.transaction_hash));
     if resumes_finalized_target {
@@ -1050,13 +1052,17 @@ async fn run_finalized_admission_recovery_v1(
                     )
                 })? {
                     JoinOfferKeyState::ReadyExact => return Ok(io.expected_offer_key()),
-                    JoinOfferKeyState::ReadyMismatch => eyre::bail!(
-                        "resident permanent offer key does not match finalized TeeRegistry after reconnect"
-                    ),
+                    JoinOfferKeyState::ReadyMismatch => {
+                        eyre::bail!(
+                            "resident permanent offer key does not match finalized TeeRegistry after reconnect"
+                        );
+                    }
                     JoinOfferKeyState::Keyless if uploads == 1 => continue,
-                    JoinOfferKeyState::Keyless => eyre::bail!(
-                        "finalized-admission replay exhausted after a second connection fault; authenticated enclave remains keyless"
-                    ),
+                    JoinOfferKeyState::Keyless => {
+                        eyre::bail!(
+                            "finalized-admission replay exhausted after a second connection fault; authenticated enclave remains keyless"
+                        );
+                    }
                 }
             }
         }
@@ -1329,7 +1335,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 .map_err(|error| eyre::eyre!("inspect committed join checkpoint: {error}"))?;
             match (candidate, committed) {
                 (Some(_), Some(_)) => {
-                    eyre::bail!("candidate and committed tee join checkpoints coexist")
+                    eyre::bail!("candidate and committed tee join checkpoints coexist");
                 }
                 (Some(value), None) => Some(DurableJoinSubmissionV1::Candidate(value)),
                 (None, Some(value)) => Some(DurableJoinSubmissionV1::Committed(value)),
@@ -1405,9 +1411,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                         println!("[ok] exact tee join is already finalized and locally committed");
                         return Ok(());
                     }
-                    other => eyre::bail!(
-                        "finalized tee join is not durably ready in the committed enclave: {other:?}"
-                    ),
+                    other => {
+                        eyre::bail!(
+                            "finalized tee join is not durably ready in the committed enclave: {other:?}"
+                        );
+                    }
                 }
             }
             ensure_joinable_binding(Some(binding), finalized.schedule.finalized_timestamp)?;
@@ -1808,9 +1816,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                             recipient_x25519_pub,
                             ..
                         } if recipient_x25519_pub == expected_offer_pub => {}
-                        other => eyre::bail!(
-                            "cleanup recovery did not reopen the exact permanent offer key: {other:?}"
-                        ),
+                        other => {
+                            eyre::bail!(
+                                "cleanup recovery did not reopen the exact permanent offer key: {other:?}"
+                            );
+                        }
                     }
                     persist_authorized_join_admission_anchor_v1(
                         node_data_dir,
@@ -1970,7 +1980,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             AttestationMode::GramineDirectDev => {
                 eyre::bail!(
                     "post-bootstrap enclave onboarding requires DcapRequired; GramineDirectDev networks must be restarted from a new founding ceremony"
-                )
+                );
             }
         }
     } else {
@@ -2111,7 +2121,7 @@ async fn load_finalized_admission_anchor_v1(
         }
     }
 
-    eyre::bail!("finalized history has no epoch-0 BoundaryOutcome")
+    eyre::bail!("finalized history has no epoch-0 BoundaryOutcome");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2295,7 +2305,7 @@ async fn await_finalized_join_target(
         match view.binding.as_ref() {
             Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(view),
             Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
-                eyre::bail!("finalized Registry contains a competing live join binding")
+                eyre::bail!("finalized Registry contains a competing live join binding");
             }
             _ => {}
         }

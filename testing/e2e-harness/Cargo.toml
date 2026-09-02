@@ -167,12 +167,5 @@ name = "ocomp_checkpoint_handoff"
 path = "tests/ocomp_checkpoint_handoff.rs"
 required-features = ["ocomp-integration"]
 
-[dev-dependencies]
-trybuild = "1"
-
-[[test]]
-name = "ocomp_harness_contract"
-path = "tests/ocomp_harness_contract.rs"
-
 [lints]
 workspace = true

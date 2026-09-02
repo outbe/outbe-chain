@@ -26,6 +26,11 @@ outbe-protocol = { workspace = true, optional = true }
 [dev-dependencies]
 outbe-paynote = { path = ".", features = ["test-utils"] }
 
+# The self dev-dependency activates `test-utils` for this crate's unit tests;
+# cargo-udeps cannot observe dependencies used only through that feature edge.
+[package.metadata.cargo-udeps.ignore]
+development = ["outbe-paynote"]
+
 [features]
 default = []
 test-utils = ["dep:outbe-zk-backend", "dep:outbe-zk-canonical", "dep:outbe-protocol"]

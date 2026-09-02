@@ -344,7 +344,9 @@ fn read_config(path: &Path) -> Result<Map<String, Value>> {
         .wrap_err_with(|| format!("{} is not valid JSON", path.display()))?;
     match value {
         Value::Object(map) => Ok(map),
-        _ => bail!("{} must contain a JSON object", path.display()),
+        _ => {
+            bail!("{} must contain a JSON object", path.display());
+        }
     }
 }
 

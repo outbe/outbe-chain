@@ -282,7 +282,6 @@ impl FinalizedProjectionSink {
             .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))
     }
 
-    #[must_use]
     pub fn runtime_recovery_handle(&self) -> eyre::Result<ProjectionRuntimeRecoveryHandle> {
         Ok(ProjectionRuntimeRecoveryHandle {
             writer: self.runtime.writer.clone(),
