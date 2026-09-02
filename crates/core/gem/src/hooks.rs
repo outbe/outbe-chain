@@ -12,8 +12,7 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN,
-    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -185,6 +184,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = gem.call_currency_cursor.read()? as usize % currencies.len();
+    // The window is seconds; the daily scan needs the day count.
+    let window_days = crate::config::read_from(&gem)?.call_window / 86_400;
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
@@ -211,7 +212,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             gem.call_scan_cursor.write(&iso_code, 0)?;
             continue;
         }
-        let index = window_for(&oracle, &mut windows, iso_code, pinned_day)?;
+        let index = window_for(&oracle, &mut windows, iso_code, pinned_day, window_days)?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
@@ -342,6 +343,7 @@ fn window_for(
     cache: &mut Vec<(u16, VwapWindow)>,
     iso_code: u16,
     last_closed_day: u32,
+    window_days: u32,
 ) -> Result<usize> {
     if let Some(index) = cache.iter().position(|(code, _)| *code == iso_code) {
         return Ok(index);
@@ -349,8 +351,6 @@ fn window_for(
     let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     let mut window = Vec::new();
     if pair_index != 0 {
-        // CALL_WINDOW is stored in seconds; the daily scan needs the day count.
-        let window_days = CALL_WINDOW / 86_400;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

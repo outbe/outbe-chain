@@ -24,6 +24,9 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+# Shorten the DEV profile's wall-clock waits so an e2e run can sit them out.
+# Never enabled in a release build.
+e2e-test = []
 
 [lints]
 workspace = true
