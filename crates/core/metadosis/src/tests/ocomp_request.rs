@@ -1585,3 +1585,127 @@ fn request_observables(
             .unwrap(),
     }
 }
+
+#[test]
+fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    let scope = ExecutionScope::new();
+    let parent = TestParent::empty();
+    let wwd = outbe_common::WorldwideDay::new(2026_0709);
+    let block_number = 19;
+    let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
+    let owner = address!("7200000000000000000000000000000000000072");
+    // The day traded far below its emission ceiling: it issues its own nominal and no more.
+    let nominal = U256::from(100);
+    let day_limit = U256::from(1_000);
+    let mut profile = request_profile();
+    profile.chain_id = chain::CHAIN_ID;
+    provider.set_block_number(block_number);
+    provider.set_timestamp(U256::from(block_time));
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_active_ocomp_snapshot(storage.clone(), 5);
+        seed_ce_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+
+        outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+            .unwrap();
+        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
+            .unwrap();
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                wwd.start_timestamp(),
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        let scheduled = wwd.start_timestamp()
+            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
+            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
+            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
+        assert_eq!(
+            metadosis
+                .fixture_set_wwd_status_from_timestamp(wwd, scheduled)
+                .unwrap(),
+            status::READY
+        );
+        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
+        metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
+        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
+        metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
+        metadosis
+            .enqueue_ocomp_ready(
+                wwd,
+                block_number,
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap();
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.initialize_fresh_ocomp_profile().unwrap();
+        tribute.unseal_day(wwd).unwrap();
+        tribute
+            .issue(
+                &scope,
+                &parent,
+                &TributeData {
+                    tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
+                    owner,
+                    worldwide_day: wwd,
+                    issuance_amount_minor: nominal,
+                    issuance_currency: 840,
+                    nominal_amount_minor: nominal,
+                    reference_currency: 840,
+                    exclude_from_intex_issuance: false,
+                    tribute_price_minor: U256::from(2),
+                },
+            )
+            .unwrap();
+        tribute.seal_day(wwd).unwrap();
+        metadosis
+            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .unwrap();
+
+        end_block(storage.clone(), &scope).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
+            storage.clone(),
+        );
+        run_terminal_request(&ctx, &scope).unwrap();
+
+        let receipt = MetadosisContract::new(storage.clone())
+            .request_budget_receipt(wwd, &poc_schema_limits())
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.day_limit, day_limit);
+        assert_eq!(receipt.lysis_budget, U256::from(32));
+        assert_eq!(receipt.auction_base, U256::from(68));
+        assert_eq!(receipt.carry_over_credit, U256::from(900));
+
+        assert_eq!(
+            DesisContract::new(storage.clone())
+                .pending_supply_promis
+                .read(&wwd)
+                .unwrap(),
+            U256::from(68),
+            "the auction is briefed with the day's own nominal beyond the symbolic share"
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(900),
+            "the limit headroom the day never earned stays on the warehouse"
+        );
+    });
+}

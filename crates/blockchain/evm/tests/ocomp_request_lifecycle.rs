@@ -727,12 +727,17 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
                 .checked_sub(frozen.lysis_budget)
                 .unwrap()
         );
-        assert!(
-            frozen
-                .lysis_budget
-                .checked_add(frozen.auction_base)
-                .unwrap()
-                <= frozen.day_limit
+        let headroom = frozen
+            .day_limit
+            .checked_sub(frozen.lysis_budget)
+            .and_then(|rest| rest.checked_sub(frozen.auction_base))
+            .unwrap();
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            headroom,
+            "the limit above the day's own nominal stays on the warehouse"
         );
         assert!(!record.intent.frozen_metadosis_values.lysis_budget.is_zero());
         assert_ne!(
