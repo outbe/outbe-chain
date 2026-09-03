@@ -622,7 +622,8 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
         })
         .collect::<BTreeSet<_>>();
     ensure!(
-        source_rows.len() == quorum * 2
+        evidence.controlled_sources.len() == quorum * 2
+            && source_rows.len() == quorum * 2
             && validator_indexes.iter().all(|validator_index| {
                 source_rows.contains(&(
                     *validator_index,
@@ -649,8 +650,13 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
         .price
         .as_str();
     let final_rate = scale6_decimal_minor(final_price)?;
+    let update_validator_indexes = updates
+        .iter()
+        .map(|source| source.validator_index)
+        .collect::<BTreeSet<_>>();
     ensure!(
         updates.len() == quorum
+            && update_validator_indexes == validator_indexes
             && final_rate > 1_000_000
             && updates.iter().all(|source| {
                 validator_indexes.contains(&source.validator_index)
@@ -1644,6 +1650,11 @@ mod tests {
         assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
         scenario["price_oracle"]["canonical_publications"][3]["rate"] =
             serde_json::json!("1080001");
+
+        scenario["price_oracle"]["controlled_sources"][5]["validator_index"] = serde_json::json!(1);
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
+        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
+        scenario["price_oracle"]["controlled_sources"][5]["validator_index"] = serde_json::json!(2);
 
         scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]["status_changes"][0]
             ["new_status"] = serde_json::json!(2);
