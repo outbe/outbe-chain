@@ -860,13 +860,14 @@ class LaunchBundleTests(unittest.TestCase):
             _, _, output_dir = self.render(tmp)
             toml = (output_dir / "validator-0" / "feeder.toml").read_text()
             names = re.findall(r'name = "([^"]+)"', toml)
-            providers = re.findall(r'providers = \["([^"]+)"\]', toml)
+            providers = re.findall(r'provider = "([^"]+)"', toml)
             self.assertTrue(names and providers)
             for value in names + providers:
                 self.assertIn(value, known, f"{value} is not a provider the feeder knows")
             # And the two must agree, or the pair references a missing endpoint.
             self.assertEqual(set(names), set(providers))
             self.assertNotIn("chain_denom", toml)
+            self.assertNotIn("providers =", toml)
             self.assertNotIn("websocket =", toml)
 
     def test_exchange_feeder_emits_websocket_override_without_legacy_pair_fields(self):

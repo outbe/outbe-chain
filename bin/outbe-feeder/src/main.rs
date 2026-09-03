@@ -221,7 +221,7 @@ async fn run_feeder(config: FeederConfig) -> Result<()> {
             match prices {
                 Ok(aggregated) if !aggregated.is_empty() => {
                     // Build and submit vote
-                    let calldata = vote_builder::encode_vote(&aggregated, &config);
+                    let calldata = vote_builder::encode_vote(&aggregated);
 
                     // Decode calldata back and log exactly what goes on-chain
                     if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {

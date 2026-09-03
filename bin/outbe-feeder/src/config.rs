@@ -1,10 +1,11 @@
 //! TOML configuration for the price-feeder daemon.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use eyre::{Context, Result};
 use serde::Deserialize;
 
 use crate::fixed::FixedValue;
+use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::units::SCALE_1E18;
 
 /// Top-level feeder configuration.
@@ -79,9 +80,21 @@ pub struct OracleConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CurrencyPairConfig {
+    /// On-chain Oracle base asset: `COEN`, an ISO numeric code, or an address.
+    pub base: String,
+    /// On-chain Oracle quote asset: an ISO numeric code or an address.
+    pub quote: String,
+    /// External markets which are aggregated into this one Oracle observation.
+    pub sources: Vec<CurrencyPairSource>,
+}
+
+/// One provider-native market used to price an on-chain Oracle pair.
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CurrencyPairSource {
+    pub provider: String,
     pub base: String,
     pub quote: String,
-    pub providers: Vec<String>,
 }
 
 /// Optional REST/WebSocket endpoint overrides for a provider.
@@ -156,31 +169,75 @@ impl FeederConfig {
             ));
         }
 
-        // Each pair must have at least 1 provider
+        let mut oracle_pairs = std::collections::BTreeSet::new();
         for pair in &self.currency_pairs {
-            if pair.quote.eq_ignore_ascii_case("COEN") && is_iso_symbol(&pair.base) {
+            let base = parse_oracle_asset(&pair.base)?;
+            let quote = parse_oracle_asset(&pair.quote)?;
+            if base == quote {
+                return Err(eyre::eyre!(
+                    "Oracle pair {}/{} uses the same asset twice",
+                    pair.base,
+                    pair.quote
+                ));
+            }
+            if matches!(AssetType::from(base), AssetType::IsoCurrency(_))
+                && matches!(AssetType::from(quote), AssetType::Native)
+            {
                 return Err(eyre::eyre!(
                     "ISO/COEN pair {}/{} is invalid; configure COEN/ISO",
                     pair.base,
                     pair.quote
                 ));
             }
-            if pair.providers.is_empty() {
+            let unordered_key = if base < quote {
+                (base, quote)
+            } else {
+                (quote, base)
+            };
+            if !oracle_pairs.insert(unordered_key) {
                 return Err(eyre::eyre!(
-                    "currency pair {}/{} has no providers configured",
+                    "duplicate or inverse Oracle pair {}/{}",
                     pair.base,
                     pair.quote
                 ));
             }
-            // All provider names must be known
-            for provider in &pair.providers {
-                if !Self::KNOWN_PROVIDERS.contains(&provider.as_str()) {
+            if pair.sources.is_empty() {
+                return Err(eyre::eyre!(
+                    "currency pair {}/{} has no sources configured",
+                    pair.base,
+                    pair.quote
+                ));
+            }
+            let mut sources = std::collections::BTreeSet::new();
+            for source in &pair.sources {
+                if source.base.trim().is_empty() || source.quote.trim().is_empty() {
+                    return Err(eyre::eyre!(
+                        "provider source for {}/{} has an empty market asset",
+                        pair.base,
+                        pair.quote
+                    ));
+                }
+                if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str()) {
                     return Err(eyre::eyre!(
                         "unknown provider '{}' for pair {}/{}. Known: {:?}",
-                        provider,
+                        source.provider,
                         pair.base,
                         pair.quote,
                         Self::KNOWN_PROVIDERS
+                    ));
+                }
+                if !sources.insert((
+                    source.provider.as_str(),
+                    source.base.as_str(),
+                    source.quote.as_str(),
+                )) {
+                    return Err(eyre::eyre!(
+                        "duplicate provider source '{}' {}/{} for pair {}/{}",
+                        source.provider,
+                        source.base,
+                        source.quote,
+                        pair.base,
+                        pair.quote
                     ));
                 }
             }
@@ -240,10 +297,27 @@ impl FeederConfig {
     }
 }
 
-pub(crate) fn is_iso_symbol(value: &str) -> bool {
-    value
-        .parse::<u16>()
-        .is_ok_and(|code| (1..=999).contains(&code))
+impl CurrencyPairConfig {
+    pub(crate) fn oracle_pair(&self) -> Result<(Address, Address)> {
+        Ok((
+            parse_oracle_asset(&self.base)?,
+            parse_oracle_asset(&self.quote)?,
+        ))
+    }
+}
+
+fn parse_oracle_asset(symbol: &str) -> Result<Address> {
+    let text = symbol.trim();
+    if text.eq_ignore_ascii_case("COEN") {
+        return Ok(Address::ZERO);
+    }
+    if let Ok(code) = text.parse::<u16>() {
+        if (1..=999).contains(&code) {
+            return Ok(AssetType::IsoCurrency(code).into());
+        }
+    }
+    text.parse::<Address>()
+        .map_err(|_| eyre::eyre!("unknown on-chain Oracle asset '{symbol}'"))
 }
 
 #[cfg(test)]
@@ -269,6 +343,14 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             health: None,
+        }
+    }
+
+    fn source(provider: &str, base: &str, quote: &str) -> CurrencyPairSource {
+        CurrencyPairSource {
+            provider: provider.to_owned(),
+            base: base.to_owned(),
+            quote: quote.to_owned(),
         }
     }
 
@@ -298,12 +380,12 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_empty_providers() {
+    fn test_validate_rejects_empty_sources() {
         let mut cfg = minimal_config(2);
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            providers: vec![],
+            sources: vec![],
         });
         assert!(cfg.validate().is_err());
     }
@@ -314,7 +396,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            providers: vec!["nonexistent_exchange".to_string()],
+            sources: vec![source("nonexistent_exchange", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_err());
     }
@@ -325,7 +407,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            providers: vec!["mock".to_string()],
+            sources: vec![source("mock", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_ok());
     }
@@ -333,7 +415,15 @@ mod tests {
     #[test]
     fn currency_pair_rejects_removed_chain_denom() {
         let result = toml::from_str::<CurrencyPairConfig>(
-            "base = 'COEN'\nquote = '840'\nproviders = ['mock']\nchain_denom = 'unit'",
+            "base = 'COEN'\nquote = '840'\nchain_denom = 'unit'\n[[sources]]\nprovider = 'mock'\nbase = 'COEN'\nquote = 'USDT'",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn currency_pair_rejects_the_removed_providers_array() {
+        let result = toml::from_str::<CurrencyPairConfig>(
+            "base = 'COEN'\nquote = '840'\nproviders = ['mock']",
         );
         assert!(result.is_err());
     }
@@ -349,7 +439,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            providers: vec!["mock_http".to_string()],
+            sources: vec![source("mock_http", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_ok());
     }
@@ -403,7 +493,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "840".to_string(),
             quote: "COEN".to_string(),
-            providers: vec!["mock".to_string()],
+            sources: vec![source("mock", "USDT", "COEN")],
         });
         assert!(cfg.validate().unwrap_err().to_string().contains("COEN/ISO"));
 
@@ -411,8 +501,37 @@ mod tests {
         assert!(cfg.validate().unwrap_err().to_string().contains("COEN/ISO"));
 
         cfg.currency_pairs[0].base = "840".to_string();
-        cfg.currency_pairs[0].quote = "BTC".to_string();
+        cfg.currency_pairs[0].quote = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599".to_string();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_an_unknown_on_chain_symbol() {
+        let mut cfg = minimal_config(2);
+        cfg.currency_pairs.push(CurrencyPairConfig {
+            base: "BTC".to_string(),
+            quote: "840".to_string(),
+            sources: vec![source("binance", "BTC", "USDT")],
+        });
+
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("unknown on-chain Oracle asset 'BTC'"));
+    }
+
+    #[test]
+    fn multiple_provider_markets_feed_one_coen_iso_pair() {
+        let pair: CurrencyPairConfig = toml::from_str(
+            "base = 'COEN'\nquote = '840'\n\
+             [[sources]]\nprovider = 'binance'\nbase = 'COEN'\nquote = 'USDT'\n\
+             [[sources]]\nprovider = 'binance'\nbase = 'COEN'\nquote = 'USDC'\n\
+             [[sources]]\nprovider = 'coinbase'\nbase = 'COEN'\nquote = 'USDC'",
+        )
+        .unwrap();
+
+        assert_eq!(pair.sources.len(), 3);
+        assert_eq!(pair.sources[0], source("binance", "COEN", "USDT"));
+        assert_eq!(pair.oracle_pair().unwrap().0, Address::ZERO);
+        assert_eq!(AssetType::from(pair.oracle_pair().unwrap().1), AssetType::IsoCurrency(840));
     }
 
     #[test]
@@ -444,10 +563,10 @@ mod tests {
         assert_eq!(cfg.currency_pairs.len(), 1);
         assert_eq!(cfg.currency_pairs[0].base, "COEN");
         assert_eq!(cfg.currency_pairs[0].quote, "840");
-        assert!(cfg
-            .currency_pairs
-            .iter()
-            .all(|pair| pair.providers == vec!["mock_http".to_string()]));
+        assert!(cfg.currency_pairs.iter().all(|pair| {
+            pair.sources
+                == vec![source("mock_http", "COEN", "840")]
+        }));
         assert!(cfg.validate().is_ok());
     }
 }

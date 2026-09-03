@@ -107,9 +107,7 @@ impl ExchangeKind {
     }
 
     fn pair_route(self, base: &str, quote: &str) -> Option<PairRoute> {
-        if base.eq_ignore_ascii_case("COEN")
-            || quote.eq_ignore_ascii_case("COEN")
-            || base.starts_with("0x")
+        if base.starts_with("0x")
             || quote.starts_with("0x")
         {
             return None;
@@ -1223,6 +1221,21 @@ mod tests {
             .expect("USD/EUR uses the liquid EUR/USD direction and inverts it");
         assert_eq!(usd_eur.provider_symbol, "EURUSDT");
         assert!(usd_eur.inverted);
+    }
+
+    #[test]
+    fn coen_provider_symbols_are_valid_websocket_source_markets() {
+        let binance = ExchangeKind::Binance
+            .pair_route("COEN", "USDT")
+            .expect("COEN/USDT is an explicit provider market");
+        assert_eq!(binance.key, "COEN/USDT");
+        assert_eq!(binance.provider_symbol, "COENUSDT");
+        assert!(!binance.inverted);
+
+        let coinbase = ExchangeKind::Coinbase
+            .pair_route("COEN", "USDC")
+            .expect("COEN/USDC is an explicit provider market");
+        assert_eq!(coinbase.provider_symbol, "COEN-USDC");
     }
 
     #[test]

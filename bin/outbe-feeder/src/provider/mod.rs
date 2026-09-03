@@ -76,11 +76,11 @@ pub trait Provider: Send + Sync {
 pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>> {
     let mut providers: Vec<Box<dyn Provider>> = Vec::new();
 
-    // Collect unique provider names from all pair configs
+    // Collect unique provider names from all configured source markets.
     let mut provider_names: Vec<String> = config
         .currency_pairs
         .iter()
-        .flat_map(|p| p.providers.clone())
+        .flat_map(|pair| pair.sources.iter().map(|source| source.provider.clone()))
         .collect();
     provider_names.sort();
     provider_names.dedup();
@@ -117,8 +117,9 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
         let configured_pairs = config
             .currency_pairs
             .iter()
-            .filter(|pair| pair.providers.iter().any(|provider| provider == name))
-            .map(|pair| (pair.base.clone(), pair.quote.clone()))
+            .flat_map(|pair| &pair.sources)
+            .filter(|source| source.provider == *name)
+            .map(|source| (source.base.clone(), source.quote.clone()))
             .collect::<Vec<_>>();
         let provider = if let Some(kind) = websocket::ExchangeKind::for_name(name)
             .filter(|kind| kind.supports_any(&configured_pairs))

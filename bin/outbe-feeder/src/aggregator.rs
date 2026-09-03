@@ -1,38 +1,38 @@
 //! Price aggregation with TVWAP and VWAP computation and deviation filtering.
 //!
-//! The aggregator uses a two-tier pricing strategy inspired by the Cosmos
-//! oracle feeder: **candle TVWAP first, ticker VWAP fallback**.
-//!
-//! 1. If any provider returns candle data for a pair, compute a
-//!    Time-Volume-Weighted Average Price (TVWAP) across all candles.
-//! 2. If no candles are available, fall back to the original ticker-based
-//!    Volume-Weighted Average Price (VWAP) across providers.
+//! Each configured provider market first produces one observation using candle
+//! TVWAP when available and its ticker otherwise. Those source observations are
+//! deviation-filtered, then combined into one on-chain pair observation.
 //!
 //! Provider decimals are ingested and aggregated entirely as deterministic FP18
 //! integers. The final pair-specific conversion emits COEN/ISO at `1e6` and
 //! leaves generic pairs at `1e18`.
 
-use crate::config::{is_iso_symbol, FeederConfig};
+use crate::config::{CurrencyPairSource, FeederConfig};
 use crate::fixed::FixedValue;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
-use alloy_primitives::{aliases::U1024, U256, U512};
+use alloy_primitives::{aliases::U1024, Address, U256, U512};
 use eyre::Result;
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::HashMap;
 
 /// Aggregated price/volume for a single pair in that pair's registered scale.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AggregatedPrice {
-    pub base: String,
-    pub quote: String,
+    pub base: Address,
+    pub quote: Address,
     /// VWAP price: six decimals for COEN/ISO, existing decimal18 otherwise.
     pub price: U256,
     /// Total volume: COEN units for COEN/ISO, existing decimal18 otherwise.
     pub volume: U256,
 }
 
-fn is_coen_iso_pair(base: &str, quote: &str) -> bool {
-    base.eq_ignore_ascii_case("COEN") && is_iso_symbol(quote)
+fn is_coen_iso_pair(base: Address, quote: Address) -> bool {
+    base.is_zero()
+        && matches!(
+            outbe_primitives::asset_type::AssetType::from(quote),
+            outbe_primitives::asset_type::AssetType::IsoCurrency(_)
+        )
 }
 
 const SCALE_1E12: U256 = U256::from_limbs([1_000_000_000_000u64, 0, 0, 0]);
@@ -92,14 +92,7 @@ fn compute_weighted(prices: &[(FixedValue, FixedValue)]) -> Result<Option<(U256,
     Ok(Some((price, volume)))
 }
 
-/// Fetches prices from providers, filters outliers, and computes the best
-/// available weighted average price.
-///
-/// Strategy per pair:
-/// 1. If any configured provider returns candle data -> compute TVWAP.
-/// 2. Otherwise fall back to ticker-based VWAP.
-///
-/// Only providers listed in each pair's `providers` config are consulted.
+/// Fetches provider-native source markets and emits one observation per Oracle pair.
 pub async fn fetch_and_aggregate(
     providers: &[Box<dyn Provider>],
     config: &FeederConfig,
@@ -108,21 +101,27 @@ pub async fn fetch_and_aggregate(
         return Ok(Vec::new());
     }
 
-    // Fetch from all providers (each provider gets only the pairs it's configured for)
-    let all_pairs: Vec<(String, String)> = config
-        .currency_pairs
-        .iter()
-        .map(|p| (p.base.clone(), p.quote.clone()))
-        .collect();
-
     let mut all_tickers: Vec<(String, HashMap<String, TickerPrice>)> = Vec::new();
     let mut all_candles: Vec<(String, HashMap<String, Vec<CandlePrice>>)> = Vec::new();
 
     for provider in providers {
+        let mut source_pairs = config
+            .currency_pairs
+            .iter()
+            .flat_map(|pair| &pair.sources)
+            .filter(|source| source.provider == provider.name())
+            .map(|source| (source.base.clone(), source.quote.clone()))
+            .collect::<Vec<_>>();
+        source_pairs.sort();
+        source_pairs.dedup();
+        if source_pairs.is_empty() {
+            continue;
+        }
+
         // Fetch tickers
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            provider.get_ticker_prices(&all_pairs),
+            provider.get_ticker_prices(&source_pairs),
         )
         .await
         {
@@ -143,7 +142,7 @@ pub async fn fetch_and_aggregate(
         // Fetch candles
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            provider.get_candle_prices(&all_pairs),
+            provider.get_candle_prices(&source_pairs),
         )
         .await
         {
@@ -164,69 +163,31 @@ pub async fn fetch_and_aggregate(
         }
     }
 
-    // Aggregate per pair, respecting per-pair provider config
+    // Aggregate each source independently, then merge those source observations
+    // into exactly one wire tuple for the configured Oracle pair.
     let mut results = Vec::new();
 
     for pair_config in &config.currency_pairs {
         let key = format!("{}/{}", pair_config.base, pair_config.quote);
         let threshold = config.deviation_for(&pair_config.base);
-        let is_coen_iso = is_coen_iso_pair(&pair_config.base, &pair_config.quote);
-
-        // --- Try candle TVWAP first ---
-        let mut candle_data: Vec<(FixedValue, FixedValue)> = Vec::new();
-        for (provider_name, candle_map) in &all_candles {
-            if !pair_config.providers.iter().any(|p| p == provider_name) {
-                continue;
-            }
-            if let Some(candles) = candle_map.get(&key) {
-                for c in candles {
-                    if !c.price.is_zero() && !c.volume.is_zero() {
-                        candle_data.push((c.price, c.volume));
-                    }
-                }
+        let (base, quote) = pair_config.oracle_pair()?;
+        let is_coen_iso = is_coen_iso_pair(base, quote);
+        let mut observations = Vec::new();
+        for source in &pair_config.sources {
+            if let Some(observation) = source_observation(
+                source,
+                &all_tickers,
+                &all_candles,
+            )? {
+                observations.push(observation);
             }
         }
 
-        if !candle_data.is_empty() {
-            if let Some((tvwap, total_volume)) = compute_weighted(&candle_data)?
-                .and_then(|(price, volume)| finalize_pair_value(is_coen_iso, price, volume))
-            {
-                if !tvwap.is_zero() {
-                    tracing::debug!(pair = %key, "using candle TVWAP");
-                    results.push(AggregatedPrice {
-                        base: pair_config.base.clone(),
-                        quote: pair_config.quote.clone(),
-                        price: tvwap,
-                        volume: total_volume,
-                    });
-                    continue;
-                }
-            }
-        }
-
-        // --- Fall back to ticker VWAP ---
-        let mut raw_prices: Vec<(FixedValue, FixedValue)> = Vec::new();
-        for (provider_name, tickers) in &all_tickers {
-            if !pair_config.providers.iter().any(|p| p == provider_name) {
-                continue;
-            }
-            if let Some(ticker) = tickers.get(&key) {
-                if !ticker.price.is_zero() {
-                    let volume = if is_coen_iso {
-                        ticker.volume
-                    } else {
-                        ticker.volume.max(FixedValue::from_raw(SCALE_1E18))
-                    };
-                    raw_prices.push((ticker.price, volume));
-                }
-            }
-        }
-
-        if raw_prices.is_empty() {
+        if observations.is_empty() {
             continue;
         }
 
-        let filtered = filter_deviations(&raw_prices, threshold)?;
+        let filtered = filter_deviations(&observations, threshold)?;
         if filtered.is_empty() {
             continue;
         }
@@ -237,10 +198,10 @@ pub async fn fetch_and_aggregate(
             continue;
         };
         if !vwap.is_zero() {
-            tracing::debug!(pair = %key, "using ticker VWAP (no candles available)");
+            tracing::debug!(pair = %key, sources = filtered.len(), "aggregated Oracle pair");
             results.push(AggregatedPrice {
-                base: pair_config.base.clone(),
-                quote: pair_config.quote.clone(),
+                base,
+                quote,
                 price: vwap,
                 volume: total_volume,
             });
@@ -248,6 +209,38 @@ pub async fn fetch_and_aggregate(
     }
 
     Ok(results)
+}
+
+fn source_observation(
+    source: &CurrencyPairSource,
+    all_tickers: &[(String, HashMap<String, TickerPrice>)],
+    all_candles: &[(String, HashMap<String, Vec<CandlePrice>>)],
+) -> Result<Option<(FixedValue, FixedValue)>> {
+    let key = format!("{}/{}", source.base, source.quote);
+    let candles = all_candles
+        .iter()
+        .find(|(provider, _)| provider == &source.provider)
+        .and_then(|(_, prices)| prices.get(&key));
+    if let Some(candles) = candles {
+        let values = candles
+            .iter()
+            .filter(|candle| !candle.price.is_zero())
+            .map(|candle| (candle.price, candle.volume))
+            .collect::<Vec<_>>();
+        if let Some((price, volume)) = compute_weighted(&values)? {
+            return Ok(Some((
+                FixedValue::from_raw(price),
+                FixedValue::from_raw(volume),
+            )));
+        }
+    }
+
+    Ok(all_tickers
+        .iter()
+        .find(|(provider, _)| provider == &source.provider)
+        .and_then(|(_, prices)| prices.get(&key))
+        .filter(|ticker| !ticker.price.is_zero())
+        .map(|ticker| (ticker.price, ticker.volume)))
 }
 
 /// Filters prices that deviate more than `threshold` standard deviations from
@@ -331,15 +324,64 @@ fn compute_tvwap_fixed(candles: &[(FixedValue, FixedValue)]) -> Result<(U256, U2
 mod tests {
     use super::*;
     use crate::config::{
-        AccountConfig, ChainConfig, CurrencyPairConfig, FeederConfig, OracleConfig,
+        AccountConfig, ChainConfig, CurrencyPairConfig, CurrencyPairSource, FeederConfig,
+        OracleConfig,
     };
     use crate::provider::mock::MockProvider;
     use outbe_primitives::units::SCALE_1E18;
 
     const COEN_ISO_SCALE: u128 = 1_000_000;
+    const ETH_TOKEN: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
     fn fp(value: &str) -> FixedValue {
         FixedValue::parse(value).unwrap()
+    }
+
+    fn source(provider: &str, base: &str, quote: &str) -> CurrencyPairSource {
+        CurrencyPairSource {
+            provider: provider.to_owned(),
+            base: base.to_owned(),
+            quote: quote.to_owned(),
+        }
+    }
+
+    struct MarketDataProvider {
+        name: &'static str,
+        tickers: HashMap<String, TickerPrice>,
+        candles: HashMap<String, Vec<CandlePrice>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for MarketDataProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        async fn get_ticker_prices(
+            &self,
+            pairs: &[(String, String)],
+        ) -> eyre::Result<HashMap<String, TickerPrice>> {
+            Ok(pairs
+                .iter()
+                .filter_map(|(base, quote)| {
+                    let key = format!("{base}/{quote}");
+                    self.tickers.get(&key).cloned().map(|value| (key, value))
+                })
+                .collect())
+        }
+
+        async fn get_candle_prices(
+            &self,
+            pairs: &[(String, String)],
+        ) -> eyre::Result<HashMap<String, Vec<CandlePrice>>> {
+            Ok(pairs
+                .iter()
+                .filter_map(|(base, quote)| {
+                    let key = format!("{base}/{quote}");
+                    self.candles.get(&key).cloned().map(|value| (key, value))
+                })
+                .collect())
+        }
     }
 
     struct CoenTickerProvider {
@@ -389,7 +431,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: "COEN".into(),
             quote: quote.into(),
-            providers: vec!["coen_ticker".into()],
+            sources: vec![source("coen_ticker", "COEN", quote)],
         }]);
         fetch_and_aggregate(&providers, &config).await.unwrap()
     }
@@ -509,16 +551,16 @@ mod tests {
     async fn test_fetch_and_aggregate_uses_candle_tvwap() {
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(MockProvider::new())];
         let config = test_config(vec![CurrencyPairConfig {
-            base: "ETH".into(),
+            base: ETH_TOKEN.into(),
             quote: "840".into(),
-            providers: vec!["mock".into()],
+            sources: vec![source("mock", "ETH", "840")],
         }]);
 
         let results = fetch_and_aggregate(&providers, &config).await.unwrap();
         assert_eq!(results.len(), 1);
 
         let agg = &results[0];
-        assert_eq!(agg.base, "ETH");
+        assert_eq!(agg.base, ETH_TOKEN.parse::<Address>().unwrap());
         assert!(!agg.price.is_zero());
 
         // MockProvider candles: 2475.0 * 3000 + 2525.0 * 4000 + 2500.0 * 3500
@@ -574,9 +616,9 @@ mod tests {
 
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(TickerOnlyProvider)];
         let config = test_config(vec![CurrencyPairConfig {
-            base: "ETH".into(),
+            base: ETH_TOKEN.into(),
             quote: "840".into(),
-            providers: vec!["ticker_only".into()],
+            sources: vec![source("ticker_only", "ETH", "840")],
         }]);
 
         let results = fetch_and_aggregate(&providers, &config).await.unwrap();
@@ -584,6 +626,104 @@ mod tests {
 
         let agg = &results[0];
         assert_eq!(agg.price, U256::from(2_500u64) * SCALE_1E18);
+    }
+
+    #[tokio::test]
+    async fn source_markets_are_aggregated_into_one_coen_iso_vote_tuple() {
+        let providers: Vec<Box<dyn Provider>> = vec![
+            Box::new(MarketDataProvider {
+                name: "binance",
+                tickers: HashMap::from([
+                    (
+                        "COEN/USDT".to_owned(),
+                        TickerPrice {
+                            price: fp("1"),
+                            volume: fp("1"),
+                        },
+                    ),
+                    (
+                        "COEN/USDC".to_owned(),
+                        TickerPrice {
+                            price: fp("9"),
+                            volume: fp("3"),
+                        },
+                    ),
+                ]),
+                candles: HashMap::from([(
+                    "COEN/USDC".to_owned(),
+                    vec![CandlePrice {
+                        price: fp("3"),
+                        volume: fp("3"),
+                        timestamp: 1,
+                    }],
+                )]),
+            }),
+            Box::new(MarketDataProvider {
+                name: "coinbase",
+                tickers: HashMap::from([(
+                    "COEN/USDC".to_owned(),
+                    TickerPrice {
+                        price: fp("2"),
+                        volume: fp("2"),
+                    },
+                )]),
+                candles: HashMap::new(),
+            }),
+        ];
+        let config = test_config(vec![CurrencyPairConfig {
+            base: "COEN".into(),
+            quote: "840".into(),
+            sources: vec![
+                source("binance", "COEN", "USDT"),
+                source("binance", "COEN", "USDC"),
+                source("coinbase", "COEN", "USDC"),
+            ],
+        }]);
+
+        let results = fetch_and_aggregate(&providers, &config).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].base, Address::ZERO);
+        assert_eq!(results[0].price, U256::from(2_333_333u64));
+        assert_eq!(results[0].volume, U256::from(6_000_000u64));
+    }
+
+    #[tokio::test]
+    async fn all_zero_volume_sources_use_an_arithmetic_mean_and_publish_zero_volume() {
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(MarketDataProvider {
+            name: "binance",
+            tickers: HashMap::from([
+                (
+                    "COEN/USDT".to_owned(),
+                    TickerPrice {
+                        price: fp("1"),
+                        volume: FixedValue::ZERO,
+                    },
+                ),
+                (
+                    "COEN/USDC".to_owned(),
+                    TickerPrice {
+                        price: fp("2.000001"),
+                        volume: FixedValue::ZERO,
+                    },
+                ),
+            ]),
+            candles: HashMap::new(),
+        })];
+        let config = test_config(vec![CurrencyPairConfig {
+            base: "COEN".into(),
+            quote: "840".into(),
+            sources: vec![
+                source("binance", "COEN", "USDT"),
+                source("binance", "COEN", "USDC"),
+            ],
+        }]);
+
+        let results = fetch_and_aggregate(&providers, &config).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].price, U256::from(1_500_000u64));
+        assert_eq!(results[0].volume, U256::ZERO);
     }
 
     #[tokio::test]
@@ -640,23 +780,25 @@ mod tests {
             CurrencyPairConfig {
                 base: "COEN".into(),
                 quote: "840".into(),
-                providers: vec!["provider_a".into()],
+                sources: vec![source("provider_a", "COEN", "840")],
             },
             CurrencyPairConfig {
-                base: "ETH".into(),
+                base: ETH_TOKEN.into(),
                 quote: "840".into(),
-                providers: vec!["provider_b".into()],
+                sources: vec![source("provider_b", "ETH", "840")],
             },
         ]);
 
         let results = fetch_and_aggregate(&providers, &config).await.unwrap();
         assert_eq!(results.len(), 2);
 
-        let coen = results.iter().find(|p| p.base == "COEN").unwrap();
-        let eth = results.iter().find(|p| p.base == "ETH").unwrap();
+        let coen = results.iter().find(|p| p.base == Address::ZERO).unwrap();
+        let eth_address = ETH_TOKEN.parse::<Address>().unwrap();
+        let eth = results.iter().find(|p| p.base == eth_address).unwrap();
 
-        assert_eq!(coen.quote, "840");
-        assert_eq!(eth.quote, "840");
+        let usd: Address = outbe_primitives::asset_type::AssetType::IsoCurrency(840).into();
+        assert_eq!(coen.quote, usd);
+        assert_eq!(eth.quote, usd);
         assert_eq!(coen.price, U256::from(COEN_ISO_SCALE));
         assert_eq!(
             coen.volume,
@@ -693,7 +835,9 @@ mod tests {
     async fn test_every_coen_iso_market_uses_six_decimal_price_and_volume() {
         let prices = aggregate_coen_iso_ticker("999", "1.25", "2.5").await;
         assert_eq!(prices.len(), 1);
-        assert_eq!(prices[0].quote, "999");
+        let expected_quote: Address =
+            outbe_primitives::asset_type::AssetType::IsoCurrency(999).into();
+        assert_eq!(prices[0].quote, expected_quote);
         assert_eq!(prices[0].price, U256::from(1_250_000u64));
         assert_eq!(prices[0].volume, U256::from(2_500_000u64));
     }

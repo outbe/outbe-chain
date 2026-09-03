@@ -447,6 +447,12 @@ def feeder_config(
 ) -> str:
     oracle = config.get("oracle", {}).get("config", {})
     price_provider = str(config.get("price_provider", "mock_http"))
+    source_quote = str(
+        config.get(
+            "price_source_quote",
+            "840" if price_provider == "mock_http" else "USDT",
+        )
+    )
     if price_provider == "mock_http":
         provider_endpoint = f'''[[provider_endpoints]]
 name = "mock_http"
@@ -485,7 +491,11 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-providers = ["{price_provider}"]
+
+[[currency_pairs.sources]]
+provider = "{price_provider}"
+base = "COEN"
+quote = "{source_quote}"
 
 [[deviation_thresholds]]
 base = "COEN"

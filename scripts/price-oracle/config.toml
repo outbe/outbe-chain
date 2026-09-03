@@ -25,7 +25,11 @@ rest = "https://prc.testnet.outbe.net"
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-providers = ["mock_http"]
+
+[[currency_pairs.sources]]
+provider = "mock_http"
+base = "COEN"
+quote = "840"
 
 [[deviation_thresholds]]
 base = "COEN"
