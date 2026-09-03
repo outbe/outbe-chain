@@ -175,7 +175,7 @@ impl BenchmarkScenario for GemScenario {
                 path: PreparedGemPath::Direct(gem_type),
             }),
             GemPath::Position => {
-                let mut provider = new_provider(false)?;
+                let mut provider = new_provider(true)?;
                 StorageHandle::enter(&mut provider, |storage| seed_series(&storage))?;
                 Ok(PreparedGem {
                     provider,
