@@ -1,4 +1,4 @@
-@price-oracle @min-validators-4
+@price-oracle @validators-4
 Feature: Price Oracle publishes through independent validator feeders
   The production feeder path must reach the on-chain count quorum without
   treating stake as extra quorum votes.

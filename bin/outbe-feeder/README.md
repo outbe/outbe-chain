@@ -41,7 +41,16 @@ bind_address = "0.0.0.0:9002"
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-providers = ["mock"]
+
+[[currency_pairs.sources]]
+provider = "mock_http"
+base = "COEN"
+quote = "USDT"
+
+[[currency_pairs.sources]]
+provider = "mock_http"
+base = "COEN"
+quote = "USDC"
 
 [[provider_endpoints]]
 name = "mock_http"
@@ -70,9 +79,12 @@ threshold = "2.0"
 | `oracle.poll_interval_secs` | no | Block polling interval (default: 2s) |
 | `health.enabled` | no | Enables health/status HTTP server (default: true) |
 | `health.bind_address` | no | Health server bind address (default: `0.0.0.0:9002`) |
-| `currency_pairs[].base` | yes | Base asset symbol |
-| `currency_pairs[].quote` | yes | Quote asset symbol |
-| `currency_pairs[].providers` | yes | Provider names listed below |
+| `currency_pairs[].base` | yes | On-chain base asset: `COEN`, an ISO 4217 numeric code, or a `0x` token address |
+| `currency_pairs[].quote` | yes | On-chain quote asset in the same format |
+| `currency_pairs[].sources` | yes | One or more external source markets aggregated into this on-chain pair |
+| `currency_pairs[].sources[].provider` | yes | Provider name listed below |
+| `currency_pairs[].sources[].base` | yes | Provider-market base symbol |
+| `currency_pairs[].sources[].quote` | yes | Provider-market quote symbol |
 | `provider_endpoints[].name` | only endpoint-backed providers | Provider endpoint name |
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
@@ -85,7 +97,7 @@ At startup, the feeder validates:
 
 - `vote_period > 0`
 - `validator_address` is a valid 20-byte hex address
-- Each pair has at least 1 provider
+- Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
 - All provider names are known: `mock`, `mock_http`, `pyth`, `chainlink`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`
 - WebSocket endpoints are only accepted for streaming exchange providers
@@ -94,6 +106,10 @@ At startup, the feeder validates:
 Provider prices and volumes are parsed and aggregated as deterministic FP18
 integers. Votes encode `COEN/ISO` price and volume at protocol scale `10^6`;
 all other configured pairs retain scale `10^18` and their configured direction.
+All source markets nested under one `currency_pairs` entry produce one vote
+tuple: each source uses candle TVWAP when available and ticker VWAP otherwise,
+then the feeder deviation-filters the observations and combines them with a
+volume-weighted mean rounded down.
 
 ## Providers
 
