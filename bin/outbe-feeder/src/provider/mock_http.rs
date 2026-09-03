@@ -203,8 +203,22 @@ impl Provider for MockHttpProvider {
             });
         }
 
+        ensure_complete_candle_response(&requested, &candles)?;
+
         Ok(candles)
     }
+}
+
+fn ensure_complete_candle_response(
+    requested: &HashMap<String, String>,
+    candles: &HashMap<String, Vec<CandlePrice>>,
+) -> Result<()> {
+    for (symbol, key) in requested {
+        if !candles.contains_key(key) {
+            return Err(eyre!("missing mock_http candles for {symbol}"));
+        }
+    }
+    Ok(())
 }
 
 fn requested_symbols(pairs: &[(String, String)]) -> HashMap<String, String> {
@@ -216,4 +230,29 @@ fn requested_symbols(pairs: &[(String, String)]) -> HashMap<String, String> {
 
 fn pair_symbol(base: &str, quote: &str) -> String {
     format!("{base}{quote}").to_uppercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixed::FixedValue;
+
+    #[test]
+    fn partial_candle_response_is_rejected() {
+        let requested = requested_symbols(&[
+            ("COEN".to_owned(), "USDT".to_owned()),
+            ("COEN".to_owned(), "USDC".to_owned()),
+        ]);
+        let candles = HashMap::from([(
+            "COEN/USDT".to_owned(),
+            vec![CandlePrice {
+                price: FixedValue::parse("1").unwrap(),
+                volume: FixedValue::parse("1").unwrap(),
+                timestamp: 1,
+            }],
+        )]);
+
+        let error = ensure_complete_candle_response(&requested, &candles).unwrap_err();
+        assert!(error.to_string().contains("COENUSDC"));
+    }
 }

@@ -54,6 +54,17 @@ pub(crate) struct FeederPair<'a> {
     pub(crate) sources: Vec<FeederSource<'a>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeederLaunch<'a> {
+    pub(crate) validator_index: usize,
+    pub(crate) rpc_url: &'a str,
+    pub(crate) chain_id: u64,
+    pub(crate) private_key: &'a str,
+    pub(crate) validator_address: &'a str,
+    pub(crate) vote_period: u64,
+    pub(crate) phase: OracleEvidencePhaseV1,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OracleEvidencePhaseV1 {
@@ -119,6 +130,20 @@ pub struct CanonicalPricePublicationV1 {
     pub finalized_height: u64,
     pub finalized_timestamp: u64,
     pub age_seconds: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CanonicalPublicationObservation {
+    pub(crate) phase: OracleEvidencePhaseV1,
+    pub(crate) validator_count: usize,
+    pub(crate) base: alloy_primitives::Address,
+    pub(crate) quote: alloy_primitives::Address,
+    pub(crate) rate: alloy_primitives::U256,
+    pub(crate) volume: alloy_primitives::U256,
+    pub(crate) oracle_block: u64,
+    pub(crate) oracle_timestamp: u64,
+    pub(crate) finalized_height: u64,
+    pub(crate) finalized_timestamp: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -412,23 +437,9 @@ impl PriceOracleTopology {
         }
     }
 
-    pub(crate) fn start(
-        &mut self,
-        validator_index: usize,
-        rpc_url: &str,
-        chain_id: u64,
-        private_key: &str,
-        validator_address: &str,
-        quote: PriceQuote<'_>,
-        vote_period: u64,
-        phase: OracleEvidencePhaseV1,
-    ) -> Result<()> {
+    pub(crate) fn start(&mut self, launch: FeederLaunch<'_>, quote: PriceQuote<'_>) -> Result<()> {
         self.start_with_pairs(
-            validator_index,
-            rpc_url,
-            chain_id,
-            private_key,
-            validator_address,
+            launch,
             &[FeederPair {
                 base: "COEN",
                 quote: "840",
@@ -439,23 +450,23 @@ impl PriceOracleTopology {
                     volume: quote.volume,
                 }],
             }],
-            vote_period,
-            phase,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_with_pairs(
         &mut self,
-        validator_index: usize,
-        rpc_url: &str,
-        chain_id: u64,
-        private_key: &str,
-        validator_address: &str,
+        launch: FeederLaunch<'_>,
         pairs: &[FeederPair<'_>],
-        vote_period: u64,
-        phase: OracleEvidencePhaseV1,
     ) -> Result<()> {
+        let FeederLaunch {
+            validator_index,
+            rpc_url,
+            chain_id,
+            private_key,
+            validator_address,
+            vote_period,
+            phase,
+        } = launch;
         if self.feeders.contains_key(&validator_index) {
             bail!("validator-{validator_index} price feeder is already running")
         }
@@ -479,18 +490,16 @@ impl PriceOracleTopology {
             generation: 1,
             entries,
         };
-        if !self.mocks.contains_key(&validator_index) {
-            self.mocks.insert(
-                validator_index,
-                MockPriceServer::bind(expected_book.clone())?,
-            );
-        } else if self
-            .mocks
-            .get(&validator_index)
-            .map(MockPriceServer::book)
-            .is_some_and(|book| book.entries != expected_book.entries)
-        {
-            bail!("price mock generation changed during one feeder acceptance window")
+        match self.mocks.entry(validator_index) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(MockPriceServer::bind(expected_book.clone())?);
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get().book().entries != expected_book.entries =>
+            {
+                bail!("price mock generation changed during one feeder acceptance window")
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
         }
 
         let directory = self.cfg.dir.join("price-oracle");
@@ -710,19 +719,22 @@ impl PriceOracleTopology {
         evidence
     }
 
-    pub fn record_canonical_publication(
+    pub(crate) fn record_canonical_publication(
         &mut self,
-        phase: OracleEvidencePhaseV1,
-        validator_count: usize,
-        base: alloy_primitives::Address,
-        quote: alloy_primitives::Address,
-        rate: alloy_primitives::U256,
-        volume: alloy_primitives::U256,
-        oracle_block: u64,
-        oracle_timestamp: u64,
-        finalized_height: u64,
-        finalized_timestamp: u64,
+        observation: CanonicalPublicationObservation,
     ) {
+        let CanonicalPublicationObservation {
+            phase,
+            validator_count,
+            base,
+            quote,
+            rate,
+            volume,
+            oracle_block,
+            oracle_timestamp,
+            finalized_height,
+            finalized_timestamp,
+        } = observation;
         self.evidence
             .canonical_publications
             .push(CanonicalPricePublicationV1 {
@@ -785,13 +797,9 @@ fn sanitize_rpc_endpoint(endpoint: &str) -> String {
     let Some((scheme, remainder)) = without_query.split_once("://") else {
         return "<invalid-rpc-endpoint>".to_owned();
     };
-    let (authority, path) = remainder.split_once('/').unwrap_or((remainder, ""));
+    let authority = remainder.split('/').next().unwrap_or(remainder);
     let authority = authority.rsplit('@').next().unwrap_or(authority);
-    if path.is_empty() {
-        format!("{scheme}://{authority}")
-    } else {
-        format!("{scheme}://{authority}/{path}")
-    }
+    format!("{scheme}://{authority}")
 }
 
 pub(crate) fn verify_price_oracle_evidence(
@@ -1147,6 +1155,14 @@ mod tests {
             next_episode,
             "starting outbe-feeder"
         ));
+    }
+
+    #[test]
+    fn retained_rpc_endpoint_omits_credentials_path_query_and_fragment() {
+        assert_eq!(
+            sanitize_rpc_endpoint("https://user:pass@rpc.example/v3/secret?key=hidden#fragment"),
+            "https://rpc.example"
+        );
     }
 
     #[test]

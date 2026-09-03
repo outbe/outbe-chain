@@ -8,8 +8,9 @@ use cucumber::{given, then};
 
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::price_oracle::{
-    OracleEvidencePhaseV1, PenaltySnapshotEvidenceV1, QuorumLossEvidenceV1,
-    QuorumLossPairEvidenceV1, ValidatorPenaltyEvidenceV1,
+    CanonicalPublicationObservation, FeederLaunch, OracleEvidencePhaseV1,
+    PenaltySnapshotEvidenceV1, QuorumLossEvidenceV1, QuorumLossPairEvidenceV1,
+    ValidatorPenaltyEvidenceV1,
 };
 use crate::world::World;
 
@@ -352,17 +353,19 @@ fn start_feeder(world: &mut World, phase: OracleEvidencePhaseV1) {
         world
             .price_oracle
             .start(
-                validator_index,
-                &rpc_url,
-                chain_id,
-                &private_key,
-                &validator_address,
+                FeederLaunch {
+                    validator_index,
+                    rpc_url: &rpc_url,
+                    chain_id,
+                    private_key: &private_key,
+                    validator_address: &validator_address,
+                    vote_period,
+                    phase,
+                },
                 crate::world::price_oracle::PriceQuote {
                     price: &price,
                     volume: &volume,
                 },
-                vote_period,
-                phase,
             )
             .unwrap_or_else(|error| {
                 panic!("start validator-{validator_index} production price feeder: {error:#}")
@@ -409,14 +412,16 @@ fn start_overlap_feeder(
     world
         .price_oracle
         .start_with_pairs(
-            validator_index,
-            &rpc_url,
-            chain_id,
-            &private_key,
-            &validator_address,
+            FeederLaunch {
+                validator_index,
+                rpc_url: &rpc_url,
+                chain_id,
+                private_key: &private_key,
+                validator_address: &validator_address,
+                vote_period,
+                phase,
+            },
             &pairs,
-            vote_period,
-            phase,
         )
         .unwrap_or_else(|error| {
             panic!("start validator-{validator_index} production price feeder: {error:#}")
@@ -628,18 +633,20 @@ fn observe_unanimous_pair_publication(
     if !same_timestamp || rate.last_timestamp == 0 || age > FX_TTL_SECS {
         return false;
     }
-    world.price_oracle.record_canonical_publication(
-        phase,
-        ports.len(),
-        base,
-        quote,
-        rate.rate,
-        volume,
-        rate.last_block,
-        rate.last_timestamp,
-        finalized_height,
-        finalized_timestamp,
-    );
+    world
+        .price_oracle
+        .record_canonical_publication(CanonicalPublicationObservation {
+            phase,
+            validator_count: ports.len(),
+            base,
+            quote,
+            rate: rate.rate,
+            volume,
+            oracle_block: rate.last_block,
+            oracle_timestamp: rate.last_timestamp,
+            finalized_height,
+            finalized_timestamp,
+        });
     true
 }
 
