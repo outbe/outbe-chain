@@ -445,6 +445,18 @@ pub struct FixtureState {
     pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
     /// Units of each lifecycle series settled so far.
     pub settled_units: u32,
+    /// The Intex series the gem scenario parks to open its position.
+    pub gem_source_series: Option<alloy_primitives::FixedBytes<14>>,
+    /// The merchant position those parked units opened.
+    pub gem_position: Option<alloy_primitives::U256>,
+    /// The gem that is settled and mined, and the one whose notice runs out.
+    pub mined_gem: Option<alloy_primitives::U256>,
+    pub forfeited_gem: Option<alloy_primitives::U256>,
+    /// Promis held before mining, so the mined load shows as a delta.
+    pub promis_before_mining: Option<alloy_primitives::U256>,
+    /// Unallocated PROMIS before each return, for the same reason.
+    pub unallocated_before_forfeit: Option<alloy_primitives::U256>,
+    pub unallocated_before_position_expiry: Option<alloy_primitives::U256>,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// Issued alongside them and never settled, so the call notice runs out on it.
@@ -483,6 +495,13 @@ impl Default for FixtureState {
             radicle: RadicleScenarioEvidenceV1::default(),
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
+            gem_source_series: None,
+            gem_position: None,
+            mined_gem: None,
+            forfeited_gem: None,
+            promis_before_mining: None,
+            unallocated_before_forfeit: None,
+            unallocated_before_position_expiry: None,
             lifecycle_series: Vec::new(),
             expiring_series: None,
             unallocated_before_expiry: None,

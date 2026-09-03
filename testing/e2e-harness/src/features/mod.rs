@@ -12,6 +12,8 @@
 #[cfg(feature = "ocomp-integration")]
 pub mod agent_reward;
 pub mod common;
+#[cfg(feature = "ocomp-integration")]
+pub mod gem_lifecycle;
 pub mod governance;
 #[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;

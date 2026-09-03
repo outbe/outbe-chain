@@ -1068,7 +1068,7 @@ fn transaction_is_reward_delivery_for_gem(
             })
 }
 
-fn chain_id_b256(world: &World) -> B256 {
+pub(crate) fn chain_id_b256(world: &World) -> B256 {
     B256::from(U256::from(
         world
             .rpc
@@ -1077,13 +1077,13 @@ fn chain_id_b256(world: &World) -> B256 {
     ))
 }
 
-fn find_pow_nonce(id: U256) -> u64 {
+pub(crate) fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
         .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
 }
 
-fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {
+pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {
     let blob = eth::read_call(
         url,
         addresses::PROMIS_ADDR,
