@@ -50,6 +50,9 @@ const CALL_TIMEOUT_SECS: u64 = 300;
 const FORFEIT_TIMEOUT_SECS: u64 = 900;
 /// The position sweep runs after its deadline, on the same cadence.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
+/// The DEV validity (15 minutes) runs from parking, and most of it is spent
+/// waiting out the call notice before this step is reached.
+const POSITION_DEADLINE_TIMEOUT_SECS: u64 = 900;
 
 #[when("a test Intex series is issued to a funded merchant")]
 fn issue_source_series(world: &mut World) {
@@ -452,7 +455,7 @@ fn wait_for_position_expiry(world: &mut World) {
     world.state.unallocated_before_position_expiry =
         world.rpc.promis_limit_total_unallocated_on(port);
 
-    let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(POSITION_DEADLINE_TIMEOUT_SECS);
     loop {
         let now = world
             .rpc
