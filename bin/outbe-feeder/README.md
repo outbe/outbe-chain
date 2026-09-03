@@ -107,7 +107,7 @@ Provider prices and volumes are parsed and aggregated as deterministic FP18
 integers. Votes encode `COEN/ISO` price and volume at protocol scale `10^6`;
 all other configured pairs retain scale `10^18` and their configured direction.
 All source markets nested under one `currency_pairs` entry produce one vote
-tuple: each source uses candle TVWAP when available and ticker VWAP otherwise,
+tuple: each source uses candle TVWAP when available and the ticker otherwise,
 then the feeder deviation-filters the observations and combines them with a
 volume-weighted mean rounded down.
 
