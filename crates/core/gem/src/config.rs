@@ -45,7 +45,7 @@ impl GemParams {
         #[cfg(not(feature = "e2e-test"))]
         position_validity: 7 * 24 * 3600,
         #[cfg(feature = "e2e-test")]
-        position_validity: 1800,
+        position_validity: 900,
     };
 
     pub fn from_selector(selector: u8) -> Result<Self> {
