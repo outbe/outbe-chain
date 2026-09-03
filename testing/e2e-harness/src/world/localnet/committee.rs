@@ -12,6 +12,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
+use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
 use crate::internal::proc::{self, args, attach_log, wait_tcp, SealSpec};
 
@@ -583,6 +585,7 @@ impl Localnet {
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
                 .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
+            dev_network_binding: self.dev_network_binding_hex()?,
             launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
@@ -609,6 +612,25 @@ impl Localnet {
     /// The genesis chain id as `0x`-padded 64-hex (enclave seal `--chain-id`).
     pub(super) fn chain_id_hex(&self) -> Result<String> {
         Ok(format!("0x{:064x}", self.chain_id()?))
+    }
+
+    pub(super) fn dev_network_binding_hex(&self) -> Result<Option<String>> {
+        if !self.cfg.tee_mode.uses_mock_binary() {
+            return Ok(None);
+        }
+        let binding =
+            DcapSeededChainSpecBindingV1::from_genesis_path(&self.cfg.dir.join("genesis.json"))
+                .map_err(|error| {
+                    eyre::eyre!("derive mock network binding from final genesis: {error}")
+                })?;
+        let canonical = NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
+            genesis_hash: binding.genesis_hash,
+            attestation_mode: AttestationMode::GramineDirectDev,
+        }
+        .encode_canonical()
+        .map_err(|error| eyre::eyre!("encode mock network binding: {error}"))?;
+        Ok(Some(alloy_primitives::hex::encode(canonical)))
     }
 
     /// The chain ID from the immutable localnet genesis configuration.

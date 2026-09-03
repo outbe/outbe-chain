@@ -266,6 +266,9 @@ pub(crate) struct EnclaveSpec {
     pub signing_key: PathBuf,
     /// Seeded-genesis authority measured into every real-DCAP test enclave.
     pub network_descriptor: Option<PathBuf>,
+    /// Canonical `NetworkBindingV1` hex for the mock binary. Production launch
+    /// profiles leave this absent.
+    pub dev_network_binding: Option<String>,
     /// Which execution profile runs this enclave.
     pub launch: EnclaveLaunch,
     pub sudo: bool,
@@ -573,6 +576,9 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
     if let Some(seed) = &spec.dkg_seed {
         cmd.args(["--dkg-seed", seed]);
     }
+    if let Some(binding) = &spec.dev_network_binding {
+        cmd.args(["--dev-network-binding", binding]);
+    }
     if let Some(seal) = &spec.seal {
         cmd.args(["--tee-dir", "/tee", "--chain-id", &seal.chain_id_hex]);
     }
@@ -587,6 +593,9 @@ fn build_native_command(spec: &EnclaveSpec) -> Result<Command> {
     cmd.args(["--socket", &format!("127.0.0.1:{}", spec.tee_port)]);
     if let Some(seed) = &spec.dkg_seed {
         cmd.args(["--dkg-seed", seed]);
+    }
+    if let Some(binding) = &spec.dev_network_binding {
+        cmd.args(["--dev-network-binding", binding]);
     }
     if let Some(seal) = &spec.seal {
         fs::create_dir_all(&seal.tee_dir)?;
@@ -907,6 +916,7 @@ mod tests {
             enclave_bin,
             signing_key,
             network_descriptor: None,
+            dev_network_binding: Some("01".repeat(66)),
             launch: EnclaveLaunch::Gramine {
                 image_id: image_id.clone(),
             },
@@ -927,6 +937,9 @@ mod tests {
         assert!(arguments
             .iter()
             .any(|argument| argument == image_id.as_str()));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair[0] == "--dev-network-binding" && pair[1] == "01".repeat(66) }));
         assert!(!arguments
             .iter()
             .any(|argument| argument == TEST_ENCLAVE_IMAGE));
@@ -960,6 +973,7 @@ mod tests {
             enclave_bin: enclave_bin.clone(),
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: Some("01".repeat(66)),
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -984,6 +998,9 @@ mod tests {
         assert!(arguments
             .windows(2)
             .any(|pair| pair[0] == "--socket" && pair[1] == "127.0.0.1:19501"));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair[0] == "--dev-network-binding" && pair[1] == "01".repeat(66) }));
         // The container's `/tee` would be meaningless to a host process: the
         // sealed offer key has to land in this validator's own directory.
         let canonical = tee_dir.canonicalize().expect("seal dir created by builder");
@@ -1006,6 +1023,7 @@ mod tests {
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -1040,6 +1058,7 @@ mod tests {
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: false,
             pass_sgx_devices: false,

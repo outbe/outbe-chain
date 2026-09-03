@@ -22,6 +22,59 @@ use outbe_tee_enclave::transport::serve_connection_for_network_test;
 const N: usize = 4;
 
 #[test]
+fn dkg_rejects_a_ceremony_id_from_another_network_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("foreign-network.sock");
+    let expected_binding = outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
+        chain_id: alloy_primitives::U256::from(outbe_primitives::chain::TESTNET_CHAIN_ID)
+            .to_be_bytes(),
+        genesis_hash: B256::repeat_byte(0x5b),
+        attestation_mode: outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev,
+    };
+    let foreign_binding = outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
+        genesis_hash: B256::repeat_byte(0x6c),
+        ..expected_binding
+    };
+    let keys = EnclaveKeys::new([0x11; 32], None).unwrap();
+    let listener = match UnixListener::bind(&socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("bind test enclave socket: {error}"),
+    };
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let offer_key = std::sync::Arc::new(std::sync::OnceLock::new());
+        let _ = serve_connection_for_network_test(stream, &keys, &offer_key, foreign_binding);
+    });
+    let mut client = EnclaveClient::connect(&socket).unwrap();
+    let participant_bls = match client.request(&EnclaveRequest::GetPublicKeys).unwrap() {
+        EnclaveResponse::PublicKeys { tee_bls_pub, .. } => vec![tee_bls_pub],
+        other => panic!("unexpected GetPublicKeys: {other:?}"),
+    };
+    let participant_set_hash =
+        outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
+            .unwrap();
+    let ceremony_id = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
+        &expected_binding,
+        0,
+        participant_set_hash,
+    )
+    .unwrap();
+
+    let error = client
+        .request(&EnclaveRequest::DkgParticipantAnnounceV1 {
+            ceremony_id,
+            round: 0,
+            participant_bls,
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("does not match network"));
+
+    drop(client);
+    server.join().unwrap();
+}
+
+#[test]
 fn full_dkg_ceremony_over_real_noise_transport() {
     let dir = tempfile::tempdir().unwrap();
     let network_binding = outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
