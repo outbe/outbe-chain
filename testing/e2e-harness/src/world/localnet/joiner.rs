@@ -747,14 +747,6 @@ impl Localnet {
         self.enclaves.remove(&index);
     }
 
-    /// Move one complete harness-owned node slot without changing any identity
-    /// or key material. Production nodes keep their directory in place; this
-    /// exists only because the harness reserves distinct numeric port slots.
-    pub fn move_role_neutral_node_slot(&mut self, from: usize, to: usize) -> Result<()> {
-        self.stop_node_enclave(from);
-        self.move_datadir(&format!("validator-{from}"), &format!("validator-{to}"))
-    }
-
     pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
         self.enclaves.remove(&index);
         self.start_node_enclave(index)

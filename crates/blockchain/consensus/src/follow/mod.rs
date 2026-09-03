@@ -365,7 +365,6 @@ mod tests {
                     planned_activation_height: 120,
                     vrf_material_version: 1,
                     is_validator_set_change: false,
-                    tee_reshare_registrations: vec![],
                     tee_expired_target_exclusions: vec![],
                 },
             )

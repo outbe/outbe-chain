@@ -25,7 +25,8 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::NOISE_PARAMS;
 
 use crate::dcap_verifier::{
-    complete_verification_response, DcapVerificationProgressV1, DcapVerificationSessionV1,
+    complete_gramine_direct_dev_onboarding_response, complete_verification_response,
+    DcapVerificationProgressV1, DcapVerificationSessionV1,
 };
 use crate::dkg::{build_ceremony_info, DkgSessionStore};
 use crate::initialization::{
@@ -636,6 +637,18 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
         }
 
         let resp = match req {
+            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+                request_hash,
+                context,
+            } => match initialization.manifest() {
+                Ok(manifest) => complete_gramine_direct_dev_onboarding_response(
+                    request_hash,
+                    &context,
+                    offer_key.get(),
+                    manifest.as_ref(),
+                ),
+                Err(message) => EnclaveResponse::Error { message },
+            },
             request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
             | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
             | EnclaveRequest::DcapVerificationChunkV1 { .. }
@@ -824,6 +837,73 @@ fn complete_onboarding_artifact_ingest_response(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn complete_gramine_direct_dev_onboarding_ingest_response(
+    artifact: &[u8],
+    expected_intent_hash: B256,
+    expected_tribute_offer_public: [u8; 32],
+    expected_key_epoch: u64,
+    expected_tribute_offer_epoch: u64,
+    keys: &EnclaveKeys,
+    offer_key: &SharedTributeOfferKey,
+    boot: Option<&EnclaveBootConfig>,
+    initialization: Option<&InitializationState>,
+) -> EnclaveResponse {
+    let Some(initialization) = initialization else {
+        return EnclaveResponse::Error {
+            message: "GramineDirectDev onboarding requires production initialization".into(),
+        };
+    };
+    let manifest = match initialization.manifest() {
+        Ok(Some(manifest)) if manifest.attestation_mode == AttestationMode::GramineDirectDev => {
+            manifest
+        }
+        Ok(Some(_)) => {
+            return EnclaveResponse::Error {
+                message: "GramineDirectDev onboarding is forbidden by the initialized network"
+                    .into(),
+            }
+        }
+        Ok(None) => {
+            return EnclaveResponse::Error {
+                message: "GramineDirectDev onboarding requires an initialization manifest".into(),
+            }
+        }
+        Err(message) => return EnclaveResponse::Error { message },
+    };
+    let derived = match derive_onboarding_offer_key_v1(
+        keys,
+        &manifest,
+        artifact,
+        expected_intent_hash,
+        expected_tribute_offer_public,
+        expected_key_epoch,
+        expected_tribute_offer_epoch,
+    ) {
+        Ok(derived) => derived,
+        Err(error) => {
+            return EnclaveResponse::Error {
+                message: error.to_string(),
+            }
+        }
+    };
+    let Some(boot) = boot else {
+        return EnclaveResponse::Error {
+            message: "GramineDirectDev onboarding requires durable production sealed storage"
+                .into(),
+        };
+    };
+    let public = derived.public();
+    if let Err(message) =
+        persist_then_activate_offer_key(boot, manifest.network_binding(), offer_key, derived)
+    {
+        return EnclaveResponse::Error { message };
+    }
+    EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+        tribute_offer_public: public,
+    }
+}
+
 /// Dispatch a post-handshake request to a response. `offer_key` is the shared
 /// DKG-derived offer key slot: once Seam F populates it, the offer-decrypt path
 /// and `GetPublicKeys` use it instead of the pre-DKG dev offer key.
@@ -885,6 +965,12 @@ fn dispatch_with_initialization(
         | EnclaveRequest::FinishDcapVerificationV1 { .. } => EnclaveResponse::Error {
             message: "DCAP verification requires an authenticated production session".to_string(),
         },
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+            EnclaveResponse::Error {
+                message: "GramineDirectDev artifact creation requires an authenticated production session"
+                    .to_string(),
+            }
+        }
         EnclaveRequest::AuthorizeRemoteSessionV1 {
             ticket_id,
             initiator_static_x25519,
@@ -958,6 +1044,23 @@ fn dispatch_with_initialization(
             // DkgParticipantAnnounceV1 response below.
             dkg_enc_sig: Vec::new(),
         },
+        EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+            artifact,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        } => complete_gramine_direct_dev_onboarding_ingest_response(
+            &artifact,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+            keys,
+            offer_key,
+            context.boot,
+            context.initialization,
+        ),
         EnclaveRequest::GenerateDcapQuote { intent } => {
             let Some(initialization) = initialization else {
                 return EnclaveResponse::Error {
@@ -2847,6 +2950,158 @@ mod tests {
             }
             other => panic!("unexpected ready response: {other:?}"),
         }
+    }
+
+    #[test]
+    fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() {
+        use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
+
+        let source_keys = EnclaveKeys::new([0x20; 32], Some([0x20; 32])).unwrap();
+        let (source_manifest, _) = signed_initialization_manifest_for_mode(
+            &source_keys,
+            [0x21; 32],
+            [0x22; 32],
+            AttestationMode::GramineDirectDev,
+        );
+        let group_signature = vec![0x24; 96];
+        let (offer_secret, offer_public) =
+            crate::crypto::derive_tribute_offer_secret_from_group_sig(
+                &group_signature,
+                B256::from(testnet_chain_word()),
+                5,
+            )
+            .unwrap();
+        let resident = DerivedTributeOfferKey::for_test(*offer_secret, group_signature, 4, 5);
+        assert_eq!(resident.public(), offer_public);
+
+        let target_root = tempfile::tempdir().unwrap();
+        let target_boot = Arc::new(EnclaveBootConfig::new(
+            testnet_chain_word(),
+            target_root.path().to_path_buf(),
+            1,
+        ));
+        let target_keys = EnclaveKeys::new([0x25; 32], Some([0x25; 32])).unwrap();
+        let target_initialization = InitializationState::production_with_challenge_and_attestation(
+            target_boot.clone(),
+            &target_keys,
+            [0x26; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
+        let (target_manifest, target_node_signature) = signed_initialization_manifest_for_mode(
+            &target_keys,
+            [0x26; 32],
+            [0x27; 32],
+            AttestationMode::GramineDirectDev,
+        );
+        let pending = target_initialization
+            .prepare(
+                &target_manifest.encode_canonical().unwrap(),
+                &target_node_signature,
+                &target_keys,
+            )
+            .unwrap();
+        target_initialization.commit(pending, &target_keys).unwrap();
+
+        let context = DcapOnboardingContextV1 {
+            chain_id: target_manifest.chain_id,
+            genesis_hash: target_manifest.genesis_hash,
+            intent_hash: B256::repeat_byte(0x28),
+            node_id_hash: target_manifest.node_id.node_id_hash().unwrap(),
+            enclave_id: target_manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x29),
+            policy_hash: B256::repeat_byte(0x2a),
+            recipient_x25519: target_manifest.recipient_x25519,
+            tribute_offer_public: resident.public(),
+            key_epoch: resident.key_epoch(),
+            tribute_offer_epoch: resident.tribute_offer_epoch(),
+        };
+        let prepared = complete_gramine_direct_dev_onboarding_response(
+            context.context_hash(),
+            &context.encode_canonical(),
+            Some(&resident),
+            Some(&source_manifest),
+        );
+        let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+            onboarding_artifact,
+            ..
+        } = prepared
+        else {
+            panic!("DirectDev source rejected exact context: {prepared:?}");
+        };
+
+        let dcap_root = tempfile::tempdir().unwrap();
+        let dcap_boot = Arc::new(EnclaveBootConfig::new(
+            testnet_chain_word(),
+            dcap_root.path().to_path_buf(),
+            1,
+        ));
+        let dcap_keys = EnclaveKeys::new([0x2b; 32], Some([0x2b; 32])).unwrap();
+        let dcap_initialization = production_dcap_state(dcap_boot, &dcap_keys);
+        let dcap_challenge = match dcap_initialization.challenge_response(&dcap_keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let (dcap_manifest, dcap_node_signature) =
+            signed_initialization_manifest(&dcap_keys, dcap_challenge, [0x2c; 32]);
+        let pending = dcap_initialization
+            .prepare(
+                &dcap_manifest.encode_canonical().unwrap(),
+                &dcap_node_signature,
+                &dcap_keys,
+            )
+            .unwrap();
+        dcap_initialization.commit(pending, &dcap_keys).unwrap();
+
+        let request = EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+            artifact: onboarding_artifact.clone(),
+            expected_intent_hash: context.intent_hash,
+            expected_tribute_offer_public: context.tribute_offer_public,
+            expected_key_epoch: context.key_epoch,
+            expected_tribute_offer_epoch: context.tribute_offer_epoch,
+        };
+        assert_eq!(
+            dcap_initialization.authorize_command(
+                &request,
+                false,
+                SessionAuthorityV1::LocalNodeHost,
+            ),
+            Err("GramineDirectDev onboarding is forbidden by the initialized network")
+        );
+
+        let target_offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        assert!(target_initialization
+            .authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost)
+            .is_ok());
+        let response = complete_gramine_direct_dev_onboarding_ingest_response(
+            &onboarding_artifact,
+            context.intent_hash,
+            context.tribute_offer_public,
+            context.key_epoch,
+            context.tribute_offer_epoch,
+            &target_keys,
+            &target_offer_key,
+            Some(&target_boot),
+            Some(&target_initialization),
+        );
+        let EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+            tribute_offer_public,
+        } = response
+        else {
+            panic!("DirectDev target rejected exact artifact: {response:?}");
+        };
+        assert_eq!(tribute_offer_public, context.tribute_offer_public);
+        assert_eq!(
+            target_offer_key.get().map(DerivedTributeOfferKey::public),
+            Some(context.tribute_offer_public)
+        );
+        assert!(
+            target_boot.sealed_root_path().exists(),
+            "permanent key must be durable before the ready slot is published"
+        );
+        assert!(target_initialization
+            .authorize_command(&request, true, SessionAuthorityV1::LocalNodeHost)
+            .is_err());
     }
 
     #[test]

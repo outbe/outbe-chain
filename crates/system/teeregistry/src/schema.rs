@@ -52,11 +52,8 @@ pub struct TeeRegistry {
     #[attribute(order = 8)]
     pub announced_recipient_x25519: outbe_primitives::storage::dsl::Map<Address, B256>,
 
-    /// slot 9: the active committee's DKG group public key (constant term),
-    /// chunked into 32-byte words. The verification key for this committee's
-    /// threshold group signatures - used to verify a prior-committee reshare
-    /// endorsement before applying `DkgBoundaryArtifact::tee_reshare_registrations`.
-    /// Written at bootstrap; updated on reshare activation. Empty (len 0) until set.
+    /// slot 9: the founding committee's DKG group public key from the canonical
+    /// bootstrap payload, chunked into 32-byte words. Empty until bootstrap.
     #[attribute(order = 9)]
     pub group_public_key: outbe_primitives::storage::dsl::Map<u32, B256>,
 

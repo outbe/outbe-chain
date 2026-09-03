@@ -21,9 +21,9 @@ Feature: FullNode synchronization, failover, promotion, and replay
   Scenario: Warm promotion survives duplicate readiness and boundary restarts
     Given a fresh localnet with a short epoch
     When the committee drives past a reshare
-    And a production FullNode with its own enclave syncs from the committee
-    Then the follower reaches the committee finalized checkpoint with matching hash and state root
-    When the first follower is promoted to a validator with its warm datadir
+    And the fifth production FullNode with its own enclave syncs from the committee
+    Then the fifth FullNode reaches the committee finalized checkpoint with matching hash and state root
+    When the fifth FullNode is promoted to a validator in place
     And readiness is resubmitted before the warm promotion restart
     And the warm-promoted node and an active validator restart around the activation boundary
     Then promotion activates only at its planned boundary with sealed state and exact network parity

@@ -22,7 +22,7 @@ use commonware_cryptography::bls12381::{
 use commonware_utils::{ordered::Set, N3f1};
 use eyre::{ensure, Result, WrapErr};
 use outbe_primitives::{
-    consensus::{DkgBoundaryArtifact, ReshareResult, TeeReshareRegistration},
+    consensus::{DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::{encode_boundary_artifact, ConsensusHeaderArtifact},
 };
 use tokio::sync::mpsc;
@@ -861,11 +861,6 @@ pub struct BoundaryArtifactInput<'a> {
     pub planned_activation_height: u64,
     pub vrf_material_version: u64,
     pub is_validator_set_change: bool,
-    /// New-committee per-validator TEE key re-registrations to carry in this
-    /// boundary outcome after a tribute-offer reshare (R5). Empty for a
-    /// non-reshare boundary; populated by the epoch loop from the TEE reshare
-    /// result. The offer key is preserved across the reshare.
-    pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
     /// Exact ordered ValidatorSet members excluded by the DcapRequired readiness
     /// check at this boundary's canonical freeze block.
     pub tee_expired_target_exclusions: Vec<Address>,
@@ -882,7 +877,6 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         planned_activation_height,
         vrf_material_version,
         is_validator_set_change,
-        tee_reshare_registrations,
         tee_expired_target_exclusions,
     } = input;
 
@@ -950,12 +944,8 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         outcome,
         is_full_dkg,
         tee_recipient_pubkeys: Vec::new(),
-        tee_reshare_registrations,
         tee_expired_target_exclusions,
         tee_expired_target_exclusions_hash,
-        // Reshare authority endorsement is produced by the reshare round (R5);
-        // empty here until that flow recovers the prior-committee group signature.
-        endorsement_signature: Bytes::new(),
         reshare: ReshareResult {
             new_active_set,
             active_set_hash,

@@ -22,7 +22,10 @@ use alloy_primitives::B256;
 use crate::client::NodeHostNoiseKey;
 use crate::client::{AuthorizedEnclaveClient, EnclaveClient, GeneratedDcapQuoteV1};
 use crate::client_global::RuntimeEnclaveClient;
-use crate::dcap_protocol::{DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1};
+use crate::dcap_protocol::{
+    DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapOnboardingVerificationResultV1,
+    DcapVerificationOutcomeV1,
+};
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, RegistrationIntentV1};
@@ -328,6 +331,21 @@ impl EnclaveSession {
                     tribute_offer_epoch,
                 )
             },
+        )
+    }
+
+    pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
+        &mut self,
+        context: DcapOnboardingContextV1,
+    ) -> Result<DcapOnboardingArtifactV1, TransportError> {
+        self.with_production_retry(
+            "prepare_gramine_direct_dev_onboarding_artifact_v1",
+            || {
+                TransportError::EnclaveError(
+                    "development enclave client cannot issue DirectDev onboarding artifacts".into(),
+                )
+            },
+            |client| client.prepare_gramine_direct_dev_onboarding_artifact_v1(context),
         )
     }
 

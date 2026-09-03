@@ -1194,10 +1194,8 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         outcome: Bytes::new(),
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
-        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
             active_set_hash: B256::with_last_byte(0xA2),
@@ -2560,7 +2558,6 @@ fn test_build_boundary_artifact_maps_addresses() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2626,7 +2623,6 @@ fn test_build_boundary_artifact_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2640,7 +2636,6 @@ fn test_build_boundary_artifact_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2678,7 +2673,6 @@ fn test_build_boundary_artifact_allows_extra_validator_not_in_threshold_output()
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2704,7 +2698,6 @@ fn test_build_boundary_artifact_rejects_removed_validator_in_output() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap_err()
@@ -2736,7 +2729,6 @@ fn test_decode_boundary_output_round_trips_full_output() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2769,7 +2761,6 @@ fn test_decode_boundary_output_rejects_corrupted_outcome() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2804,7 +2795,6 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2964,7 +2954,6 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3025,7 +3014,6 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3206,7 +3194,6 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3265,7 +3252,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -4906,7 +4892,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         planned_activation_height: 421,
         vrf_material_version: 7,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -5367,7 +5352,6 @@ mod restart_recovery {
                 planned_activation_height: 20,
                 vrf_material_version: 2,
                 is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
                 tee_expired_target_exclusions: Vec::new(),
             })
             .unwrap();

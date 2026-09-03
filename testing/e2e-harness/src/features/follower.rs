@@ -144,6 +144,15 @@ fn production_full_node_follower(world: &mut World) {
         .expect("launch production FullNode follower");
 }
 
+#[when("the fifth production FullNode with its own enclave syncs from the committee")]
+fn production_full_node_in_joiner_slot(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world
+        .localnet
+        .launch_joiner_full_node(index, 0, &[])
+        .expect("launch the fifth node as a production FullNode");
+}
+
 /// S1 - follower1 reaches lockstep with the committee.
 #[then("the follower reaches lockstep with the committee")]
 fn follower_lockstep(world: &mut World) {
@@ -172,6 +181,28 @@ fn follower_exact_finality(world: &mut World) {
         world.rpc.has_threshold_shares(follower),
         Some(false),
         "FullNode unexpectedly required participant DKG material"
+    );
+}
+
+#[then(
+    "the fifth FullNode reaches the committee finalized checkpoint with matching hash and state root"
+)]
+fn fifth_full_node_exact_finality(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let follower = world.validators.http_port(world.validators.joiner_index());
+    assert!(
+        wait_finalized_checkpoint_match(&world.rpc, primary, follower, 45),
+        "fifth FullNode never reached the committee finalized checkpoint with matching hash/state root"
+    );
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "isValidator"),
+        Some("false".to_string()),
+        "fifth FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(follower),
+        Some(false),
+        "fifth FullNode unexpectedly required participant DKG material"
     );
 }
 
@@ -307,18 +338,13 @@ fn validator_relockstep(world: &mut World) {
 
 /// S2 - stop followers, preserve follower1's complete node identity and local
 /// state, then assign validator role through the ordinary ValidatorSet path.
-#[when("the first follower is promoted to a validator with its warm datadir")]
+#[when("the fifth FullNode is promoted to a validator in place")]
 fn warm_promotion(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
 
-    world.localnet.stop_followers().expect("stop followers");
-    sleep(Duration::from_secs(3));
-    world
-        .localnet
-        .move_role_neutral_node_slot(FOLLOWER1_SLOT, idx)
-        .expect("move the complete role-neutral node slot");
+    world.localnet.stop_joiner_full_node(idx);
     world
         .localnet
         .provision_existing_node_as_joiner(idx)
@@ -326,7 +352,7 @@ fn warm_promotion(world: &mut World) {
     world
         .localnet
         .restart_joiner_enclave(idx)
-        .expect("restart the moved role-neutral enclave");
+        .expect("restart the role-neutral enclave in place");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
