@@ -69,18 +69,12 @@ fn issue_source_series(world: &mut World) {
         .as_ref()
         .expect("intex engine was deployed")
         .origin_router;
-    let day = world
+    let head = world
         .rpc
         .latest_block_timestamp(port)
-        .map(|now| u32::try_from(now / 86_400).expect("worldwide day fits a uint32"))
         .expect("committee head timestamp");
-    let now = u32::try_from(
-        world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("committee head timestamp"),
-    )
-    .expect("timestamp fits a uint32");
+    let day = outbe_primitives::time::worldwide_day_from_timestamp(head);
+    let now = u32::try_from(head).expect("timestamp fits a uint32");
 
     test_issuance::open_day(
         &url,
@@ -364,16 +358,12 @@ fn gem_burned_into_promis(world: &mut World) {
         before + U256::from(GEM_LOAD_MINOR),
         "the gem's load was not minted exactly into the merchant's Promis"
     );
-    assert!(
-        eth::read_call(
-            &url,
-            addresses::GEM_ADDR,
-            &eth::IGem::getGemStatusCall {
-                gemId: mined_gem(world)
-            },
-        )
-        .is_none(),
-        "the mined gem still answers a status read; it was not burned"
+    // A positive read, not the absence of one: a status read can also come back
+    // empty because the node was busy.
+    assert_eq!(
+        gem_count(&url, merchant),
+        U256::from(1),
+        "mining did not burn the gem out of the merchant's holding"
     );
 }
 
@@ -429,6 +419,7 @@ fn gem_becomes_called(world: &mut World) {
 fn gem_is_forfeited(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
+    let merchant = crate::world::origin_venue::deployer_address();
     let gem_id = forfeited_gem(world);
     let before = world
         .state
@@ -437,13 +428,7 @@ fn gem_is_forfeited(world: &mut World) {
 
     let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
     loop {
-        if eth::read_call(
-            &url,
-            addresses::GEM_ADDR,
-            &eth::IGem::getGemStatusCall { gemId: gem_id },
-        )
-        .is_none()
-        {
+        if gem_count(&url, merchant).is_zero() {
             break;
         }
         assert!(
@@ -577,6 +562,15 @@ fn read_position(world: &World) -> eth::IGemFactory::PositionData {
         },
     )
     .expect("the parked position reads back")
+}
+
+fn gem_count(url: &str, owner: Address) -> U256 {
+    eth::read_call(
+        url,
+        addresses::GEM_ADDR,
+        &eth::IGem::balanceOfCall { owner },
+    )
+    .expect("the gem collection answers a balance read")
 }
 
 fn read_gem(url: &str, gem_id: U256) -> eth::IGem::GemData {
