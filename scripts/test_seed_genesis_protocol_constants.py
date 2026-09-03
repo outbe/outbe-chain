@@ -64,6 +64,18 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 },
             )
 
+    def test_oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address(self):
+        token = "0x1111111111111111111111111111111111111111"
+        for base, quote in (("COEN", "native"), ("840", "840"), (token, token)):
+            with self.subTest(base=base, quote=quote):
+                storage = seed_genesis.StorageBuilder()
+                with self.assertRaisesRegex(ValueError, "same asset"):
+                    seed_genesis.seed_oracle(
+                        storage,
+                        {"pairs": [{"base": base, "quote": quote}]},
+                    )
+                self.assertEqual(storage.entries, {})
+
     def test_checked_in_genesis_fixtures_use_scale18_native_balances(self):
         node_fixture = json.loads(
             (REPO_ROOT / "crates/blockchain/node/tests/assets/genesis.json").read_text()
