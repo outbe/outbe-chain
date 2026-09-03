@@ -20,7 +20,10 @@
     "forge-std/=dependencies/forge-std-1.8.1/src/",
     "the-compact/=dependencies/the-compact-1.0.0/",
     "solady/=dependencies/the-compact-1.0.0/lib/solady/src/",
+    "@shared/=../shared/src/",
   ]
+  # @shared files import their own vendored deps by relative path, which land outside this project.
+  allow_paths = ["../shared/src"]
 
 
 [profile.ci]

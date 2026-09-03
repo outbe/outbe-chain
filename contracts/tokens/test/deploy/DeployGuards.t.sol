@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {CreateX} from "../../script/0_DeployCreateX.s.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
 import {Route} from "../../script/routes/Routes.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
@@ -23,19 +23,19 @@ contract DeployHarness is DeployAll {
         _requireDeclaredChain();
     }
 
-    function exposedDeployRoute(address createX, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
+    function exposedDeployRoute(address factory, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
         external
         returns (address, address)
     {
-        return _deployRoute(createX, salt, spec, tokenInitCode);
+        return _deployRoute(factory, salt, spec, tokenInitCode);
     }
 
-    function exposedBridgeAddress(address createX, string memory salt, RouteSpec memory spec)
+    function exposedBridgeAddress(address factory, string memory salt, RouteSpec memory spec)
         external
         view
         returns (address)
     {
-        return _bridgeAddress(createX, salt, spec);
+        return _bridgeAddress(factory, salt, spec);
     }
 
     /// @dev The harness is the deployer, so it can make the owner-only `setTokenBridge` call itself. Under a real
@@ -63,7 +63,7 @@ contract DeployGuardsTest is Test {
     string internal constant SALT = "TEST_V1";
 
     DeployHarness internal deploy;
-    CreateX internal createX;
+    Create3Factory internal factory;
 
     function setUp() public {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
@@ -80,7 +80,7 @@ contract DeployGuardsTest is Test {
         vm.etch(ADOPTED_USDT, address(new USDT()).code);
 
         deploy = new DeployHarness();
-        createX = new CreateX();
+        factory = new Create3Factory();
     }
 
     // === Owner guard ===
@@ -168,10 +168,10 @@ contract DeployGuardsTest is Test {
         Route memory wcoen = deploy.routeByLabel("WCOEN");
 
         vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
-        deploy.deployRoute(address(createX), SALT, usdt);
+        deploy.deployRoute(address(factory), SALT, usdt);
 
         vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
-        deploy.deployRoute(address(createX), SALT, wcoen);
+        deploy.deployRoute(address(factory), SALT, wcoen);
     }
 
     // === Deterministic addresses ===
@@ -184,9 +184,9 @@ contract DeployGuardsTest is Test {
 
         vm.chainId(EXTERNAL_CHAIN);
         (address extUsdt, address extUsdtBridge) =
-            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+            deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
         (address extWcoen, address extWcoenBridge) =
-            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
+            deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("WCOEN"));
         bytes memory extUsdtCode = extUsdt.code;
         assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
 
@@ -194,9 +194,9 @@ contract DeployGuardsTest is Test {
 
         vm.chainId(OUTBE_CHAIN);
         (address outUsdt, address outUsdtBridge) =
-            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+            deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
         (address outWcoen, address outWcoenBridge) =
-            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
+            deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("WCOEN"));
         assertEq(uint8(ERC7786TokenBridge(outUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.BurnMint));
 
         assertEq(extUsdt, outUsdt, "USDT token address differs between chains");
@@ -209,8 +209,8 @@ contract DeployGuardsTest is Test {
 
     function test_Routes_AreDistinct() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
-        (address wcoen, address wcoenBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("WCOEN"));
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
+        (address wcoen, address wcoenBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("WCOEN"));
 
         assertTrue(usdt != usdtBridge && usdt != wcoen && usdt != wcoenBridge, "USDT address collides");
         assertTrue(usdtBridge != wcoen && usdtBridge != wcoenBridge, "USDT bridge address collides");
@@ -220,8 +220,8 @@ contract DeployGuardsTest is Test {
     function test_Salt_ChangesAddresses() public {
         vm.chainId(EXTERNAL_CHAIN);
 
-        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", deploy.routeByLabel("USDT").spec);
-        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", deploy.routeByLabel("USDT").spec);
+        address a = deploy.exposedBridgeAddress(address(factory), "SALT_A", deploy.routeByLabel("USDT").spec);
+        address b = deploy.exposedBridgeAddress(address(factory), "SALT_B", deploy.routeByLabel("USDT").spec);
 
         assertTrue(a != b, "salt does not change the address");
     }
@@ -234,10 +234,10 @@ contract DeployGuardsTest is Test {
         vm.chainId(EXTERNAL_CHAIN);
 
         RouteSpec memory spec = deploy.routeByLabel("USDT").spec;
-        address predictedBridge = deploy.exposedBridgeAddress(address(createX), SALT, spec);
+        address predictedBridge = deploy.exposedBridgeAddress(address(factory), SALT, spec);
         spec.canonicalTokenEnv = "ADOPTED_USDT_TOKEN";
 
-        (address token, address tokenBridge) = deploy.exposedDeployRoute(address(createX), SALT, spec, "");
+        (address token, address tokenBridge) = deploy.exposedDeployRoute(address(factory), SALT, spec, "");
 
         assertEq(token, ADOPTED_USDT, "did not adopt the configured canonical token");
         assertEq(tokenBridge, predictedBridge, "bridge address moved because of the adopted token");
@@ -246,7 +246,7 @@ contract DeployGuardsTest is Test {
 
     function test_Synthetic_IsWiredToBridge() public {
         vm.chainId(OUTBE_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
 
         assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
@@ -254,9 +254,9 @@ contract DeployGuardsTest is Test {
     /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
     function test_Rerun_IsNoop() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
         (address usdtAgain, address usdtBridgeAgain) =
-            deploy.deployRoute(address(createX), SALT, deploy.routeByLabel("USDT"));
+            deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
 
         assertEq(usdt, usdtAgain);
         assertEq(usdtBridge, usdtBridgeAgain);

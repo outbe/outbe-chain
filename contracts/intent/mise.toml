@@ -48,13 +48,6 @@ rm -rf ./out ./build ./cache
 
 # Deploy tasks (require NETWORK + keys in $ENV_FILE, default .env)
 
-[tasks.deploy-createx]
-description = "Deploy CreateX deterministic factory"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/0_DeployCreateX.s.sol:DeployCreateXDeterministic --rpc-url "$NETWORK" --broadcast --verify --slow -vvv
-'''
-
 [tasks.deploy-escrow]
 description = "Deploy SolverEscrow"
 run = '''
