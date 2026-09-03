@@ -61,8 +61,20 @@ impl FixedValue {
             return None;
         }
 
+        let fraction_len = i64::try_from(fraction.len()).ok()?;
+        let shift = 18i64
+            .checked_add(i64::from(exponent))
+            .and_then(|value| value.checked_sub(fraction_len))?;
+        let digit_count = whole.len().checked_add(fraction.len())?;
+        let kept_digits = if shift < 0 {
+            let discarded = usize::try_from(-shift).unwrap_or(usize::MAX);
+            digit_count.saturating_sub(discarded)
+        } else {
+            digit_count
+        };
+
         let mut coefficient = U256::ZERO;
-        for byte in whole.bytes().chain(fraction.bytes()) {
+        for byte in whole.bytes().chain(fraction.bytes()).take(kept_digits) {
             coefficient = coefficient.checked_mul(U256::from(10u64))?;
             coefficient = coefficient.checked_add(U256::from(byte - b'0'))?;
         }
@@ -70,16 +82,14 @@ impl FixedValue {
             return Some(Self::ZERO);
         }
 
-        let shift = 18i64 + i64::from(exponent) - i64::try_from(fraction.len()).ok()?;
         let raw = if shift >= 0 {
-            coefficient.checked_mul(pow10(u32::try_from(shift).ok()?)?)?
-        } else {
-            let divisor_exp = u32::try_from(-shift).ok()?;
-            if divisor_exp > 77 {
-                U256::ZERO
-            } else {
-                coefficient / pow10(divisor_exp)?
+            let shift = u32::try_from(shift).ok()?;
+            if shift > 77 {
+                return None;
             }
+            coefficient.checked_mul(pow10(shift)?)?
+        } else {
+            coefficient
         };
         Some(Self(raw))
     }
@@ -148,6 +158,23 @@ mod tests {
             SCALE_1E18
         );
         assert_eq!(FixedValue::parse("4e-19").unwrap().raw(), U256::ZERO);
+    }
+
+    #[test]
+    fn decimal_parser_discards_a_long_fraction_before_u256_conversion() {
+        let one_with_irrelevant_tail = format!("1.{}9", "0".repeat(200));
+        assert_eq!(
+            FixedValue::parse(&one_with_irrelevant_tail).unwrap().raw(),
+            SCALE_1E18
+        );
+        let one_minor_unit_with_irrelevant_tail =
+            format!("0.000000000000000001{}9", "9".repeat(200));
+        assert_eq!(
+            FixedValue::parse(&one_minor_unit_with_irrelevant_tail)
+                .unwrap()
+                .raw(),
+            U256::ONE
+        );
     }
 
     #[test]
