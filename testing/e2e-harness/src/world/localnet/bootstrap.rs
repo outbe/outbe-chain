@@ -20,7 +20,7 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
@@ -40,7 +40,10 @@ const DEV_FELONY_THRESHOLD: u64 = 30;
 /// `IntexFactory.config_profile` selector slot; `1` selects the DEV parameter profile
 /// (24h qualification, 3-day call window) over PROD's unwalkable 21-day timings.
 const INTEX_CONFIG_PROFILE_SLOT: u64 = 10;
-const INTEX_PROFILE_DEV: u64 = 1;
+/// `GemContract::config_profile`; `gem_items` spans a 17-slot record, so the
+/// attribute order is not the slot (pinned by a test in the gem crate).
+const GEM_CONFIG_PROFILE_SLOT: u64 = 42;
+const PROFILE_DEV: u64 = 1;
 
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
@@ -606,6 +609,7 @@ impl Localnet {
 
         // Step 2d: DEV intex timings, so a run can walk qualification and the call window.
         self.patch_intex_profile()?;
+        self.patch_gem_profile()?;
         Ok(())
     }
 
@@ -880,6 +884,29 @@ impl Localnet {
     /// Select the DEV IntexFactory parameter profile. Unset reads `0` = PROD, whose
     /// 21-day qualification and 28-day call window no scenario can walk.
     fn patch_intex_profile(&self) -> Result<()> {
+        self.patch_profile_slot(
+            "1015",
+            INTEX_FACTORY_ADDRESS,
+            INTEX_CONFIG_PROFILE_SLOT,
+            "intex",
+        )
+    }
+
+    /// Select the DEV Gem parameter profile, for the same reason: PROD terms a
+    /// gem with a 28-day call window and a 7-day notice.
+    fn patch_gem_profile(&self) -> Result<()> {
+        self.patch_profile_slot("1013", GEM_ADDRESS, GEM_CONFIG_PROFILE_SLOT, "gem")
+    }
+
+    /// Write `1` (= DEV) into a precompile's genesis profile-selector slot,
+    /// allocating the account when the seeder left it out.
+    fn patch_profile_slot(
+        &self,
+        suffix: &str,
+        fallback: alloy_primitives::Address,
+        slot: u64,
+        label: &str,
+    ) -> Result<()> {
         let path = self.cfg.dir.join("genesis.json");
         let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
         let alloc = g
@@ -889,25 +916,25 @@ impl Localnet {
 
         let key = alloc
             .keys()
-            .find(|k| address_has_suffix(k, "1015"))
+            .find(|k| address_has_suffix(k, suffix))
             .cloned();
         let key = key.unwrap_or_else(|| {
-            let k = format!("{INTEX_FACTORY_ADDRESS:?}");
+            let k = format!("{fallback:?}");
             alloc.insert(k.clone(), json!({ "balance": "0x0", "code": "0xef0000" }));
             k
         });
         let entry = alloc
             .get_mut(&key)
             .and_then(|e| e.as_object_mut())
-            .ok_or_else(|| eyre!("intex alloc entry is not an object"))?;
+            .ok_or_else(|| eyre!("{label} alloc entry is not an object"))?;
         let storage = entry
             .entry("storage")
             .or_insert_with(|| json!({}))
             .as_object_mut()
-            .ok_or_else(|| eyre!("intex storage is not an object"))?;
+            .ok_or_else(|| eyre!("{label} storage is not an object"))?;
         storage.insert(
-            format!("0x{INTEX_CONFIG_PROFILE_SLOT:064x}"),
-            json!(format!("0x{INTEX_PROFILE_DEV:064x}")),
+            format!("0x{slot:064x}"),
+            json!(format!("0x{PROFILE_DEV:064x}")),
         );
 
         fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;

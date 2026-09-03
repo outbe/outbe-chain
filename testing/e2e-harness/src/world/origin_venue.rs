@@ -17,6 +17,7 @@ use crate::world::hardhat;
 /// precompile-initiated calls arrive as.
 pub(crate) const DESIS: &str = "0x0000000000000000000000000000000000001016";
 const INTEX_FACTORY: &str = "0x0000000000000000000000000000000000001015";
+const GEM_FACTORY: &str = "0x0000000000000000000000000000000000002013";
 const SYSTEM_CALLER: &str = "0xff00000000000000000000000000000000000001";
 
 /// Native float each router spends on bridge fees, in whole COEN.
@@ -352,6 +353,20 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
             ("--intex-auction-contract", auction.clone()),
             ("--compact-contract", format!("{:?}", contracts.compact)),
             ("--payment-token", format!("{:?}", contracts.payment_token)),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    // GemFactory.parkIntex burns the parked units, which IntexNFT1155 gates on
+    // GEM_ROLE. The production deploy grants it here; without this the merchant
+    // gem path reverts on access control.
+    hardhat::task(
+        intex,
+        "gem-wire",
+        &[
+            ("--gem-factory", GEM_FACTORY.to_owned()),
+            ("--intex-contract", nft.clone()),
         ],
         url,
         chain_id,
