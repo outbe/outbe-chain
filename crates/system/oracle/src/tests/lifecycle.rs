@@ -457,7 +457,121 @@ fn run_tally_breaks_equal_reference_observation_ties_by_registry_order() {
 }
 
 #[test]
-fn two_large_stakes_cannot_replace_the_third_vote_required_for_four_validator_quorum() {
+fn later_pair_with_more_observations_becomes_the_reference_pair() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let first = AddressPair::from_addresses(Address::new([0x71; 20]), Address::new([0x72; 20]));
+        let later = AddressPair::from_addresses(Address::new([0x81; 20]), Address::new([0x82; 20]));
+        oracle.register_pair(first).unwrap();
+        oracle.register_pair(later).unwrap();
+
+        let voters = [
+            Address::new([0x11; 20]),
+            Address::new([0x22; 20]),
+            Address::new([0x33; 20]),
+            Address::new([0x44; 20]),
+        ];
+        for voter in voters {
+            register_validator(storage.clone(), voter, native_coen(100));
+        }
+
+        for (index, voter) in voters.into_iter().enumerate() {
+            let mut votes = vec![(later.address1(), later.address2(), fixed18(1), SCALE_1E18)];
+            if index < 3 {
+                let rate = [fixed18(2), fixed18(3), fixed18(7)][index];
+                votes.push((first.address1(), first.address2(), rate, SCALE_1E18));
+            }
+            oracle.submit_vote(voter, &votes).unwrap();
+        }
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle
+                .get_exchange_rate(later.address1(), later.address2())
+                .unwrap(),
+            fixed18(1)
+        );
+        assert_eq!(
+            oracle
+                .get_exchange_rate(first.address1(), first.address2())
+                .unwrap(),
+            fixed18(3) + U256::from(3u64)
+        );
+        let (_, _, bases, quotes, _, _) = oracle.get_all_price_snapshot_history(1).unwrap();
+        assert_eq!((bases[0], quotes[0]), (later.address1(), later.address2()));
+    });
+}
+
+#[test]
+fn pair_below_quorum_is_not_selected_as_reference() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let first = AddressPair::from_addresses(Address::new([0x71; 20]), Address::new([0x72; 20]));
+        let later = AddressPair::from_addresses(Address::new([0x81; 20]), Address::new([0x82; 20]));
+        oracle.register_pair(first).unwrap();
+        oracle.register_pair(later).unwrap();
+        oracle
+            .set_exchange_rate(Address::ZERO, first, fixed18(40), 1, 12)
+            .unwrap();
+
+        let voters = [
+            Address::new([0x11; 20]),
+            Address::new([0x22; 20]),
+            Address::new([0x33; 20]),
+            Address::new([0x44; 20]),
+        ];
+        for voter in voters {
+            register_validator(storage.clone(), voter, native_coen(100));
+        }
+
+        oracle
+            .submit_vote(
+                voters[0],
+                &[(first.address1(), first.address2(), fixed18(50), SCALE_1E18)],
+            )
+            .unwrap();
+        oracle
+            .submit_vote(
+                voters[1],
+                &[
+                    (first.address1(), first.address2(), fixed18(50), SCALE_1E18),
+                    (later.address1(), later.address2(), fixed18(2), SCALE_1E18),
+                ],
+            )
+            .unwrap();
+        for voter in &voters[2..] {
+            oracle
+                .submit_vote(
+                    *voter,
+                    &[(later.address1(), later.address2(), fixed18(2), SCALE_1E18)],
+                )
+                .unwrap();
+        }
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle
+                .get_exchange_rate_data(first.address1(), first.address2())
+                .unwrap(),
+            (fixed18(40), 1, 12)
+        );
+        assert_eq!(
+            oracle
+                .get_exchange_rate(later.address1(), later.address2())
+                .unwrap(),
+            fixed18(2)
+        );
+        let (_, _, bases, quotes, _, _) = oracle.get_all_price_snapshot_history(1).unwrap();
+        assert_eq!((bases[0], quotes[0]), (later.address1(), later.address2()));
+    });
+}
+
+#[test]
+fn two_votes_cannot_replace_the_third_vote_required_for_four_validator_quorum() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
@@ -471,8 +585,8 @@ fn two_large_stakes_cannot_replace_the_third_vote_required_for_four_validator_qu
         let v2 = Address::new([0x22; 20]);
         let v3 = Address::new([0x33; 20]);
         let v4 = Address::new([0x44; 20]);
-        register_validator(storage.clone(), v1, U256::MAX / U256::from(4u64));
-        register_validator(storage.clone(), v2, U256::MAX / U256::from(4u64));
+        register_validator(storage.clone(), v1, native_coen(100));
+        register_validator(storage.clone(), v2, native_coen(100));
         register_validator(storage.clone(), v3, native_coen(1));
         register_validator(storage.clone(), v4, native_coen(1));
 

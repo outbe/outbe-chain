@@ -873,6 +873,48 @@ mod tests {
     }
 
     #[test]
+    fn reward_band_excludes_one_rate_unit_beyond_the_lower_boundary() {
+        let voters = [
+            Address::new([1u8; 20]),
+            Address::new([2u8; 20]),
+            Address::new([3u8; 20]),
+        ];
+        let mut ballot = vec![
+            VoteForTally {
+                exchange_rate: fixed18(99) - U256::ONE,
+                volume: U256::ONE,
+                voter: voters[0],
+            },
+            VoteForTally {
+                exchange_rate: fixed18(100),
+                volume: U256::ONE,
+                voter: voters[1],
+            },
+            VoteForTally {
+                exchange_rate: fixed18(101),
+                volume: U256::ONE,
+                voter: voters[2],
+            },
+        ];
+        let mut claims = voters
+            .into_iter()
+            .map(|voter| (voter, Claim::default()))
+            .collect::<Vec<_>>();
+
+        let median = tally_pair(
+            &mut ballot,
+            U256::from(20_000_000_000_000_000u64),
+            &mut claims,
+        )
+        .unwrap();
+
+        assert_eq!(median, fixed18(100));
+        assert_eq!(claims[0].1.win_count, 0);
+        assert_eq!(claims[1].1.win_count, 1);
+        assert_eq!(claims[2].1.win_count, 1);
+    }
+
+    #[test]
     fn test_tally_pair_winners() {
         // 3 validators voting on one pair.
         // Rates: 100, 101, 200 (1e18 scaled).
@@ -1079,6 +1121,44 @@ mod tests {
             )
             .unwrap(),
             target_rate
+        );
+    }
+
+    #[test]
+    fn mixed_scale_cross_rate_round_trip_documents_flooring_loss() {
+        let voter = Address::new([1u8; 20]);
+        let reference_pair = AddressPair::new_coen_to(840);
+        let target_pair =
+            AddressPair::from_addresses(Address::new([2u8; 20]), Address::new([3u8; 20]));
+        let reference_rate = U256::from(1_000_000u64);
+        let target_rate = fixed18(3);
+        let ballot = vec![VoteForTally {
+            exchange_rate: target_rate,
+            volume: U256::ONE,
+            voter,
+        }];
+
+        let cross = to_cross_rate(
+            &ballot,
+            &[(voter, reference_rate)],
+            reference_pair,
+            target_pair,
+        )
+        .unwrap();
+
+        assert_eq!(
+            cross[0].exchange_rate,
+            U256::from(333_333_333_333_333_333u64)
+        );
+        assert_eq!(
+            from_cross_rate(
+                reference_rate,
+                cross[0].exchange_rate,
+                reference_pair,
+                target_pair,
+            )
+            .unwrap(),
+            target_rate + U256::from(3u64)
         );
     }
 
