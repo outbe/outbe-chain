@@ -8,7 +8,7 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 
 /// @dev Full token-route deploy on one chain, in one command:
 /// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared,
-/// and passed in as `CREATEX_ADDRESS`.
+/// and passed in as `CREATE3_FACTORY_ADDRESS`.
 ///   2. Every route in `script/routes/Routes.sol`
 ///   3. Remote wiring for each `REMOTE_CHAIN_IDS`
 ///
@@ -20,7 +20,7 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 /// produces the same addresses, and step 3 is safe before the other chains exist.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
-/// Optional env: `CREATEX_ADDRESS`, `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,
+/// Optional env: `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,
 ///   `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 contract DeployAll is DeployRoutes, ConfigureRemotes {
     function run() public override(DeployRoutes, ConfigureRemotes) {
@@ -31,18 +31,18 @@ contract DeployAll is DeployRoutes, ConfigureRemotes {
 
         vm.startBroadcast(_pk());
 
-        address createX = vm.envAddress("CREATEX_ADDRESS");
-        console2.log("CreateX:", createX);
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
+        console2.log("Create3Factory:", factory);
 
         console2.log("[1/2] Routes...");
-        deployRoutes(createX, salt);
+        deployRoutes(factory, salt);
 
         console2.log("[2/2] Configure remotes...");
-        configureRemotes(createX, salt);
+        configureRemotes(factory, salt);
 
         vm.stopBroadcast();
 
         console2.log("=== DeployAll complete (identical on every chain) ===");
-        console2.log("CREATEX_ADDRESS=", createX);
+        console2.log("CREATE3_FACTORY_ADDRESS=", factory);
     }
 }

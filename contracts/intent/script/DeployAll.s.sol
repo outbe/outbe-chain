@@ -14,7 +14,7 @@ import {ConfigureAll} from "./4_ConfigureAll.s.sol";
 /// Deploy order:
 ///   1. SolverEscrow
 ///   2. Auction
-///   3. RouterAllocator + composition Router (via CreateX) - talks to the ERC7786Bridge hub
+///   3. RouterAllocator + composition Router (via Create3Factory) - talks to the ERC7786Bridge hub
 ///   4. Wire all contracts together (same-chain)
 ///
 /// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared
@@ -45,7 +45,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         address factoryAddr = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         console2.log("Create3Factory:", factoryAddr);
 
-        // Everything below is deterministic from (CreateX, salt, deployer). If the router already exists, the whole
+        // Everything below is deterministic from (factory, deployer, salt). If the router already exists, the whole
         // stack is already deployed - skip it: re-deploying escrow/auction/allocator would waste gas and the router's
         // CREATE3 would revert on collision anyway.
         address routerAddr = Create3Factory(factoryAddr).predict(vm.addr(deployerPrivateKey), getRouterSalt(salt));
@@ -65,7 +65,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         address auctionAddress = deployAuction(vm.addr(deployerPrivateKey));
         console2.log("  Auction:", auctionAddress);
 
-        // 3. Deploy RouterAllocator + Router via CreateX
+        // 3. Deploy RouterAllocator + Router via Create3Factory
         console2.log("[3/4] Deploy RouterAllocator + Router...");
         (address routerAddress, address allocatorAddress) =
             deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress);

@@ -251,7 +251,7 @@ contract DeployGuardsTest is Test {
         assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
 
-    /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
+    /// @dev Create3Factory reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
     function test_Rerun_IsNoop() public {
         vm.chainId(EXTERNAL_CHAIN);
         (address usdt, address usdtBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));

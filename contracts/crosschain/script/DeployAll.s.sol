@@ -36,7 +36,7 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge {
         vm.startBroadcast(deployerPk);
 
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        console2.log("CreateX:", factory);
+        console2.log("Create3Factory:", factory);
 
         // 1. Deploy adapters (each only if its endpoint env is present)
         console2.log("[1/3] Deploy adapters...");

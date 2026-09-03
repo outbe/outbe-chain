@@ -10,7 +10,7 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 
-/// @dev Deploys RouterAllocator + the composition {Router} via CreateX. The Router talks to the `crosschain` hub's
+/// @dev Deploys RouterAllocator + the composition {Router} via Create3Factory. The Router talks to the `crosschain` hub's
 ///      `ERC7786Bridge` (no LayerZero endpoint / eids here - the protocol lives on the bridge).
 ///
 /// Required env vars:
