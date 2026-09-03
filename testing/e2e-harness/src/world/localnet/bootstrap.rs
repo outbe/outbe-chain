@@ -1099,10 +1099,12 @@ fn publish_embedded_ocomp_file(path: &Path, bytes: &[u8], mode: u32) -> Result<(
             }
             Ok(())
         }
-        Ok(_) => bail!(
-            "refusing to replace a different embedded OCOMP artifact at {}",
-            path.display()
-        ),
+        Ok(_) => {
+            bail!(
+                "refusing to replace a different embedded OCOMP artifact at {}",
+                path.display()
+            );
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);

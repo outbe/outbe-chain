@@ -1999,7 +1999,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     other => {
                         eyre::bail!(
                             "GramineDirectDev onboarding returned an unexpected response: {other:?}"
-                        )
+                        );
                     }
                 }
             }

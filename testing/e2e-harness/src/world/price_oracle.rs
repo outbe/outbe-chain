@@ -216,12 +216,14 @@ fn mock_response(path: &str, symbols: &str, book: &PriceBook) -> Result<String> 
         "/api/candles" => {
             for symbol in requested {
                 if !book.entries.contains_key(symbol) {
-                    bail!("unsupported mock price symbol `{symbol}`")
+                    bail!("unsupported mock price symbol `{symbol}`");
                 }
             }
             MockResponse { data: Vec::new() }
         }
-        other => bail!("unsupported mock price path `{other}`"),
+        other => {
+            bail!("unsupported mock price path `{other}`");
+        }
     };
     serde_json::to_string(&response).map_err(Into::into)
 }
@@ -468,10 +470,10 @@ impl PriceOracleTopology {
             phase,
         } = launch;
         if self.feeders.contains_key(&validator_index) {
-            bail!("validator-{validator_index} price feeder is already running")
+            bail!("validator-{validator_index} price feeder is already running");
         }
         if pairs.is_empty() || pairs.iter().any(|pair| pair.sources.is_empty()) {
-            bail!("a feeder must configure at least one source for one Oracle pair")
+            bail!("a feeder must configure at least one source for one Oracle pair");
         }
         let entries = pairs
             .iter()
@@ -497,7 +499,7 @@ impl PriceOracleTopology {
             std::collections::btree_map::Entry::Occupied(entry)
                 if entry.get().book().entries != expected_book.entries =>
             {
-                bail!("price mock generation changed during one feeder acceptance window")
+                bail!("price mock generation changed during one feeder acceptance window");
             }
             std::collections::btree_map::Entry::Occupied(_) => {}
         }
@@ -649,11 +651,11 @@ impl PriceOracleTopology {
 
     pub fn ensure_feeder_alive(&mut self) -> Result<()> {
         if self.feeders.is_empty() {
-            bail!("price feeder is not running")
+            bail!("price feeder is not running");
         }
         for (index, feeder) in &mut self.feeders {
             if feeder.exited() {
-                bail!("owned price feeder {index} exited")
+                bail!("owned price feeder {index} exited");
             }
         }
         Ok(())
@@ -686,7 +688,7 @@ impl PriceOracleTopology {
         volume: &str,
     ) -> Result<u64> {
         if self.feeders.is_empty() {
-            bail!("price feeder must be running before changing the controlled quote")
+            bail!("price feeder must be running before changing the controlled quote");
         }
         let mut generation = None;
         for (validator_index, mock) in &self.mocks {
