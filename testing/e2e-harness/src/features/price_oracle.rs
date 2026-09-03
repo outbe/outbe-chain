@@ -7,6 +7,10 @@ use alloy_primitives::{address, Address, U256};
 use cucumber::{given, then};
 
 use crate::world::localnet::{BootstrapProfile, StartOpts};
+use crate::world::price_oracle::{
+    OracleEvidencePhaseV1, PenaltySnapshotEvidenceV1, QuorumLossEvidenceV1,
+    QuorumLossPairEvidenceV1, ValidatorPenaltyEvidenceV1,
+};
 use crate::world::World;
 
 const USD_ISO: u16 = 840;
@@ -62,13 +66,22 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
         .map_or(0, |rate| rate.last_block);
     let vote_period = start_overlapping_feeders(world);
 
-    wait_for_unanimous_pair_publication(world, Address::ZERO, usd, before, EXPECTED_RATE, true);
     wait_for_unanimous_pair_publication(
         world,
+        OracleEvidencePhaseV1::Initial,
+        Address::ZERO,
+        usd,
+        before,
+        EXPECTED_RATE,
+        true,
+    );
+    wait_for_unanimous_pair_publication(
+        world,
+        OracleEvidencePhaseV1::Initial,
         BTC_TOKEN,
         usd,
         before_b,
-        U256::from(100u64) * outbe_primitives::units::SCALE_1E18,
+        U256::from(133_333_333_333_333_333_333u128),
         true,
     );
 
@@ -81,7 +94,7 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
         );
     }
 
-    let penalty_counts = (0..4)
+    let penalties = (0..4)
         .map(|index| {
             let key = world.validators.get(index).evm_key().unwrap();
             let validator = world
@@ -90,16 +103,29 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
                 .unwrap()
                 .parse::<Address>()
                 .unwrap();
-            world
+            let (success, abstain, miss) = world
                 .rpc
                 .oracle_penalty_counts(world.validators.primary_port(), validator)
-                .unwrap()
+                .unwrap();
+            ValidatorPenaltyEvidenceV1 {
+                validator_index: index,
+                validator_address: format!("{validator:#x}"),
+                success,
+                miss,
+                abstain,
+            }
         })
         .collect::<Vec<_>>();
-    assert!(penalty_counts[0].0 == 0 && penalty_counts[0].2 > 0);
-    assert!(penalty_counts[1].0 > 0 && penalty_counts[1].2 == 0);
-    assert!(penalty_counts[2].0 > 0 && penalty_counts[2].2 == 0);
-    assert!(penalty_counts[3].0 == 0 && penalty_counts[3].2 > 0);
+    assert!(penalties[0].success == 0 && penalties[0].miss > 0);
+    assert!(penalties[1].success > 0 && penalties[1].miss == 0);
+    assert!(penalties[2].success > 0 && penalties[2].miss == 0);
+    assert!(penalties[3].success == 0 && penalties[3].miss > 0);
+    world
+        .price_oracle
+        .record_penalty_snapshot(PenaltySnapshotEvidenceV1 {
+            phase: OracleEvidencePhaseV1::Initial,
+            validators: penalties,
+        });
 
     let evidence = world.price_oracle.evidence_snapshot();
     assert!(evidence.ticker_requests > 0);
@@ -150,10 +176,30 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
             checkpoint_b.last_block
         );
     }
+    world.price_oracle.record_quorum_loss(QuorumLossEvidenceV1 {
+        stopped_validator_index: 2,
+        finalized_height_before: checkpoint_height,
+        finalized_height_after: checkpoint_height + vote_period + 2,
+        pairs: vec![
+            QuorumLossPairEvidenceV1 {
+                base: format!("{:#x}", Address::ZERO),
+                quote: format!("{usd:#x}"),
+                last_block_before: checkpoint_a.last_block,
+                last_block_after: checkpoint_a.last_block,
+            },
+            QuorumLossPairEvidenceV1 {
+                base: format!("{BTC_TOKEN:#x}"),
+                quote: format!("{usd:#x}"),
+                last_block_before: checkpoint_b.last_block,
+                last_block_after: checkpoint_b.last_block,
+            },
+        ],
+    });
 
-    start_overlap_feeder(world, 2, vote_period);
+    start_overlap_feeder(world, 2, vote_period, OracleEvidencePhaseV1::QuorumRecovery);
     wait_for_unanimous_pair_publication(
         world,
+        OracleEvidencePhaseV1::QuorumRecovery,
         Address::ZERO,
         usd,
         checkpoint_a.last_block,
@@ -162,10 +208,11 @@ fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
     );
     wait_for_unanimous_pair_publication(
         world,
+        OracleEvidencePhaseV1::QuorumRecovery,
         BTC_TOKEN,
         usd,
         checkpoint_b.last_block,
-        U256::from(100u64) * outbe_primitives::units::SCALE_1E18,
+        U256::from(133_333_333_333_333_333_333u128),
         true,
     );
 }
@@ -176,8 +223,14 @@ fn controlled_quote_is_finalized(world: &mut World) {
         .rpc
         .oracle_rate_data(world.validators.primary_port(), USD_ISO)
         .map_or(0, |rate| rate.last_block);
-    start_feeder(world);
-    wait_for_unanimous_publication(world, before, EXPECTED_RATE, true);
+    start_feeder(world, OracleEvidencePhaseV1::Initial);
+    wait_for_unanimous_publication(
+        world,
+        OracleEvidencePhaseV1::Initial,
+        before,
+        EXPECTED_RATE,
+        true,
+    );
     let evidence = world.price_oracle.evidence_snapshot();
     assert!(evidence.ticker_requests > 0);
     assert!(evidence.candle_requests > 0);
@@ -217,7 +270,7 @@ pub(crate) fn resume_after_clock_restart(
 ) -> Option<PendingPricePublication> {
     let previous_block = previous_block?;
     let expected_rate = feeder_restart_expected_rate(world.price_oracle.read_controlled_quote());
-    start_feeder(world);
+    start_feeder(world, OracleEvidencePhaseV1::ClockRestart);
     Some(PendingPricePublication {
         strictly_after_block: previous_block,
         expected_rate,
@@ -234,6 +287,7 @@ pub(crate) fn observe_pending_publication(
 ) -> bool {
     if observe_unanimous_publication(
         world,
+        OracleEvidencePhaseV1::ClockRestart,
         pending.strictly_after_block,
         pending.expected_rate,
         true,
@@ -255,12 +309,18 @@ pub(crate) fn publish_controlled_quote(world: &mut World, expected_rate: U256) {
     let quote = scale6_quote(expected_rate);
     world
         .price_oracle
-        .publish_quote(&quote, MOCK_VOLUME)
+        .publish_quote(OracleEvidencePhaseV1::ControlledUpdate, &quote, MOCK_VOLUME)
         .expect("publish controlled Oracle quote generation");
-    wait_for_unanimous_publication(world, strictly_after_block, expected_rate, true);
+    wait_for_unanimous_publication(
+        world,
+        OracleEvidencePhaseV1::ControlledUpdate,
+        strictly_after_block,
+        expected_rate,
+        true,
+    );
 }
 
-fn start_feeder(world: &mut World) {
+fn start_feeder(world: &mut World, phase: OracleEvidencePhaseV1) {
     let (price, volume) = feeder_start_quote(world.price_oracle.read_controlled_quote());
     let validator_count = world.validators.size();
     let quorum = oracle_quorum(validator_count);
@@ -302,6 +362,7 @@ fn start_feeder(world: &mut World) {
                     volume: &volume,
                 },
                 vote_period,
+                phase,
             )
             .unwrap_or_else(|error| {
                 panic!("start validator-{validator_index} production price feeder: {error:#}")
@@ -315,12 +376,22 @@ fn start_overlapping_feeders(world: &mut World) -> u64 {
         .oracle_vote_period(world.validators.primary_port())
         .expect("read canonical Oracle vote period for feeder");
     for validator_index in 0..4 {
-        start_overlap_feeder(world, validator_index, vote_period);
+        start_overlap_feeder(
+            world,
+            validator_index,
+            vote_period,
+            OracleEvidencePhaseV1::Initial,
+        );
     }
     vote_period
 }
 
-fn start_overlap_feeder(world: &mut World, validator_index: usize, vote_period: u64) {
+fn start_overlap_feeder(
+    world: &mut World,
+    validator_index: usize,
+    vote_period: u64,
+    phase: OracleEvidencePhaseV1,
+) {
     let validator = world.validators.get(validator_index);
     let private_key = validator.evm_key().unwrap_or_else(|error| {
         panic!("validator-{validator_index} EVM key for feeder: {error:#}")
@@ -345,6 +416,7 @@ fn start_overlap_feeder(world: &mut World, validator_index: usize, vote_period: 
             &validator_address,
             &pairs,
             vote_period,
+            phase,
         )
         .unwrap_or_else(|error| {
             panic!("start validator-{validator_index} production price feeder: {error:#}")
@@ -386,7 +458,7 @@ fn overlap_pairs(validator_index: usize) -> Vec<crate::world::price_oracle::Feed
     match validator_index {
         0 => vec![pair_a()],
         1 => vec![pair_a(), pair_b("100", "10")],
-        2 => vec![pair_a(), pair_b("100", "20")],
+        2 => vec![pair_a(), pair_b("200", "20")],
         3 => vec![pair_b("300", "30")],
         _ => panic!("overlap fixture has exactly four validators"),
     }
@@ -431,12 +503,14 @@ fn parse_scale6_rate(price: &str) -> Option<U256> {
 
 fn wait_for_unanimous_publication(
     world: &mut World,
+    phase: OracleEvidencePhaseV1,
     strictly_after_block: u64,
     expected_rate: U256,
     require_live_feeder: bool,
 ) {
     wait_for_unanimous_pair_publication(
         world,
+        phase,
         Address::ZERO,
         outbe_primitives::asset_type::currency_address(USD_ISO),
         strictly_after_block,
@@ -447,6 +521,7 @@ fn wait_for_unanimous_publication(
 
 fn wait_for_unanimous_pair_publication(
     world: &mut World,
+    phase: OracleEvidencePhaseV1,
     base: Address,
     quote: Address,
     strictly_after_block: u64,
@@ -457,6 +532,7 @@ fn wait_for_unanimous_pair_publication(
     loop {
         if observe_unanimous_pair_publication(
             world,
+            phase,
             base,
             quote,
             strictly_after_block,
@@ -475,12 +551,14 @@ fn wait_for_unanimous_pair_publication(
 
 fn observe_unanimous_publication(
     world: &mut World,
+    phase: OracleEvidencePhaseV1,
     strictly_after_block: u64,
     expected_rate: U256,
     require_live_feeder: bool,
 ) -> bool {
     observe_unanimous_pair_publication(
         world,
+        phase,
         Address::ZERO,
         outbe_primitives::asset_type::currency_address(USD_ISO),
         strictly_after_block,
@@ -491,6 +569,7 @@ fn observe_unanimous_publication(
 
 fn observe_unanimous_pair_publication(
     world: &mut World,
+    phase: OracleEvidencePhaseV1,
     base: Address,
     quote: Address,
     strictly_after_block: u64,
@@ -512,6 +591,10 @@ fn observe_unanimous_pair_publication(
         .iter()
         .map(|port| world.rpc.oracle_rate_data_for_pair(*port, base, quote))
         .collect::<Vec<_>>();
+    let volumes = ports
+        .iter()
+        .map(|port| world.rpc.oracle_latest_volume(*port, base, quote))
+        .collect::<Vec<_>>();
     let (Some(finalized_height), Some(rate)) = (
         finalized.iter().flatten().copied().min(),
         rates.first().and_then(|rate| *rate),
@@ -523,6 +606,12 @@ fn observe_unanimous_pair_publication(
         || rate.last_block <= strictly_after_block
         || rate.last_block > finalized_height
     {
+        return false;
+    }
+    let Some(volume) = volumes.first().and_then(|volume| *volume) else {
+        return false;
+    };
+    if !volumes.iter().all(|candidate| *candidate == Some(volume)) {
         return false;
     }
     let timestamps = ports
@@ -540,8 +629,12 @@ fn observe_unanimous_pair_publication(
         return false;
     }
     world.price_oracle.record_canonical_publication(
+        phase,
         ports.len(),
+        base,
+        quote,
         rate.rate,
+        volume,
         rate.last_block,
         rate.last_timestamp,
         finalized_height,
