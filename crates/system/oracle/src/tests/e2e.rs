@@ -93,6 +93,56 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
 }
 
 #[test]
+fn genesis_round_trip_preserves_coen_iso_scale_and_reverse_generic_orientation() {
+    let coen_iso_pair = AddressPair::new_coen_to(840);
+    let configured = AddressPair::from_addresses(ETH, usd());
+    let mut config = crate::genesis::OracleGenesisConfig::default_config();
+    config.pairs = vec![
+        (coen_iso_pair.address1(), coen_iso_pair.address2()),
+        (configured.address1(), configured.address2()),
+    ];
+    config.initial_rates = vec![
+        (
+            coen_iso_pair.address1(),
+            coen_iso_pair.address2(),
+            coen_iso(1),
+        ),
+        (configured.address1(), configured.address2(), fixed18(2_000)),
+    ];
+
+    let exported = {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+            assert_eq!(oracle.pair_at(1).unwrap(), coen_iso_pair);
+            assert_eq!(oracle.pair_at(2).unwrap(), configured);
+            crate::genesis::export_genesis(&oracle, &[]).unwrap()
+        })
+    };
+    assert_eq!(exported.pairs, config.pairs);
+    assert_eq!(exported.initial_rates, config.initial_rates);
+
+    let mut provider = HashMapStorageProvider::new(2);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage);
+        crate::genesis::init_from_genesis(&mut oracle, &exported).unwrap();
+        assert_eq!(oracle.pair_at(1).unwrap(), coen_iso_pair);
+        assert_eq!(oracle.pair_at(2).unwrap(), configured);
+        assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(1));
+        assert_eq!(
+            oracle
+                .get_exchange_rate(configured.address1(), configured.address2())
+                .unwrap(),
+            fixed18(2_000)
+        );
+        let reexported = crate::genesis::export_genesis(&oracle, &[]).unwrap();
+        assert_eq!(reexported.pairs, exported.pairs);
+        assert_eq!(reexported.initial_rates, exported.initial_rates);
+    });
+}
+
+#[test]
 fn init_from_genesis_imports_every_custom_config_collection() {
     with_storage(|storage| {
         register_validator(storage.clone(), Address::new([0x11; 20]), native_coen(100));

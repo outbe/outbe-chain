@@ -7,17 +7,18 @@ use eyre::Result;
 use std::collections::HashMap;
 
 use super::{CandlePrice, Provider, TickerPrice};
+use crate::fixed::FixedValue;
 
 /// Mock provider returning hardcoded prices with small variations.
 pub struct MockProvider {
-    base_prices: HashMap<String, f64>,
+    base_prices: HashMap<String, FixedValue>,
 }
 
 impl MockProvider {
     pub fn new() -> Self {
         let mut base_prices = HashMap::new();
-        base_prices.insert("COEN/840".to_string(), 1.0);
-        base_prices.insert("ETH/840".to_string(), 2500.0);
+        base_prices.insert("COEN/840".to_string(), FixedValue::parse("1").unwrap());
+        base_prices.insert("ETH/840".to_string(), FixedValue::parse("2500").unwrap());
         Self { base_prices }
     }
 }
@@ -40,7 +41,7 @@ impl Provider for MockProvider {
                     key,
                     TickerPrice {
                         price,
-                        volume: 10_000.0,
+                        volume: FixedValue::parse("10000").unwrap(),
                     },
                 );
             }
@@ -65,18 +66,18 @@ impl Provider for MockProvider {
                 // Return 3 sample candles with slight price variation
                 let candles = vec![
                     CandlePrice {
-                        price: base_price * 0.99,
-                        volume: 3000.0,
+                        price: base_price.checked_mul_ratio(99, 100).unwrap(),
+                        volume: FixedValue::parse("3000").unwrap(),
                         timestamp: now - 180,
                     },
                     CandlePrice {
-                        price: base_price * 1.01,
-                        volume: 4000.0,
+                        price: base_price.checked_mul_ratio(101, 100).unwrap(),
+                        volume: FixedValue::parse("4000").unwrap(),
                         timestamp: now - 120,
                     },
                     CandlePrice {
                         price: base_price,
-                        volume: 3500.0,
+                        volume: FixedValue::parse("3500").unwrap(),
                         timestamp: now - 60,
                     },
                 ];

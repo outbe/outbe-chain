@@ -271,7 +271,7 @@ impl OracleContract<'_> {
     /// Calculates VWAP for a specific pair over a time range.
     ///
     /// VWAP = sum(price_i * volume_i) / sum(volume_i)
-    /// Values remain in the pair's canonical scale.
+    /// Values remain in the pair's registered scale.
     pub fn calculate_vwap(
         &self,
         pair: AddressPair,

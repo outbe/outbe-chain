@@ -25,10 +25,14 @@ alloy-rpc-types.workspace = true
 # Async runtime
 tokio.workspace = true
 reqwest.workspace = true
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures.workspace = true
+flate2 = "1"
+prost = "0.14"
 
 # Config & CLI
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 toml.workspace = true
 clap.workspace = true
 eyre.workspace = true

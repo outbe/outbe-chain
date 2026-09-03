@@ -21,7 +21,7 @@ pub type PairIndex = u32;
 /// Manages exchange rates, validator voting, price snapshots, and VWAP
 /// calculation for whitelisted trading pairs.
 ///
-/// Prices and volumes remain `U256` in each pair's canonical scale. COEN/ISO
+/// Prices and volumes remain `U256` in each pair's registered scale. COEN/ISO
 /// uses six decimals; generic non-ISO pairs retain their existing contract.
 ///
 /// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
@@ -73,8 +73,8 @@ pub struct OracleContract {
     // `pair_to_index` first, then this column. Only a registered pair has an
     // index, so an unregistered market has no rate slot to write into at all,
     // and the index carries the orientation the pair was registered in - the
-    // stored rate is always the canonical direction, never the reciprocal.
-    // slot 12: mapping(pair_index => exchange_rate), pair-canonical scale
+    // stored rate is always the registered direction, never the reciprocal.
+    // slot 12: mapping(pair_index => exchange_rate), pair-registered scale
     pub exchange_rate: Mapping<PairIndex, U256>,
     // slot 13: mapping(pair_index => last_update_block)
     pub exchange_rate_block: Mapping<PairIndex, u64>,
@@ -139,7 +139,7 @@ pub struct OracleContract {
     pub scurve_pair: Mapping<u32, AddressPair>,
     // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
     pub scurve_peak_day: Mapping<u32, u64>,
-    // slot 37: mapping(entry_idx => peak_price), pair-canonical scale
+    // slot 37: mapping(entry_idx => peak_price), pair-registered scale
     pub scurve_peak_price: Mapping<u32, U256>,
     // slot 38: oldest non-evicted entry index (head pointer for cleanup)
     pub scurve_oldest_idx: Slot<u32>,

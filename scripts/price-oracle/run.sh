@@ -20,7 +20,6 @@ RPC_URL="${RPC_URL:-http://127.0.0.1:$((18545 + VALIDATOR_INDEX))}"
 CHAIN_ID="${CHAIN_ID:-54322345}"
 HEALTH_BIND="${HEALTH_BIND:-0.0.0.0:$((9002 + VALIDATOR_INDEX))}"
 PRICE_REST_URL="${PRICE_REST_URL:-https://prc.testnet.outbe.net}"
-PRICE_WS_URL="${PRICE_WS_URL:-prc.testnet.outbe.net}"
 CONFIG_TEMPLATE="${OUTBE_PRICE_ORACLE_CONFIG:-$SCRIPT_DIR/config.toml}"
 RUNTIME_CONFIG="${OUTBE_PRICE_ORACLE_RUNTIME_CONFIG:-$TESTNET_DIR/price-oracle-feeder-$VALIDATOR_INDEX.toml}"
 OUTBE_FEEDER="${OUTBE_FEEDER:-$REPO_ROOT/target/release/outbe-feeder}"
@@ -66,12 +65,12 @@ except (IndexError, KeyError) as exc:
 PY
 )"
 
-python3 - "$CONFIG_TEMPLATE" "$RUNTIME_CONFIG" "$PRIVATE_KEY" "$VALIDATOR_ADDRESS" "$RPC_URL" "$CHAIN_ID" "$HEALTH_BIND" "$PRICE_REST_URL" "$PRICE_WS_URL" <<'PY'
+python3 - "$CONFIG_TEMPLATE" "$RUNTIME_CONFIG" "$PRIVATE_KEY" "$VALIDATOR_ADDRESS" "$RPC_URL" "$CHAIN_ID" "$HEALTH_BIND" "$PRICE_REST_URL" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-template, output, private_key, validator, rpc_url, chain_id, health_bind, price_rest, price_ws = sys.argv[1:]
+template, output, private_key, validator, rpc_url, chain_id, health_bind, price_rest = sys.argv[1:]
 text = Path(template).read_text()
 
 replacements = {
@@ -81,7 +80,6 @@ replacements = {
     r'(?m)^validator_address = ".*"$': f'validator_address = "{validator}"',
     r'(?m)^bind_address = ".*"$': f'bind_address = "{health_bind}"',
     r'(?m)^rest = ".*"$': f'rest = "{price_rest}"',
-    r'(?m)^websocket = ".*"$': f'websocket = "{price_ws}"',
 }
 
 for pattern, replacement in replacements.items():

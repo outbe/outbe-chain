@@ -14,8 +14,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::ProviderEndpointConfig;
+use crate::fixed::JsonDecimal;
 
-use super::{CandlePrice, Provider, TickerPrice};
+use super::{CandlePrice, Provider, TickerPrice, VolumeInput};
 
 const DEFAULT_MOCK_HTTP_URL: &str = "http://localhost:8000";
 
@@ -58,8 +59,8 @@ struct TickerResponse {
 #[derive(Debug, Deserialize)]
 struct TickerEntry {
     symbol: String,
-    price: NumberLike,
-    volume: NumberLike,
+    price: JsonDecimal,
+    volume: JsonDecimal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,28 +72,10 @@ struct CandleResponse {
 #[derive(Debug, Deserialize)]
 struct CandleEntry {
     symbol: String,
-    price: NumberLike,
-    volume: NumberLike,
+    price: JsonDecimal,
+    volume: JsonDecimal,
     #[serde(default)]
     timestamp: i64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum NumberLike {
-    String(String),
-    Number(f64),
-}
-
-impl NumberLike {
-    fn as_f64(&self) -> Result<f64> {
-        match self {
-            Self::String(value) => value
-                .parse::<f64>()
-                .with_context(|| format!("failed to parse numeric string `{value}`")),
-            Self::Number(value) => Ok(*value),
-        }
-    }
 }
 
 #[async_trait]
@@ -139,12 +122,13 @@ impl Provider for MockHttpProvider {
                 return Err(eyre!("duplicate mock_http ticker for {symbol}"));
             }
 
-            let price = ticker.price.as_f64()?;
-            let volume = ticker.volume.as_f64()?;
-            tracing::info!(symbol = %symbol, price, volume, "mock_http ticker received");
-            if price > 0.0 {
-                prices.insert(key.clone(), TickerPrice { price, volume });
-            }
+            let ticker = TickerPrice::from_parsed(
+                ticker.price.fixed(),
+                VolumeInput::Present(ticker.volume.fixed()),
+            )
+            .map_err(|error| eyre!("invalid mock_http ticker for {symbol}: {error}"))?;
+            tracing::info!(symbol = %symbol, price = %ticker.price.raw(), volume = %ticker.volume.raw(), "mock_http ticker received");
+            prices.insert(key.clone(), ticker);
         }
 
         for (symbol, key) in &requested {
@@ -191,17 +175,14 @@ impl Provider for MockHttpProvider {
                 continue;
             };
 
-            let price = candle.price.as_f64()?;
-            let volume = candle.volume.as_f64()?;
-            if price <= 0.0 || volume <= 0.0 {
-                continue;
-            }
+            let candle = CandlePrice::from_parsed(
+                candle.price.fixed(),
+                VolumeInput::Present(candle.volume.fixed()),
+                candle.timestamp.max(0) as u64,
+            )
+            .map_err(|error| eyre!("invalid mock_http candle for {symbol}: {error}"))?;
 
-            candles.entry(key.clone()).or_default().push(CandlePrice {
-                price,
-                volume,
-                timestamp: candle.timestamp.max(0) as u64,
-            });
+            candles.entry(key.clone()).or_default().push(candle);
         }
 
         if candles.is_empty() {
@@ -222,8 +203,22 @@ impl Provider for MockHttpProvider {
             });
         }
 
+        ensure_complete_candle_response(&requested, &candles)?;
+
         Ok(candles)
     }
+}
+
+fn ensure_complete_candle_response(
+    requested: &HashMap<String, String>,
+    candles: &HashMap<String, Vec<CandlePrice>>,
+) -> Result<()> {
+    for (symbol, key) in requested {
+        if !candles.contains_key(key) {
+            return Err(eyre!("missing mock_http candles for {symbol}"));
+        }
+    }
+    Ok(())
 }
 
 fn requested_symbols(pairs: &[(String, String)]) -> HashMap<String, String> {
@@ -235,4 +230,29 @@ fn requested_symbols(pairs: &[(String, String)]) -> HashMap<String, String> {
 
 fn pair_symbol(base: &str, quote: &str) -> String {
     format!("{base}{quote}").to_uppercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixed::FixedValue;
+
+    #[test]
+    fn partial_candle_response_is_rejected() {
+        let requested = requested_symbols(&[
+            ("COEN".to_owned(), "USDT".to_owned()),
+            ("COEN".to_owned(), "USDC".to_owned()),
+        ]);
+        let candles = HashMap::from([(
+            "COEN/USDT".to_owned(),
+            vec![CandlePrice {
+                price: FixedValue::parse("1").unwrap(),
+                volume: FixedValue::parse("1").unwrap(),
+                timestamp: 1,
+            }],
+        )]);
+
+        let error = ensure_complete_candle_response(&requested, &candles).unwrap_err();
+        assert!(error.to_string().contains("COENUSDC"));
+    }
 }

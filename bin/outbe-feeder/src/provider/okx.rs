@@ -5,7 +5,8 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to an OKX instrument ID.
 /// Returns `None` for pairs OKX doesn't support.
@@ -106,12 +107,14 @@ impl Provider for OkxProvider {
             };
 
             if let Some(ticker) = data.data.first() {
-                let price: f64 = ticker.last.parse().unwrap_or(0.0);
-                let volume: f64 = ticker.vol_24h.parse().unwrap_or(0.0);
-
-                if price > 0.0 {
-                    let key = format!("{base}/{quote}");
-                    result.insert(key, TickerPrice { price, volume });
+                let key = format!("{base}/{quote}");
+                if let Some(ticker) = checked_ticker(
+                    "okx",
+                    &key,
+                    FixedValue::parse(&ticker.last),
+                    VolumeInput::Present(FixedValue::parse(&ticker.vol_24h)),
+                ) {
+                    result.insert(key, ticker);
                 }
             }
         }

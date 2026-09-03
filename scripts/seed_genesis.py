@@ -541,7 +541,7 @@ class StorageBuilder:
         An oracle pair is 40 bytes and a storage word is 32, so the value spans
         the key's mapping slot and the one after it - base then quote, the same
         layout Solidity gives `mapping(K => struct { address; address; })`.
-        Callers pass the pair already canonical; nothing here sorts it.
+        Callers pass the pair in its registered orientation; nothing here sorts it.
         """
         slot = int(mapping_key(key_bytes, base_slot), 16)
         self.set_raw_slot(slot, int.from_bytes(asset_address(base), "big"))
@@ -722,6 +722,15 @@ def address_pair(base: str, quote: str) -> bytes:
     """
     low, high = sorted((asset_address(base), asset_address(quote)))
     return low + high
+
+
+def is_iso_asset_address(address: bytes) -> bool:
+    """Mirror `AssetType::IsoCurrency` for an already encoded asset address."""
+    raw = int.from_bytes(address, "big")
+    if not ISO_MARKER <= raw <= ISO_MARKER | 0x999:
+        return False
+    bcd = raw - ISO_MARKER
+    return all(((bcd >> shift) & 0xF) <= 9 for shift in (0, 4, 8, 12))
 
 
 # --- Seeders ---
@@ -1418,18 +1427,20 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         if h in pair_keys.values():
             raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
         # This seeder writes slot 43 directly, bypassing `register_pair`, so it
-        # owes the same invariant: only the canonical orientation is stored, and
-        # `require_pair` relies on that rather than re-reading the entry.
-        if asset_address(base) > asset_address(quote):
+        # owes the same directional invariant: generic markets preserve their
+        # configured orientation, while COEN/ISO is always COEN base, ISO quote.
+        base_address = asset_address(base)
+        quote_address = asset_address(quote)
+        if is_iso_asset_address(base_address) and quote_address == bytes(20):
             raise ValueError(
-                f"oracle pair must be canonical (base <= quote): {base}/{quote}"
+                f"oracle COEN/ISO pair must use COEN base and ISO quote: {base}/{quote}"
             )
         pair_keys[key] = h
         pair_ids[key] = idx
 
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_by_index (macro slot 43), canonical orientation.
+        # pair_by_index (macro slot 43), configured orientation.
         storage.set_mapping_pair(43, u32_bytes(idx), base, quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))

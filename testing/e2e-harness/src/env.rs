@@ -10,6 +10,7 @@
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
 //!   - `min-validators-N` -> requires `--validators >= N` (N parsed from the tag).
+//!   - `validators-N`     -> requires `--validators == N` (N parsed from the tag).
 //!   - `tee`              -> requires an enabled enclave mode.
 //!   - `sudo`             -> requires `sudo` (no `--no-sudo`).
 //!   - `real-sgx`         -> always skipped outside `--tee real`, regardless of `--all`.
@@ -441,9 +442,17 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 
 /// Why the environment can't satisfy this scenario, or `None` if it can.
 ///
-/// Every requirement is declared as a tag (`@tee`, `@min-validators-N`, `@sudo`),
+/// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
 /// so the Given text stays purely descriptive - nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
+    if let Some(n) = exact_validators(feature, scenario) {
+        if env.validators != n {
+            return Some(format!(
+                "needs exactly {n} validators, have {}",
+                env.validators
+            ));
+        }
+    }
     if let Some(n) = required_validators(feature, scenario) {
         if env.validators < n {
             return Some(format!("needs >={n} validators, have {}", env.validators));
@@ -483,6 +492,15 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
     None
 }
 
+/// The exact validator count from a `@validators-N` tag, if present.
+pub fn exact_validators(feature: &Feature, scenario: &Scenario) -> Option<usize> {
+    feature
+        .tags
+        .iter()
+        .chain(scenario.tags.iter())
+        .find_map(|tag| parse_exact_validators_tag(tag))
+}
+
 /// The minimum validator count from a `@min-validators-N` tag, if present.
 pub fn required_validators(feature: &Feature, scenario: &Scenario) -> Option<usize> {
     feature
@@ -500,6 +518,11 @@ pub fn requires_tee(feature: &Feature, scenario: &Scenario) -> bool {
 /// Parse `N` out of a `min-validators-<N>` tag (tags are `@`-less here).
 fn parse_min_validators_tag(tag: &str) -> Option<usize> {
     tag.strip_prefix("min-validators-")?.parse().ok()
+}
+
+/// Parse `N` out of a `validators-<N>` tag (tags are `@`-less here).
+fn parse_exact_validators_tag(tag: &str) -> Option<usize> {
+    tag.strip_prefix("validators-")?.parse().ok()
 }
 
 /// What to do with a scenario given the environment.
@@ -666,6 +689,36 @@ mod tests {
         assert_eq!(parse_min_validators_tag("tee"), None);
         assert_eq!(parse_min_validators_tag("min-validators-"), None);
         assert_eq!(parse_min_validators_tag("min-validators-x"), None);
+    }
+
+    #[test]
+    fn parses_exact_validators_tag() {
+        assert_eq!(parse_exact_validators_tag("validators-4"), Some(4));
+        assert_eq!(parse_exact_validators_tag("validators-12"), Some(12));
+        assert_eq!(parse_exact_validators_tag("min-validators-4"), None);
+        assert_eq!(parse_exact_validators_tag("validators-"), None);
+        assert_eq!(parse_exact_validators_tag("validators-x"), None);
+    }
+
+    #[test]
+    fn exact_validator_requirement_rejects_a_larger_committee() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/price_oracle.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse price Oracle feature");
+        let scenario = feature.scenarios.first().expect("price Oracle scenario");
+        let mut env = Environment {
+            validators: 4,
+            ..Environment::default()
+        };
+        assert_eq!(unmet(&feature, scenario, &env), None);
+
+        env.validators = 5;
+        assert_eq!(
+            unmet(&feature, scenario, &env).as_deref(),
+            Some("needs exactly 4 validators, have 5")
+        );
     }
 
     #[test]

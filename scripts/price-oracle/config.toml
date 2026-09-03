@@ -21,15 +21,16 @@ bind_address = "0.0.0.0:9002"
 [[provider_endpoints]]
 name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
-websocket = "prc.testnet.outbe.net"
 
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-chain_denom = "unit"
-providers = ["mock_http"]
+
+[[currency_pairs.sources]]
+provider = "mock_http"
+base = "COEN"
+quote = "840"
 
 [[deviation_thresholds]]
 base = "COEN"
-threshold = 2.0
-
+threshold = "2.0"

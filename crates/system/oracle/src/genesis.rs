@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 pub struct GenesisSnapshot {
     /// Unix timestamp of the snapshot.
     pub timestamp: u64,
-    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
+    /// Entries as `(base, quote, rate, volume)` in each pair's registered scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
@@ -41,7 +41,7 @@ pub struct GenesisScurveEntry {
 pub struct GenesisAggregateVote {
     /// Validator address that owns this pending vote.
     pub validator: Address,
-    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
+    /// Entries as `(base, quote, rate, volume)` in each pair's registered scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
