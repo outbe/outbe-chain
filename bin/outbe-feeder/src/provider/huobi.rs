@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::JsonDecimal;
 
 /// Maps a (base, quote) pair to a Huobi symbol (lowercase).
@@ -116,15 +116,14 @@ impl Provider for HuobiProvider {
             }
 
             if let Some(tick) = data.tick {
-                if let Some(price) = tick.close.fixed().filter(|price| !price.is_zero()) {
-                    let key = format!("{base}/{quote}");
-                    result.insert(
-                        key,
-                        TickerPrice {
-                            price,
-                            volume: tick.vol.fixed().unwrap_or_default(),
-                        },
-                    );
+                let key = format!("{base}/{quote}");
+                if let Some(ticker) = checked_ticker(
+                    "huobi",
+                    &key,
+                    tick.close.fixed(),
+                    VolumeInput::Present(tick.vol.fixed()),
+                ) {
+                    result.insert(key, ticker);
                 }
             }
         }

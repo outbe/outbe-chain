@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::config::ProviderEndpointConfig;
 use crate::fixed::JsonDecimal;
 
-use super::{CandlePrice, Provider, TickerPrice};
+use super::{CandlePrice, Provider, TickerPrice, VolumeInput};
 
 const DEFAULT_MOCK_HTTP_URL: &str = "http://localhost:8000";
 
@@ -122,18 +122,13 @@ impl Provider for MockHttpProvider {
                 return Err(eyre!("duplicate mock_http ticker for {symbol}"));
             }
 
-            let price = ticker
-                .price
-                .fixed()
-                .ok_or_else(|| eyre!("invalid mock_http ticker price for {symbol}"))?;
-            let volume = ticker
-                .volume
-                .fixed()
-                .ok_or_else(|| eyre!("invalid mock_http ticker volume for {symbol}"))?;
-            tracing::info!(symbol = %symbol, price = %price.raw(), volume = %volume.raw(), "mock_http ticker received");
-            if !price.is_zero() {
-                prices.insert(key.clone(), TickerPrice { price, volume });
-            }
+            let ticker = TickerPrice::from_parsed(
+                ticker.price.fixed(),
+                VolumeInput::Present(ticker.volume.fixed()),
+            )
+            .map_err(|error| eyre!("invalid mock_http ticker for {symbol}: {error}"))?;
+            tracing::info!(symbol = %symbol, price = %ticker.price.raw(), volume = %ticker.volume.raw(), "mock_http ticker received");
+            prices.insert(key.clone(), ticker);
         }
 
         for (symbol, key) in &requested {
@@ -180,21 +175,14 @@ impl Provider for MockHttpProvider {
                 continue;
             };
 
-            let Some(price) = candle.price.fixed() else {
-                continue;
-            };
-            let Some(volume) = candle.volume.fixed() else {
-                continue;
-            };
-            if price.is_zero() || volume.is_zero() {
-                continue;
-            }
+            let candle = CandlePrice::from_parsed(
+                candle.price.fixed(),
+                VolumeInput::Present(candle.volume.fixed()),
+                candle.timestamp.max(0) as u64,
+            )
+            .map_err(|error| eyre!("invalid mock_http candle for {symbol}: {error}"))?;
 
-            candles.entry(key.clone()).or_default().push(CandlePrice {
-                price,
-                volume,
-                timestamp: candle.timestamp.max(0) as u64,
-            });
+            candles.entry(key.clone()).or_default().push(candle);
         }
 
         if candles.is_empty() {

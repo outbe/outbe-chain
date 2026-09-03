@@ -303,7 +303,7 @@ fn isqrt_u1024(n: U1024) -> U1024 {
         return U1024::ONE;
     }
     let mut x = n;
-    let mut y = (x >> 1) + U1024::ONE;
+    let mut y = (x >> 1) + (x & U1024::ONE);
     while y < x {
         x = y;
         y = (x + n / x) >> 1;
@@ -440,14 +440,8 @@ mod tests {
             (fp("300"), fp("3000")),
         ];
         let (vwap, volume) = compute_weighted(&prices).unwrap().unwrap();
-        // VWAP = (100*1000 + 200*2000 + 300*3000) / (1000 + 2000 + 3000) ~= 233.33
-        let expected_vwap = U256::from(233u128) * SCALE_1E18;
-        // Allow 1 unit tolerance due to fixed-point rounding
-        assert!(vwap >= expected_vwap);
-        assert!(vwap < expected_vwap + SCALE_1E18); // within 1.0
-
-        let expected_volume = U256::from(6000u128) * SCALE_1E18;
-        assert_eq!(volume, expected_volume);
+        assert_eq!(vwap, U256::from(233_333_333_333_333_333_333u128));
+        assert_eq!(volume, U256::from(6000u128) * SCALE_1E18);
     }
 
     #[test]
@@ -460,16 +454,8 @@ mod tests {
         ];
         let (tvwap, total_volume) = compute_tvwap_fixed(&candles).unwrap();
 
-        // Expected TVWAP = (100*3000 + 102*4000 + 101*3500) / (3000+4000+3500)
-        //                = (300000 + 408000 + 353500) / 10500
-        //                = 1061500 / 10500 ~= 101.095238
-        let expected_min = U256::from(101u128) * SCALE_1E18;
-        let expected_max = U256::from(102u128) * SCALE_1E18;
-        assert!(tvwap >= expected_min, "tvwap too low: {tvwap}");
-        assert!(tvwap < expected_max, "tvwap too high: {tvwap}");
-
-        let expected_volume = U256::from(10500u128) * SCALE_1E18;
-        assert_eq!(total_volume, expected_volume);
+        assert_eq!(tvwap, U256::from(101_095_238_095_238_095_238u128));
+        assert_eq!(total_volume, U256::from(10500u128) * SCALE_1E18);
     }
 
     #[test]
@@ -518,6 +504,31 @@ mod tests {
         ];
         let filtered = filter_deviations(&prices, fp("2")).unwrap();
         assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn deviation_filter_includes_the_boundary_and_excludes_one_minor_unit_beyond_it() {
+        let one = FixedValue::from_raw(U256::ONE);
+        let on_boundary = vec![
+            (FixedValue::from_raw(U256::from(100u64)), one),
+            (FixedValue::from_raw(U256::from(100u64)), one),
+            (FixedValue::from_raw(U256::from(102u64)), one),
+            (FixedValue::from_raw(U256::from(102u64)), one),
+        ];
+        assert_eq!(filter_deviations(&on_boundary, fp("2")).unwrap().len(), 4);
+
+        let one_unit_outside = vec![
+            (FixedValue::from_raw(U256::from(99u64)), one),
+            (FixedValue::from_raw(U256::from(100u64)), one),
+            (FixedValue::from_raw(U256::from(102u64)), one),
+            (FixedValue::from_raw(U256::from(102u64)), one),
+        ];
+        let filtered = filter_deviations(&one_unit_outside, fp("2")).unwrap();
+
+        assert_eq!(filtered.len(), 3);
+        assert!(!filtered
+            .iter()
+            .any(|(price, _)| price.raw() == U256::from(99u64)));
     }
 
     fn test_config(pairs: Vec<CurrencyPairConfig>) -> FeederConfig {

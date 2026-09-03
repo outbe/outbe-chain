@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Gate.io currency pair.
@@ -102,12 +102,14 @@ impl Provider for GateProvider {
             };
 
             if let Some(ticker) = data.first() {
-                let price = FixedValue::parse(&ticker.last).unwrap_or(FixedValue::ZERO);
-                let volume = FixedValue::parse(&ticker.base_volume).unwrap_or(FixedValue::ZERO);
-
-                if !price.is_zero() {
-                    let key = format!("{base}/{quote}");
-                    result.insert(key, TickerPrice { price, volume });
+                let key = format!("{base}/{quote}");
+                if let Some(ticker) = checked_ticker(
+                    "gate",
+                    &key,
+                    FixedValue::parse(&ticker.last),
+                    VolumeInput::Present(FixedValue::parse(&ticker.base_volume)),
+                ) {
+                    result.insert(key, ticker);
                 }
             }
         }

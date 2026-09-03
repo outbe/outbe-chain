@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::{CandlePrice, Provider, TickerPrice};
+use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
 use crate::config::ProviderEndpointConfig;
 use crate::fixed::FixedValue;
 use outbe_primitives::stablecoin::iso_4217_alpha;
@@ -954,19 +954,19 @@ fn parse_coinbase(
 }
 
 fn insert_ticker(cache: &SharedCache, route: &PairRoute, price: FixedValue, volume: FixedValue) {
-    if price.is_zero() {
-        return;
-    }
     let Some((price, volume)) = route.values(price, volume) else {
         return;
     };
-    if price.is_zero() {
+    let Some(ticker) = checked_ticker(
+        "websocket",
+        &route.key,
+        Some(price),
+        VolumeInput::Present(Some(volume)),
+    ) else {
         return;
-    }
+    };
     let mut cache = cache.write().unwrap_or_else(|error| error.into_inner());
-    cache
-        .tickers
-        .insert(route.key.clone(), TickerPrice { price, volume });
+    cache.tickers.insert(route.key.clone(), ticker);
     cache
         .ticker_updated
         .insert(route.key.clone(), Instant::now());
@@ -989,32 +989,27 @@ fn insert_candle(
     volume: FixedValue,
     timestamp: u64,
 ) {
-    if price.is_zero() || volume.is_zero() {
-        return;
-    }
     let Some((price, volume)) = route.values(price, volume) else {
         return;
     };
-    if price.is_zero() || volume.is_zero() {
+    let Some(candle) = checked_candle(
+        "websocket",
+        &route.key,
+        Some(price),
+        VolumeInput::Present(Some(volume)),
+        timestamp,
+    ) else {
         return;
-    }
+    };
     let mut cache = cache.write().unwrap_or_else(|error| error.into_inner());
     let candles = cache.candles.entry(route.key.clone()).or_default();
     if let Some(existing) = candles
         .iter_mut()
         .find(|candle| candle.timestamp == timestamp)
     {
-        *existing = CandlePrice {
-            price,
-            volume,
-            timestamp,
-        };
+        *existing = candle;
     } else {
-        candles.push(CandlePrice {
-            price,
-            volume,
-            timestamp,
-        });
+        candles.push(candle);
     }
     candles.sort_unstable_by_key(|candle| candle.timestamp);
     if candles.len() > MAX_CANDLES_PER_PAIR {
@@ -1219,6 +1214,24 @@ mod tests {
             .expect("USD/EUR uses the liquid EUR/USD direction and inverts it");
         assert_eq!(usd_eur.provider_symbol, "EURUSDT");
         assert!(usd_eur.inverted);
+    }
+
+    #[test]
+    fn websocket_candle_preserves_literal_zero_volume() {
+        let route = &route()[0];
+        let cache = Arc::new(RwLock::new(MarketCache::default()));
+
+        insert_candle(
+            &cache,
+            route,
+            FixedValue::parse("100").unwrap(),
+            FixedValue::ZERO,
+            42,
+        );
+
+        let cache = cache.read().unwrap();
+        assert_eq!(cache.candles["ETH/840"].len(), 1);
+        assert!(cache.candles["ETH/840"][0].volume.is_zero());
     }
 
     #[test]

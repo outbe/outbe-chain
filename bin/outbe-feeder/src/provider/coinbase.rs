@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Coinbase price path segment.
@@ -104,17 +104,14 @@ impl Provider for CoinbaseProvider {
                 }
             };
 
-            let price = FixedValue::parse(&data.data.amount).unwrap_or(FixedValue::ZERO);
-
-            if !price.is_zero() {
-                let key = format!("{base}/{quote}");
-                result.insert(
-                    key,
-                    TickerPrice {
-                        price,
-                        volume: FixedValue::ZERO, // Coinbase spot endpoint doesn't provide volume
-                    },
-                );
+            let key = format!("{base}/{quote}");
+            if let Some(ticker) = checked_ticker(
+                "coinbase",
+                &key,
+                FixedValue::parse(&data.data.amount),
+                VolumeInput::Unavailable,
+            ) {
+                result.insert(key, ticker);
             }
         }
 

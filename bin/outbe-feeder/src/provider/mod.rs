@@ -19,6 +19,37 @@ use std::collections::HashMap;
 use crate::config::{FeederConfig, ProviderEndpointConfig};
 use crate::fixed::FixedValue;
 
+/// Whether an upstream endpoint supplied a volume field.
+///
+/// `Present(None)` means the field existed but failed deterministic decimal
+/// parsing. It must never be conflated with an endpoint that has no volume in
+/// its contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VolumeInput {
+    Present(Option<FixedValue>),
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ObservationError {
+    InvalidPrice,
+    ZeroPrice,
+    InvalidVolume,
+}
+
+impl std::fmt::Display for ObservationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self {
+            Self::InvalidPrice => "invalid price",
+            Self::ZeroPrice => "zero price",
+            Self::InvalidVolume => "invalid volume",
+        };
+        formatter.write_str(reason)
+    }
+}
+
+impl std::error::Error for ObservationError {}
+
 /// A price data point from a provider.
 ///
 /// Provider decimals are parsed directly from their decimal lexemes into FP18.
@@ -28,6 +59,23 @@ pub struct TickerPrice {
     pub price: FixedValue,
     /// 24-hour trading volume at FP18.
     pub volume: FixedValue,
+}
+
+impl TickerPrice {
+    pub(crate) fn from_parsed(
+        price: Option<FixedValue>,
+        volume: VolumeInput,
+    ) -> Result<Self, ObservationError> {
+        let price = price.ok_or(ObservationError::InvalidPrice)?;
+        if price.is_zero() {
+            return Err(ObservationError::ZeroPrice);
+        }
+        let volume = match volume {
+            VolumeInput::Present(volume) => volume.ok_or(ObservationError::InvalidVolume)?,
+            VolumeInput::Unavailable => FixedValue::ZERO,
+        };
+        Ok(Self { price, volume })
+    }
 }
 
 /// A single candle (OHLCV bar) from a provider.
@@ -45,6 +93,52 @@ pub struct CandlePrice {
     /// each candle's weight is proportional to its actual time span.
     #[allow(dead_code)]
     pub timestamp: u64,
+}
+
+impl CandlePrice {
+    pub(crate) fn from_parsed(
+        price: Option<FixedValue>,
+        volume: VolumeInput,
+        timestamp: u64,
+    ) -> Result<Self, ObservationError> {
+        let ticker = TickerPrice::from_parsed(price, volume)?;
+        Ok(Self {
+            price: ticker.price,
+            volume: ticker.volume,
+            timestamp,
+        })
+    }
+}
+
+pub(crate) fn checked_ticker(
+    provider: &'static str,
+    symbol: &str,
+    price: Option<FixedValue>,
+    volume: VolumeInput,
+) -> Option<TickerPrice> {
+    match TickerPrice::from_parsed(price, volume) {
+        Ok(ticker) => Some(ticker),
+        Err(error) => {
+            tracing::warn!(provider, symbol, reason = %error, "discarding invalid ticker");
+            None
+        }
+    }
+}
+
+pub(crate) fn checked_candle(
+    provider: &'static str,
+    symbol: &str,
+    price: Option<FixedValue>,
+    volume: VolumeInput,
+    timestamp: u64,
+) -> Option<CandlePrice> {
+    match CandlePrice::from_parsed(price, volume, timestamp) {
+        Ok(candle) => Some(candle),
+        Err(error) => {
+            tracing::warn!(provider, symbol, reason = %error, "discarding invalid candle");
+            None
+        }
+    }
 }
 
 /// Trait for external price data providers.
@@ -139,4 +233,75 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
     }
 
     Ok(providers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CandlePrice, ObservationError, TickerPrice, VolumeInput};
+    use crate::fixed::FixedValue;
+
+    #[test]
+    fn present_invalid_volume_is_rejected_instead_of_becoming_zero() {
+        let result = TickerPrice::from_parsed(
+            FixedValue::parse("1"),
+            VolumeInput::Present(FixedValue::parse("-1")),
+        );
+
+        assert_eq!(result.unwrap_err(), ObservationError::InvalidVolume);
+    }
+
+    #[test]
+    fn literal_zero_volume_and_unavailable_volume_are_distinct_valid_inputs() {
+        let literal_zero = TickerPrice::from_parsed(
+            FixedValue::parse("1"),
+            VolumeInput::Present(FixedValue::parse("0")),
+        )
+        .unwrap();
+        let unavailable =
+            TickerPrice::from_parsed(FixedValue::parse("1"), VolumeInput::Unavailable).unwrap();
+
+        assert!(literal_zero.volume.is_zero());
+        assert!(unavailable.volume.is_zero());
+    }
+
+    #[test]
+    fn invalid_or_zero_price_is_rejected() {
+        assert_eq!(
+            TickerPrice::from_parsed(
+                FixedValue::parse("malformed"),
+                VolumeInput::Present(FixedValue::parse("1")),
+            )
+            .unwrap_err(),
+            ObservationError::InvalidPrice
+        );
+        assert_eq!(
+            TickerPrice::from_parsed(
+                FixedValue::parse("0"),
+                VolumeInput::Present(FixedValue::parse("1")),
+            )
+            .unwrap_err(),
+            ObservationError::ZeroPrice
+        );
+    }
+
+    #[test]
+    fn candle_uses_the_same_validation_contract() {
+        assert_eq!(
+            CandlePrice::from_parsed(
+                FixedValue::parse("1"),
+                VolumeInput::Present(FixedValue::parse("broken")),
+                42,
+            )
+            .unwrap_err(),
+            ObservationError::InvalidVolume
+        );
+        let candle = CandlePrice::from_parsed(
+            FixedValue::parse("1"),
+            VolumeInput::Present(FixedValue::parse("0")),
+            42,
+        )
+        .unwrap();
+        assert!(candle.volume.is_zero());
+        assert_eq!(candle.timestamp, 42);
+    }
 }

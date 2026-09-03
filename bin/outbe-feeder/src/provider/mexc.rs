@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a MEXC symbol.
@@ -101,12 +101,14 @@ impl Provider for MexcProvider {
                 }
             };
 
-            let price = FixedValue::parse(&data.last_price).unwrap_or(FixedValue::ZERO);
-            let volume = FixedValue::parse(&data.volume).unwrap_or(FixedValue::ZERO);
-
-            if !price.is_zero() {
-                let key = format!("{base}/{quote}");
-                result.insert(key, TickerPrice { price, volume });
+            let key = format!("{base}/{quote}");
+            if let Some(ticker) = checked_ticker(
+                "mexc",
+                &key,
+                FixedValue::parse(&data.last_price),
+                VolumeInput::Present(FixedValue::parse(&data.volume)),
+            ) {
+                result.insert(key, ticker);
             }
         }
 

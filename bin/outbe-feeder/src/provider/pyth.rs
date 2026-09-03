@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Default Pyth Hermes endpoint.
@@ -102,18 +102,14 @@ impl Provider for PythProvider {
                 .with_context(|| "failed to parse pyth response")?;
 
             if let Some(parsed) = data.parsed.first() {
-                let price =
-                    FixedValue::parse(&format!("{}e{}", parsed.price.price, parsed.price.expo))
-                        .unwrap_or(FixedValue::ZERO);
-                if !price.is_zero() {
-                    let key = format!("{base}/{quote}");
-                    result.insert(
-                        key,
-                        TickerPrice {
-                            price,
-                            volume: FixedValue::ZERO, // Pyth doesn't provide volume
-                        },
-                    );
+                let key = format!("{base}/{quote}");
+                if let Some(ticker) = checked_ticker(
+                    "pyth",
+                    &key,
+                    FixedValue::parse(&format!("{}e{}", parsed.price.price, parsed.price.expo)),
+                    VolumeInput::Unavailable,
+                ) {
+                    result.insert(key, ticker);
                 }
             }
         }

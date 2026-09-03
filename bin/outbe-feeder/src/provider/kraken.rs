@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{Provider, TickerPrice};
+use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Kraken pair string.
@@ -125,20 +125,16 @@ impl Provider for KrakenProvider {
                 // Kraken uses internal pair names (e.g. XETHZUSD, XXBTZUSD)
                 // so we just take the first (and only) entry.
                 if let Some(ticker) = result_map.values().next() {
-                    let price = ticker
-                        .c
-                        .first()
-                        .and_then(|value| FixedValue::parse(value))
-                        .unwrap_or(FixedValue::ZERO);
-                    let volume = ticker
-                        .v
-                        .get(1) // last 24h volume
-                        .and_then(|value| FixedValue::parse(value))
-                        .unwrap_or(FixedValue::ZERO);
-
-                    if !price.is_zero() {
-                        let key = format!("{base}/{quote}");
-                        result.insert(key, TickerPrice { price, volume });
+                    let key = format!("{base}/{quote}");
+                    if let Some(ticker) = checked_ticker(
+                        "kraken",
+                        &key,
+                        ticker.c.first().and_then(|value| FixedValue::parse(value)),
+                        VolumeInput::Present(
+                            ticker.v.get(1).and_then(|value| FixedValue::parse(value)),
+                        ),
+                    ) {
+                        result.insert(key, ticker);
                     }
                 }
             }

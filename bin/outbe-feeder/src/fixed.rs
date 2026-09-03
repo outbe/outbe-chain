@@ -189,4 +189,11 @@ mod tests {
             serde_json::from_str("1.000000000000000001").expect("JSON number parses");
         assert_eq!(value.fixed().unwrap().raw(), SCALE_1E18 + U256::ONE);
     }
+
+    #[test]
+    fn decimal_parser_rejects_negative_malformed_and_overflowing_values() {
+        for invalid in ["-1", "", ".", "1.2.3", "1e", "1e78"] {
+            assert!(FixedValue::parse(invalid).is_none(), "accepted {invalid:?}");
+        }
+    }
 }
