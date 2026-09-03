@@ -151,6 +151,18 @@ class ProjectToolchainContractTests(unittest.TestCase):
             recipe,
         )
 
+    def test_ci_stage_provides_the_python_command_used_by_actions(self) -> None:
+        recipe = DOCKERFILE.read_text(encoding="utf-8")
+        ci_stage = recipe.split("FROM toolchain AS ci", 1)[1].split(
+            "FROM toolchain AS builder", 1
+        )[0]
+        ci_packages = ci_stage.split("RUN apt-get update", 1)[1].split(
+            "rm -rf /var/lib/apt/lists/*", 1
+        )[0]
+
+        self.assertIn("      python-is-python3 \\\n", ci_packages)
+        self.assertRegex(ci_stage, r"for tool in [^;]+ python; do")
+
     def test_reproducible_release_is_owned_by_the_project_toolchain_recipe(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         elf = json.loads(ELF_SPEC_PATH.read_text(encoding="utf-8"))

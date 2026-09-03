@@ -102,16 +102,18 @@ ENV MISE_DISABLE_TOOLS=rust
 # pinned rustup toolchain.
 ENV PATH=/usr/local/cargo/bin:/opt/mise/data/shims:${PATH}
 
-# jq is read by the ABI export check; mold and the archive tools are build and
-# unpack helpers. These do not enter a release artifact, so they are not part of
-# the verified pin closure - but they still come from the frozen APT snapshot
-# installed above, not from a mutable mirror.
+# jq is read by the ABI export check; python-is-python3 provides the `python`
+# command required by composite actions; mold and the archive tools are build
+# and unpack helpers. These do not enter a release artifact, so they are not
+# part of the verified pin closure - but they still come from the frozen APT
+# snapshot installed above, not from a mutable mirror.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       jq \
       mold \
+      python-is-python3 \
       unzip \
       xz-utils && \
     rm -rf /var/lib/apt/lists/*
@@ -162,7 +164,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold; do \
+                cog duckdb uv uvx aderyn sccache jq mold python; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \
