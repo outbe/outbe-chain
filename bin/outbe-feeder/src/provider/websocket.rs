@@ -107,9 +107,7 @@ impl ExchangeKind {
     }
 
     fn pair_route(self, base: &str, quote: &str) -> Option<PairRoute> {
-        if base.starts_with("0x")
-            || quote.starts_with("0x")
-        {
+        if base.starts_with("0x") || quote.starts_with("0x") {
             return None;
         }
         let (market_base, market_quote, inverted) =

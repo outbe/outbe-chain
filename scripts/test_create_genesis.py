@@ -496,6 +496,55 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
+        token = "0x1111111111111111111111111111111111111111"
+        pairs = [
+            {"base": "COEN", "quote": "840", "initial_rate": "1250000"},
+            {
+                "base": token,
+                "quote": "840",
+                "initial_rate": str(65_000 * 10**18),
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {"oracle": {"pairs": pairs}}
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+        storage = seeded["alloc"][SEED_GENESIS.ORACLE_ADDRESS]["storage"]
+        for pair_id, pair in enumerate(pairs, start=1):
+            pair_slot = int(
+                SEED_GENESIS.mapping_key(SEED_GENESIS.u32_bytes(pair_id), 43), 16
+            )
+            self.assertEqual(
+                storage[SEED_GENESIS.hex32(pair_slot)],
+                SEED_GENESIS.hex32(
+                    int.from_bytes(SEED_GENESIS.asset_address(pair["base"]), "big")
+                ),
+            )
+            self.assertEqual(
+                storage[SEED_GENESIS.hex32(pair_slot + 1)],
+                SEED_GENESIS.hex32(
+                    int.from_bytes(SEED_GENESIS.asset_address(pair["quote"]), "big")
+                ),
+            )
+            rate_slot = SEED_GENESIS.mapping_key(SEED_GENESIS.u32_bytes(pair_id), 12)
+            self.assertEqual(
+                storage[rate_slot], SEED_GENESIS.hex32(int(pair["initial_rate"]))
+            )
+
+    def test_production_seed_stage_rejects_iso_to_coen_oracle_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {
+                "oracle": {
+                    "pairs": [
+                        {"base": "840", "quote": "COEN", "initial_rate": "1000000"}
+                    ]
+                }
+            }
+            with self.assertRaisesRegex(ValueError, "COEN base"):
+                self.seed_once(pathlib.Path(tmp), config)
+
     def test_mainnet_profile_seeds_chain_676_with_canonical_production_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {

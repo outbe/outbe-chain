@@ -891,10 +891,7 @@ fn submit_vote_rejects_an_unregistered_signer() {
 
         let stranger = Address::new([0x99; 20]);
         let err = oracle
-            .submit_vote(
-                stranger,
-                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
-            )
+            .submit_vote(stranger, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
             .unwrap_err();
 
         assert!(
@@ -919,10 +916,7 @@ fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
             .unwrap();
 
         let err = oracle
-            .submit_vote(
-                validator,
-                &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
-            )
+            .submit_vote(validator, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
             .unwrap_err();
 
         assert!(
@@ -946,12 +940,18 @@ fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
         let err = oracle
             .submit_vote(
                 validator,
-                &[(registered.address2(), registered.address1(), fixed18(2), SCALE_1E18)],
+                &[(
+                    registered.address2(),
+                    registered.address1(),
+                    fixed18(2),
+                    SCALE_1E18,
+                )],
             )
             .unwrap_err();
 
         assert!(
-            err.to_string().contains("does not match the registered orientation"),
+            err.to_string()
+                .contains("does not match the registered orientation"),
             "unexpected error: {err:?}"
         );
         assert_eq!(oracle.voter_list.len().unwrap(), 0);

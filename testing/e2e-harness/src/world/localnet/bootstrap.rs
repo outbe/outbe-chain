@@ -80,6 +80,7 @@ pub struct BootstrapProfile {
     metadosis_forming_seconds: Option<u64>,
     metadosis_offering_seconds: u64,
     ocomp_vote_window_blocks: u64,
+    oracle_pairs: Option<Vec<(String, String, String)>>,
 }
 
 impl Default for BootstrapProfile {
@@ -102,11 +103,44 @@ impl Default for BootstrapProfile {
             metadosis_forming_seconds: None,
             metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
             ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+            oracle_pairs: None,
         }
     }
 }
 
 impl BootstrapProfile {
+    /// Replace the seed's Oracle registry through the normal genesis seeder.
+    /// Each tuple is `(base, quote, initial_rate)` in configured orientation.
+    pub fn with_oracle_pairs(mut self, pairs: Vec<(String, String, String)>) -> Result<Self> {
+        if pairs.is_empty() {
+            bail!("Oracle pair profile must not be empty");
+        }
+        let mut markets = HashSet::new();
+        for (base, quote, initial_rate) in &pairs {
+            if base.trim().is_empty() || quote.trim().is_empty() || base.eq_ignore_ascii_case(quote)
+            {
+                bail!("invalid Oracle pair {base}/{quote}");
+            }
+            if quote.eq_ignore_ascii_case("COEN")
+                && base
+                    .parse::<u16>()
+                    .is_ok_and(|code| (1..=999).contains(&code))
+            {
+                bail!("Oracle COEN/ISO pair must use COEN base and ISO quote");
+            }
+            if initial_rate.is_empty() || !initial_rate.bytes().all(|byte| byte.is_ascii_digit()) {
+                bail!("Oracle initial rate must be an unsigned decimal integer");
+            }
+            let mut market = [base.to_ascii_lowercase(), quote.to_ascii_lowercase()];
+            market.sort();
+            if !markets.insert(market) {
+                bail!("duplicate or inverse Oracle pair {base}/{quote}");
+            }
+        }
+        self.oracle_pairs = Some(pairs);
+        Ok(self)
+    }
+
     /// Override the EIP-155 chain identity. Zero is rejected.
     pub fn with_chain_id(mut self, chain_id: u64) -> Result<Self> {
         self.chain_id =
@@ -976,6 +1010,29 @@ impl Localnet {
             }
         }
 
+        if let Some(pairs) = &profile.oracle_pairs {
+            let oracle = root
+                .entry("oracle")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| eyre!("genesis seed oracle is not an object"))?;
+            oracle.insert(
+                "pairs".into(),
+                serde_json::Value::Array(
+                    pairs
+                        .iter()
+                        .map(|(base, quote, initial_rate)| {
+                            json!({
+                                "base": base,
+                                "quote": quote,
+                                "initial_rate": initial_rate,
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+        }
+
         let path = self.cfg.dir.join("scenario-seed.json");
         fs::write(&path, serde_json::to_string_pretty(&seed)? + "\n")?;
         Ok(path)
@@ -1530,6 +1587,32 @@ mod tests {
             .with_staking_timing(Some(0), None)
             .is_err());
         assert!(BootstrapProfile::default().with_max_validators(0).is_err());
+        assert!(BootstrapProfile::default()
+            .with_oracle_pairs(vec![("840".into(), "COEN".into(), "0".into())])
+            .is_err());
+    }
+
+    #[test]
+    fn profile_keeps_configured_oracle_pair_orientation_for_the_genesis_seeder() {
+        let profile = BootstrapProfile::default()
+            .with_oracle_pairs(vec![
+                ("COEN".into(), "840".into(), "1000000".into()),
+                (
+                    "840".into(),
+                    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599".into(),
+                    "0".into(),
+                ),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            profile.oracle_pairs.unwrap()[1],
+            (
+                "840".into(),
+                "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599".into(),
+                "0".into(),
+            )
+        );
     }
 
     #[test]

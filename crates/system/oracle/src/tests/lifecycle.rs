@@ -305,16 +305,16 @@ fn run_tally_gives_every_validator_one_median_observation_regardless_of_stake() 
 
         for (voter, rate) in [(v1, 100), (v2, 200), (v3, 300)] {
             oracle
-                .submit_vote(
-                    voter,
-                    &[(COEN, usd(), coen_iso(rate), COEN_ISO_SCALE)],
-                )
+                .submit_vote(voter, &[(COEN, usd(), coen_iso(rate), COEN_ISO_SCALE)])
                 .unwrap();
         }
 
         crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
 
-        assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(200));
+        assert_eq!(
+            oracle.get_exchange_rate(COEN, usd()).unwrap(),
+            coen_iso(200)
+        );
     });
 }
 
@@ -519,10 +519,7 @@ fn a_validator_deactivated_after_submission_does_not_count_toward_tally_quorum()
 
         for voter in &voters[..2] {
             oracle
-                .submit_vote(
-                    *voter,
-                    &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
-                )
+                .submit_vote(*voter, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
                 .unwrap();
         }
         outbe_validatorset::contract::ValidatorSet::new(storage)

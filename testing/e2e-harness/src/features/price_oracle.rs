@@ -3,15 +3,17 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::U256;
-use cucumber::then;
+use alloy_primitives::{address, Address, U256};
+use cucumber::{given, then};
 
+use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::World;
 
 const USD_ISO: u16 = 840;
 const MOCK_PRICE: &str = "1.000000";
 const MOCK_VOLUME: &str = "1000.000000";
 const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
 const PUBLICATION_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -20,6 +22,152 @@ pub(crate) struct PendingPricePublication {
     strictly_after_block: u64,
     expected_rate: U256,
     deadline: Instant,
+}
+
+#[given(expr = "a fresh price oracle localnet with a {int}-block voting window")]
+fn fresh_price_oracle_localnet(world: &mut World, window: u64) {
+    let profile = BootstrapProfile::default()
+        .with_oracle_pairs(vec![
+            ("COEN".into(), "840".into(), "1000000".into()),
+            (format!("{BTC_TOKEN:#x}"), "840".into(), "0".into()),
+        ])
+        .expect("valid Oracle E2E registry");
+    world.state.voting_window = window;
+    world.state.wwd = Some(crate::world::localnet::worldwide_day());
+    world
+        .localnet
+        .bootstrap_with_profile(world.validators.size(), &profile)
+        .expect("bootstrap price Oracle localnet");
+    crate::features::common::start_bootstrapped_localnet(
+        world,
+        &StartOpts::with_voting_window(window),
+    );
+}
+
+#[then("independent validator feeders finalize overlapping pair quorums")]
+fn independent_feeders_finalize_overlapping_pair_quorums(world: &mut World) {
+    assert_eq!(
+        world.validators.size(),
+        4,
+        "scenario requires four validators"
+    );
+    let usd = outbe_primitives::asset_type::currency_address(USD_ISO);
+    let before = world
+        .rpc
+        .oracle_rate_data(world.validators.primary_port(), USD_ISO)
+        .map_or(0, |rate| rate.last_block);
+    let before_b = world
+        .rpc
+        .oracle_rate_data_for_pair(world.validators.primary_port(), BTC_TOKEN, usd)
+        .map_or(0, |rate| rate.last_block);
+    let vote_period = start_overlapping_feeders(world);
+
+    wait_for_unanimous_pair_publication(world, Address::ZERO, usd, before, EXPECTED_RATE, true);
+    wait_for_unanimous_pair_publication(
+        world,
+        BTC_TOKEN,
+        usd,
+        before_b,
+        U256::from(100u64) * outbe_primitives::units::SCALE_1E18,
+        true,
+    );
+
+    let expected_volume = U256::from(60u64) * outbe_primitives::units::SCALE_1E18;
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world.rpc.oracle_latest_volume(port, BTC_TOKEN, usd),
+            Some(expected_volume),
+            "target volume must use the full raw 3-validator ballot"
+        );
+    }
+
+    let penalty_counts = (0..4)
+        .map(|index| {
+            let key = world.validators.get(index).evm_key().unwrap();
+            let validator = world
+                .rpc
+                .address_of(&key)
+                .unwrap()
+                .parse::<Address>()
+                .unwrap();
+            world
+                .rpc
+                .oracle_penalty_counts(world.validators.primary_port(), validator)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert!(penalty_counts[0].0 == 0 && penalty_counts[0].2 > 0);
+    assert!(penalty_counts[1].0 > 0 && penalty_counts[1].2 == 0);
+    assert!(penalty_counts[2].0 > 0 && penalty_counts[2].2 == 0);
+    assert!(penalty_counts[3].0 == 0 && penalty_counts[3].2 > 0);
+
+    let evidence = world.price_oracle.evidence_snapshot();
+    assert!(evidence.ticker_requests > 0);
+    assert!(evidence.candle_requests > 0);
+    assert_eq!(evidence.feeder_processes.len(), 4);
+    let mut distinct_pids = evidence
+        .feeder_processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<Vec<_>>();
+    distinct_pids.sort_unstable();
+    distinct_pids.dedup();
+    assert_eq!(distinct_pids.len(), 4);
+    assert_eq!(evidence.feeder_processes[0].oracle_pairs.len(), 1);
+    assert_eq!(evidence.feeder_processes[1].oracle_pairs.len(), 2);
+    assert_eq!(evidence.feeder_processes[2].oracle_pairs.len(), 2);
+    assert_eq!(evidence.feeder_processes[3].oracle_pairs.len(), 1);
+
+    world
+        .price_oracle
+        .stop_validator_feeder(2)
+        .expect("stop one quorum feeder");
+    let checkpoint_height = wait_finalized_blocks(world, vote_period * 2);
+    let checkpoint_a = world
+        .rpc
+        .oracle_rate_data(world.validators.primary_port(), USD_ISO)
+        .unwrap();
+    let checkpoint_b = world
+        .rpc
+        .oracle_rate_data_for_pair(world.validators.primary_port(), BTC_TOKEN, usd)
+        .unwrap();
+    wait_until_finalized_height(world, checkpoint_height + vote_period + 2);
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world
+                .rpc
+                .oracle_rate_data(port, USD_ISO)
+                .unwrap()
+                .last_block,
+            checkpoint_a.last_block
+        );
+        assert_eq!(
+            world
+                .rpc
+                .oracle_rate_data_for_pair(port, BTC_TOKEN, usd)
+                .unwrap()
+                .last_block,
+            checkpoint_b.last_block
+        );
+    }
+
+    start_overlap_feeder(world, 2, vote_period);
+    wait_for_unanimous_pair_publication(
+        world,
+        Address::ZERO,
+        usd,
+        checkpoint_a.last_block,
+        EXPECTED_RATE,
+        true,
+    );
+    wait_for_unanimous_pair_publication(
+        world,
+        BTC_TOKEN,
+        usd,
+        checkpoint_b.last_block,
+        U256::from(100u64) * outbe_primitives::units::SCALE_1E18,
+        true,
+    );
 }
 
 #[then("the controlled COEN USD quote is finalized through the real price feeder")]
@@ -34,9 +182,12 @@ fn controlled_quote_is_finalized(world: &mut World) {
     assert!(evidence.ticker_requests > 0);
     assert!(evidence.candle_requests > 0);
     let quorum = oracle_quorum(world.validators.size());
-    assert_eq!(evidence.feeder_pids.len(), quorum);
-    assert_eq!(evidence.feeder_logs.len(), quorum);
-    let mut distinct_pids = evidence.feeder_pids.clone();
+    assert_eq!(evidence.feeder_processes.len(), quorum);
+    let mut distinct_pids = evidence
+        .feeder_processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<Vec<_>>();
     distinct_pids.sort_unstable();
     distinct_pids.dedup();
     assert_eq!(distinct_pids.len(), quorum);
@@ -158,6 +309,89 @@ fn start_feeder(world: &mut World) {
     }
 }
 
+fn start_overlapping_feeders(world: &mut World) -> u64 {
+    let vote_period = world
+        .rpc
+        .oracle_vote_period(world.validators.primary_port())
+        .expect("read canonical Oracle vote period for feeder");
+    for validator_index in 0..4 {
+        start_overlap_feeder(world, validator_index, vote_period);
+    }
+    vote_period
+}
+
+fn start_overlap_feeder(world: &mut World, validator_index: usize, vote_period: u64) {
+    let validator = world.validators.get(validator_index);
+    let private_key = validator.evm_key().unwrap_or_else(|error| {
+        panic!("validator-{validator_index} EVM key for feeder: {error:#}")
+    });
+    let validator_address = world
+        .rpc
+        .address_of(&private_key)
+        .unwrap_or_else(|| panic!("derive validator-{validator_index} feeder address"));
+    let rpc_url = world.rpc.url(world.validators.http_port(validator_index));
+    let chain_id = world
+        .rpc
+        .chain_id(world.validators.primary_port())
+        .expect("read feeder chain id");
+    let pairs = overlap_pairs(validator_index);
+    world
+        .price_oracle
+        .start_with_pairs(
+            validator_index,
+            &rpc_url,
+            chain_id,
+            &private_key,
+            &validator_address,
+            &pairs,
+            vote_period,
+        )
+        .unwrap_or_else(|error| {
+            panic!("start validator-{validator_index} production price feeder: {error:#}")
+        });
+}
+
+fn overlap_pairs(validator_index: usize) -> Vec<crate::world::price_oracle::FeederPair<'static>> {
+    use crate::world::price_oracle::{FeederPair, FeederSource};
+
+    let pair_a = || FeederPair {
+        base: "COEN",
+        quote: "840",
+        sources: vec![
+            FeederSource {
+                base: "COEN",
+                quote: "USDT",
+                price: "1",
+                volume: "5",
+            },
+            FeederSource {
+                base: "COEN",
+                quote: "USDC",
+                price: "1",
+                volume: "5",
+            },
+        ],
+    };
+    let pair_b = |price, volume| FeederPair {
+        base: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+        quote: "840",
+        sources: vec![FeederSource {
+            base: "BTC",
+            quote: "USDT",
+            price,
+            volume,
+        }],
+    };
+
+    match validator_index {
+        0 => vec![pair_a()],
+        1 => vec![pair_a(), pair_b("100", "10")],
+        2 => vec![pair_a(), pair_b("100", "20")],
+        3 => vec![pair_b("300", "30")],
+        _ => panic!("overlap fixture has exactly four validators"),
+    }
+}
+
 fn oracle_quorum(active_validators: usize) -> usize {
     active_validators - active_validators / 3
 }
@@ -201,10 +435,30 @@ fn wait_for_unanimous_publication(
     expected_rate: U256,
     require_live_feeder: bool,
 ) {
+    wait_for_unanimous_pair_publication(
+        world,
+        Address::ZERO,
+        outbe_primitives::asset_type::currency_address(USD_ISO),
+        strictly_after_block,
+        expected_rate,
+        require_live_feeder,
+    );
+}
+
+fn wait_for_unanimous_pair_publication(
+    world: &mut World,
+    base: Address,
+    quote: Address,
+    strictly_after_block: u64,
+    expected_rate: U256,
+    require_live_feeder: bool,
+) {
     let deadline = Instant::now() + PUBLICATION_TIMEOUT;
     loop {
-        if observe_unanimous_publication(
+        if observe_unanimous_pair_publication(
             world,
+            base,
+            quote,
             strictly_after_block,
             expected_rate,
             require_live_feeder,
@@ -225,6 +479,24 @@ fn observe_unanimous_publication(
     expected_rate: U256,
     require_live_feeder: bool,
 ) -> bool {
+    observe_unanimous_pair_publication(
+        world,
+        Address::ZERO,
+        outbe_primitives::asset_type::currency_address(USD_ISO),
+        strictly_after_block,
+        expected_rate,
+        require_live_feeder,
+    )
+}
+
+fn observe_unanimous_pair_publication(
+    world: &mut World,
+    base: Address,
+    quote: Address,
+    strictly_after_block: u64,
+    expected_rate: U256,
+    require_live_feeder: bool,
+) -> bool {
     if require_live_feeder {
         world
             .price_oracle
@@ -238,7 +510,7 @@ fn observe_unanimous_publication(
         .collect::<Vec<_>>();
     let rates = ports
         .iter()
-        .map(|port| world.rpc.oracle_rate_data(*port, USD_ISO))
+        .map(|port| world.rpc.oracle_rate_data_for_pair(*port, base, quote))
         .collect::<Vec<_>>();
     let (Some(finalized_height), Some(rate)) = (
         finalized.iter().flatten().copied().min(),
@@ -276,6 +548,39 @@ fn observe_unanimous_publication(
         finalized_timestamp,
     );
     true
+}
+
+fn wait_finalized_blocks(world: &mut World, blocks: u64) -> u64 {
+    let current = world
+        .validators
+        .committee_ports()
+        .iter()
+        .filter_map(|port| world.rpc.finalized(*port))
+        .min()
+        .expect("read committee finality before quorum-loss window");
+    let target = current.saturating_add(blocks);
+    wait_until_finalized_height(world, target);
+    target
+}
+
+fn wait_until_finalized_height(world: &mut World, target: u64) {
+    let deadline = Instant::now() + PUBLICATION_TIMEOUT;
+    loop {
+        let ports = world.validators.committee_ports();
+        if ports.iter().all(|port| {
+            world
+                .rpc
+                .finalized(*port)
+                .is_some_and(|height| height >= target)
+        }) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "committee did not finalize height {target} during Oracle quorum-loss window"
+        );
+        sleep(Duration::from_millis(250));
+    }
 }
 
 fn scale6_quote(rate: U256) -> String {
@@ -321,5 +626,22 @@ mod tests {
         for (active, expected_quorum) in expected.into_iter().enumerate() {
             assert_eq!(oracle_quorum(active), expected_quorum, "N={active}");
         }
+    }
+
+    #[test]
+    fn overlap_fixture_is_a_ab_ab_b_and_uses_two_stablecoin_sources_for_coen() {
+        let pairs = (0..4).map(overlap_pairs).collect::<Vec<_>>();
+        assert_eq!(pairs.iter().map(Vec::len).collect::<Vec<_>>(), [1, 2, 2, 1]);
+        assert_eq!(
+            pairs[0][0]
+                .sources
+                .iter()
+                .map(|source| source.quote)
+                .collect::<Vec<_>>(),
+            ["USDT", "USDC"]
+        );
+        assert_eq!(pairs[1][1].sources[0].volume, "10");
+        assert_eq!(pairs[2][1].sources[0].volume, "20");
+        assert_eq!(pairs[3][0].sources[0].volume, "30");
     }
 }

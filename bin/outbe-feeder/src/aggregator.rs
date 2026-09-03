@@ -174,11 +174,7 @@ pub async fn fetch_and_aggregate(
         let is_coen_iso = is_coen_iso_pair(base, quote);
         let mut observations = Vec::new();
         for source in &pair_config.sources {
-            if let Some(observation) = source_observation(
-                source,
-                &all_tickers,
-                &all_candles,
-            )? {
+            if let Some(observation) = source_observation(source, &all_tickers, &all_candles)? {
                 observations.push(observation);
             }
         }

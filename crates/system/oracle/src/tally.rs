@@ -941,10 +941,7 @@ mod tests {
                 voter: zero_rate,
             },
         ];
-        let mut claims = vec![
-            (valid, Claim::default()),
-            (zero_rate, Claim::default()),
-        ];
+        let mut claims = vec![(valid, Claim::default()), (zero_rate, Claim::default())];
 
         let median = tally_pair(&mut ballot, U256::ZERO, &mut claims).unwrap();
 

@@ -515,7 +515,9 @@ mod tests {
         });
 
         let err = cfg.validate().unwrap_err();
-        assert!(err.to_string().contains("unknown on-chain Oracle asset 'BTC'"));
+        assert!(err
+            .to_string()
+            .contains("unknown on-chain Oracle asset 'BTC'"));
     }
 
     #[test]
@@ -531,7 +533,10 @@ mod tests {
         assert_eq!(pair.sources.len(), 3);
         assert_eq!(pair.sources[0], source("binance", "COEN", "USDT"));
         assert_eq!(pair.oracle_pair().unwrap().0, Address::ZERO);
-        assert_eq!(AssetType::from(pair.oracle_pair().unwrap().1), AssetType::IsoCurrency(840));
+        assert_eq!(
+            AssetType::from(pair.oracle_pair().unwrap().1),
+            AssetType::IsoCurrency(840)
+        );
     }
 
     #[test]
@@ -563,10 +568,10 @@ mod tests {
         assert_eq!(cfg.currency_pairs.len(), 1);
         assert_eq!(cfg.currency_pairs[0].base, "COEN");
         assert_eq!(cfg.currency_pairs[0].quote, "840");
-        assert!(cfg.currency_pairs.iter().all(|pair| {
-            pair.sources
-                == vec![source("mock_http", "COEN", "840")]
-        }));
+        assert!(cfg
+            .currency_pairs
+            .iter()
+            .all(|pair| { pair.sources == vec![source("mock_http", "COEN", "840")] }));
         assert!(cfg.validate().is_ok());
     }
 }
