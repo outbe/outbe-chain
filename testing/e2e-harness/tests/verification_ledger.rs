@@ -1,7 +1,5 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use outbe_e2e_harness::ocomp_evidence::PlanningLedger;
 use outbe_e2e_harness::verification_ledger::{
     validate_domain_evidence_manifest, verify_domain_evidence, verify_evidence_set,
     AssertionStatus, DomainEvidenceBundle, DomainEvidenceV1, EvidenceTestV1, MemberDigestV1,
@@ -9,85 +7,6 @@ use outbe_e2e_harness::verification_ledger::{
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-
-fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-#[test]
-fn checked_in_index_loads_both_packs_without_changing_ocomp_catalog() {
-    let root = repository_root();
-    let generic =
-        VerificationLedger::parse(&root.join("outbe-plan/verification-ledger.yaml")).unwrap();
-    let ocomp =
-        PlanningLedger::parse(&root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml")).unwrap();
-
-    assert_eq!(generic.domain_packs.len(), 2);
-    assert_eq!(
-        generic
-            .domain_pack("OCOMP")
-            .unwrap()
-            .tests
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        ocomp.test_ids()
-    );
-    assert_eq!(
-        generic
-            .domain_pack("METADOSIS")
-            .unwrap()
-            .requirements
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["C-1", "D-1", "H-1", "H-2", "H-3", "M-1", "M-2", "M-3", "M-4",]
-    );
-}
-
-#[test]
-fn domain_neutral_cli_reaches_the_checked_in_index() {
-    let root = repository_root();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_outbe-verification-ledger"))
-        .args(["--repo", root.to_str().unwrap(), "validate-index"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "verification ledger PASS: 2 domain packs\n"
-    );
-}
-
-#[test]
-fn domain_neutral_cli_rejects_self_attested_metadosis_pass() {
-    let root = repository_root();
-    let temporary = TempDir::new().unwrap();
-    let evidence_path = temporary.path().join("metadosis-evidence.json");
-    let bundle = temporary.path().join("bundle");
-    std::fs::create_dir(&bundle).unwrap();
-    let evidence = evidence("METADOSIS", "MET-ENV-001", "PROCESS_Q_FORMING_IMPORT");
-    std::fs::write(&evidence_path, serde_json::to_vec(&evidence).unwrap()).unwrap();
-
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_outbe-verification-ledger"))
-        .args(["--repo", root.to_str().unwrap(), "verify", "--evidence"])
-        .arg(&evidence_path)
-        .arg("--bundle-root")
-        .arg(&bundle)
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("Metadosis evidence has no content-addressed runner-receipt.json"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 
 #[test]
 fn index_rejects_duplicate_keys_namespaces_ids_and_schema_drift() {

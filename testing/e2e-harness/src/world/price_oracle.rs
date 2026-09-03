@@ -289,7 +289,7 @@ impl MockPriceServer {
 
     fn publish(&self, symbol: &str, price: &str, volume: &str) -> Result<u64> {
         if price.is_empty() || volume.is_empty() {
-            bail!("controlled price and volume must be non-empty")
+            bail!("controlled price and volume must be non-empty");
         }
         let mut book = self
             .state
@@ -566,7 +566,7 @@ impl PriceOracleTopology {
                 bail!(
                     "price feeder exited during startup; see {}",
                     log_path.display()
-                )
+                );
             }
             let started = log_suffix_contains(&log_path, log_start, "starting outbe-feeder");
             if started {
@@ -574,7 +574,7 @@ impl PriceOracleTopology {
             }
             if Instant::now() >= deadline {
                 let _ = fs::remove_file(&config_path);
-                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}")
+                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}");
             }
             thread::sleep(Duration::from_millis(50));
         }
@@ -1169,7 +1169,7 @@ mod tests {
     fn bound_mock_server_serves_ticker_and_empty_candle_fallback() {
         let mut server = match MockPriceServer::bind(coen_book(3, "1.250000", "4.000000")) {
             Ok(server) => server,
-            Err(error) if format!("{error:#}").contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
@@ -1186,7 +1186,7 @@ mod tests {
     fn bound_mock_server_publishes_one_atomic_new_price_generation() {
         let mut server = match MockPriceServer::bind(coen_book(3, "1.000000", "4.000000")) {
             Ok(server) => server,
-            Err(error) if format!("{error:#}").contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
 
@@ -1196,9 +1196,21 @@ mod tests {
         assert_eq!(generation, 4);
         assert_eq!(server.book(), coen_book(4, "1.080001", "4.000000"));
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
-        assert!(ticker
-            .contains(r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#));
+        assert!(
+            ticker.contains(
+                r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#
+            ),
+            "unexpected ticker response: {ticker:?}"
+        );
         server.stop();
+    }
+
+    fn bind_permission_denied(error: &eyre::Report) -> bool {
+        error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        })
     }
 
     fn raw_get(addr: SocketAddr, target: &str) -> String {

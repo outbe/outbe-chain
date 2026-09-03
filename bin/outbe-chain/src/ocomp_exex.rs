@@ -156,7 +156,7 @@ fn advance_vote_eligibility(
             Ok(LocalVoteEligibilityV1::Pending)
         }
         outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Corrupt { detail } => {
-            bail!("pinned OCOMP vote membership is corrupt: {detail}")
+            bail!("pinned OCOMP vote membership is corrupt: {detail}");
         }
     }
 }
@@ -201,9 +201,11 @@ fn classify_async_outcome_projection(
             Ok(AsyncOutcomeProjectionV1::Active)
         }
         (None, None) => Ok(AsyncOutcomeProjectionV1::CheckpointPruned),
-        (Some(_), Some(_)) => bail!("OCOMP runtime and reducer generations disagree"),
+        (Some(_), Some(_)) => {
+            bail!("OCOMP runtime and reducer generations disagree");
+        }
         (Some(_), None) | (None, Some(_)) => {
-            bail!("OCOMP runtime and reducer projections disagree")
+            bail!("OCOMP runtime and reducer projections disagree");
         }
     }
 }
@@ -265,7 +267,7 @@ fn classify_canonical_job(
             has_finalized_job,
         },
         OcompJobStatus::VotingOpen | OcompJobStatus::Completed => {
-            bail!("OCOMP canonical status/finalized payload shape is invalid")
+            bail!("OCOMP canonical status/finalized payload shape is invalid");
         }
     })
 }
@@ -1570,7 +1572,9 @@ where
                     EmbeddedJobActionV1::ProtocolOwned => {
                         info!(%job_id, %detail, "ignored late embedded OCOMP computation failure");
                     }
-                    _ => bail!("unexpected embedded OCOMP local-failure action"),
+                    _ => {
+                        bail!("unexpected embedded OCOMP local-failure action");
+                    }
                 }
                 return Ok(());
             }
@@ -1782,7 +1786,9 @@ where
             EmbeddedJobActionV1::ProtocolOwned => {
                 info!(%job_id, "ignored late embedded OCOMP vote outcome");
             }
-            _ => bail!("unexpected embedded OCOMP vote action"),
+            _ => {
+                bail!("unexpected embedded OCOMP vote action");
+            }
         }
         Ok(())
     }

@@ -67,10 +67,12 @@ fn ensure_real_directory(storage_dir: &Path) -> eyre::Result<()> {
         Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
             Ok(())
         }
-        Ok(_) => eyre::bail!(
-            "Mainnet consensus storage {} must be a real directory",
-            storage_dir.display()
-        ),
+        Ok(_) => {
+            eyre::bail!(
+                "Mainnet consensus storage {} must be a real directory",
+                storage_dir.display()
+            );
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir_all(storage_dir)?;
             Ok(())

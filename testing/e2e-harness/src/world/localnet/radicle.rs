@@ -599,6 +599,7 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::{symlink, PermissionsExt as _},
+        os::unix::net::UnixStream,
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
         thread::sleep,
@@ -701,7 +702,7 @@ mod tests {
             .expect("run competing launcher");
         assert!(!second.status.success());
         assert!(
-            String::from_utf8_lossy(&second.stderr).contains("another outbe-radicle instance owns"),
+            String::from_utf8_lossy(&second.stderr).contains("a live sidecar already owns"),
             "unexpected competing-launcher error: {}",
             String::from_utf8_lossy(&second.stderr)
         );
@@ -752,7 +753,18 @@ mod tests {
         let binary = root.path().join("outbe-radicle-fixture");
         fs::write(
             &binary,
-            "#!/usr/bin/env bash\ntrap 'exit 0' TERM INT\nwhile true; do read -r -t 1 _ || true; done\n",
+            concat!(
+                "#!/usr/bin/env python3\n",
+                "import socket\n",
+                "import sys\n",
+                "path = sys.argv[sys.argv.index('--control-socket') + 1]\n",
+                "listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n",
+                "listener.bind(path)\n",
+                "listener.listen()\n",
+                "while True:\n",
+                "    connection, _ = listener.accept()\n",
+                "    connection.close()\n",
+            ),
         )
         .expect("write fake sidecar");
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))
@@ -781,13 +793,17 @@ mod tests {
     /// the sidecar builds its runtime config from its command line and never
     /// reads that file.
     fn wait_for_launcher(child: &mut Child, home: &Path) {
+        let control_socket = home.join("node/outbe-control.sock");
         for _ in 0..100 {
             assert_eq!(child.try_wait().expect("poll launcher"), None);
-            if home.join("node").is_dir() && home.join("storage").is_dir() {
+            if UnixStream::connect(&control_socket).is_ok() {
                 return;
             }
             sleep(Duration::from_millis(10));
         }
-        panic!("first launcher did not take ownership of its home");
+        panic!(
+            "first launcher did not bind its control socket at {}",
+            control_socket.display()
+        );
     }
 }
