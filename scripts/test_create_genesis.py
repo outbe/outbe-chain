@@ -545,6 +545,18 @@ class SeedStageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "COEN base"):
                 self.seed_once(pathlib.Path(tmp), config)
 
+    def test_production_seed_stage_rejects_oracle_pair_with_the_same_resolved_asset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {
+                "oracle": {
+                    "pairs": [
+                        {"base": "COEN", "quote": "native", "initial_rate": "1000000"}
+                    ]
+                }
+            }
+            with self.assertRaisesRegex(ValueError, "same asset"):
+                self.seed_once(pathlib.Path(tmp), config)
+
     def test_mainnet_profile_seeds_chain_676_with_canonical_production_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {

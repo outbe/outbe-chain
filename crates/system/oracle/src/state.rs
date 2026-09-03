@@ -428,6 +428,63 @@ impl OracleContract<'_> {
     // Price Snapshots (circular buffer)
     // -----------------------------------------------------------------------
 
+    /// Maximum positive submitted volume that can be accumulated exactly in
+    /// every applicable VWAP bucket for this rate.
+    pub(crate) fn snapshot_volume_capacity(
+        &self,
+        timestamp: u64,
+        pair: AddressPair,
+        rate: U256,
+    ) -> Result<U256> {
+        if rate.is_zero() {
+            return Ok(U256::MAX);
+        }
+
+        let mut capacity = U256::MAX / rate;
+        let day = timestamp - (timestamp % 86_400);
+
+        let daily_pv = self.daily_pv_sum.get_nested(&pair).read(&day)?;
+        let daily_volume = self.daily_vol_sum.get_nested(&pair).read(&day)?;
+        capacity = capacity
+            .min((U256::MAX - daily_pv) / rate)
+            .min(U256::MAX - daily_volume);
+
+        let seconds_since_midnight = timestamp % 86_400;
+        if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
+            let suffix_pv = self.wwd_suffix_pv_sum.get_nested(&pair).read(&day)?;
+            let suffix_volume = self.wwd_suffix_vol_sum.get_nested(&pair).read(&day)?;
+            capacity = capacity
+                .min((U256::MAX - suffix_pv) / rate)
+                .min(U256::MAX - suffix_volume);
+        }
+        if seconds_since_midnight < WWD_PREFIX_END_SECONDS {
+            let prefix_pv = self.wwd_prefix_pv_sum.get_nested(&pair).read(&day)?;
+            let prefix_volume = self.wwd_prefix_vol_sum.get_nested(&pair).read(&day)?;
+            capacity = capacity
+                .min((U256::MAX - prefix_pv) / rate)
+                .min(U256::MAX - prefix_volume);
+        }
+
+        Ok(capacity)
+    }
+
+    /// Returns whether a tally-produced snapshot entry can be accumulated
+    /// exactly. A zero submitted volume uses the existing per-pair sentinel.
+    pub(crate) fn snapshot_can_accept(
+        &self,
+        timestamp: u64,
+        pair: AddressPair,
+        rate: U256,
+        submitted_volume: U256,
+    ) -> Result<bool> {
+        let required_volume = if submitted_volume.is_zero() {
+            zero_volume_weight(pair)
+        } else {
+            submitted_volume
+        };
+        Ok(required_volume <= self.snapshot_volume_capacity(timestamp, pair, rate)?)
+    }
+
     /// Writes a price snapshot with rates/volumes for the given pairs.
     ///
     /// Each entry is (registered pair, rate, volume). The snapshot is appended at
