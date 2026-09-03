@@ -85,7 +85,7 @@ jobs:
     runs-on: testnet-release-sgx
     container:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       CARGO_HOME: /github/home/.cargo
     steps:
@@ -117,6 +117,28 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: code-coverage-results.md
+
+  compile-contracts:
+    name: compile contracts
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    timeout-minutes: 40
+    env:
+      CARGO_HOME: /github/home/.cargo
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      # trybuild creates nested temporary crates. Running those under llvm-cov
+      # adds no useful runtime coverage and repeatedly rebuilds their crate graphs.
+      - name: Verify compile-time API contracts
+        run: |
+          cargo test --locked --package outbe-macros --test trybuild
+          cargo test --locked --package outbe-primitives --test trybuild
+          cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
 
   doctests:
     name: doctests
@@ -254,6 +276,7 @@ jobs:
       - fmt
       - clippy
       - test
+      - compile-contracts
       - doctests
       - udeps
       - no-test-deps
@@ -264,6 +287,10 @@ jobs:
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
+        env:
+          # The job container runs as a different UID than the host runner.
+          # Keep Python from leaving an undeletable __pycache__ in _actions.
+          PYTHONDONTWRITEBYTECODE: "1"
         with:
           allowed-skips: clippy, test, doctests, udeps, no-test-deps, deny, machete, miri
           jobs: ${{ toJSON(needs) }}

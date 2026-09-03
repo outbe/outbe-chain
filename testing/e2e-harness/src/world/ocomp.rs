@@ -880,7 +880,7 @@ impl OcompTopology {
     pub fn prepare_cross_currency_tribute_fixture(&self) -> Result<u32> {
         #[cfg(not(feature = "ocomp-integration"))]
         {
-            eyre::bail!("cross-currency Tribute fixture requires ocomp-integration")
+            eyre::bail!("cross-currency Tribute fixture requires ocomp-integration");
         }
 
         #[cfg(feature = "ocomp-integration")]
