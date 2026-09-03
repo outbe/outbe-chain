@@ -333,13 +333,21 @@ fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> 
             break;
         }
         size += read;
-        if request[..size].windows(4).any(|window| window == b"\r\n\r\n") {
+        if request[..size]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n")
+        {
             break;
         }
-        eyre::ensure!(size < request.len(), "mock HTTP request headers are too large");
+        eyre::ensure!(
+            size < request.len(),
+            "mock HTTP request headers are too large"
+        );
     }
     eyre::ensure!(
-        request[..size].windows(4).any(|window| window == b"\r\n\r\n"),
+        request[..size]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n"),
         "mock HTTP request ended before its headers"
     );
     let request =
