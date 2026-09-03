@@ -94,7 +94,7 @@ const GAS_ROUNDING: u64 = 10_000;
 // Stable ADR-007 cleanup reserves charged explicitly by the CE execution scope.
 // Keeping the decomposition here makes a protocol-gas change fail loudly rather
 // than disappearing into a generic runtime remainder.
-const CE_FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = 65_000;
+const CE_FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = 55_000;
 const CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
 const CE_FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 = 25_000;
 const CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
