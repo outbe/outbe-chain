@@ -26,6 +26,7 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
         let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
         let (position_id, amount_stables) = runtime::request_credis(
             storage.clone(),
             cca(),
@@ -486,13 +487,6 @@ fn a_position_settled_inside_the_window_is_never_voided() {
 // The originating CCA's matching COEN stake
 // ---------------------------------------------------------------------------
 
-fn staked(storage: &StorageHandle<'_>, position_id: U256) -> U256 {
-    crate::schema::CredisFactoryContract::new(storage.clone())
-        .cca_stake
-        .read(&position_id)
-        .unwrap()
-}
-
 fn factory_balance(storage: &StorageHandle<'_>) -> U256 {
     storage
         .balance(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
@@ -501,7 +495,7 @@ fn factory_balance(storage: &StorageHandle<'_>) -> U256 {
 
 /// The stake must equal the pledged collateral exactly. Both directions are
 /// rejected: under-staking would let a CCA originate cheaply, over-staking would
-/// strand COEN the escrow has no way to return.
+/// hand the borrower more than the collateral it is supposed to match.
 #[test]
 fn request_credis_requires_the_stake_to_equal_the_collateral() {
     let mut storage = env();
@@ -539,60 +533,58 @@ fn request_credis_requires_the_stake_to_equal_the_collateral() {
     teardown();
 }
 
-/// The escrow is recorded against the position and the COEN stays with the factory
-/// until the position resolves.
+/// The stake is handed to the borrower's smart account at origination - the factory
+/// keeps nothing and the CCA gets nothing back.
 #[test]
-fn request_credis_escrows_the_stake_against_the_position() {
+fn request_credis_pays_the_stake_to_the_smart_account() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
+        open(&storage, 1);
 
-        assert_eq!(staked(&storage, position_id), pledge_stake());
-        assert_eq!(factory_balance(&storage), pledge_stake());
-        assert_eq!(
-            storage.balance(cca()).unwrap(),
-            U256::ZERO,
-            "not yet returned"
-        );
+        assert_eq!(storage.balance(alice()).unwrap(), pledge_stake());
+        assert_eq!(factory_balance(&storage), U256::ZERO, "nothing escrowed");
+        assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
     });
     teardown();
 }
 
-/// Settling the last of the principal returns the stake to the originating CCA.
+/// Settling the position in full does not claw the stake back: it stays with the
+/// borrower, who may already have spent it.
 #[test]
-fn the_closing_settlement_returns_the_stake_to_the_cca() {
+fn the_closing_settlement_does_not_return_the_stake() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
 
-        // A partial settlement must not release anything: the position is still open.
         settle_principal(
             &storage,
             alice(),
             position_id,
             pledge_stables() / U256::from(2u64),
         );
-        assert_eq!(
-            staked(&storage, position_id),
-            pledge_stake(),
-            "stake stays escrowed while principal is outstanding"
-        );
-        assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
-
-        // Clearing the remainder closes the position and returns the stake.
         settle_principal(&storage, alice(), position_id, pledge_stables());
-        assert_eq!(staked(&storage, position_id), U256::ZERO, "claim cleared");
-        assert_eq!(storage.balance(cca()).unwrap(), pledge_stake());
+
+        assert_eq!(
+            storage.balance(alice()).unwrap(),
+            pledge_stake(),
+            "the borrower keeps it"
+        );
+        assert_eq!(
+            storage.balance(cca()).unwrap(),
+            U256::ZERO,
+            "never returned"
+        );
         assert_eq!(factory_balance(&storage), U256::ZERO);
     });
     teardown();
 }
 
-/// A void burns the stake: it leaves the factory's balance and goes to no one.
+/// A void burns the unpaid collateral but not the stake - that COEN left the protocol's
+/// hands at origination.
 #[test]
-fn the_void_burns_the_cca_stake() {
+fn the_void_leaves_the_stake_with_the_smart_account() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -609,13 +601,17 @@ fn the_void_burns_the_cca_stake() {
         finalize_through(&storage, deadline);
         assert_eq!(scan(&storage, deadline), 1);
 
-        assert_eq!(staked(&storage, position_id), U256::ZERO, "claim cleared");
+        assert_eq!(
+            storage.balance(alice()).unwrap(),
+            pledge_stake(),
+            "not burned with the collateral"
+        );
         assert_eq!(
             storage.balance(cca()).unwrap(),
             U256::ZERO,
             "never returned"
         );
-        assert_eq!(factory_balance(&storage), U256::ZERO, "burned, not held");
+        assert_eq!(factory_balance(&storage), U256::ZERO);
     });
     teardown();
 }
@@ -663,6 +659,7 @@ fn the_entry_price_is_struck_from_the_reference_leg() {
         set_coen_rate_for(&storage, REFERENCE_ISO, U256::from(3_000_000u64));
 
         let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
         let (position_id, amount_stables) = runtime::request_credis(
             storage.clone(),
             cca(),
@@ -738,6 +735,7 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
         set_coen_rate_for(&storage, ISSUANCE_ISO, U256::from(3_000_000u64));
 
         let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
         let (position_id, _) = runtime::request_credis(
             storage.clone(),
             cca(),
