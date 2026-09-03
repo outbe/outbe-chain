@@ -765,6 +765,7 @@ fn a_position_reports_its_full_terms() {
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
         assert_eq!(data.parkedAt, T_NOW);
+        assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
         assert_eq!(data.remainingCapacity, parked_capacity(six_decimal_u128()));
     });
 }

@@ -525,6 +525,7 @@ pub fn position_data(
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
         parkedAt: record.parked_at,
+        expiresAt: record.expires_at,
     })
 }
 
