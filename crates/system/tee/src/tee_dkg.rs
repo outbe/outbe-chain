@@ -404,10 +404,9 @@ pub struct CeremonyOutcome {
     /// for all honest parties; clients encrypt offers to it. Set by
     /// [`run_tee_dkg_ceremony`]; `[0u8; 32]` until Seam F completes.
     pub tribute_offer_public: [u8; 32],
-    /// The committee's DKG group public KEY (constant term, encoded) - the public
-    /// verification key for its threshold group signatures. Set alongside
-    /// `tribute_offer_public` at Seam F; carried into the bootstrap payload so a
-    /// later reshare endorsement verifies against this committee's key.
+    /// The committee's encoded DKG group public key (constant term). Set alongside
+    /// `tribute_offer_public` at Seam F and carried into the founding bootstrap
+    /// payload.
     pub tribute_offer_group_public_key: Vec<u8>,
 }
 

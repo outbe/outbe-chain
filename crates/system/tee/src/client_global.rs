@@ -18,7 +18,10 @@ use std::sync::{Mutex, OnceLock};
 use alloy_primitives::B256;
 
 use crate::client::{AuthorizedEnclaveClient, EnclaveClient, GeneratedDcapQuoteV1};
-use crate::dcap_protocol::{DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1};
+use crate::dcap_protocol::{
+    DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapOnboardingVerificationResultV1,
+    DcapVerificationOutcomeV1,
+};
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use crate::session::EnclaveSession;
@@ -187,6 +190,19 @@ pub fn verify_dcap_registration_and_seal_v1(
         )
     }) else {
         return Err(TransportError::DcapVerification(
+            "production enclave client is not configured".into(),
+        ));
+    };
+    result
+}
+
+pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
+    context: DcapOnboardingContextV1,
+) -> Result<DcapOnboardingArtifactV1, TransportError> {
+    let Some(result) = try_with_enclave(|session| {
+        session.prepare_gramine_direct_dev_onboarding_artifact_v1(context)
+    }) else {
+        return Err(TransportError::EnclaveError(
             "production enclave client is not configured".into(),
         ));
     };

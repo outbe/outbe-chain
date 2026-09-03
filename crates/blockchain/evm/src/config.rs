@@ -2106,10 +2106,8 @@ mod tests {
                 outcome: Bytes::from_static(b"outcome"),
                 is_full_dkg: true,
                 tee_recipient_pubkeys: Vec::new(),
-                tee_reshare_registrations: Vec::new(),
                 tee_expired_target_exclusions: Vec::new(),
                 tee_expired_target_exclusions_hash: B256::ZERO,
-                endorsement_signature: alloy_primitives::Bytes::new(),
                 reshare: ReshareResult {
                     new_active_set: vec![Address::repeat_byte(0x11)],
                     active_set_hash: B256::repeat_byte(0x21),

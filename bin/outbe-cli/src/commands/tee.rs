@@ -1916,27 +1916,36 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     };
 
     let tribute_offer_public = if completion_plan.ingest_offer_key {
+        let expected = ExpectedOnboardingBindingV1 {
+            selector: binding_selector.clone(),
+            chain_id: policy.chain_id,
+            genesis_hash: policy.genesis_hash,
+            node_id_hash,
+            enclave_id,
+            intent_hash,
+            recipient_x25519,
+            tribute_offer_public: expected_offer_pub,
+            key_epoch,
+            tribute_offer_epoch,
+        };
+        let finalized = await_finalized_onboarding_v1(
+            &CliFinalityRpc(client),
+            &tx_hash,
+            &expected,
+            Duration::from_secs(timeout_secs),
+        )
+        .await?;
+        let artifact = finalized
+            .artifact
+            .encode_canonical()
+            .map_err(|code| eyre::eyre!("encode finalized artifact: {:#06x}", code.code()))?;
+        println!(
+            "exact onboarding finalized at height {} (artifact {} bytes)",
+            finalized.finalized_height,
+            artifact.len()
+        );
         match policy.attestation_mode {
             AttestationMode::DcapRequired => {
-                let expected = ExpectedOnboardingBindingV1 {
-                    selector: binding_selector.clone(),
-                    chain_id: policy.chain_id,
-                    genesis_hash: policy.genesis_hash,
-                    node_id_hash,
-                    enclave_id,
-                    intent_hash,
-                    recipient_x25519,
-                    tribute_offer_public: expected_offer_pub,
-                    key_epoch,
-                    tribute_offer_epoch,
-                };
-                let finalized = await_finalized_onboarding_v1(
-                    &CliFinalityRpc(client),
-                    &tx_hash,
-                    &expected,
-                    Duration::from_secs(timeout_secs),
-                )
-                .await?;
                 let anchor_outcome = load_finalized_admission_anchor_v1(
                     client,
                     genesis,
@@ -1944,14 +1953,6 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     &finalized.artifact.context,
                 )
                 .await?;
-                let artifact = finalized.artifact.encode_canonical().map_err(|code| {
-                    eyre::eyre!("encode finalized artifact: {:#06x}", code.code())
-                })?;
-                println!(
-                    "exact onboarding finalized at height {} (artifact {} bytes)",
-                    finalized.finalized_height,
-                    artifact.len()
-                );
                 let node_data_dir = authorized_node_data_dir
                     .expect("DcapRequired join has a durable NodeHost admission anchor");
                 let mut recovery = CliFinalizedAdmissionIoV1 {
@@ -1978,9 +1979,29 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     .wrap_err("enclave purpose-bound onboarding ingest failed")?
             }
             AttestationMode::GramineDirectDev => {
-                eyre::bail!(
-                    "post-bootstrap enclave onboarding requires DcapRequired; GramineDirectDev networks must be restarted from a new founding ceremony"
-                );
+                if authorized_node_data_dir.is_none() {
+                    eyre::bail!(
+                        "GramineDirectDev post-bootstrap onboarding requires authenticated NodeHost state"
+                    );
+                }
+                match enclave.request(
+                    &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+                        artifact,
+                        expected_intent_hash: intent_hash,
+                        expected_tribute_offer_public: expected_offer_pub,
+                        expected_key_epoch: key_epoch,
+                        expected_tribute_offer_epoch: tribute_offer_epoch,
+                    },
+                )? {
+                    EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+                        tribute_offer_public,
+                    } if tribute_offer_public == expected_offer_pub => tribute_offer_public,
+                    other => {
+                        eyre::bail!(
+                            "GramineDirectDev onboarding returned an unexpected response: {other:?}"
+                        )
+                    }
+                }
             }
         }
     } else {

@@ -48,6 +48,10 @@ pub enum TeeMode {
     MockNative,
 }
 
+/// Co-located hardware enclaves share one physical EPC, so SGX E2E subprocesses
+/// need a wider host/enclave I/O deadline than production's fail-fast default.
+pub(crate) const CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS: &str = "300";
+
 impl TeeMode {
     /// Whether an enclave is launched.
     pub const fn enabled(self) -> bool {

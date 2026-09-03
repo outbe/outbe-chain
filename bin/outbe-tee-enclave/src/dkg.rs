@@ -125,11 +125,6 @@ pub const TEE_DKG_NAMESPACE: &[u8] = b"outbe-tee-dkg";
 pub const TEE_OFFER_NAMESPACE: &[u8] = b"outbe-tee-offer";
 pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
 
-// The reshare endorsement namespace + message are a PUBLIC message contract shared
-// with the on-chain verifier, so they live in `outbe_tee` (not the enclave binary)
-// to guarantee signing here and verification in `begin_block_precompile` agree.
-pub use outbe_tee::endorsement::{reshare_endorsement_message, TEE_ENDORSE_NAMESPACE};
-
 fn dkg_err(context: &str, error: impl core::fmt::Debug) -> TeeError {
     TeeError::Dkg(format!("{context}: {error:?}"))
 }
@@ -371,28 +366,13 @@ impl DkgSession {
         Ok((secret, public, sigma))
     }
 
-    /// Reshare authority - produce this enclave's threshold partial signature over a
-    /// reshare-endorsement `message` (see [`reshare_endorsement_message`]) with its
-    /// recovered share. Unlike the offer-key partials these are NOT sealed: the
-    /// recovered group signature is the PUBLIC on-chain authority over the new
-    /// committee, so individual partials are safe to relay in cleartext. Requires
-    /// [`DkgSession::player_finalize`] to have run (the share must be resident).
-    pub fn sign_endorsement_partial(&self, message: &[u8]) -> Result<Vec<u8>> {
-        let share = self.recovered_share.as_ref().ok_or(TeeError::DkgSeamOrder(
-            "sign_endorsement_partial before player_finalize",
-        ))?;
-        let partial = threshold::sign_message::<Variant>(share, TEE_ENDORSE_NAMESPACE, message);
-        Ok(partial.encode().to_vec())
-    }
-
     /// The encoded DKG group public KEY - the constant term of the public
     /// polynomial (`output.public().public()`), a single fixed-size point. PUBLIC:
     /// it is the verification key for this committee's threshold group signatures
-    /// (offer-key recovery and reshare endorsements), and matches the byte layout of
+    /// and matches the byte layout of
     /// the consensus VRF `vrf_group_public_key_bytes` (constant term, not the whole
-    /// polynomial). Carried into the bootstrap payload so a later committee's reshare
-    /// endorsement can be verified on-chain against the endorsing committee's group
-    /// key via `verify_message::<MinSig>`. Requires `player_finalize`.
+    /// polynomial). Carried as signed founding bootstrap material. Requires
+    /// `player_finalize`.
     pub fn group_public_key_bytes(&self) -> Result<Vec<u8>> {
         let output = self.group_output.as_ref().ok_or(TeeError::DkgSeamOrder(
             "group_public_key_bytes before player_finalize",
@@ -818,48 +798,6 @@ mod tests {
         assert!(
             matches!(err, TeeError::Dkg(_)),
             "incomplete dealer set must be rejected: {err:?}"
-        );
-    }
-
-    #[test]
-    fn reshare_endorsement_partials_recover_deterministic_group_sig() {
-        // Reshare-authority prerequisite (Fix B3): 2f+1 prior-committee partials over
-        // the endorsement commitment recover a single deterministic group signature,
-        // regardless of WHICH quorum subset is gathered - the on-chain authority must
-        // be byte-identical across validators.
-        let sessions = drive_ceremony_to_shares(7);
-        let msg = reshare_endorsement_message(
-            B256::repeat_byte(0x11),
-            B256::repeat_byte(0x22),
-            [0x33; 32],
-        );
-        let partials: Vec<Vec<u8>> = sessions
-            .iter()
-            .map(|s| {
-                s.sign_endorsement_partial(msg.as_slice())
-                    .expect("endorsement partial")
-            })
-            .collect();
-
-        let output0 = sessions[0].group_output.as_ref().unwrap();
-        let recover = |idx: &[usize]| -> Vec<u8> {
-            let ps: Vec<PartialSignature<Variant>> = idx
-                .iter()
-                .map(|&i| {
-                    let mut r: &[u8] = &partials[i];
-                    PartialSignature::<Variant>::read(&mut r).unwrap()
-                })
-                .collect();
-            threshold::recover::<Variant, _, N3f1>(output0.public(), ps.iter(), &Sequential)
-                .unwrap()
-                .encode()
-                .to_vec()
-        };
-        // Quorum for n=7 is 5 (2f+1, f=2); two different 5-subsets must agree.
-        assert_eq!(
-            recover(&[0, 1, 2, 3, 4]),
-            recover(&[2, 3, 4, 5, 6]),
-            "endorsement group signature must be deterministic across 2f+1 subsets"
         );
     }
 
