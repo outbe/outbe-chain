@@ -208,6 +208,12 @@ fn mark_called(nod: &mut NodContract<'_>, bucket_key: B256, now: u64) -> Result<
 /// cannot change an outcome: the deadline has already passed and mining is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the callable index.
+///
+/// Each burned load returns to the Promis Reserve. Lysis drew it out of the day
+/// limit and only mining converts it into Gratis, so a load that is destroyed
+/// unmined would otherwise leave the reserve with nothing minted against it.
+/// The credit is one accumulated write per pass, and the caller's checkpoint
+/// makes it atomic with the burns it accounts for.
 fn forfeit_members(
     storage: &StorageHandle<'_>,
     nod: &mut NodContract<'_>,
@@ -218,6 +224,7 @@ fn forfeit_members(
 ) -> Result<u32> {
     let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
     let mut burned: u32 = 0;
+    let mut credit = U256::ZERO;
     while burned < budget {
         let count = nod.bucket_nod_count.read(&bucket_key)?;
         let Some(last) = count.checked_sub(1) else {
@@ -252,7 +259,16 @@ fn forfeit_members(
             nodId: nod_id.to_u256(),
             gratisLoadMinor: gratis_load_minor,
         })?;
+        credit = credit.checked_add(gratis_load_minor).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Revert(
+                "Nod forfeit Promis Reserve credit overflow".into(),
+            )
+        })?;
         burned = burned.saturating_add(1);
+    }
+    if !credit.is_zero() {
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .add_to_total_unallocated(credit)?;
     }
     Ok(burned)
 }
