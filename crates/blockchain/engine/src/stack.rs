@@ -2202,7 +2202,6 @@ fn build_genesis_dkg_boundary_artifact(
         planned_activation_height: 0,
         vrf_material_version: 0,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
 }
@@ -7149,7 +7148,6 @@ fn build_completed_dkg_boundary(
         planned_activation_height: target.planned_activation_height,
         vrf_material_version: next_vrf_material_version,
         is_validator_set_change: activated_participants != *current_participants,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: target.tee_expired_target_exclusions.clone(),
     })
 }
@@ -7316,7 +7314,6 @@ fn validate_pending_boundary_snapshot(
         planned_activation_height: snapshot.artifact.planned_activation_height,
         vrf_material_version: snapshot.artifact.vrf_material_version,
         is_validator_set_change: snapshot.artifact.is_validator_set_change,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions,
     })?;
     ensure!(

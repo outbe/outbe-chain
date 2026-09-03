@@ -25,7 +25,6 @@ use serde::Serialize;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::internal::proc::{first_hex, run_capture};
-use crate::internal::shell::Sh;
 
 use super::Localnet;
 
@@ -384,26 +383,6 @@ impl Localnet {
                  reconstructing its test-owned CE database"
             );
             sleep(Duration::from_millis(100));
-        }
-    }
-
-    /// Relocate a datadir under the data dir (warm promotion reuses synced state).
-    pub fn move_datadir(&self, from_rel: &str, to_rel: &str) -> Result<()> {
-        let from = self.cfg.dir.join(from_rel);
-        let to = self.cfg.dir.join(to_rel);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        match fs::rename(&from, &to) {
-            Ok(()) => Ok(()),
-            Err(_) if self.cfg.sudo => {
-                Sh::new(&self.cfg).sudo_best_effort(
-                    "mv",
-                    &[&from.display().to_string(), &to.display().to_string()],
-                );
-                Ok(())
-            }
-            Err(e) => Err(e).wrap_err("move datadir"),
         }
     }
 

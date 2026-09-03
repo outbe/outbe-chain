@@ -189,24 +189,18 @@ pub fn dispatch(
                         })?;
                     let (node_id_hash, _recipient_x25519) =
                         registration_onboarding_target(preflight.evidence)?;
-                    let outcome = if policy.attestation_mode == AttestationMode::DcapRequired {
-                        let onboarding = registry.register_enclave_with_onboarding_v1(
-                            caller,
-                            preflight.evidence,
-                            &node_signature,
-                            &enclave_signature,
-                            &binding,
-                            &validator_signature,
-                            &node_binding_signature,
-                            policy,
-                        )?;
-                        registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
-                        onboarding.registration
-                    } else {
-                        return Err(PrecompileError::Revert(
-                            "post-bootstrap enclave registration requires DcapRequired".into(),
-                        ));
-                    };
+                    let onboarding = registry.register_enclave_with_onboarding_v1(
+                        caller,
+                        preflight.evidence,
+                        &node_signature,
+                        &enclave_signature,
+                        &binding,
+                        &validator_signature,
+                        &node_binding_signature,
+                        policy,
+                    )?;
+                    registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
+                    let outcome = onboarding.registration;
                     Ok(Bytes::from(
                         ITeeRegistryV1::registerEnclaveCall::abi_encode_returns(&matches!(
                             outcome,

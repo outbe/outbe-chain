@@ -730,76 +730,6 @@ pub(crate) fn run_boundary_outcome(
         outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
             .record_boundary_recipient_keys(&artifact.tee_recipient_pubkeys)?;
     }
-    // R5: re-register the new committee's per-validator TEE keys after a
-    // tribute-offer reshare. These ride in the hash-committed `OutbeBlockArtifacts`
-    // (same bytes on every validator), so every node writes the same registry
-    // state deterministically. The offer key itself is preserved across the
-    // reshare, so it is NOT touched here. Empty for non-reshare boundaries.
-    if !artifact.tee_reshare_registrations.is_empty() {
-        // Reshare authority (membership gate): every re-registered enclave key must
-        // belong to a validator in the committee this boundary activates. The host
-        // relays the artifact; an injected registration for a non-member would
-        // otherwise place an attacker-controlled enclave key into the registry.
-        // `new_active_set` is part of the
-        // hash-committed artifact, so this gate is byte-deterministic across
-        // validators. This bounds a malicious host / below-quorum collusion; the
-        // prior-committee endorsement below is still required to bound a malicious
-        // supermajority of the new committee itself.
-        let authorized: std::collections::BTreeSet<alloy_primitives::Address> =
-            artifact.reshare.new_active_set.iter().copied().collect();
-        for r in &artifact.tee_reshare_registrations {
-            if !authorized.contains(&r.validator) {
-                return Err(PrecompileError::Revert(format!(
-                    "reshare TEE registration for validator {} is not in the activated committee",
-                    r.validator
-                )));
-            }
-        }
-        // Reshare authority (prior-committee endorsement): the OUTGOING committee must
-        // have threshold-signed this incoming committee + the preserved offer key.
-        // This is the only check a malicious supermajority of the NEW committee cannot
-        // forge (the membership gate above is self-certifying for a >2/3-new attacker).
-        // Verified against the stored prior group public key via deterministic plain
-        // pairing, so every validator reaches the same verdict.
-        let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
-        let prior_group_pub = registry.prior_group_public_key()?;
-        let offer_pub = registry.offer_public_key()?;
-        let chain_id = alloy_primitives::B256::left_padding_from(&ctx.block.chain_id.to_be_bytes());
-        let endorsement_msg = outbe_tee::endorsement::reshare_endorsement_message(
-            chain_id,
-            artifact.committee_set_hash,
-            offer_pub.0,
-        );
-        if !outbe_consensus::proof::seed_partial::verify_group_signature(
-            &prior_group_pub,
-            outbe_tee::endorsement::TEE_ENDORSE_NAMESPACE,
-            endorsement_msg.as_slice(),
-            &artifact.endorsement_signature,
-        ) {
-            return Err(PrecompileError::Revert(
-                "reshare TEE registrations lack a valid prior-committee endorsement".to_string(),
-            ));
-        }
-        let regs: Vec<(
-            alloy_primitives::Address,
-            alloy_primitives::B256,
-            alloy_primitives::B256,
-            alloy_primitives::B256,
-        )> = artifact
-            .tee_reshare_registrations
-            .iter()
-            .map(|r| {
-                (
-                    r.validator,
-                    r.recipient_x25519,
-                    r.attestation_pub,
-                    r.noise_static_pub,
-                )
-            })
-            .collect();
-        outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
-            .record_reshare_registrations(&regs)?;
-    }
     Ok(())
 }
 
@@ -1223,10 +1153,8 @@ mod tests {
             outcome: Bytes::new(),
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![VALIDATOR],
                 active_set_hash: active_set_hash(&[VALIDATOR]),
@@ -1616,10 +1544,17 @@ mod tests {
     fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
         let mut provider = configured_storage(2, 2);
         let recipient = B256::repeat_byte(0x7A);
+        let offer_public_key = B256::repeat_byte(0x7B);
+        let node_hash = B256::repeat_byte(0x7C);
 
         provider.enter(|storage| {
-            // Before the boundary, no recipient key is announced.
             let reg = outbe_teeregistry::TeeRegistry::new(storage.clone());
+            reg.tribute_offer_public_key
+                .write(offer_public_key)
+                .unwrap();
+            reg.validator_v1_node_hash
+                .write(&VALIDATOR, node_hash)
+                .unwrap();
             assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), B256::ZERO);
 
             let mut artifact = boundary_noop();
@@ -1634,60 +1569,10 @@ mod tests {
         provider.enter(|storage| {
             let reg = outbe_teeregistry::TeeRegistry::new(storage);
             assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), recipient);
-        });
-    }
-
-    fn reshare_registration(
-        validator: alloy_primitives::Address,
-    ) -> outbe_primitives::consensus::TeeReshareRegistration {
-        outbe_primitives::consensus::TeeReshareRegistration {
-            validator,
-            recipient_x25519: B256::repeat_byte(0x01),
-            attestation_pub: B256::repeat_byte(0x02),
-            noise_static_pub: B256::repeat_byte(0x03),
-        }
-    }
-
-    #[test]
-    fn boundary_outcome_rejects_reshare_registration_for_non_committee_validator() {
-        // `boundary_noop` activates new_active_set = [VALIDATOR]; a registration for
-        // any other address is not authorized by the committee and must revert.
-        let mut provider = configured_storage(2, 2);
-        provider.enter(|storage| {
-            let outsider = alloy_primitives::Address::repeat_byte(0xBE);
-            let mut artifact = boundary_noop();
-            artifact.tee_reshare_registrations = vec![reshare_registration(outsider)];
-            let input = SystemTxInputV2::BoundaryOutcome { artifact }
-                .encode()
-                .unwrap();
-            assert!(
-                dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).is_err(),
-                "reshare registration for a non-committee validator must be rejected"
-            );
-        });
-    }
-
-    #[test]
-    fn boundary_outcome_rejects_reshare_registration_without_endorsement() {
-        // Even for a committee member (VALIDATOR is in `new_active_set`, so the
-        // membership gate passes), a reshare registration is rejected unless the
-        // artifact carries a valid prior-committee endorsement (B3). Here no group key
-        // is stored and the endorsement is empty, so the authority check fails closed.
-        // The happy path (a real recovered group signature) is exercised end-to-end on
-        // the SGX localnet, since constructing a threshold group signature needs the
-        // DKG primitives, not a unit fixture.
-        let mut provider = configured_storage(2, 2);
-        provider.enter(|storage| {
-            let mut artifact = boundary_noop();
-            artifact.tee_reshare_registrations = vec![reshare_registration(VALIDATOR)];
-            let input = SystemTxInputV2::BoundaryOutcome { artifact }
-                .encode()
-                .unwrap();
-            let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
-                .expect_err("a reshare registration without an endorsement must be rejected");
-            assert!(
-                format!("{err:?}").contains("endorsement"),
-                "must fail on the missing prior-committee endorsement, got: {err:?}"
+            assert_eq!(reg.offer_public_key().unwrap(), offer_public_key);
+            assert_eq!(
+                reg.validator_v1_node_hash.read(&VALIDATOR).unwrap(),
+                node_hash
             );
         });
     }

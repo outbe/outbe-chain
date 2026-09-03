@@ -356,7 +356,6 @@ fn boundary_artifact_is_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -370,7 +369,6 @@ fn boundary_artifact_is_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -405,7 +403,6 @@ async fn pending_boundary_rejects_reordered_missing_or_altered_expiry_exclusions
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: exclusions,
     })
     .unwrap();
@@ -476,51 +473,6 @@ fn assert_canonical_output_accepts_equal_and_rejects_divergent() {
         msg.contains(&dkg_output_hash(&output).to_string()),
         "error carries the local output hash: {msg}"
     );
-}
-
-/// R5.3: the producer threads `tee_reshare_registrations` from the input into
-/// the boundary artifact (and re-encodes them deterministically), so a reshare
-/// boundary carries the new committee's per-validator TEE keys.
-#[test]
-fn boundary_artifact_carries_tee_reshare_registrations() {
-    let (keys, _participants, output, _polynomial, _log) = run_test_dkg_complete();
-    let validator_set = ValidatorSet {
-        public_keys: keys.iter().map(|k| k.public_key()).collect(),
-        addresses: vec![
-            address!("0x1111111111111111111111111111111111111111"),
-            address!("0x2222222222222222222222222222222222222222"),
-            address!("0x3333333333333333333333333333333333333333"),
-        ],
-        p2p_addresses: vec![crate::validators::ValidatorP2pAddress::Missing; 3],
-    };
-    let regs = vec![TeeReshareRegistration {
-        validator: address!("0x1111111111111111111111111111111111111111"),
-        recipient_x25519: B256::repeat_byte(0xB1),
-        attestation_pub: B256::repeat_byte(0xB2),
-        noise_static_pub: B256::repeat_byte(0xB3),
-    }];
-    let artifact = build_boundary_artifact(BoundaryArtifactInput {
-        epoch: Epoch::new(1),
-        validator_set: &validator_set,
-        output: &output,
-        is_full_dkg: false,
-        dkg_cycle: 1,
-        freeze_height: 10,
-        planned_activation_height: 20,
-        vrf_material_version: 1,
-        is_validator_set_change: true,
-        tee_reshare_registrations: regs.clone(),
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap();
-    assert_eq!(artifact.tee_reshare_registrations, regs);
-    // The artifact (and thus the hash-committed block bytes) round-trips with
-    // the registrations intact.
-    let encoded = encode_boundary_artifact(&artifact).unwrap();
-    let decoded = outbe_primitives::reshare_artifact::decode_boundary_artifact(&encoded)
-        .unwrap()
-        .unwrap();
-    assert_eq!(decoded.tee_reshare_registrations, regs);
 }
 
 #[tokio::test]
@@ -931,7 +883,6 @@ async fn verify_preannounce_outcome_matches_only_local_dkg_output() {
         planned_activation_height: 0,
         vrf_material_version: 0,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -993,7 +944,6 @@ async fn pending_next_epoch_artifact_is_distinct_from_current_activation_boundar
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -1051,7 +1001,6 @@ async fn verify_boundary_succeeds_after_finalize() {
         planned_activation_height: 0,
         vrf_material_version: 0,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -1187,7 +1136,6 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -1201,7 +1149,6 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();

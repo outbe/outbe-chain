@@ -6,8 +6,8 @@ use outbe_tee::{
     dcap_protocol::{
         dcap_onboarding_attestation_preimage, dcap_onboarding_request_hash,
         dcap_verification_attestation_preimage, dcap_verification_request_hash,
-        DcapOnboardingContextV1, DcapRejectCodeV1, DcapVerificationOutcomeV1,
-        MAX_DCAP_VERIFICATION_CHUNK_BYTES,
+        DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapRejectCodeV1,
+        DcapVerificationOutcomeV1, MAX_DCAP_VERIFICATION_CHUNK_BYTES,
     },
     protocol::{EnclaveRequest, EnclaveResponse},
 };
@@ -351,6 +351,85 @@ pub(crate) fn complete_verification_response(
     }
 }
 
+/// Build a deterministic purpose-bound artifact after TeeRegistry has already
+/// validated the DirectDev registration. The request carries only the exact
+/// canonical context, never host-selected plaintext key material.
+pub(crate) fn complete_gramine_direct_dev_onboarding_response(
+    request_hash: B256,
+    context: &[u8],
+    resident_offer_key: Option<&DerivedTributeOfferKey>,
+    source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
+) -> EnclaveResponse {
+    let context = match DcapOnboardingContextV1::decode_canonical(context) {
+        Ok(context) => context,
+        Err(_) => {
+            return EnclaveResponse::Error {
+                message: "GramineDirectDev onboarding context is not canonical".into(),
+            }
+        }
+    };
+    if request_hash != context.context_hash() {
+        return EnclaveResponse::Error {
+            message: "GramineDirectDev onboarding context hash mismatch".into(),
+        };
+    }
+    let artifact = match build_gramine_direct_dev_onboarding_artifact(
+        context,
+        resident_offer_key,
+        source_manifest,
+    ) {
+        Ok(artifact) => artifact,
+        Err(message) => {
+            return EnclaveResponse::Error {
+                message: message.to_string(),
+            };
+        }
+    };
+    let onboarding_artifact = match artifact.encode_canonical() {
+        Ok(artifact) => artifact,
+        Err(_) => {
+            return EnclaveResponse::Error {
+                message: "enclave produced a non-canonical GramineDirectDev onboarding artifact"
+                    .to_string(),
+            };
+        }
+    };
+    EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+        request_hash,
+        onboarding_artifact,
+    }
+}
+
+fn build_gramine_direct_dev_onboarding_artifact(
+    context: DcapOnboardingContextV1,
+    resident_offer_key: Option<&DerivedTributeOfferKey>,
+    source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
+) -> Result<DcapOnboardingArtifactV1, &'static str> {
+    use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+    let source_manifest = source_manifest.ok_or("onboarding source is not initialized")?;
+    if source_manifest.attestation_mode != AttestationMode::GramineDirectDev
+        || source_manifest.chain_id != context.chain_id
+        || source_manifest.genesis_hash != context.genesis_hash
+    {
+        return Err("GramineDirectDev onboarding source network binding mismatch");
+    }
+    let resident_offer_key =
+        resident_offer_key.ok_or("onboarding source offer key is not ready")?;
+    if resident_offer_key.public() != context.tribute_offer_public
+        || resident_offer_key.key_epoch() != context.key_epoch
+        || resident_offer_key.tribute_offer_epoch() != context.tribute_offer_epoch
+    {
+        return Err("GramineDirectDev onboarding offer-key context mismatch");
+    }
+    crate::crypto::encrypt_onboarding_artifact_v1(
+        resident_offer_key.secret(),
+        context,
+        resident_offer_key.group_sig(),
+    )
+    .map_err(|_| "purpose-bound GramineDirectDev onboarding artifact encryption failed")
+}
+
 fn build_onboarding_artifact(
     request: &CompleteDcapVerificationV1,
     outcome: &mut DcapVerificationOutcomeV1,
@@ -483,6 +562,7 @@ fn verify_complete_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
     use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
@@ -598,6 +678,168 @@ mod tests {
 
     fn accepted_code_identity() -> (B256, B256, u16, u16) {
         (B256::repeat_byte(0x91), B256::repeat_byte(0x92), 1, 1)
+    }
+
+    #[test]
+    fn gramine_direct_dev_onboarding_is_bound_to_testnet_genesis_policy() {
+        use outbe_primitives::{
+            chain::TESTNET_CHAIN_ID,
+            tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1},
+        };
+
+        let genesis_hash = B256::repeat_byte(0xA1);
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            TESTNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap();
+        let policy_hash = policy.policy_hash().unwrap();
+        let source_keys = crate::keys::EnclaveKeys::new([0xA2; 32], Some([0xA2; 32])).unwrap();
+        let source_node_key = k256::ecdsa::SigningKey::from_bytes((&[0xA3; 32]).into()).unwrap();
+        let source_node_public: [u8; 33] = source_node_key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let source_manifest = EnclaveInitializationManifestV1 {
+            chain_id: U256::from(TESTNET_CHAIN_ID).to_be_bytes(),
+            genesis_hash,
+            attestation_mode: AttestationMode::GramineDirectDev,
+            node_id: NodeIdV1 {
+                reth_p2p_public: source_node_public,
+            },
+            initialization_challenge: [0xA4; 32],
+            node_host_noise_x25519: [0xA5; 32],
+            recipient_x25519: source_keys.tribute_offer_public(),
+            attestation_ed25519: source_keys.attestation_pub(),
+            noise_responder_x25519: source_keys.noise_public(),
+        };
+
+        let target_keys = crate::keys::EnclaveKeys::new([0xA6; 32], Some([0xA6; 32])).unwrap();
+        let target_node_key = k256::ecdsa::SigningKey::from_bytes((&[0xA7; 32]).into()).unwrap();
+        let target_node_public: [u8; 33] = target_node_key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let target_manifest = EnclaveInitializationManifestV1 {
+            chain_id: U256::from(TESTNET_CHAIN_ID).to_be_bytes(),
+            genesis_hash,
+            attestation_mode: AttestationMode::GramineDirectDev,
+            node_id: NodeIdV1 {
+                reth_p2p_public: target_node_public,
+            },
+            initialization_challenge: [0xA8; 32],
+            node_host_noise_x25519: [0xA9; 32],
+            recipient_x25519: target_keys.tribute_offer_public(),
+            attestation_ed25519: target_keys.attestation_pub(),
+            noise_responder_x25519: target_keys.noise_public(),
+        };
+        let mut intent = RegistrationIntentV1 {
+            chain_id: target_manifest.chain_id,
+            genesis_hash,
+            operation: AttestationOperationV1::RegisterEnclave,
+            attestation_mode: AttestationMode::GramineDirectDev,
+            policy_hash,
+            node_id: target_manifest.node_id.clone(),
+            enclave_id: target_manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0xAA),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: target_manifest.recipient_x25519,
+            attestation_ed25519: target_manifest.attestation_ed25519,
+            noise_responder_x25519: target_manifest.noise_responder_x25519,
+            node_host_authorization_hash: target_manifest.node_host_authorization_hash().unwrap(),
+        };
+        intent.enclave_id = intent.derived_enclave_id().unwrap();
+        let intent_hash = intent.intent_hash().unwrap();
+        let resident =
+            crate::transport::DerivedTributeOfferKey::for_test([0xAB; 32], vec![0xAC; 96], 2, 3);
+        let context = DcapOnboardingContextV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            intent_hash,
+            node_id_hash: intent.node_id.node_id_hash().unwrap(),
+            enclave_id: intent.enclave_id,
+            binding_id: intent.binding_id,
+            policy_hash: intent.policy_hash,
+            recipient_x25519: intent.recipient_x25519,
+            tribute_offer_public: resident.public(),
+            key_epoch: 2,
+            tribute_offer_epoch: 3,
+        };
+        let request_hash = context.context_hash();
+        let canonical_context = context.encode_canonical();
+
+        let response = complete_gramine_direct_dev_onboarding_response(
+            request_hash,
+            &canonical_context,
+            Some(&resident),
+            Some(&source_manifest),
+        );
+        let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+            request_hash: actual_hash,
+            onboarding_artifact,
+            ..
+        } = response
+        else {
+            panic!("testnet GramineDirectDev onboarding was rejected: {response:?}");
+        };
+        assert_eq!(actual_hash, request_hash);
+        let artifact = DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).unwrap();
+        assert_eq!(artifact.context.chain_id, intent.chain_id);
+        assert_eq!(artifact.context.genesis_hash, intent.genesis_hash);
+        assert_eq!(artifact.context.policy_hash, intent.policy_hash);
+        assert_eq!(artifact.context.intent_hash, intent_hash);
+        assert_eq!(artifact.context.recipient_x25519, intent.recipient_x25519);
+
+        let mut wrong_source_mode = source_manifest.clone();
+        wrong_source_mode.attestation_mode = AttestationMode::DcapRequired;
+        let rejected = complete_gramine_direct_dev_onboarding_response(
+            request_hash,
+            &canonical_context,
+            Some(&resident),
+            Some(&wrong_source_mode),
+        );
+        assert!(matches!(
+            rejected,
+            EnclaveResponse::Error { ref message }
+                if message.contains("source network binding mismatch")
+        ));
+
+        let mut wrong_network_context = context;
+        wrong_network_context.genesis_hash = B256::repeat_byte(0xAD);
+        let rejected = complete_gramine_direct_dev_onboarding_response(
+            wrong_network_context.context_hash(),
+            &wrong_network_context.encode_canonical(),
+            Some(&resident),
+            Some(&source_manifest),
+        );
+        assert!(matches!(
+            rejected,
+            EnclaveResponse::Error { ref message }
+                if message.contains("source network binding mismatch")
+        ));
+
+        let wrong_resident =
+            crate::transport::DerivedTributeOfferKey::for_test([0xAE; 32], vec![0xAF; 96], 2, 3);
+        let rejected = complete_gramine_direct_dev_onboarding_response(
+            request_hash,
+            &canonical_context,
+            Some(&wrong_resident),
+            Some(&source_manifest),
+        );
+        assert!(matches!(
+            rejected,
+            EnclaveResponse::Error { ref message }
+                if message.contains("offer-key context mismatch")
+        ));
     }
 
     #[test]
