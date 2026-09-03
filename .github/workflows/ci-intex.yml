@@ -209,5 +209,9 @@ jobs:
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
+        env:
+          # The job container runs as a different UID than the host runner.
+          # Keep Python from leaving an undeletable __pycache__ in _actions.
+          PYTHONDONTWRITEBYTECODE: "1"
         with:
           jobs: ${{ toJSON(needs) }}
