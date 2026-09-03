@@ -27,7 +27,7 @@ jobs:
     name: Solhint
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/intex
@@ -47,7 +47,7 @@ jobs:
     name: Forge Format
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/intex
@@ -62,7 +62,7 @@ jobs:
     name: Compile Contracts
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/intex
@@ -82,7 +82,7 @@ jobs:
     name: Foundry Tests
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     needs: [compile]
     defaults:
       run:
@@ -108,7 +108,7 @@ jobs:
     name: ABI Export Check
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     needs: [compile]
     defaults:
       run:
@@ -137,7 +137,7 @@ jobs:
     name: Slither
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     needs: [compile]
     defaults:
       run:
@@ -166,7 +166,7 @@ jobs:
     name: Aderyn
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     needs: [compile]
     defaults:
       run:
@@ -195,7 +195,7 @@ jobs:
     name: ci success
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:0e0603bd4fa1a68676c4d43d294440d0a07739c731aa09dac042165c8b7811f9
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     if: always()
     needs:
       - lint
