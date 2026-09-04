@@ -36,6 +36,10 @@ pub fn issue_gem(
     if entry_price.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
+    // A zero load makes the cost zero, and a PayNote cannot spend zero.
+    if promis_load.is_zero() {
+        return Err(GemFactoryError::ZeroPromisLoad.into());
+    }
 
     // The holder's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
@@ -191,6 +195,10 @@ pub fn issue_merchant_gem(
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
+    // A zero load makes the cost zero, and a PayNote cannot spend zero.
+    if promis_load.is_zero() {
+        return Err(GemFactoryError::ZeroPromisLoad.into());
+    }
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
@@ -267,11 +275,15 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
+/// This path moves no value. The cost's underlying assets already reached the
+/// reserve vault when the note was deposited through `IPayNote.deposit`. What
+/// happens here is the proof obligation: `paynote_proof` must name `caller` as
+/// its spender, carry an asset the gem accepts, and cover the cost.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
-    asset: Address,
+    paynote_proof: &[u8],
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.owner != caller {
@@ -291,19 +303,37 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The payer picks the rail by the asset they bring.
-    let currency = accept_payment_asset(storage, asset, &item)?;
+    // The proof is the payment, and it is consumed last so a doomed settle never
+    // pays for verification. The payer picks the rail by the asset their note
+    // carries.
+    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+
+    // PayNote notes are bearer instruments: the proof names its own spender and
+    // anyone can relay it. Binding that spender to the caller is what stops an
+    // observer from lifting a broadcast proof to settle their own gem.
+    if claim.spender != caller {
+        return Err(GemFactoryError::PayNoteSpenderMismatch {
+            expected: caller,
+            actual: claim.spender,
+        }
+        .into());
+    }
+
+    let currency = accept_payment_asset(storage, claim.asset, &item)?;
     let expected = match currency {
         PaymentCurrency::Reference => item.reference_currency,
         PaymentCurrency::Issuance => item.issuance_currency,
     };
-    let amount_paid = cost_in_token(storage, &item, asset, currency)?;
+    let amount_paid = cost_in_token(storage, &item, claim.asset, currency)?;
+    if U256::from(claim.spend_amount) < amount_paid {
+        return Err(GemFactoryError::PayNoteUndercoversCost {
+            covered: claim.spend_amount,
+            required: amount_paid,
+        }
+        .into());
+    }
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
-
-    if !amount_paid.is_zero() {
-        deposit_to_vault(storage, caller, amount_paid, asset)?;
-    }
 
     emit_event(
         storage,
@@ -322,49 +352,6 @@ pub fn settle_gem(
 fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
-}
-
-/// Pulls `amount` from `caller` and deposits what actually arrived. Fee-on-transfer
-/// safe: the deposit follows the measured delta, and zero shares is a refusal.
-fn deposit_to_vault(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    asset: Address,
-) -> Result<()> {
-    let before = erc20_balance_of(storage, asset, GEM_FACTORY_ADDRESS)?;
-    let transfer = IERC20::transferFromCall {
-        from: caller,
-        to: GEM_FACTORY_ADDRESS,
-        amount,
-    }
-    .abi_encode();
-    storage.call(asset, U256::ZERO, transfer.into())?;
-    let after = erc20_balance_of(storage, asset, GEM_FACTORY_ADDRESS)?;
-    let received = after
-        .checked_sub(before)
-        .ok_or_else(|| PrecompileError::Revert("settlement balance underflow".into()))?;
-
-    let approve = IERC20::approveCall {
-        spender: VAULT_ROUTER_ADDRESS,
-        amount: received,
-    }
-    .abi_encode();
-    storage.call(asset, U256::ZERO, approve.into())?;
-
-    // Deposit into the reserve vault via the router's Solidity ABI.
-    let shares = outbe_vaultrouter::api::deposit(storage, asset, received)?;
-    if shares.is_zero() {
-        return Err(GemFactoryError::ZeroSharesReceived.into());
-    }
-
-    Ok(())
-}
-
-fn erc20_balance_of(storage: &StorageHandle<'_>, asset: Address, account: Address) -> Result<U256> {
-    let ret = storage.staticcall(asset, IERC20::balanceOfCall { account }.abi_encode().into())?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
 }
 
 /// Which of a gem's two currencies a payment asset is denominated in.
