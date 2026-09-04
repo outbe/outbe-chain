@@ -6,7 +6,7 @@ use std::{
 
 use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS},
     error::{PrecompileError, Result},

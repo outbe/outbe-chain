@@ -1,6 +1,6 @@
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{intent::PreAdmissionEnvelopeV1, SchemaLimits};
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
 use crate::{aggregate::WwdStatus, errors::storage_corruption_message};

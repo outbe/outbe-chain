@@ -16,7 +16,6 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
@@ -42,6 +41,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_offchain_storage::{MemoryStorage, StorageWriter as _};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, types::StorageKey as _, StorageHandle},

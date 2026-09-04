@@ -1,5 +1,4 @@
 use alloy_primitives::{Bytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1};
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
@@ -25,6 +24,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_promislimit::certified::{credit_certified_carry_over, CertifiedCarryOverCreditV1};
 use outbe_tribute::{
     certified::{
@@ -274,7 +274,7 @@ fn target_preconditions_changed(
     let storage = context.storage;
     let limits = context.limits;
     let expected = &record.intent.activation_preconditions;
-    let wwd = outbe_common::WorldwideDay::new(record.intent.wwd);
+    let wwd = outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
     let tribute = TributeContract::new(storage.clone()).pre_admission_projection(wwd)?;
     let nod = NodContract::new(storage.clone()).ocomp_target_projection(wwd)?;
     let contributors = outbe_intex::api::ocomp_contributor_target_projection(
@@ -435,7 +435,7 @@ fn apply_certified_result(
     let binding = plan.binding().clone();
     let mut request_receipt = metadosis
         .request_budget_receipt(
-            outbe_common::WorldwideDay::new(plan.carry_over().source_wwd()),
+            outbe_primitives::time::WorldwideDay::new(plan.carry_over().source_wwd()),
             limits,
         )?
         .ok_or_else(|| storage_corruption_message("OCOMP request budget receipt is missing"))?;

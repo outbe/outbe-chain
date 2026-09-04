@@ -177,7 +177,7 @@ pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result
 pub(crate) fn fail_worldwide_day_for_test(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
-    worldwide_day: outbe_common::WorldwideDay,
+    worldwide_day: outbe_primitives::time::WorldwideDay,
 ) -> Result<()> {
     let binding = metadosis_ocomp_lifecycle_begin_binding(
         ctx.block.chain_id,
@@ -311,8 +311,8 @@ pub fn submit_verified_result_vote(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{keccak256, Address, B256, U256};
-    use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
+    use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
         addresses::COMPRESSED_ENTITIES_ADDRESS,
         block::{BlockContext, BlockRuntimeContext},

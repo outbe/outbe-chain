@@ -1,8 +1,8 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_nod::NodCertifiedGenerationProjection;
 use outbe_nodfactory::certified_read::active_nod_set;
 use outbe_ocomp_protocol::{result::ExactCountsV1, state::ActiveGenerationV1};
+use outbe_primitives::time::WorldwideDay;
 
 const WWD: u32 = 20_260_726;
 

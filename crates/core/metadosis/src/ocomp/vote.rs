@@ -169,7 +169,7 @@ fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
 pub(crate) fn result_vote_worldwide_day(
     storage: StorageHandle<'_>,
     data: &[u8],
-) -> Result<Option<outbe_common::WorldwideDay>> {
+) -> Result<Option<outbe_primitives::time::WorldwideDay>> {
     let limits = super::schema::poc_schema_limits();
     let vote_bytes = match preflight_result_vote_calldata(data, &limits) {
         Ok(bytes) => bytes,
@@ -189,7 +189,9 @@ pub(crate) fn result_vote_worldwide_day(
             "OCOMP response index points to a missing job",
         ));
     };
-    Ok(Some(outbe_common::WorldwideDay::new(record.intent.wwd)))
+    Ok(Some(outbe_primitives::time::WorldwideDay::new(
+        record.intent.wwd,
+    )))
 }
 
 #[must_use]
@@ -493,7 +495,8 @@ impl MetadosisContract<'_> {
                     let current_time = storage.timestamp()?.try_into().map_err(|_| {
                         storage_corruption_message("OCOMP block timestamp does not fit u64")
                     })?;
-                    let worldwide_day = outbe_common::WorldwideDay::new(record.intent.wwd);
+                    let worldwide_day =
+                        outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
                     let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
                     let outer = aggregate.record(worldwide_day).ok_or_else(|| {
                         storage_corruption_message(

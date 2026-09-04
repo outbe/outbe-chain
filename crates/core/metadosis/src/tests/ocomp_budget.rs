@@ -269,7 +269,7 @@ fn retry_rejects_tampered_or_future_receipts_without_writing() {
 #[test]
 fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20_260_105);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20_260_105);
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             wwd,

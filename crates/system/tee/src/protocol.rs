@@ -17,7 +17,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-pub use outbe_common::WorldwideDay;
+pub use outbe_primitives::time::WorldwideDay;
 
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller; this prevents a

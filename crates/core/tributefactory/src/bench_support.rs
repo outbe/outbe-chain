@@ -5,8 +5,8 @@
 //! unit tests without making that seam part of TributeFactory's product API.
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,

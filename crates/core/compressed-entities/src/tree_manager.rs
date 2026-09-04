@@ -765,7 +765,7 @@ pub enum TreeServiceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_common::WorldwideDay;
+    use outbe_primitives::time::WorldwideDay;
 
     use crate::{
         persistence::{EnvironmentIdentity, LOCAL_STORAGE_SCHEMA_VERSION},

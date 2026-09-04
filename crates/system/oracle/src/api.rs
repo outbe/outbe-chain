@@ -13,7 +13,7 @@ pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 
 use alloy_primitives::{Address, U256};
 
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,

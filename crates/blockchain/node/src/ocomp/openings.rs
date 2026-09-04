@@ -55,7 +55,7 @@ where
     )
     .map_err(|error| RetentionError::Source(error.to_string()))?;
 
-    let day = outbe_common::WorldwideDay::new(finalized.intent.wwd);
+    let day = outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd);
     let count_slots = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?
         .slots;
@@ -246,7 +246,7 @@ fn oracle_slots_from_authenticated_opening(
         .iter()
         .map(|raw| (raw.slot, raw.value))
         .collect::<BTreeMap<_, _>>();
-    let day = outbe_common::WorldwideDay::new(wwd);
+    let day = outbe_primitives::time::WorldwideDay::new(wwd);
     let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
     let reference_currency_count =
@@ -339,7 +339,7 @@ fn oracle_slots(
     candidate: CandidatePinV1,
     subjects: &OpeningSubjectsV1,
 ) -> Result<Vec<B256>, RetentionError> {
-    let day = outbe_common::WorldwideDay::new(candidate.wwd);
+    let day = outbe_primitives::time::WorldwideDay::new(candidate.wwd);
     let counts = oracle_count_slot_plan_v1(day, &subjects.reference_isos)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
     let reference_currency_count = read_u32(

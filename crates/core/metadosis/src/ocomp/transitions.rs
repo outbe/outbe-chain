@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
     intent::{intent_storage_key, JobIntentV1},
@@ -12,6 +11,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     aggregate::WwdStatus,

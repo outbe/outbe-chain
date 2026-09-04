@@ -22,8 +22,6 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
 use outbe_chain_constants::GENESIS_CONFIG_KEY;
 #[cfg(feature = "ocomp-integration")]
-use outbe_common::WorldwideDay;
-#[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{
     OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
 };
@@ -46,6 +44,8 @@ use outbe_ocomp_protocol::{
     vote::{ResultVoteSigningSubjectV1, ResultVoteV1},
     PreparedVoteTransactionV1,
 };
+#[cfg(feature = "ocomp-integration")]
+use outbe_primitives::time::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},

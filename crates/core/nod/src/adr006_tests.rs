@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     error::{PrecompileError, Result},
