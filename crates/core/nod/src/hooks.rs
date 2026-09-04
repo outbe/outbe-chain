@@ -28,14 +28,16 @@
 //! oracle's whole reference-currency registry in order, prices each one, and
 //! shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget across them;
 //! each currency resumes from its own per-bin cursor next block. A currency
-//! whose COEN pair is unregistered or unpriced is skipped for the block
-//! rather than halting it.
+//! whose COEN pair is unregistered, unpriced or stale is skipped for the block
+//! rather than halting it. Qualification is a one-way latch, so the rate that
+//! arms a bucket's call clock must be a live one: the read enforces the same
+//! `FX_RATE_MAX_AGE_SECONDS` bound Gem and Intex qualify under.
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
     ExecutionScope, ParentBodySource, ParentBodySourceRef, WwdEntityId,
 };
-use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
+use outbe_oracle::api::{fresh_coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -87,9 +89,11 @@ impl BlockLifecycle for NodLifecycle {
 ///
 /// Reads every reference currency the oracle knows about and qualifies each
 /// one's buckets against its own COEN rate. An uninitialized registry does no
-/// work. A currency whose COEN pair is unregistered or carries no published
-/// rate is skipped for this block rather than halting it - the registry lists
-/// currencies independently of whether a pair has been priced yet.
+/// work. A currency whose COEN pair is unregistered, carries no published rate
+/// or carries one older than `FX_RATE_MAX_AGE_SECONDS` is skipped for this
+/// block rather than halting it - the registry lists currencies independently
+/// of whether a pair has been priced yet, and a stale rate must not arm a
+/// latch that never reopens.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -100,7 +104,7 @@ pub fn qualify_nods(
         if budget == 0 {
             break;
         }
-        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
             continue;
         };
         let inspected = qualify_buckets_with_rate(ctx, scope, parent, iso_code, rate, budget)?;
