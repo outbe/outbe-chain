@@ -25,31 +25,38 @@ fn entry_prices() -> Vec<ReferenceEntryPriceV1> {
 #[test]
 fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
     assert_eq!(
-        RequestBudgetSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO).unwrap(),
+        RequestBudgetSplit::derive(U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::ZERO,
             lysis_budget: U256::ZERO,
             auction_base: U256::ZERO,
+            carry_over_credit: U256::ZERO,
         }
     );
+    // Lysis takes the whole emission, so nothing is credited and nothing is drawn.
     assert_eq!(
-        RequestBudgetSplit::derive(U256::MAX, U256::MAX, U256::MAX).unwrap(),
+        RequestBudgetSplit::derive(U256::MAX, U256::MAX, U256::MAX, U256::ZERO, true).unwrap(),
         RequestBudgetSplit {
             day_limit: U256::MAX,
             lysis_budget: U256::MAX,
             auction_base: U256::ZERO,
+            carry_over_credit: U256::ZERO,
         }
     );
-    assert_eq!(
-        RequestBudgetSplit::derive(U256::MAX, U256::ZERO, U256::MAX).unwrap(),
-        RequestBudgetSplit {
-            day_limit: U256::MAX,
-            lysis_budget: U256::ZERO,
-            auction_base: U256::MAX,
-        }
-    );
+    // A draw the effective ceiling could not represent is rejected rather than wrapped.
     assert!(matches!(
-        RequestBudgetSplit::derive(U256::from(9), U256::from(10), U256::from(9)),
+        RequestBudgetSplit::derive(U256::MAX, U256::ZERO, U256::MAX, U256::ZERO, true),
+        Err(PrecompileError::Revert(_))
+    ));
+    // Lysis above the day's own emission is corruption, not a clamp.
+    assert!(matches!(
+        RequestBudgetSplit::derive(
+            U256::from(9),
+            U256::from(10),
+            U256::from(9),
+            U256::ZERO,
+            true
+        ),
         Err(PrecompileError::Revert(_))
     ));
 }
@@ -58,24 +65,68 @@ fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
 fn request_budget_split_auctions_the_day_nominal_and_leaves_limit_headroom_unbriefed() {
     // A day that earned less than the limit auctions the rest of what it earned; the headroom is
     // not briefed and goes back to the warehouse instead.
-    let weak =
-        RequestBudgetSplit::derive(U256::from(1_000), U256::from(32), U256::from(100)).unwrap();
+    let weak = RequestBudgetSplit::derive(
+        U256::from(1_000),
+        U256::from(32),
+        U256::from(100),
+        U256::ZERO,
+        true,
+    )
+    .unwrap();
     assert_eq!(weak.auction_base, U256::from(68));
+    assert_eq!(weak.carry_over_credit, U256::from(968));
 
-    // A day that earned past the limit is unchanged: the limit is what binds.
-    let strong =
-        RequestBudgetSplit::derive(U256::from(1_000), U256::from(320), U256::from(5_000)).unwrap();
+    // A day that earned past its own emission is bounded by what the accumulator holds.
+    let strong = RequestBudgetSplit::derive(
+        U256::from(1_000),
+        U256::from(320),
+        U256::from(5_000),
+        U256::ZERO,
+        true,
+    )
+    .unwrap();
     assert_eq!(strong.auction_base, U256::from(680));
 
-    // Lysis alone can exhaust the limit, and then nothing is auctioned.
-    let exhausted =
-        RequestBudgetSplit::derive(U256::from(1_000), U256::from(1_000), U256::from(5_000))
-            .unwrap();
+    // The same day reaches past its own emission once the accumulator has something to give.
+    let funded = RequestBudgetSplit::derive(
+        U256::from(1_000),
+        U256::from(320),
+        U256::from(5_000),
+        U256::from(2_000),
+        true,
+    )
+    .unwrap();
+    assert_eq!(funded.auction_base, U256::from(2_680));
+    assert_eq!(funded.day_limit, U256::from(3_680));
+
+    // Lysis alone can exhaust the day's emission, and then only the accumulator funds the auction.
+    let exhausted = RequestBudgetSplit::derive(
+        U256::from(1_000),
+        U256::from(1_000),
+        U256::from(5_000),
+        U256::ZERO,
+        true,
+    )
+    .unwrap();
     assert_eq!(exhausted.auction_base, U256::ZERO);
 
     // A day with no tributes auctions nothing.
-    let empty = RequestBudgetSplit::derive(U256::from(1_000), U256::ZERO, U256::ZERO).unwrap();
+    let empty =
+        RequestBudgetSplit::derive(U256::from(1_000), U256::ZERO, U256::ZERO, U256::ZERO, true)
+            .unwrap();
     assert_eq!(empty.auction_base, U256::ZERO);
+
+    // A red day draws nothing, however much the accumulator holds.
+    let red = RequestBudgetSplit::derive(
+        U256::from(1_000),
+        U256::from(4),
+        U256::from(100),
+        U256::from(9_000),
+        false,
+    )
+    .unwrap();
+    assert_eq!(red.auction_base, U256::ZERO);
+    assert_eq!(red.carry_over_credit, U256::from(996));
 }
 
 #[test]
@@ -96,11 +147,12 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
         let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
             .expect("GREEN request budget effect");
 
-        assert_eq!(receipt.day_limit, U256::from(100));
+        // The effective ceiling is the day's own emission plus what it drew from the accumulator.
+        assert_eq!(receipt.day_limit, U256::from(160));
         assert_eq!(receipt.lysis_budget, U256::from(40));
         assert_eq!(receipt.auction_base, U256::from(60));
         assert_eq!(receipt.destination, BudgetSplitDestination::DesisAuction);
-        assert_eq!(receipt.carry_over_credit, U256::ZERO);
+        assert_eq!(receipt.carry_over_credit, U256::from(60));
         assert_eq!(
             receipt.desis_brief_hash,
             Some(
@@ -408,11 +460,11 @@ fn a_weak_day_credits_the_headroom_it_never_briefed() {
             .expect("a weak day commits its budget split");
 
         assert_eq!(receipt.auction_base, U256::from(68));
-        assert_eq!(receipt.carry_over_credit, U256::from(900));
+        assert_eq!(receipt.carry_over_credit, U256::from(968));
         assert_eq!(
             receipt.lysis_budget + receipt.auction_base + receipt.carry_over_credit,
-            request.day_limit,
-            "the day limit is exhausted by Lysis, the brief and the warehouse"
+            receipt.day_limit,
+            "the effective ceiling is exhausted by Lysis, the brief and the accumulator"
         );
         assert_eq!(
             DesisContract::new(storage.clone())
@@ -448,7 +500,7 @@ fn a_weak_red_day_credits_its_base_together_with_the_headroom() {
         let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
             .expect("a weak RED day commits its budget split");
 
-        assert_eq!(receipt.auction_base, U256::from(96));
+        assert_eq!(receipt.auction_base, U256::ZERO);
         assert_eq!(receipt.carry_over_credit, U256::from(996));
         assert_eq!(
             PromisLimitContract::new(storage)

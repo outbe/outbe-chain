@@ -1688,10 +1688,10 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .request_budget_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        assert_eq!(receipt.day_limit, day_limit);
+        assert_eq!(receipt.day_limit, day_limit + U256::from(68));
         assert_eq!(receipt.lysis_budget, U256::from(32));
         assert_eq!(receipt.auction_base, U256::from(68));
-        assert_eq!(receipt.carry_over_credit, U256::from(900));
+        assert_eq!(receipt.carry_over_credit, U256::from(968));
 
         assert_eq!(
             DesisContract::new(storage.clone())
@@ -1706,7 +1706,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
                 .get_total_unallocated()
                 .unwrap(),
             U256::from(900),
-            "the limit headroom the day never earned stays on the warehouse"
+            "what Lysis left, less what the auction drew, stays in the accumulator"
         );
     });
 }
