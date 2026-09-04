@@ -556,3 +556,87 @@ fn a_day_reaches_past_its_own_emission_into_the_accumulator() {
         );
     });
 }
+
+#[test]
+fn a_replay_reproduces_the_receipt_after_the_accumulator_moved() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(5_000))
+            .unwrap();
+
+        let request = RequestBudgetEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_113,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(1_000),
+            lysis_budget: U256::from(320),
+            nominal_total: U256::from(5_000),
+            auction_entry_prices: entry_prices(),
+            logical_anchor: 1_699_920_005,
+        };
+
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+            .expect("the first attempt commits");
+        assert_eq!(receipt.auction_base, U256::from(4_680));
+
+        // Between attempts an unrelated return lands in the accumulator, so its balance no longer
+        // says anything about what this day drew.
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(777))
+            .unwrap();
+
+        assert_eq!(
+            validate_replayed_request_budget_effect(request, &receipt).expect("the retry replays"),
+            receipt
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(1_777),
+            "a replay moves nothing"
+        );
+    });
+}
+
+#[test]
+fn an_auction_takes_what_the_accumulator_holds_when_demand_exceeds_it() {
+    with_storage(|storage| {
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(U256::from(100))
+            .unwrap();
+
+        let request = RequestBudgetEffect {
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            wwd: 20_260_114,
+            pending_nonce: 1,
+            day_type: DayType::Green,
+            day_limit: U256::from(1_000),
+            lysis_budget: U256::from(320),
+            nominal_total: U256::from(5_000),
+            auction_entry_prices: entry_prices(),
+            logical_anchor: 1_699_920_005,
+        };
+
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
+            .expect("a day the accumulator cannot fully serve");
+
+        // Demand is 4_680, but the accumulator only holds 100 plus this day's own 680.
+        assert_eq!(receipt.auction_base, U256::from(780));
+        assert_eq!(
+            DesisContract::new(storage.clone())
+                .pending_supply_promis
+                .read(&request.wwd.into())
+                .unwrap(),
+            U256::from(780)
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO,
+            "the accumulator serves what it has and is left empty"
+        );
+    });
+}

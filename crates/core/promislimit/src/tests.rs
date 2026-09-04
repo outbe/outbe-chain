@@ -61,24 +61,6 @@ fn checked_carry_over_credit_returns_the_committed_delta() {
 }
 
 #[test]
-fn checked_carry_over_take_clears_the_accumulator_exactly_once() {
-    with_contract(|c| {
-        c.checked_add_carry_over(U256::from(42u64)).unwrap();
-
-        let first = c.checked_take_carry_over().expect("first take");
-        assert_eq!(first.before, U256::from(42u64));
-        assert_eq!(first.taken, U256::from(42u64));
-        assert_eq!(first.after, U256::ZERO);
-        assert_eq!(c.get_total_unallocated().unwrap(), U256::ZERO);
-
-        let second = c.checked_take_carry_over().expect("empty take");
-        assert_eq!(second.before, U256::ZERO);
-        assert_eq!(second.taken, U256::ZERO);
-        assert_eq!(second.after, U256::ZERO);
-    });
-}
-
-#[test]
 fn a_partial_take_serves_what_the_accumulator_holds() {
     with_contract(|c| {
         c.checked_add_carry_over(U256::from(42u64)).unwrap();

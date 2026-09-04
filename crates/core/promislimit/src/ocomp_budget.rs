@@ -46,14 +46,4 @@ impl PromisLimitContract<'_> {
             after,
         })
     }
-
-    pub fn checked_take_carry_over(&mut self) -> Result<CarryOverTake> {
-        let before = self.get_total_unallocated()?;
-        self.set_total_unallocated(U256::ZERO)?;
-        Ok(CarryOverTake {
-            before,
-            taken: before,
-            after: U256::ZERO,
-        })
-    }
 }

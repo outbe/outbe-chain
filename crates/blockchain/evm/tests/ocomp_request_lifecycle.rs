@@ -719,25 +719,33 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
             outbe_ocomp_protocol::intent::MetadosisExpectedStatus::OffchainPending
         );
         let frozen = &record.intent.frozen_metadosis_values;
+        let base_limit = outbe_metadosis::api::worldwide_day(storage.clone(), prepared.wwd)
+            .unwrap()
+            .unwrap()
+            .metadosis_limit_amount;
+        // The effective ceiling is the day's own emission plus what it drew from the accumulator.
         assert_eq!(
-            frozen.auction_base,
-            prepared
-                .nominal
-                .min(frozen.day_limit)
-                .checked_sub(frozen.lysis_budget)
-                .unwrap()
+            frozen.day_limit,
+            base_limit.checked_add(frozen.auction_base).unwrap()
         );
-        let headroom = frozen
-            .day_limit
-            .checked_sub(frozen.lysis_budget)
-            .and_then(|rest| rest.checked_sub(frozen.auction_base))
-            .unwrap();
+        // The auction never asks for more than the nominal beyond the symbolic share.
+        assert!(
+            frozen.auction_base
+                <= prepared
+                    .nominal
+                    .checked_sub(frozen.lysis_budget)
+                    .expect("Lysis cannot exceed the day's nominal")
+        );
+        // Lysis took this day's whole emission, so it credited nothing and the auction, with an
+        // empty accumulator behind it, had nothing to draw.
+        assert_eq!(frozen.lysis_budget, base_limit);
+        assert_eq!(frozen.auction_base, U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            headroom,
-            "the limit above the day's own nominal stays on the warehouse"
+            U256::ZERO,
+            "nothing was credited and nothing was drawn"
         );
         assert!(!record.intent.frozen_metadosis_values.lysis_budget.is_zero());
         assert_ne!(
