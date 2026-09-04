@@ -11,13 +11,14 @@ import {RouterAccessors} from "../common/RouterAccessors.sol";
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../../interfaces/OrderTypes.sol";
 import {IOriginSettler} from "../../interfaces/IOriginSettler.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {Whitelisted} from "@shared/Whitelist.sol";
 
 /**
  * @title OriginSettlerBase
  * @notice Base implementation for origin chain settlement contracts
  * @dev Handles order creation (open) and resolution on the origin chain
  */
-abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOriginSettler {
+abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOriginSettler, Whitelisted {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
@@ -47,7 +48,7 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
      * @dev To be called by the user. Emits the Open event
      * @param _order The OnchainCrossChainOrder definition
      */
-    function open(OnchainCrossChainOrder calldata _order) external payable {
+    function open(OnchainCrossChainOrder calldata _order) external payable onlyWhitelisted {
         // The deadline must leave room to run the auction and let the winner claim + fill before it
         // expires. MIN_ORDER_DURATION is strictly positive, so this also rejects past deadlines.
         if (_order.fillDeadline < block.timestamp + MIN_ORDER_DURATION) revert InvalidFillDeadline();

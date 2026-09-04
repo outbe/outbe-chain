@@ -21,3 +21,10 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/DeployCreate3Factory.s.sol:DeployCreate3Factory --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
 '''
 
+[tasks.deploy-whitelist]
+description = "Deploy the shared Whitelist registry (CREATE2, owner = deployer)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/DeployWhitelist.s.sol:DeployWhitelist --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
+'''
+
