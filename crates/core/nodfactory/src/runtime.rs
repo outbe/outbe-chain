@@ -278,8 +278,8 @@ fn discharge_cost(
         .into());
     }
     check_settlement_asset(storage, item.reference_currency, claim.asset)?;
-    if claim.spend_amount < cost_minor {
-        return Err(NodFactoryError::PayNoteUndercoversCost {
+    if claim.spend_amount != cost_minor {
+        return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
             required: cost_minor,
         }

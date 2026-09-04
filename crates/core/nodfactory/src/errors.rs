@@ -30,8 +30,8 @@ pub enum NodFactoryError {
         reference_currency: u16,
     },
 
-    #[error("PayNote covers {covered}, nod cost is {required}")]
-    PayNoteUndercoversCost { covered: u128, required: u128 },
+    #[error("PayNote spends {covered}, nod cost is {required}")]
+    PayNoteCostMismatch { covered: u128, required: u128 },
 
     #[error("nod cost {cost} exceeds the maximum a PayNote can cover")]
     SettlementCostTooLarge { cost: U256 },

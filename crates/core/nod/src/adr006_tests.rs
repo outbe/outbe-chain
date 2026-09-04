@@ -287,6 +287,21 @@ fn seed_bucket(
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 
+/// Block timestamp every qualification-hook test runs at.
+const NOW: u64 = 1_752_534_000;
+
+/// Publishes `rate` at `published_at` on pair `index` and moves the block clock
+/// to [`NOW`], which is what the hook measures the rate's age against.
+fn publish_rate(storage: &StorageHandle<'_>, index: u32, rate: U256, published_at: u64) {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle.exchange_rate.write(&index, rate).unwrap();
+    oracle
+        .exchange_rate_timestamp
+        .write(&index, published_at)
+        .unwrap();
+    storage.set_block_timestamp(U256::from(NOW)).unwrap();
+}
+
 fn is_qualified(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -371,18 +386,57 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
             .pair_to_index
             .write(&AddressPair::new_coen_to(840), 1)
             .unwrap();
-        oracle.exchange_rate.write(&1, U256::from(14)).unwrap();
+        publish_rate(&storage, 1, U256::from(14), NOW);
 
         let unpriced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
         let priced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x77), 840);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
             storage.clone(),
         );
         crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
         assert!(is_qualified(&storage, &scope, &parent, priced));
         assert!(!is_qualified(&storage, &scope, &parent, unpriced));
+    });
+}
+
+/// Qualification is a one-way latch that snapshots the call price and arms the
+/// call clock, so it must read a live rate, on the same freshness bound Gem and
+/// Intex qualify under. A rate that went stale above the floor must leave the
+/// bucket waiting rather than qualify it permanently.
+#[test]
+fn a_stale_rate_does_not_qualify_a_bucket() {
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let mut provider = HashMapStorageProvider::new(1);
+    let scope = ExecutionScope::new();
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .pair_to_index
+            .write(&AddressPair::new_coen_to(978), 1)
+            .unwrap();
+        let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+
+        // The rate clears the bucket's floor of 13; it is only its age that
+        // disqualifies it.
+        let stale_at = NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1;
+        publish_rate(&storage, 1, U256::from(14), stale_at);
+
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
+            storage.clone(),
+        );
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
+
+        // The same rate republished now qualifies it.
+        publish_rate(&storage, 1, U256::from(14), NOW);
+        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+        assert!(is_qualified(&storage, &scope, &parent, bucket_id));
     });
 }
 
@@ -405,11 +459,11 @@ fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
             .pair_to_index
             .write(&AddressPair::new_coen_to(840), 1)
             .unwrap();
-        oracle.exchange_rate.write(&1, U256::from(14)).unwrap();
+        publish_rate(&storage, 1, U256::from(14), NOW);
 
         let unlisted = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
             storage.clone(),
         );
         for _ in 0..3 {
