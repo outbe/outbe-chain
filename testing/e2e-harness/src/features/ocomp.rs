@@ -211,22 +211,27 @@ fn bounded_completion_decision(
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None, None);
+    start_ocomp_measurement_localnet(world, None, None, false);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), None);
+    start_ocomp_measurement_localnet(world, Some(0), None, false);
 }
 
 #[given("a fresh four-validator OCOMP short-window public measurement localnet")]
 fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), Some(6));
+    start_ocomp_measurement_localnet(world, Some(0), Some(6), false);
+}
+
+#[given("a fresh four-validator OCOMP short-window public recovery localnet")]
+fn fresh_ocomp_short_window_public_recovery_localnet(world: &mut World) {
+    start_ocomp_measurement_localnet(world, Some(0), Some(6), true);
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None);
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None, false);
 }
 
 #[given("a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs")]
@@ -350,7 +355,12 @@ fn start_ocomp_measurement_localnet(
     world: &mut World,
     public_capacity_tribute_count: Option<usize>,
     vote_window_blocks: Option<u64>,
+    seed_recovery_day: bool,
 ) {
+    assert!(
+        !seed_recovery_day || public_capacity_tribute_count == Some(0),
+        "the second recovery WWD belongs only to the one-Tribute public fixture"
+    );
     let shorten_public_day = public_capacity_tribute_count.is_some();
     let mut tuning = vec![(
         "TESTNET_EPOCH_LENGTH_BLOCKS",
@@ -384,6 +394,10 @@ fn start_ocomp_measurement_localnet(
         StartOpts::default()
     };
     let measurement_fork = match public_capacity_tribute_count {
+        Some(0) if seed_recovery_day => world
+            .ocomp
+            .prepare_public_recovery_fork_install()
+            .expect("publish the immutable two-day public recovery fork before node launch"),
         Some(0) => world
             .ocomp
             .prepare_public_measurement_fork_install()
@@ -5803,50 +5817,47 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
 
     let ports = world.validators.committee_ports();
     let primary = world.validators.primary_port();
-    let schedule = world
-        .rpc
-        .metadosis_wwd_state_on(primary, followup_wwd)
-        .expect("independent next-day WorldwideDay exists");
-    assert!(
-        schedule.status <= 1,
-        "independent next-day WorldwideDay passed OFFERING before submission: {schedule:?}"
+    let states = ports
+        .iter()
+        .copied()
+        .map(|port| world.rpc.metadosis_wwd_state_on(port, followup_wwd))
+        .collect::<Vec<_>>();
+    let schedule = states[0]
+        .clone()
+        .expect("recovery fixture exposes its independent next-day WorldwideDay");
+    assert_eq!(
+        schedule.status, 2,
+        "independent next-day WorldwideDay must be exactly OFFERING before submission: {schedule:?}"
     );
-    let offering_target = schedule
-        .lookback_end
-        .checked_add(1)
-        .expect("next-day OFFERING timestamp");
-    let _ = restart_committee_at_logical_time(world, offering_target);
-    let offering_deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
-    loop {
-        let states = ports
+    assert!(
+        states
             .iter()
-            .copied()
-            .map(|port| world.rpc.metadosis_wwd_state_on(port, followup_wwd))
-            .collect::<Vec<_>>();
-        if states
-            .iter()
-            .all(|state| state.as_ref().is_some_and(|state| state.status == 2))
-        {
-            let first = states[0]
-                .as_ref()
-                .expect("all next-day OFFERING states are present");
-            assert!(
-                states
-                    .iter()
-                    .all(|candidate| candidate.as_ref() == Some(first)),
-                "validators disagree on the next-day OFFERING state: {states:?}"
-            );
-            break;
-        }
-        world
-            .ocomp
-            .ensure_validator_roles_alive()
-            .expect("OCOMP roles remain live while the next day enters OFFERING");
+            .all(|candidate| candidate.as_ref() == Some(&schedule)),
+        "validators disagree on the next-day OFFERING state: {states:?}"
+    );
+    let finalized_height = world
+        .rpc
+        .finalized_result(primary)
+        .expect("read finalized height before the independent Tribute");
+    let finalized_timestamp = world
+        .rpc
+        .block_timestamp(primary, finalized_height)
+        .expect("read finalized timestamp before the independent Tribute");
+    assert!(
+        finalized_timestamp < schedule.offering_end,
+        "independent next-day offering already closed before submission: finalized_timestamp={finalized_timestamp}, schedule={schedule:?}"
+    );
+    for port in &ports {
+        let existing = world
+            .rpc
+            .finalized_ocomp_job_request_for_worldwide_day_result_on(*port, 0, followup_wwd)
+            .unwrap_or_else(|error| {
+                panic!("prove no pre-seeded next-day JobIntent on RPC port {port}: {error:#}")
+            });
         assert!(
-            Instant::now() < offering_deadline,
-            "independent next-day WorldwideDay did not reach OFFERING: {states:?}"
+            existing.is_none(),
+            "recovery fixture pre-seeded a forbidden next-day JobIntent on RPC port {port}: {existing:?}"
         );
-        sleep(Duration::from_millis(250));
     }
 
     let offerer = world

@@ -181,7 +181,7 @@ Feature: Off-chain computation and Metadosis
   @ocomp-zero-vote-exporter-outage
   # OCOMP-TEST-ID: OCM-PUB-006
   Scenario: Complete snapshot-exporter outage cannot halt consensus
-    Given a fresh four-validator OCOMP short-window public measurement localnet
+    Given a fresh four-validator OCOMP short-window public recovery localnet
     When all four OCOMP snapshot exporters are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
