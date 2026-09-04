@@ -8507,6 +8507,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "bytes",
  "clap",
  "commonware-actor",

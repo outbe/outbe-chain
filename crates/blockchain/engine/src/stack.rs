@@ -4540,6 +4540,22 @@ where
         recovery_anchor_hash,
     );
 
+    // Restore certified provider finality before a queued payload can wait for
+    // projection. The executor heartbeat cannot run while that wait is active.
+    let recovery_checkpoint = ProjectionCheckpoint {
+        block_number: recovery_anchor_height,
+        block_hash: recovery_anchor_hash,
+    };
+    let fcu_provider_node = node.clone();
+    confirm_recovered_forkchoice(
+        ctx.child("recovered_forkchoice"),
+        recovery_checkpoint,
+        || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
+        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+    )
+    .await
+    .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;
+
     // Start broadcast engine with P2P channel.
     let _broadcast_handle = broadcast_engine.start(broadcast_channel);
 

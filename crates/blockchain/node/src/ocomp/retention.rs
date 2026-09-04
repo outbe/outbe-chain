@@ -881,6 +881,75 @@ where
     }
 }
 
+fn gc_ack_metadata_advanced(previous: PinRecordV1, current: PinRecordV1) -> bool {
+    let mut expected = previous;
+    let PinStateV1::GcPending {
+        source_generation,
+        export: Some(export),
+        ..
+    } = current.state
+    else {
+        return false;
+    };
+    if current.generation <= previous.generation || export.source_generation != source_generation {
+        return false;
+    }
+    let PinStateV1::GcPending {
+        export: slot @ None,
+        ..
+    } = &mut expected.state
+    else {
+        return false;
+    };
+    *slot = Some(export);
+    expected.generation = current.generation;
+    expected == current
+}
+
+fn canonical_finalized_pin(
+    candidate: CandidatePinV1,
+    record: &OcompJobRecordV1,
+) -> Result<FinalizedJobPinV1, RetentionError> {
+    let limits = poc_schema_limits();
+    record.validate_semantics(&limits).map_err(|error| {
+        RetentionError::Source(format!("validate canonical finalized OCOMP job: {error}"))
+    })?;
+    let finalized = record
+        .finalized
+        .as_ref()
+        .ok_or(RetentionError::InvalidTransition(
+            "canonical OCOMP job is not finalized",
+        ))?;
+    let intent_id = record
+        .intent
+        .intent_id(&limits)
+        .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let input_lease_id = record
+        .intent
+        .input_lease_id()
+        .map_err(|error| RetentionError::Source(error.to_string()))?;
+    if record.intent_height != candidate.block_number
+        || intent_id != candidate.intent_id
+        || record.intent.wwd != candidate.wwd
+        || record.intent.ce_sealed_root != candidate.ce_sealed_root
+        || record.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
+        || input_lease_id != candidate.input_lease_id
+        || finalized.finalized_request_block_hash != candidate.block_hash
+        || finalized.finalized_request_state_root != candidate.state_root
+    {
+        return Err(RetentionError::InvalidTransition(
+            "canonical finalized job does not match retained request candidate",
+        ));
+    }
+    Ok(FinalizedJobPinV1 {
+        candidate,
+        job_id: finalized.job_id,
+        finality_recorded_height: finalized.finality_recorded_height,
+        open_height: finalized.open_height,
+        deadline_height: finalized.deadline_height,
+    })
+}
+
 fn terminal_height_from_record(
     record: &OcompJobRecordV1,
     observed_height: u64,
@@ -1591,6 +1660,30 @@ impl SharedOcompRetentionSelector {
             .get()
             .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
             .confirm_export_ack(job_id, source_generation, lease_generation, manifest_hash)
+    }
+
+    /// Recovers an exact spool ACK using the canonical finalized job authority.
+    pub fn confirm_canonical_export_ack(
+        &self,
+        record: &OcompJobRecordV1,
+        export: ExportAuthorityV1,
+    ) -> Result<DurablePinAck, RetentionError> {
+        self.coordinator
+            .get()
+            .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
+            .confirm_canonical_export_ack(record, export)
+    }
+
+    /// Closes a newly bound job at the already sampled finalized target.
+    pub fn reconcile_canonical_terminal(
+        &self,
+        record: &OcompJobRecordV1,
+        observed_height: u64,
+    ) -> Result<(), RetentionError> {
+        self.coordinator
+            .get()
+            .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
+            .reconcile_canonical_terminal(record, observed_height)
     }
 
     /// Returns the exact durable authority for an already released export.
@@ -2354,7 +2447,7 @@ impl OcompRetentionCoordinator {
             let candidate = self
                 .source
                 .candidate_for_finalized_observation(frame, observation)?;
-            self.record_tentative(candidate)?;
+            self.record_finalized_observation(candidate)?;
         }
         let live = {
             let inner = self.lock()?;
@@ -2375,6 +2468,11 @@ impl OcompRetentionCoordinator {
                 .collect::<Vec<_>>()
         };
         for (generation, candidate, job_id) in live {
+            // A durable journal can be ahead of the replay cursor. Its later
+            // jobs do not exist in this historical state yet.
+            if candidate.block_number > height {
+                continue;
+            }
             if let Some(terminal_height) = self
                 .source
                 .terminal_height_at_finalized_frame(frame, candidate, job_id)?
@@ -2383,6 +2481,37 @@ impl OcompRetentionCoordinator {
             }
         }
         Ok(())
+    }
+
+    /// Reobserving finalized history must preserve an already advanced lease.
+    /// This does not relax speculative candidate admission or orphan handling.
+    fn record_finalized_observation(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<DurablePinAck, RetentionError> {
+        let mut inner = self.lock()?;
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
+        }
+        if let Some(record) = inner
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.records.get(&candidate.block_hash))
+            .copied()
+        {
+            if record_candidate(record) != candidate {
+                return Err(RetentionError::ConflictingCandidate);
+            }
+            return match record.state {
+                PinStateV1::OrphanGcPending { .. }
+                | PinStateV1::Released {
+                    reason: PinReleaseReason::Orphaned,
+                    ..
+                } => Err(RetentionError::OrphanedCandidate),
+                _ => Ok(ack_for(record)),
+            };
+        }
+        self.record_new_candidate_locked(&mut inner, candidate)
     }
 
     pub fn record_tentative(
@@ -2412,6 +2541,14 @@ impl OcompRetentionCoordinator {
                 _ => Err(RetentionError::ConflictingCandidate),
             };
         }
+        self.record_new_candidate_locked(&mut inner, candidate)
+    }
+
+    fn record_new_candidate_locked(
+        &self,
+        inner: &mut CoordinatorInner,
+        candidate: CandidatePinV1,
+    ) -> Result<DurablePinAck, RetentionError> {
         if inner.registry.as_ref().is_some_and(|registry| {
             registry.records.values().any(|record| {
                 matches!(
@@ -2434,10 +2571,10 @@ impl OcompRetentionCoordinator {
         }) {
             return Err(RetentionError::RegistryCapacity);
         }
-        let generation = next_registry_generation(&inner)?;
+        let generation = next_registry_generation(inner)?;
         self.persist_locked(
-            &mut inner,
-            key,
+            inner,
+            candidate.block_hash,
             PinRecordV1 {
                 generation,
                 state: PinStateV1::Tentative { candidate },
@@ -2468,43 +2605,131 @@ impl OcompRetentionCoordinator {
                     "canonical finalized job has no retained request candidate",
                 ))?
         };
-        let limits = poc_schema_limits();
-        record.validate_semantics(&limits).map_err(|error| {
-            RetentionError::Source(format!("validate canonical finalized OCOMP job: {error}"))
-        })?;
-        let finalized = record
+        if candidate.block_hash != candidate_block_hash {
+            return Err(RetentionError::ConflictingCandidate);
+        }
+        self.finalize_exact(canonical_finalized_pin(candidate, record)?)
+    }
+
+    /// Replay can bind a historical candidate after the terminal frame was
+    /// already observed. Apply that same canonical state without waiting for
+    /// another block, and never move a retired record backwards.
+    pub fn reconcile_canonical_terminal(
+        &self,
+        canonical: &OcompJobRecordV1,
+        observed_height: u64,
+    ) -> Result<(), RetentionError> {
+        let finalized = canonical
             .finalized
             .as_ref()
             .ok_or(RetentionError::InvalidTransition(
                 "canonical OCOMP job is not finalized",
             ))?;
-        let intent_id = record.intent.intent_id(&limits).map_err(|error| {
-            RetentionError::Source(format!("derive canonical OCOMP IntentId: {error}"))
-        })?;
-        let input_lease_id = record.intent.input_lease_id().map_err(|error| {
-            RetentionError::Source(format!("derive canonical OCOMP input lease: {error}"))
-        })?;
-        if candidate.block_hash != candidate_block_hash
-            || record.intent_height != candidate.block_number
-            || intent_id != candidate.intent_id
-            || record.intent.wwd != candidate.wwd
-            || record.intent.ce_sealed_root != candidate.ce_sealed_root
-            || record.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
-            || input_lease_id != candidate.input_lease_id
-            || finalized.finalized_request_block_hash != candidate.block_hash
-            || finalized.finalized_request_state_root != candidate.state_root
-        {
+        let record = {
+            let inner = self.lock()?;
+            let (_, record) = record_for_job(&inner, finalized.job_id)?;
+            record
+        };
+        let candidate = record_candidate(record);
+        canonical_finalized_pin(candidate, canonical)?;
+        if matches!(
+            record.state,
+            PinStateV1::Finalized { .. } | PinStateV1::Exported { .. }
+        ) {
+            if let Some(height) = terminal_height_from_record(
+                canonical,
+                observed_height,
+                candidate,
+                finalized.job_id,
+            )? {
+                self.observe_terminal(finalized.job_id, record.generation, height)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A crash may persist the spool ACK before retaining its export authority.
+    /// Completing that metadata write never reactivates a retired lease. Expired
+    /// jobs cannot adopt a late ACK, and speculative ACK admission stays strict.
+    pub fn confirm_canonical_export_ack(
+        &self,
+        canonical: &OcompJobRecordV1,
+        export: ExportAuthorityV1,
+    ) -> Result<DurablePinAck, RetentionError> {
+        if canonical.status == OcompJobStatus::Expired {
             return Err(RetentionError::InvalidTransition(
-                "canonical finalized job does not match retained request candidate",
+                "expired job cannot adopt an export ACK",
             ));
         }
-        self.finalize_exact(FinalizedJobPinV1 {
-            candidate,
-            job_id: finalized.job_id,
-            finality_recorded_height: finalized.finality_recorded_height,
-            open_height: finalized.open_height,
-            deadline_height: finalized.deadline_height,
-        })
+        let finalized = canonical
+            .finalized
+            .as_ref()
+            .ok_or(RetentionError::InvalidTransition(
+                "canonical OCOMP job is not finalized",
+            ))?;
+        {
+            let inner = self.lock()?;
+            let (_, record) = record_for_job(&inner, finalized.job_id)?;
+            canonical_finalized_pin(record_candidate(record), canonical)?;
+        }
+        match self.confirm_export_ack(
+            finalized.job_id,
+            export.source_generation,
+            export.lease_generation,
+            export.manifest_hash,
+        ) {
+            Ok(ack) => return Ok(ack),
+            Err(RetentionError::InvalidTransition(_)) => {}
+            Err(error) => return Err(error),
+        }
+        if !matches!(
+            canonical.status,
+            OcompJobStatus::Completed | OcompJobStatus::Failed
+        ) || export.source_generation == 0
+            || export.lease_generation == 0
+            || export.manifest_hash.is_zero()
+        {
+            return Err(RetentionError::InvalidTransition(
+                "late export ACK requires exact terminal authority",
+            ));
+        }
+        let mut inner = self.lock()?;
+        let (key, record) = record_for_job(&inner, finalized.job_id)?;
+        canonical_finalized_pin(record_candidate(record), canonical)?;
+        let mut state = record.state;
+        let slot = match &mut state {
+            PinStateV1::Terminal {
+                source_generation,
+                export: slot,
+                ..
+            }
+            | PinStateV1::GcPending {
+                source_generation,
+                export: slot,
+                ..
+            } if *source_generation == export.source_generation => slot,
+            PinStateV1::Released {
+                source_generation: Some(source_generation),
+                reason: PinReleaseReason::RetentionSatisfied,
+                export: slot,
+                ..
+            } if *source_generation == export.source_generation => slot,
+            _ => {
+                return Err(RetentionError::InvalidTransition(
+                    "late export ACK has a different source generation",
+                ))
+            }
+        };
+        match *slot {
+            Some(existing) if existing == export => return Ok(ack_for(record)),
+            Some(_) => {
+                return Err(RetentionError::InvalidTransition(
+                    "late export ACK conflicts with retained authority",
+                ))
+            }
+            None => *slot = Some(export),
+        }
+        self.persist_next(&mut inner, key, record, state)
     }
 
     pub fn record_exported(
@@ -3121,6 +3346,12 @@ impl OcompRetentionCoordinator {
             ))
             .map_err(RetainedGcAttemptFailure::global)?;
         if current != gc_record {
+            // A canonical ACK can be durably attached while GC is doing Mongo
+            // I/O outside this lock. Recheck deletion under its new generation
+            // instead of publishing Released with the old ACK-less metadata.
+            if gc_ack_metadata_advanced(gc_record, current) {
+                return Ok(RetainedGcAttemptOutcome::NoLongerPending);
+            }
             return Err(RetainedGcAttemptFailure::global(
                 RetentionError::InvalidTransition("GC claim changed before completion"),
             ));

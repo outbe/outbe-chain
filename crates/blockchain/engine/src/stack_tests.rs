@@ -2321,6 +2321,84 @@ fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
 }
 
 #[test]
+fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
+    use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+    use outbe_primitives::projection::{projection_readiness, ProjectionStatus, WaitOutcome};
+    use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
+
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let genesis = B256::repeat_byte(1);
+        let below = ProjectionCheckpoint {
+            block_number: 338,
+            block_hash: B256::repeat_byte(0x38),
+        };
+        let anchor = ProjectionCheckpoint {
+            block_number: 339,
+            block_hash: B256::repeat_byte(0x39),
+        };
+        let (publisher, readiness) = projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: genesis,
+            },
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(below),
+            },
+        );
+        let waiting_parent = readiness.clone().wait_for(anchor, std::future::pending());
+        tokio::pin!(waiting_parent);
+        assert!(futures::poll!(&mut waiting_parent).is_pending());
+        let provider = Arc::new(StdMutex::new(below_recovered_reth_readback(below)));
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (actor, _mailbox) = ExecutorActor::new(
+            context.child("executor"),
+            ConsensusEngineHandle::new(engine_tx),
+            genesis,
+            anchor.block_number,
+            anchor.block_hash,
+            readiness,
+            None,
+        );
+        let updated_provider = Arc::clone(&provider);
+        let publisher_keepalive = publisher.clone();
+        let engine_task = context.child("engine").spawn(move |_| async move {
+            let Some(BeaconEngineMessage::ForkchoiceUpdated {
+                state,
+                payload_attrs,
+                tx,
+            }) = engine_rx.recv().await
+            else {
+                panic!("expected recovered FCU before projection readiness");
+            };
+            assert_eq!(state.head_block_hash, anchor.block_hash);
+            assert_eq!(state.safe_block_hash, anchor.block_hash);
+            assert_eq!(state.finalized_block_hash, anchor.block_hash);
+            assert!(payload_attrs.is_none());
+            *updated_provider.lock().unwrap() = exact_recovered_reth_readback(anchor);
+            tx.send(Ok(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+                PayloadStatusEnum::Valid,
+            ))))
+            .unwrap();
+            // The projector can now consume the certified recovered parent.
+            publisher.publish(ProjectionStatus::Ready { checkpoint: anchor });
+        });
+        confirm_recovered_forkchoice(
+            context.child("startup_barrier"),
+            anchor,
+            || actor.replay_recovered_forkchoice_once(anchor),
+            || Ok(*provider.lock().unwrap()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting_parent.await, WaitOutcome::Ready);
+        engine_task.await.unwrap();
+        drop(publisher_keepalive);
+        // actor.start() is deliberately never called: no live heartbeat is
+        // available to rescue an incorrectly ordered startup barrier.
+    });
+}
+
+#[test]
 fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
         let anchor = ProjectionCheckpoint {

@@ -609,6 +609,182 @@ fn unified_finalized_frame_supplies_retention_receipts_without_a_second_read() {
 }
 
 #[test]
+fn finalized_request_replay_preserves_every_durable_lifecycle_state_after_restart() {
+    let ProductionCandidateFixture {
+        request,
+        candidate,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    let receipts = pending_receipts.lock().unwrap().take().unwrap().1;
+    let frame = FinalizedFrame::for_test(
+        BlockNumHash::new(request.number(), request.block_hash()),
+        request.header().inner.parent_hash,
+        request.header().inner.state_root,
+        Block::default(),
+        receipts,
+    );
+    let observation = observe_finalized_request(&frame).unwrap().unwrap();
+    let job_id = production_intent(request.number())
+        .job_id(
+            candidate.block_hash,
+            candidate.state_root,
+            &poc_schema_limits(),
+        )
+        .unwrap();
+    let finality_recorded_height = candidate.block_number + 1;
+    let open_height = candidate.block_number + 5;
+    let deadline_height = candidate.block_number + 15;
+    let export = ExportAuthorityV1 {
+        source_generation: 2,
+        lease_generation: 3,
+        manifest_hash: B256::repeat_byte(0x59),
+    };
+    let states = [
+        PinStateV1::Tentative { candidate },
+        PinStateV1::Finalized {
+            candidate,
+            job_id,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+        },
+        PinStateV1::Exported {
+            candidate,
+            job_id,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            export,
+        },
+        PinStateV1::Terminal {
+            candidate,
+            job_id,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            source_generation: 2,
+            export: None,
+            terminal_height: deadline_height,
+            release_height: deadline_height + 64,
+        },
+        PinStateV1::GcPending {
+            candidate,
+            job_id,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            source_generation: 2,
+            export: None,
+            terminal_height: deadline_height,
+            release_height: deadline_height + 64,
+        },
+        PinStateV1::Released {
+            candidate,
+            job_id: Some(job_id),
+            source_generation: Some(2),
+            reason: PinReleaseReason::RetentionSatisfied,
+            observed_height: deadline_height + 64,
+            export: None,
+        },
+        PinStateV1::Released {
+            candidate,
+            job_id: Some(job_id),
+            source_generation: Some(2),
+            reason: PinReleaseReason::RetentionSatisfied,
+            observed_height: deadline_height + 64,
+            export: Some(export),
+        },
+    ];
+    for state in states {
+        let root = tempfile::tempdir().unwrap();
+        let record = PinRecordV1 {
+            generation: 8,
+            state,
+        };
+        seed_retention_journal_for_test(
+            root.path(),
+            8,
+            candidate.block_hash,
+            vec![(candidate.block_hash, record)],
+        )
+        .unwrap();
+        let before = fs::read(root.path().join("pin.v1")).unwrap();
+        for _ in 0..2 {
+            let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+            coordinator
+                .reconcile_finalized_frame(&frame, Some(observation))
+                .unwrap_or_else(|error| panic!("replay of {state:?} failed: {error}"));
+            assert_eq!(ready_record(&coordinator), record);
+            assert_eq!(fs::read(root.path().join("pin.v1")).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn finalized_request_replay_rejects_conflicts_and_orphaned_authority_without_mutation() {
+    let ProductionCandidateFixture {
+        request,
+        candidate,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    let frame = FinalizedFrame::for_test(
+        BlockNumHash::new(request.number(), request.block_hash()),
+        request.header().inner.parent_hash,
+        request.header().inner.state_root,
+        Block::default(),
+        pending_receipts.lock().unwrap().take().unwrap().1,
+    );
+    let observation = observe_finalized_request(&frame).unwrap().unwrap();
+    let mut conflicting = candidate;
+    conflicting.state_root = B256::repeat_byte(0x91);
+    let states = [
+        PinStateV1::Tentative {
+            candidate: conflicting,
+        },
+        PinStateV1::OrphanGcPending {
+            candidate,
+            observed_height: request.number() + 1,
+        },
+        PinStateV1::Released {
+            candidate,
+            job_id: None,
+            source_generation: None,
+            reason: PinReleaseReason::Orphaned,
+            observed_height: request.number() + 1,
+            export: None,
+        },
+    ];
+    for state in states {
+        let root = tempfile::tempdir().unwrap();
+        seed_retention_journal_for_test(
+            root.path(),
+            8,
+            candidate.block_hash,
+            vec![(
+                candidate.block_hash,
+                PinRecordV1 {
+                    generation: 8,
+                    state,
+                },
+            )],
+        )
+        .unwrap();
+        let before = fs::read(root.path().join("pin.v1")).unwrap();
+        let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+        let error = coordinator
+            .reconcile_finalized_frame(&frame, Some(observation))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RetentionError::ConflictingCandidate | RetentionError::OrphanedCandidate
+        ));
+        assert_eq!(fs::read(root.path().join("pin.v1")).unwrap(), before);
+    }
+}
+
+#[test]
 fn unified_retention_waits_for_and_copies_canonical_finalized_job() {
     let ProductionCandidateFixture {
         request,
@@ -686,6 +862,271 @@ fn unified_retention_waits_for_and_copies_canonical_finalized_job() {
             }
         )
     );
+}
+
+fn canonical_terminal_fixture(
+    candidate: CandidatePinV1,
+    status: OcompJobStatus,
+) -> OcompJobRecordV1 {
+    use outbe_ocomp_protocol::{
+        receipts::{ActivationOutcome, AggregateActivationReceiptV1, EffectBindingV1},
+        state::{LysisTerminalV1, OcompCompletedBindingV1, OcompTerminalOutcome},
+        vote::OcompQuorumV1,
+    };
+    let intent = production_intent(candidate.block_number);
+    let limits = poc_schema_limits();
+    let job_id = intent
+        .job_id(candidate.block_hash, candidate.state_root, &limits)
+        .unwrap();
+    let mut finalized = OcompFinalizedJobV1 {
+        job_id,
+        finalized_request_block_hash: candidate.block_hash,
+        finalized_request_state_root: candidate.state_root,
+        finality_recorded_height: candidate.block_number + 1,
+        open_height: candidate.block_number + 5,
+        deadline_height: candidate.block_number + 15,
+        quorum: None,
+    };
+    let mut terminal = LysisTerminalV1 {
+        outcome: match status {
+            OcompJobStatus::Completed => OcompTerminalOutcome::Completed,
+            OcompJobStatus::Expired => OcompTerminalOutcome::Expired,
+            OcompJobStatus::Failed => OcompTerminalOutcome::Failed,
+            _ => panic!("terminal fixture requires a terminal status"),
+        },
+        terminal_height: finalized.deadline_height,
+        terminal_time: 2_000,
+        completed_binding: None,
+    };
+    if status == OcompJobStatus::Completed {
+        let quorum_height = finalized.open_height + 1;
+        let digest = B256::repeat_byte(0x93);
+        let activation_call_id = B256::repeat_byte(0x94);
+        let evidence = B256::repeat_byte(0x95);
+        let receipt = AggregateActivationReceiptV1 {
+            binding: EffectBindingV1 {
+                intent_id: candidate.intent_id,
+                job_id,
+                attempt: intent.attempt,
+                protocol_bundle_hash: intent.protocol_bundle_hash,
+                result_digest: digest,
+                activation_preconditions_hash: intent
+                    .activation_preconditions
+                    .activation_preconditions_hash(&limits)
+                    .unwrap(),
+                activation_call_id,
+            },
+            outcome: ActivationOutcome::Applied,
+            nod_receipt_hash: Some(B256::repeat_byte(0x96)),
+            contributor_receipt_hash: Some(B256::repeat_byte(0x97)),
+            tribute_receipt_hash: Some(B256::repeat_byte(0x98)),
+            carry_over_receipt_hash: Some(B256::repeat_byte(0x99)),
+            request_budget_split_receipt_hash: intent
+                .frozen_metadosis_values
+                .request_budget_split_receipt_hash,
+            active_generation_hash: Some(B256::repeat_byte(0x9a)),
+            effect_commitment: outbe_ocomp_protocol::hash::hash_framed(
+                outbe_ocomp_protocol::registry::HashDomain::Effects,
+                [
+                    B256::repeat_byte(0x96),
+                    B256::repeat_byte(0x97),
+                    B256::repeat_byte(0x98),
+                    B256::repeat_byte(0x99),
+                ]
+                .iter()
+                .flat_map(|hash| hash.as_slice().iter().copied())
+                .collect::<Vec<_>>()
+                .as_slice(),
+            )
+            .unwrap(),
+            event_summary_hash: B256::repeat_byte(0x9c),
+            activated_at_height: quorum_height,
+            activated_at_time: 1_500,
+        };
+        finalized.quorum = Some(OcompQuorumV1 {
+            member_count: 4,
+            quorum_threshold: 3,
+            result_digest: digest,
+            quorum_height,
+            signer_bitmap: vec![7],
+            evidence_hash: evidence,
+        });
+        terminal.terminal_height = quorum_height;
+        terminal.completed_binding = Some(OcompCompletedBindingV1 {
+            job_id,
+            activation_call_id,
+            result_digest: digest,
+            quorum_height,
+            quorum_signer_bitmap: vec![7],
+            quorum_evidence_hash: evidence,
+            result_evidence_hash: evidence,
+            terminal_receipt_hash: receipt.terminal_receipt_hash(&limits).unwrap(),
+            terminal_receipt: receipt,
+        });
+    }
+    let record = OcompJobRecordV1 {
+        intent,
+        intent_height: candidate.block_number,
+        status,
+        finalized: Some(finalized),
+        terminal: Some(terminal),
+    };
+    record.validate_semantics(&limits).unwrap();
+    record
+}
+
+#[test]
+fn canonical_terminal_binding_closes_without_waiting_for_another_finalized_block() {
+    let fixture = production_candidate_source();
+    let root = tempfile::tempdir().unwrap();
+    let canonical = canonical_terminal_fixture(fixture.candidate, OcompJobStatus::Expired);
+    let coordinator = OcompRetentionCoordinator::open(root.path(), fixture.source.clone());
+    coordinator.record_tentative(fixture.candidate).unwrap();
+    coordinator
+        .bind_canonical_finalized_job(fixture.candidate.block_hash, &canonical)
+        .unwrap();
+    let target = canonical.finalized.as_ref().unwrap().deadline_height + 70;
+    coordinator
+        .reconcile_canonical_terminal(&canonical, target)
+        .unwrap();
+    let terminal = ready_record(&coordinator);
+    assert!(matches!(
+        terminal.state,
+        PinStateV1::Terminal { export: None, .. }
+    ));
+    drop(coordinator);
+    let reopened = OcompRetentionCoordinator::open(root.path(), fixture.source);
+    reopened
+        .reconcile_canonical_terminal(&canonical, target)
+        .unwrap();
+    assert_eq!(ready_record(&reopened), terminal);
+    assert!(
+        matches!(terminal.state, PinStateV1::Terminal { release_height, .. } if release_height <= target),
+        "historical retirement must not restart its 64-block clock at the replay target"
+    );
+    reopened
+        .release_due(target)
+        .unwrap()
+        .expect("historical lease is immediately due at the same target");
+    assert!(matches!(
+        ready_record(&reopened).state,
+        PinStateV1::Released { export: None, .. }
+    ));
+}
+
+#[test]
+fn late_canonical_ack_recovers_metadata_without_reactivating_terminal_gc_or_released_jobs() {
+    for status in [OcompJobStatus::Completed, OcompJobStatus::Failed] {
+        let fixture = production_candidate_source();
+        let canonical = canonical_terminal_fixture(fixture.candidate, status);
+        let finalized = canonical.finalized.as_ref().unwrap();
+        let export = ExportAuthorityV1 {
+            source_generation: 2,
+            lease_generation: 3,
+            manifest_hash: B256::repeat_byte(0xaa),
+        };
+        for phase in 0..3 {
+            let root = tempfile::tempdir().unwrap();
+            let state = match phase {
+                0 => PinStateV1::Terminal {
+                    candidate: fixture.candidate,
+                    job_id: finalized.job_id,
+                    finality_recorded_height: finalized.finality_recorded_height,
+                    open_height: finalized.open_height,
+                    deadline_height: finalized.deadline_height,
+                    source_generation: 2,
+                    export: None,
+                    terminal_height: finalized.deadline_height,
+                    release_height: finalized.deadline_height + 64,
+                },
+                1 => PinStateV1::GcPending {
+                    candidate: fixture.candidate,
+                    job_id: finalized.job_id,
+                    finality_recorded_height: finalized.finality_recorded_height,
+                    open_height: finalized.open_height,
+                    deadline_height: finalized.deadline_height,
+                    source_generation: 2,
+                    export: None,
+                    terminal_height: finalized.deadline_height,
+                    release_height: finalized.deadline_height + 64,
+                },
+                _ => PinStateV1::Released {
+                    candidate: fixture.candidate,
+                    job_id: Some(finalized.job_id),
+                    source_generation: Some(2),
+                    reason: PinReleaseReason::RetentionSatisfied,
+                    observed_height: finalized.deadline_height + 64,
+                    export: None,
+                },
+            };
+            seed_retention_journal_for_test(
+                root.path(),
+                8,
+                fixture.candidate.block_hash,
+                vec![(
+                    fixture.candidate.block_hash,
+                    PinRecordV1 {
+                        generation: 8,
+                        state,
+                    },
+                )],
+            )
+            .unwrap();
+            let coordinator = OcompRetentionCoordinator::open(root.path(), fixture.source.clone());
+            let before = fs::read(root.path().join("pin.v1")).unwrap();
+            for invalid in [
+                ExportAuthorityV1 {
+                    source_generation: 7,
+                    ..export
+                },
+                ExportAuthorityV1 {
+                    lease_generation: 0,
+                    ..export
+                },
+                ExportAuthorityV1 {
+                    manifest_hash: B256::ZERO,
+                    ..export
+                },
+            ] {
+                assert!(coordinator
+                    .confirm_canonical_export_ack(&canonical, invalid)
+                    .is_err());
+                assert_eq!(fs::read(root.path().join("pin.v1")).unwrap(), before);
+            }
+            let expired = canonical_terminal_fixture(fixture.candidate, OcompJobStatus::Expired);
+            assert!(coordinator
+                .confirm_canonical_export_ack(&expired, export)
+                .is_err());
+            assert_eq!(fs::read(root.path().join("pin.v1")).unwrap(), before);
+            coordinator
+                .confirm_canonical_export_ack(&canonical, export)
+                .unwrap();
+            let recovered = ready_record(&coordinator);
+            let mut expected = state;
+            match &mut expected {
+                PinStateV1::Terminal { export: slot, .. }
+                | PinStateV1::GcPending { export: slot, .. }
+                | PinStateV1::Released { export: slot, .. } => *slot = Some(export),
+                _ => unreachable!(),
+            }
+            assert_eq!(recovered.state, expected);
+            assert!(coordinator
+                .confirm_canonical_export_ack(
+                    &canonical,
+                    ExportAuthorityV1 {
+                        manifest_hash: B256::repeat_byte(0xbb),
+                        ..export
+                    }
+                )
+                .is_err());
+            drop(coordinator);
+            let reopened = OcompRetentionCoordinator::open(root.path(), fixture.source.clone());
+            reopened
+                .confirm_canonical_export_ack(&canonical, export)
+                .unwrap();
+            assert_eq!(ready_record(&reopened), recovered);
+        }
+    }
 }
 
 #[test]
@@ -1743,6 +2184,103 @@ struct FailNthDurability {
 struct FailFirstAtomicWrite {
     inner: Arc<MemoryStorage>,
     failed: AtomicBool,
+}
+
+struct AckDuringGcWrite {
+    inner: Arc<MemoryStorage>,
+    coordinator: Mutex<Option<std::sync::Weak<OcompRetentionCoordinator>>>,
+    canonical: OcompJobRecordV1,
+    export: ExportAuthorityV1,
+    armed: AtomicBool,
+}
+
+impl StorageWriter for AckDuringGcWrite {
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        self.inner.apply_atomic(batch)?;
+        if self.armed.swap(false, Ordering::SeqCst) {
+            self.coordinator
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .upgrade()
+                .unwrap()
+                .confirm_canonical_export_ack(&self.canonical, self.export)
+                .unwrap();
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn gc_completion_rechecks_a_concurrent_canonical_ack_without_global_failure() {
+    let fixture = production_candidate_source();
+    let canonical = canonical_terminal_fixture(fixture.candidate, OcompJobStatus::Completed);
+    let finalized = canonical.finalized.as_ref().unwrap();
+    let export = ExportAuthorityV1 {
+        source_generation: 2,
+        lease_generation: 3,
+        manifest_hash: B256::repeat_byte(0xaf),
+    };
+    let root = tempfile::tempdir().unwrap();
+    seed_retention_journal_for_test(
+        root.path(),
+        8,
+        fixture.candidate.block_hash,
+        vec![(
+            fixture.candidate.block_hash,
+            PinRecordV1 {
+                generation: 8,
+                state: PinStateV1::GcPending {
+                    candidate: fixture.candidate,
+                    job_id: finalized.job_id,
+                    finality_recorded_height: finalized.finality_recorded_height,
+                    open_height: finalized.open_height,
+                    deadline_height: finalized.deadline_height,
+                    source_generation: 2,
+                    export: None,
+                    terminal_height: finalized.deadline_height,
+                    release_height: finalized.deadline_height + 64,
+                },
+            },
+        )],
+    )
+    .unwrap();
+    let storage = Arc::new(MemoryStorage::default());
+    let writer = Arc::new(AckDuringGcWrite {
+        inner: storage.clone(),
+        coordinator: Mutex::new(None),
+        canonical: canonical.clone(),
+        export,
+        armed: AtomicBool::new(true),
+    });
+    let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        fixture.source,
+        Arc::new(RetainedTributeWriter::new(storage, writer.clone())),
+    ));
+    *writer.coordinator.lock().unwrap() = Some(Arc::downgrade(&coordinator));
+    let mut schedule = RetainedGcRetrySchedule::default();
+    let target = finalized.deadline_height + 64;
+    let first = coordinator
+        .run_gc_cycle_with_retry_for_test(target, Instant::now(), &mut schedule)
+        .unwrap();
+    assert!(!first.global_deferred);
+    assert_eq!(first.completed, 0);
+    assert!(
+        !writer.armed.load(Ordering::SeqCst),
+        "GC must cross the real storage write seam"
+    );
+    assert!(
+        matches!(ready_record(&coordinator).state, PinStateV1::GcPending { export: Some(actual), .. } if actual == export)
+    );
+    let second = coordinator
+        .run_gc_cycle_with_retry_for_test(target, Instant::now(), &mut schedule)
+        .unwrap();
+    assert_eq!(second.completed, 1);
+    assert!(
+        matches!(ready_record(&coordinator).state, PinStateV1::Released { export: Some(actual), .. } if actual == export)
+    );
 }
 
 impl StorageWriter for FailFirstAtomicWrite {
@@ -3571,7 +4109,8 @@ fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() 
 
 #[test]
 fn ocm_pin_001_completed_status_is_not_retention_terminal_before_response_deadline() {
-    for status in [OcompJobStatus::Completed] {
+    {
+        let status = OcompJobStatus::Completed;
         assert_eq!(
             retention_terminal_height_for_status(status, 160, 165, 160).unwrap(),
             None,
