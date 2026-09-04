@@ -26,7 +26,7 @@ const RELAY_FLOAT_COEN: u64 = 100;
 /// Addresses one origin-side deploy produced.
 #[derive(Clone, Debug)]
 pub struct OriginContracts {
-    pub create_x: Address,
+    pub create3_factory: Address,
     pub mailbox: Address,
     pub bridge: Address,
     pub loopback: Address,
@@ -61,20 +61,21 @@ pub fn deployer_address() -> alloy_primitives::Address {
 /// among them is the loopback route; the rest are peered as real remotes.
 pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<OriginContracts> {
     let crosschain: PathBuf = repo.join("contracts/crosschain");
+    let shared: PathBuf = repo.join("contracts/shared");
     let intex: PathBuf = repo.join("contracts/intex");
     let chain = chain_id.to_string();
 
-    let create_x = address_from(
+    let create3_factory = address_from(
         &forge::run(
-            &crosschain,
+            &shared,
             &[
                 "script",
-                "script/0_DeployCreateX.s.sol:DeployCreateXDeterministic",
+                "script/DeployCreate3Factory.s.sol:DeployCreate3Factory",
             ],
             &[("CONTRACT_SALT", SALT_VERSION.to_owned())],
             url,
         )?,
-        "CreateX deployed at:",
+        "CREATE3_FACTORY_ADDRESS=",
     )?;
 
     // The hyperlane adapter needs a mailbox to hold even when nothing remote is
@@ -108,7 +109,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
             ),
             ("CONTRACT_SALT", SALT_VERSION.to_owned()),
             ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
-            ("CREATEX_ADDRESS", format!("{create_x:?}")),
+            ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
             ("HYPERLANE_MAILBOX", format!("{mailbox:?}")),
             ("ACTIVE_GATEWAY", "hyperlane".to_owned()),
             ("WIRE_LOOPBACK", "true".to_owned()),
@@ -151,6 +152,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
                     .join(","),
             ),
             ("SALT_VERSION", SALT_VERSION.to_owned()),
+            ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
             ("OUTBE_WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
             ("OUTBE_WCOEN_TOKEN", format!("{wcoen:?}")),
         ],
@@ -166,6 +168,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
             ("ORIGIN_CHAIN_ID", chain.clone()),
             ("TARGET_CHAIN_IDS", chain.clone()),
             ("SALT_VERSION", SALT_VERSION.to_owned()),
+            ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
             // Names the escrow's proceeds recipient. The target script spells this
             // one without the OUTBE_ prefix its origin sibling uses; without it the
             // whole proceeds route is skipped and settlement reverts unset.
@@ -197,7 +200,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
     )?;
 
     let contracts = OriginContracts {
-        create_x,
+        create3_factory,
         mailbox,
         bridge,
         loopback: address_from(&hub, "LoopbackGatewayAdapter:")?,
