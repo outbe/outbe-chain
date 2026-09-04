@@ -6,7 +6,7 @@
 //! empty returndata (matching the convention in `outbe_credisfactory::tests`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
@@ -1950,4 +1950,168 @@ fn rebalance_selectors_reject_native_value() {
             dispatch(storage.clone(), &preview.abi_encode(), cca(), U256::from(1)).unwrap_err();
         assert!(err.to_string().contains("non-payable"), "{err}");
     });
+}
+
+/// The happy path emits exactly one `LiquidityRebalanced` carrying both legs:
+/// what left `vault_from` and what the caller supplied into `vault_to`. The
+/// rollback tests below assert the absence of this event, so its presence and
+/// contents need pinning too, or "no event" would pass vacuously.
+#[test]
+fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
+    const RATE_TIMESTAMP: u64 = 1_700_000_000;
+    const USD_PAIR_ID: u32 = 1;
+    const EUR_PAIR_ID: u32 = 2;
+    let burned = U256::from(7u64);
+    let minted = U256::from(9u64);
+    let amount = U256::from(10u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(RATE_TIMESTAMP));
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(EUR_ISO_CODE)),
+    );
+    // Distinct share counts per vault, so the event cannot pass by echoing one
+    // number into both share fields.
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(burned),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(1_000u64)),
+    );
+    storage.stub_sub_call_at_selector(vault_from(), IVaultV2::withdrawCall::SELECTOR, word(burned));
+    storage.stub_sub_call_at_selector(vault_to(), IVaultV2::depositCall::SELECTOR, word(minted));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+        // 1 COEN = 1 USD, 1 COEN = 2 EUR: 10 USD is 20 EUR.
+        write_oracle_rate(
+            &storage,
+            USD_ISO_CODE,
+            USD_PAIR_ID,
+            U256::from(1_000_000u64),
+            RATE_TIMESTAMP,
+        );
+        write_oracle_rate(
+            &storage,
+            EUR_ISO_CODE,
+            EUR_PAIR_ID,
+            U256::from(2_000_000u64),
+            RATE_TIMESTAMP,
+        );
+
+        runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+    });
+
+    let events = storage.get_events(VAULT_ROUTER_ADDRESS);
+    assert_eq!(events.len(), 1, "exactly one rebalance event");
+    let decoded = IVaultRouter::LiquidityRebalanced::decode_log_data(&events[0]).unwrap();
+    assert_eq!(decoded.cca, cca());
+    assert_eq!(decoded.vaultFrom, vault_from());
+    assert_eq!(decoded.vaultTo, vault_to());
+    assert_eq!(decoded.assetsWithdrawn, amount);
+    assert_eq!(decoded.burnedShares, burned);
+    assert_eq!(decoded.assetsDeposited, U256::from(20u64));
+    assert_eq!(decoded.mintedShares, minted);
+}
+
+/// An asset whose live `isoCode()` has fallen to zero is not a currency, so it
+/// cannot be par to another zero-coded asset. Without the guard the oracle's
+/// `from_iso == to_iso` short circuit would price two unrelated assets 1:1.
+#[test]
+fn rebalance_rejects_an_asset_reporting_no_reference_currency() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    // Both assets report "no currency": the pair must be refused, not treated
+    // as a matching pair of currencies.
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid reference currency"),
+            "{err}"
+        );
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }

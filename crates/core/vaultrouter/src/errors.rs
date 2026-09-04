@@ -20,8 +20,6 @@ pub enum VaultRouterError {
     InvalidLiquiditySource,
     #[error("invalid liquidity target")]
     InvalidLiquidityTarget,
-    #[error("invalid reference currency")]
-    InvalidReferenceCurrency,
     #[error("reserve vault not configured")]
     ReserveVaultNotConfigured,
     #[error("reserve vault already added")]

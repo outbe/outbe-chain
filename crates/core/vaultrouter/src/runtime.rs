@@ -14,6 +14,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
@@ -127,9 +128,7 @@ pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) ->
     }
 
     let iso_code = asset_iso_code(&storage, asset)?;
-    if iso_code == 0 {
-        return Err(VaultRouterError::InvalidReferenceCurrency.into());
-    }
+    validate_currency_code(iso_code)?;
 
     let mut contract = VaultRouterContract::new(storage.clone());
     if !contract.asset_vault_set(asset).insert(vault)? {
@@ -513,9 +512,7 @@ fn registered_rebalance_assets(
 
 /// `amount` of `asset_from` re-expressed in `asset_to`. Identical assets short-circuit at
 /// 1:1 with no oracle read and no decimal scaling. Otherwise the two assets' ISO 4217
-/// currencies are converted through the oracle's COEN cross rate (a no-op read when both
-/// share a currency) and the two tokens' native decimals are rescaled around it, ordered so
-/// only one rounding survives - always upwards, in the vault's favour.
+/// currencies are converted through the oracle's COEN cross rate.
 fn rebalance_amount_to(
     storage: &StorageHandle<'_>,
     asset_from: Address,
@@ -537,7 +534,6 @@ fn rebalance_amount_to(
 
     let iso_from = asset_iso_code(storage, asset_from)?;
     let iso_to = asset_iso_code(storage, asset_to)?;
-
     if decimals_to >= decimals_from {
         let scaled = rescale_decimals(amount, decimals_from, decimals_to)?;
         outbe_oracle::api::fresh_currency_cross_rate(storage.clone(), iso_from, iso_to, scaled)
