@@ -79,6 +79,32 @@ fn checked_carry_over_take_clears_the_accumulator_exactly_once() {
 }
 
 #[test]
+fn a_partial_take_serves_what_the_accumulator_holds() {
+    with_contract(|c| {
+        c.checked_add_carry_over(U256::from(42u64)).unwrap();
+
+        let partial = c
+            .checked_take_carry_over_up_to(U256::from(10u64))
+            .expect("partial take");
+        assert_eq!(partial.before, U256::from(42u64));
+        assert_eq!(partial.taken, U256::from(10u64));
+        assert_eq!(partial.after, U256::from(32u64));
+
+        let over = c
+            .checked_take_carry_over_up_to(U256::from(1_000u64))
+            .expect("a request above the balance is not an error");
+        assert_eq!(over.taken, U256::from(32u64));
+        assert_eq!(over.after, U256::ZERO);
+
+        let empty = c
+            .checked_take_carry_over_up_to(U256::from(5u64))
+            .expect("empty take");
+        assert_eq!(empty.taken, U256::ZERO);
+        assert_eq!(empty.after, U256::ZERO);
+    });
+}
+
+#[test]
 fn test_set_overwrites_previous() {
     with_contract(|c| {
         c.set_total_unallocated(U256::from(500u64)).unwrap();
