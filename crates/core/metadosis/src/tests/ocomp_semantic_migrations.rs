@@ -11,7 +11,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{MetadosisMutationPurposeTag, StorageHandle},
 };
-use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 use outbe_validatorset::{
     contract::ValidatorSet, runtime::status as validator_status, ValidatorHistory,
@@ -28,42 +27,23 @@ use crate::{
     WwdStatus,
 };
 
-fn assert_failed_activation_recovery(fixture: &mut ActivationFixture) {
+fn assert_open_job_after_activation_rejection(fixture: &mut ActivationFixture) {
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
             metadosis.get_wwd_status(TEST_WWD).unwrap(),
-            WwdStatus::Failed
+            WwdStatus::OffchainPending
         );
         let job = metadosis
             .ocomp_job_record(fixture.intent_id, &fixture.limits)
             .unwrap()
             .unwrap();
-        assert_eq!(job.status, OcompJobStatus::Canceled);
+        assert_eq!(job.status, OcompJobStatus::VotingOpen);
+        assert!(job.terminal.is_none());
         assert!(metadosis
             .read_metadosis_failure_receipt(TEST_WWD, U256::from(60))
             .unwrap()
-            .is_some());
-
-        let tribute = TributeContract::new(storage.clone());
-        let totals = tribute.get_day_totals(TEST_WWD).unwrap();
-        assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
-        assert_eq!(tribute.total_supply().unwrap(), 0);
-        assert_eq!(
-            tribute
-                .pre_admission_projection(TEST_WWD)
-                .unwrap()
-                .source_generation,
-            1
-        );
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .total_unallocated
-                .read()
-                .unwrap(),
-            U256::from(60)
-        );
+            .is_none());
     });
 }
 
@@ -81,7 +61,7 @@ fn close_completed_response_window(
             BlockContext::empty_for_tests(deadline_height, 1_011, 1),
             storage,
         );
-        crate::commands::run_ocomp_lifecycle_begin(&ctx)
+        crate::commands::run_ocomp_lifecycle_begin_with_scope(&ctx, &fixture.scope)
     })
 }
 
@@ -706,18 +686,18 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ActivationReceiptFault::RequestSplit,
     ] {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
-        assert_eq!(
-            fixture.apply_with_receipt_fault(fault).unwrap(),
-            Bytes::new()
+        let before = fixture.rollback_snapshot();
+        let error = fixture
+            .apply_with_receipt_fault(fault)
+            .expect_err("invalid activation receipt must reject the forming vote");
+        assert!(
+            matches!(error, PrecompileError::Revert(_)),
+            "invalid activation receipt returned the wrong error class: {error}"
         );
-        assert_failed_activation_recovery(&mut fixture);
-        let failed = fixture.rollback_snapshot();
-        assert!(matches!(
-            fixture.apply(),
-            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
-        ));
-        assert_eq!(fixture.rollback_snapshot(), failed);
-        assert_failed_activation_recovery(&mut fixture);
+        assert_eq!(fixture.rollback_snapshot(), before);
+        assert_open_job_after_activation_rejection(&mut fixture);
+        assert_eq!(fixture.apply().unwrap(), Bytes::new());
+        assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
     }
 
     let mut control = ActivationFixture::new(20, 1_010, true);
@@ -758,7 +738,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
 }
 
 #[test]
-fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
+fn changed_activation_preconditions_reject_quorum_commit_without_closing_the_job() {
     let prepare_conflicted = || {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
         StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -774,36 +754,33 @@ fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
         fixture
     };
 
-    let mut control = prepare_conflicted();
-    control.provider.fail_after_mutation_at(usize::MAX);
-    assert_eq!(control.apply().unwrap(), Bytes::new());
-    let mutation_count = control.provider.clear_mutation_failure();
-    assert!(
-        mutation_count >= 7,
-        "conflict q-forming must persist vote, quorum, terminal, scheduler, outer state and events"
-    );
-    assert_eq!(
-        control.terminal_outcome(),
-        ActivationOutcome::ConflictResolved
-    );
-    let clean_after = control.rollback_snapshot();
+    let mut fixture = prepare_conflicted();
+    let before = fixture.rollback_snapshot();
+    let PrecompileError::RevertBytes(expected) =
+        crate::errors::result_vote_rejection(crate::errors::vote_rejection_code::PROTOCOL_VOTE)
+    else {
+        unreachable!("activation rejection is encoded bytes")
+    };
 
-    for operation in 0..mutation_count {
-        let mut fixture = prepare_conflicted();
-        let before = fixture.rollback_snapshot();
-        fixture.provider.fail_after_mutation_at(operation);
+    let PrecompileError::RevertBytes(actual) = fixture.apply().unwrap_err() else {
+        panic!("changed activation preconditions returned the wrong error class")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(fixture.rollback_snapshot(), before);
+    let PrecompileError::RevertBytes(actual) = fixture.apply().unwrap_err() else {
+        panic!("replayed changed activation preconditions returned the wrong error class")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(fixture.rollback_snapshot(), before);
 
-        assert!(matches!(fixture.apply(), Err(PrecompileError::Storage(_))));
-        assert_eq!(fixture.provider.clear_mutation_failure(), operation + 1);
-        assert_eq!(fixture.rollback_snapshot(), before);
-
-        assert_eq!(fixture.apply().unwrap(), Bytes::new());
-        assert_eq!(fixture.rollback_snapshot(), clean_after);
-        assert_eq!(
-            fixture.terminal_outcome(),
-            ActivationOutcome::ConflictResolved
-        );
-    }
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let job = MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.status, OcompJobStatus::VotingOpen);
+        assert!(job.terminal.is_none());
+    });
 }
 
 #[test]

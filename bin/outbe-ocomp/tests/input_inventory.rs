@@ -76,7 +76,7 @@ fn subject(day: WorldwideDay, count: u32, root: B256) -> TributeInventorySubject
     TributeInventorySubjectV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
         job_id: B256::repeat_byte(2),
-        attempt: 3,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day,
         sealed_tribute_collection_root: root,

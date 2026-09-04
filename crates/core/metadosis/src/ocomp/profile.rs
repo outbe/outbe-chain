@@ -8,21 +8,6 @@ pub use outbe_ocompregistry::{poc_schema_limits, OcompRequestProfile};
 use crate::errors::storage_corruption_message;
 use crate::schema::MetadosisContract;
 
-use super::state::JobFsmLimits;
-
-/// Metadosis-only projection of the canonical Registry-owned request profile.
-pub(crate) trait OcompRequestProfileExt {
-    fn fsm_limits(&self) -> JobFsmLimits;
-}
-
-impl OcompRequestProfileExt for OcompRequestProfile {
-    fn fsm_limits(&self) -> JobFsmLimits {
-        JobFsmLimits {
-            max_terminal_records: self.capacity_profile.max_terminal_job_records,
-        }
-    }
-}
-
 impl MetadosisContract<'_> {
     /// Legacy fixture initializer. Production authority writes belong only to
     /// `OcompRegistry`; this remains available for pre-registry test fixtures.

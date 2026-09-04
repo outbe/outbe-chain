@@ -1,22 +1,14 @@
 use alloy_primitives::{B256, U256};
-use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
-    hash::hash_framed,
     intent::{
         intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::CapacityProfileV1,
-    receipts::{
-        desis_request_brief_hash, empty_apply_event_summary_hash, ActivationOutcome,
-        AggregateActivationReceiptV1, BudgetSplitDestination, EffectBindingV1,
-        RequestBudgetSplitReceiptV1,
-    },
-    registry::HashDomain,
-    state::{OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
-    vote::OcompQuorumV1,
+    receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
+    state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
 };
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
@@ -25,15 +17,14 @@ use outbe_primitives::{
 };
 use outbe_promislimit::schema::PromisLimitContract;
 
-use crate::precompile::IMetadosis;
 use crate::{
     fixture_kernel::FixtureKernelExt,
     ocomp::{
         fork::OcompForkInstallClassification,
-        schema::{poc_schema_limits, OcompExpiryDisposition, OcompRequestProfile},
-        state::{DayPhase, JobFsmLimits},
+        schema::{poc_schema_limits, OcompRequestProfile},
+        state::DayPhase,
     },
-    reducer::{OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
+    reducer::{OuterWwdEvent, OuterWwdTransition},
     schema::{status, MetadosisContract, WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT},
 };
 
@@ -59,8 +50,7 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
         max_expirations_per_block: 1,
-        retry_backoff_blocks: 1,
-        max_terminal_job_records: 365,
+        ready_backoff_blocks: 1,
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
@@ -307,7 +297,6 @@ fn open_job(
     contract: &mut MetadosisContract<'_>,
     intent_id: B256,
     limits: &outbe_ocomp_protocol::SchemaLimits,
-    fsm_limits: JobFsmLimits,
 ) -> outbe_ocomp_protocol::state::OcompFinalizedJobV1 {
     // Production installs this immutable profile at genesis activation. These
     // storage-focused tests construct records directly, so mirror that
@@ -326,7 +315,7 @@ fn open_job(
         )
         .unwrap();
     contract
-        .open_due_ocomp_voting(finalized.open_height, limits, fsm_limits)
+        .open_due_ocomp_voting(finalized.open_height, limits)
         .unwrap();
     finalized
 }
@@ -335,9 +324,6 @@ fn open_job(
 fn certified_parent_finality_records_only_the_exact_live_request_and_fails_closed_without_root() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 2,
-        };
         let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let requested = intent(
@@ -353,18 +339,10 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
             .initialize_ocomp_request_profile(&request_profile(), &limits)
             .unwrap();
         create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(
-                &request_transition,
-                &requested,
-                &receipt,
-                &limits,
-                fsm_limits,
-            )
+            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
             .unwrap();
 
         let finality_height = REQUEST_HEIGHT + 1;
@@ -444,18 +422,13 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
 }
 
 #[test]
-fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() {
+fn persisted_request_and_expiry_keep_one_terminal_job_and_no_successor() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 2,
-        };
         let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
@@ -463,20 +436,14 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(
-                &request_transition,
-                &first_intent,
-                &receipt,
-                &limits,
-                fsm_limits,
-            )
+            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
             .unwrap();
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
             status::OFFCHAIN_PENDING
         );
-        let pending = contract.ocomp_fsm_state(WWD, &limits, fsm_limits).unwrap();
+        let pending = contract.ocomp_fsm_state(WWD, &limits).unwrap();
         let pending_projection = pending.projection();
         assert_eq!(pending_projection.phase, DayPhase::OffchainPending);
         assert_eq!(pending_projection.live_intent_id, Some(first_intent_id));
@@ -491,36 +458,24 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(live_record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(live_record.intent, first_intent);
 
-        open_job(&mut contract, first_intent_id, &limits, fsm_limits);
-        let retry_transition = outer_transition(
-            &contract,
-            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
-        );
-        contract
+        open_job(&mut contract, first_intent_id, &limits);
+        let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
+        let retained_lysis_budget = contract
             .expire_ocomp_job(
-                &retry_transition,
+                &expiry_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
                 &limits,
-                fsm_limits,
             )
             .unwrap();
+        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
 
         assert_eq!(
             contract.worldwide_days.entry(WWD).status().read().unwrap(),
-            status::READY
+            status::OFFCHAIN_PENDING
         );
-        let ready = contract.ocomp_fsm_state(WWD, &limits, fsm_limits).unwrap();
-        let ready_projection = ready.projection();
-        assert_eq!(ready_projection.phase, DayPhase::Ready);
-        assert_eq!(ready_projection.pending_nonce, 1);
-        assert_eq!(
-            ready_projection.next_check_height,
-            Some(DEADLINE_HEIGHT + 1)
-        );
-        assert_eq!(ready_projection.retained_lysis_budget, Some(LYSIS_BUDGET));
-        assert_eq!(ready_projection.terminal_records, 1);
+        assert!(contract.next_ocomp_ready(&limits).unwrap().is_none());
 
         let terminal_record = contract
             .ocomp_job_record(first_intent_id, &limits)
@@ -529,170 +484,13 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(terminal_record.status, OcompJobStatus::Expired);
         let terminal = terminal_record.terminal.unwrap();
         assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
-        assert_eq!(terminal.next_pending_nonce, Some(1));
         assert_eq!(terminal.completed_binding, None);
-    });
-}
-
-#[test]
-fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 2,
-        };
-        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
-        let mut contract = MetadosisContract::new(storage);
-        create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
-
-        let request_receipt = receipt();
-        let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(
-            0,
-            REQUEST_HEIGHT,
-            DEADLINE_HEIGHT,
-            request_receipt_hash,
-            &snapshot,
-        );
-        let intent_id = requested.intent_id(&limits).unwrap();
-        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(
-                &request_transition,
-                &requested,
-                &request_receipt,
-                &limits,
-                fsm_limits,
-            )
-            .unwrap();
-
-        let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
-        let job_id = finalized.job_id;
-        let result_digest = B256::repeat_byte(0x52);
-        let quorum = OcompQuorumV1 {
-            result_digest,
-            quorum_height: finalized.open_height,
-            member_count: 4,
-            quorum_threshold: 3,
-            signer_bitmap: vec![0b0111],
-            evidence_hash: B256::repeat_byte(0x55),
-        };
-        let activation_call_id = B256::repeat_byte(0x53);
-        let binding = EffectBindingV1 {
-            intent_id,
-            job_id,
-            attempt: requested.attempt,
-            protocol_bundle_hash: requested.protocol_bundle_hash,
-            result_digest,
-            activation_preconditions_hash: requested
-                .activation_preconditions
-                .activation_preconditions_hash(&limits)
-                .unwrap(),
-            activation_call_id,
-        };
-        let activation_height = REQUEST_HEIGHT + 5;
-        let activation_time = REQUEST_TIME + 5;
-        let terminal_receipt = AggregateActivationReceiptV1 {
-            binding,
-            outcome: ActivationOutcome::ConflictResolved,
-            nod_receipt_hash: None,
-            contributor_receipt_hash: None,
-            tribute_receipt_hash: None,
-            carry_over_receipt_hash: None,
-            request_budget_split_receipt_hash: request_receipt_hash,
-            active_generation_hash: None,
-            effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
-            event_summary_hash: empty_apply_event_summary_hash().unwrap(),
-            activated_at_height: activation_height,
-            activated_at_time: activation_time,
-        };
-        let completed_binding = OcompCompletedBindingV1 {
-            job_id,
-            activation_call_id,
-            result_digest,
-            quorum_height: quorum.quorum_height,
-            quorum_signer_bitmap: quorum.signer_bitmap.clone(),
-            quorum_evidence_hash: quorum.evidence_hash,
-            result_evidence_hash: B256::repeat_byte(0x54),
-            terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
-            terminal_receipt,
-        };
-
-        let conflict_transition = outer_transition(
-            &contract,
-            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
-        );
-        assert_eq!(
-            contract
-                .commit_ocomp_conflict(
-                    &conflict_transition,
-                    intent_id,
-                    completed_binding.clone(),
-                    &quorum,
-                    activation_height,
-                    activation_time,
-                    &limits,
-                    fsm_limits,
-                )
-                .unwrap(),
-            OcompExpiryDisposition::RetryScheduled {
-                next_pending_nonce: 1
-            }
-        );
-
-        assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::READY);
-        let projection = contract
-            .ocomp_fsm_state(WWD, &limits, fsm_limits)
-            .unwrap()
-            .projection();
-        assert_eq!(projection.phase, DayPhase::Ready);
-        assert_eq!(projection.pending_nonce, 1);
-        assert_eq!(projection.next_check_height, Some(activation_height + 1));
-        assert_eq!(projection.retained_lysis_budget, Some(LYSIS_BUDGET));
-        let terminal = contract
-            .ocomp_job_record(intent_id, &limits)
-            .unwrap()
-            .unwrap();
-        assert_eq!(terminal.status, OcompJobStatus::Conflicted);
-        assert_eq!(
-            terminal.terminal.unwrap().completed_binding,
-            Some(completed_binding.clone())
-        );
-        assert!(contract.ocomp_scheduler.is_empty().unwrap());
-
-        assert_eq!(
-            IMetadosis::getLysisTerminalReceiptCall::SELECTOR,
-            [0x20, 0xf4, 0x6b, 0xe7]
-        );
-        let encoded = crate::precompile::dispatch(
-            contract.storage.clone(),
-            &IMetadosis::getLysisTerminalReceiptCall {
-                intentId: intent_id,
-            }
-            .abi_encode(),
-            alloy_primitives::Address::repeat_byte(0x61),
-            U256::ZERO,
-        )
-        .unwrap();
-        let public_receipt =
-            IMetadosis::getLysisTerminalReceiptCall::abi_decode_returns(&encoded).unwrap();
-        assert_eq!(
-            AggregateActivationReceiptV1::decode_canonical(public_receipt.as_ref(), &limits)
-                .unwrap(),
-            completed_binding.terminal_receipt
-        );
     });
 }
 
 #[test]
 fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
     let limits = poc_schema_limits();
-    let fsm_limits = JobFsmLimits {
-        max_terminal_records: 2,
-    };
     let receipt = receipt();
     let receipt_hash = receipt.receipt_hash(&limits).unwrap();
     let mut provider = HashMapStorageProvider::new(1);
@@ -711,18 +509,10 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
         let mut contract = MetadosisContract::new(storage.clone());
         assert_eq!(contract.ocomp_job_records.base_slot(), records_base_slot);
         create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(
-                &request_transition,
-                &requested,
-                &receipt,
-                &limits,
-                fsm_limits,
-            )
+            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits)
             .unwrap();
 
         assert_eq!(
@@ -757,9 +547,6 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
 fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 2,
-        };
         let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
@@ -777,22 +564,14 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
 
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         contract
             .corrupt_ocomp_job_record(intent_id, &original_bytes)
             .unwrap();
 
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         assert!(contract
-            .commit_ocomp_request(
-                &request_transition,
-                &requested,
-                &receipt,
-                &limits,
-                fsm_limits,
-            )
+            .commit_ocomp_request(&request_transition, &requested, &receipt, &limits,)
             .is_err());
         assert_eq!(
             contract
@@ -813,9 +592,6 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
 fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 1,
-        };
         let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
         let mut promis_limit = PromisLimitContract::new(storage.clone());
         let existing_carry_over = U256::from(17);
@@ -825,9 +601,7 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
 
         let mut contract = MetadosisContract::new(storage.clone());
         create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
 
         let receipt = receipt();
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
@@ -835,45 +609,28 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
         let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(
-                &request_transition,
-                &first_intent,
-                &receipt,
-                &limits,
-                fsm_limits,
-            )
+            .commit_ocomp_request(&request_transition, &first_intent, &receipt, &limits)
             .unwrap();
 
-        open_job(&mut contract, first_intent_id, &limits, fsm_limits);
-        let exhausted_transition =
-            outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
-        let disposition = contract
+        open_job(&mut contract, first_intent_id, &limits);
+        let expiry_transition = outer_transition(&contract, OuterWwdEvent::OcompExpired);
+        let retained_lysis_budget = contract
             .expire_ocomp_job(
-                &exhausted_transition,
+                &expiry_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
                 &limits,
-                fsm_limits,
             )
             .unwrap();
 
-        assert_eq!(
-            disposition,
-            OcompExpiryDisposition::TerminalNoRetry {
-                next_pending_nonce: 1,
-                retained_lysis_budget: LYSIS_BUDGET,
-            }
-        );
+        assert_eq!(retained_lysis_budget, LYSIS_BUDGET);
         assert_eq!(
             contract.get_wwd_status(WWD).unwrap(),
             status::OFFCHAIN_PENDING
         );
         assert!(!contract.ocomp_scheduler.is_empty().unwrap());
-        assert!(contract
-            .next_ocomp_ready(&limits, fsm_limits)
-            .unwrap()
-            .is_none());
+        assert!(contract.next_ocomp_ready(&limits).unwrap().is_none());
         assert_eq!(
             promis_limit.get_total_unallocated().unwrap(),
             existing_carry_over
@@ -886,16 +643,14 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
         assert_eq!(terminal_record.status, OcompJobStatus::Expired);
         let terminal = terminal_record.terminal.unwrap();
         assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
-        assert_eq!(terminal.next_pending_nonce, Some(1));
 
         assert!(contract
             .expire_ocomp_job(
-                &exhausted_transition,
+                &expiry_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT + 1,
                 REQUEST_TIME + 65,
                 &limits,
-                fsm_limits,
             )
             .is_err());
         assert_eq!(
@@ -909,24 +664,19 @@ fn final_allowed_expiry_prepares_terminal_evidence_for_the_scoped_failure_commit
 fn deferred_ready_day_does_not_starve_the_next_due_day() {
     with_storage(|storage| {
         let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 2,
-        };
         let later_wwd = WorldwideDay::new(20_260_724);
         let mut contract = MetadosisContract::new(storage);
         create_ready_day(&mut contract, WWD);
         create_ready_day(&mut contract, later_wwd);
 
+        contract.enqueue_ocomp_ready(WWD, REQUEST_HEIGHT).unwrap();
         contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
-        contract
-            .enqueue_ocomp_ready(later_wwd, REQUEST_HEIGHT, fsm_limits)
+            .enqueue_ocomp_ready(later_wwd, REQUEST_HEIGHT)
             .unwrap();
 
         assert_eq!(
             contract
-                .next_ocomp_ready(&limits, fsm_limits)
+                .next_ocomp_ready(&limits)
                 .unwrap()
                 .unwrap()
                 .worldwide_day,
@@ -934,20 +684,14 @@ fn deferred_ready_day_does_not_starve_the_next_due_day() {
         );
 
         contract
-            .defer_ocomp_ready(WWD, REQUEST_HEIGHT, REQUEST_HEIGHT + 1, &limits, fsm_limits)
+            .defer_ocomp_ready(WWD, REQUEST_HEIGHT, REQUEST_HEIGHT + 1, &limits)
             .unwrap();
 
-        let next = contract
-            .next_ocomp_ready(&limits, fsm_limits)
-            .unwrap()
-            .unwrap();
+        let next = contract.next_ocomp_ready(&limits).unwrap().unwrap();
         assert_eq!(next.worldwide_day, later_wwd);
         assert_eq!(next.next_check_height, Some(REQUEST_HEIGHT));
 
-        let deferred = contract
-            .ocomp_fsm_state(WWD, &limits, fsm_limits)
-            .unwrap()
-            .projection();
+        let deferred = contract.ocomp_fsm_state(WWD, &limits).unwrap().projection();
         assert_eq!(deferred.next_check_height, Some(REQUEST_HEIGHT + 1));
         assert_eq!(deferred.pending_nonce, 0);
     });
@@ -978,84 +722,61 @@ fn canonical_storage_reads_fail_closed_when_the_declared_byte_cap_overflows() {
 }
 
 #[test]
-fn terminal_index_push_rejects_zero_overwrite_and_exact_cap() {
+fn terminal_index_push_rejects_zero_and_a_second_terminal_job() {
     with_storage(|storage| {
         let mut metadosis = MetadosisContract::new(storage);
         let wwd = WorldwideDay::new(20270401);
-        let cap = 3_u16;
 
         assert!(matches!(
-            metadosis.push_terminal_intent(wwd, B256::ZERO, cap),
+            metadosis.push_terminal_intent(wwd, B256::ZERO),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))
         ));
 
-        for index in 0..cap {
-            metadosis
-                .push_terminal_intent(wwd, B256::repeat_byte(0x10 + index as u8), cap)
-                .unwrap();
-            assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), index + 1);
-        }
+        metadosis
+            .push_terminal_intent(wwd, B256::repeat_byte(0x10))
+            .unwrap();
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 1);
 
-        // The day is exactly at its cap: the next push must be refused.
         assert!(matches!(
-            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x77), cap),
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x77)),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))
         ));
 
-        // An occupied position must never be overwritten, even if the count
-        // word is corrupted backwards.
-        metadosis.ocomp_terminal_counts.write(&wwd, 1).unwrap();
+        // An occupied position must never be overwritten even if the count is
+        // corrupted back to zero.
+        metadosis.ocomp_terminal_counts.write(&wwd, 0).unwrap();
         assert!(matches!(
-            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x78), cap),
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x78)),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))
         ));
     });
 }
 
 #[test]
-fn terminal_index_round_trips_and_fails_closed_on_sparse_or_over_cap_counts() {
+fn terminal_index_round_trips_and_fails_closed_on_invalid_cardinality() {
     with_storage(|storage| {
         let mut metadosis = MetadosisContract::new(storage);
         let wwd = WorldwideDay::new(20270402);
-        let cap = 365_u16;
 
         assert_eq!(
-            metadosis.terminal_intents_for(wwd, cap).unwrap(),
+            metadosis.terminal_intents_for(wwd).unwrap(),
             Vec::<B256>::new()
         );
 
-        let mut expected = Vec::new();
-        for index in 0..cap {
-            let id = crate::ocomp::terminal_entry_key(wwd, index);
-            metadosis.push_terminal_intent(wwd, id, cap).unwrap();
-            expected.push(id);
-            if matches!(index + 1, 1 | 364 | 365) {
-                assert_eq!(
-                    metadosis.terminal_intents_for(wwd, cap).unwrap(),
-                    expected[..usize::from(index + 1)]
-                );
-            }
-        }
-        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), cap);
+        let id = crate::ocomp::terminal_entry_key(wwd, 0);
+        metadosis.push_terminal_intent(wwd, id).unwrap();
+        assert_eq!(metadosis.terminal_intents_for(wwd).unwrap(), vec![id]);
 
-        // A count above the per-day cap fails closed on read.
-        metadosis
-            .ocomp_terminal_counts
-            .write(&wwd, cap + 1)
-            .unwrap();
+        metadosis.ocomp_terminal_counts.write(&wwd, 2).unwrap();
         assert!(matches!(
-            metadosis.terminal_intents_for(wwd, cap),
+            metadosis.terminal_intents_for(wwd),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))
         ));
 
-        // A count pointing past the last occupied position fails closed.
         let sparse = WorldwideDay::new(20270403);
-        metadosis
-            .push_terminal_intent(sparse, B256::repeat_byte(0x31), cap)
-            .unwrap();
-        metadosis.ocomp_terminal_counts.write(&sparse, 2).unwrap();
+        metadosis.ocomp_terminal_counts.write(&sparse, 1).unwrap();
         assert!(matches!(
-            metadosis.terminal_intents_for(sparse, cap),
+            metadosis.terminal_intents_for(sparse),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))
         ));
     });
@@ -1092,22 +813,18 @@ fn terminal_index_is_deleted_with_its_worldwide_day() {
     with_storage(|storage| {
         let mut metadosis = MetadosisContract::new(storage);
         let wwd = WorldwideDay::new(20270406);
-        let cap = 4_u16;
-        for index in 0..cap {
-            metadosis
-                .push_terminal_intent(wwd, B256::repeat_byte(0x40 + index as u8), cap)
-                .unwrap();
-        }
+        metadosis
+            .push_terminal_intent(wwd, B256::repeat_byte(0x40))
+            .unwrap();
 
         metadosis.delete_terminal_index(wwd).unwrap();
 
         assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
-        for index in 0..cap {
-            assert_eq!(metadosis.terminal_intent_at(wwd, index).unwrap(), None);
-        }
-        // The vacated positions accept a fresh history.
+        assert_eq!(metadosis.terminal_intent_at(wwd, 0).unwrap(), None);
+        // A retired day can reuse its vacated slot if the outer lifecycle is
+        // deliberately re-created under a later independent execution.
         metadosis
-            .push_terminal_intent(wwd, B256::repeat_byte(0x50), cap)
+            .push_terminal_intent(wwd, B256::repeat_byte(0x50))
             .unwrap();
         assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 1);
     });
@@ -1130,182 +847,4 @@ fn aggregate_rejects_closed_wwd_population_above_max_records_kept() {
             "unexpected error: {error}"
         );
     });
-}
-
-#[test]
-fn conflict_at_the_retry_cap_prepares_terminal_evidence_instead_of_halting() {
-    with_storage(|storage| {
-        let limits = poc_schema_limits();
-        let fsm_limits = JobFsmLimits {
-            max_terminal_records: 1,
-        };
-        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
-        let mut contract = MetadosisContract::new(storage);
-        create_ready_day(&mut contract, WWD);
-        contract
-            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
-            .unwrap();
-
-        let request_receipt = receipt();
-        let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
-        let requested = intent(
-            0,
-            REQUEST_HEIGHT,
-            DEADLINE_HEIGHT,
-            request_receipt_hash,
-            &snapshot,
-        );
-        let intent_id = requested.intent_id(&limits).unwrap();
-        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
-        contract
-            .commit_ocomp_request(
-                &request_transition,
-                &requested,
-                &request_receipt,
-                &limits,
-                fsm_limits,
-            )
-            .unwrap();
-
-        let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
-        let job_id = finalized.job_id;
-        let result_digest = B256::repeat_byte(0x52);
-        let quorum = OcompQuorumV1 {
-            result_digest,
-            quorum_height: finalized.open_height,
-            member_count: 4,
-            quorum_threshold: 3,
-            signer_bitmap: vec![0b0111],
-            evidence_hash: B256::repeat_byte(0x55),
-        };
-        let activation_call_id = B256::repeat_byte(0x53);
-        let binding = EffectBindingV1 {
-            intent_id,
-            job_id,
-            attempt: requested.attempt,
-            protocol_bundle_hash: requested.protocol_bundle_hash,
-            result_digest,
-            activation_preconditions_hash: requested
-                .activation_preconditions
-                .activation_preconditions_hash(&limits)
-                .unwrap(),
-            activation_call_id,
-        };
-        let activation_height = REQUEST_HEIGHT + 5;
-        let activation_time = REQUEST_TIME + 5;
-        let terminal_receipt = AggregateActivationReceiptV1 {
-            binding,
-            outcome: ActivationOutcome::ConflictResolved,
-            nod_receipt_hash: None,
-            contributor_receipt_hash: None,
-            tribute_receipt_hash: None,
-            carry_over_receipt_hash: None,
-            request_budget_split_receipt_hash: request_receipt_hash,
-            active_generation_hash: None,
-            effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
-            event_summary_hash: empty_apply_event_summary_hash().unwrap(),
-            activated_at_height: activation_height,
-            activated_at_time: activation_time,
-        };
-        let completed_binding = OcompCompletedBindingV1 {
-            job_id,
-            activation_call_id,
-            result_digest,
-            quorum_height: quorum.quorum_height,
-            quorum_signer_bitmap: quorum.signer_bitmap.clone(),
-            quorum_evidence_hash: quorum.evidence_hash,
-            result_evidence_hash: B256::repeat_byte(0x54),
-            terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
-            terminal_receipt,
-        };
-
-        let exhausted_transition =
-            outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
-        let disposition = contract
-            .commit_ocomp_conflict(
-                &exhausted_transition,
-                intent_id,
-                completed_binding.clone(),
-                &quorum,
-                activation_height,
-                activation_time,
-                &limits,
-                fsm_limits,
-            )
-            .unwrap();
-
-        assert_eq!(
-            disposition,
-            OcompExpiryDisposition::TerminalNoRetry {
-                next_pending_nonce: 1,
-                retained_lysis_budget: LYSIS_BUDGET,
-            }
-        );
-        assert_eq!(
-            contract.get_wwd_status(WWD).unwrap(),
-            status::OFFCHAIN_PENDING
-        );
-        assert!(contract
-            .next_ocomp_ready(&limits, fsm_limits)
-            .unwrap()
-            .is_none());
-        let terminal = contract
-            .ocomp_job_record(intent_id, &limits)
-            .unwrap()
-            .unwrap();
-        assert_eq!(terminal.status, OcompJobStatus::Conflicted);
-        assert_eq!(
-            terminal.terminal.unwrap().completed_binding,
-            Some(completed_binding)
-        );
-    });
-}
-
-#[test]
-fn a_conflicted_retained_terminal_is_a_legal_retry_source() {
-    use crate::ocomp::classify_retained_terminal;
-    use crate::ocomp::state::RetryTerminalOutcome;
-
-    assert_eq!(
-        classify_retained_terminal(
-            OcompJobStatus::Conflicted,
-            OcompTerminalOutcome::Conflicted,
-            true
-        )
-        .unwrap(),
-        RetryTerminalOutcome::Conflicted
-    );
-    assert_eq!(
-        classify_retained_terminal(
-            OcompJobStatus::Expired,
-            OcompTerminalOutcome::Expired,
-            false
-        )
-        .unwrap(),
-        RetryTerminalOutcome::Expired
-    );
-
-    for (status, outcome, binding) in [
-        (
-            OcompJobStatus::Conflicted,
-            OcompTerminalOutcome::Conflicted,
-            false,
-        ),
-        (OcompJobStatus::Expired, OcompTerminalOutcome::Expired, true),
-        (
-            OcompJobStatus::Completed,
-            OcompTerminalOutcome::Completed,
-            true,
-        ),
-        (
-            OcompJobStatus::Conflicted,
-            OcompTerminalOutcome::Expired,
-            true,
-        ),
-    ] {
-        assert!(
-            classify_retained_terminal(status, outcome, binding).is_err(),
-            "{status:?}/{outcome:?}/{binding} must not open a retry"
-        );
-    }
 }

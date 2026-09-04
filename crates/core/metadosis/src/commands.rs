@@ -159,21 +159,6 @@ pub fn run_ocomp_lifecycle_begin_with_scope(
 }
 
 #[cfg(test)]
-pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let binding = metadosis_ocomp_lifecycle_begin_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    let metrics =
-        commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::ocomp::expiry::run_lifecycle_begin(ctx)
-        })?;
-    metrics.record();
-    Ok(())
-}
-
-#[cfg(test)]
 pub(crate) fn fail_worldwide_day_for_test(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
@@ -189,7 +174,6 @@ pub(crate) fn fail_worldwide_day_for_test(
             crate::terminal::fail_worldwide_day(
                 ctx.storage.clone(),
                 ctx.block.block_number,
-                ctx.block.timestamp,
                 scope,
                 worldwide_day,
             )
@@ -241,7 +225,6 @@ fn run_ocomp_terminal_request_with(
                     crate::terminal::fail_worldwide_day(
                         ctx.storage.clone(),
                         ctx.block.block_number,
-                        ctx.block.timestamp,
                         scope,
                         due_worldwide_day.expect("guarded exact WWD"),
                     )
@@ -260,11 +243,9 @@ pub fn submit_verified_result_vote(
     is_static: bool,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
-    let exact_worldwide_day = crate::ocomp::vote::result_vote_worldwide_day(storage.clone(), data)?;
     with_ce_checkpoint(scope, || {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
-            let attempted_work = scope.ce_work_checkpoint()?;
-            let attempted = storage.clone().with_checkpoint(|| {
+            storage.clone().with_checkpoint(|| {
                 crate::ocomp::vote::dispatch_public_result_vote(
                     storage.clone(),
                     scope,
@@ -272,38 +253,7 @@ pub fn submit_verified_result_vote(
                     value,
                     is_static,
                 )
-            });
-            match attempted {
-                Ok(output) => Ok(output),
-                Err(error)
-                    if exact_worldwide_day.is_some()
-                        && crate::errors::is_business_failure(&error) =>
-                {
-                    tracing::warn!(
-                        target: "outbe::ocomp",
-                        worldwide_day = exact_worldwide_day.expect("guarded exact WWD").value(),
-                        block_number = storage.block_number()?,
-                        error = %error,
-                        "OCOMP result vote caused the WorldwideDay to fail"
-                    );
-                    scope.restore_ce_work_checkpoint(attempted_work)?;
-                    let block_number = storage.block_number()?;
-                    let timestamp = u64::try_from(storage.timestamp()?).map_err(|_| {
-                        crate::errors::storage_corruption_message(
-                            "Metadosis block timestamp exceeds u64",
-                        )
-                    })?;
-                    crate::terminal::fail_worldwide_day(
-                        storage.clone(),
-                        block_number,
-                        timestamp,
-                        scope,
-                        exact_worldwide_day.expect("guarded exact WWD"),
-                    )?;
-                    Ok(Bytes::new())
-                }
-                Err(error) => Err(error),
-            }
+            })
         })
     })
 }

@@ -855,7 +855,7 @@ impl OcompTopology {
     /// under `genesis.config` does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(None, &[], false, None)
+        self.prepare_measurement_fork_install_inner(None, &[], false)
     }
 
     /// Prepare the same immutable measurement fork plus one bounded, internally
@@ -868,7 +868,6 @@ impl OcompTopology {
             Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
             &[],
             false,
-            None,
         )
     }
 
@@ -1025,7 +1024,7 @@ impl OcompTopology {
         let schedule = schedule_dynamic_membership_days(&mut genesis, chain_id)?;
         replace_json_atomically(&genesis_path, &genesis)?;
 
-        let fork = self.prepare_measurement_fork_install_inner(None, &[], false, None)?;
+        let fork = self.prepare_measurement_fork_install_inner(None, &[], false)?;
         Ok(OcompDynamicMembershipForkV1 {
             fork,
             first_worldwide_day: schedule.0,
@@ -1053,7 +1052,6 @@ impl OcompTopology {
             Some(OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS),
             &private_keys,
             false,
-            None,
         )?;
         Ok((prepared, private_keys))
     }
@@ -1071,8 +1069,7 @@ impl OcompTopology {
             eyre::bail!("fresh Metadosis fixture requires at least one Tribute owner");
         }
         let private_keys = capacity_tribute_private_keys(tribute_count)?;
-        let prepared =
-            self.prepare_measurement_fork_install_inner(None, &private_keys, true, None)?;
+        let prepared = self.prepare_measurement_fork_install_inner(None, &private_keys, true)?;
         Ok((prepared, private_keys))
     }
 
@@ -1490,7 +1487,6 @@ impl OcompTopology {
         public_offering_after_genesis_secs: Option<u64>,
         capacity_tribute_private_keys: &[String],
         clear_seeded_metadosis: bool,
-        max_terminal_job_records: Option<u16>,
     ) -> Result<OcompMeasurementForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
@@ -1540,7 +1536,6 @@ impl OcompTopology {
             &self.cfg.dir.join("validators.json"),
             &limits,
             protocol_constants.ocomp_compute_vote_window_blocks,
-            max_terminal_job_records,
         )?;
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
         let canonical_install = install.encode_canonical(&limits)?;
@@ -3683,20 +3678,12 @@ fn measurement_fork_install(
     validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
     result_deadline_blocks: u64,
-    max_terminal_job_records: Option<u16>,
 ) -> Result<OcompForkInstallV1> {
     let protocol_bundle = provisional_measurement_bundle();
     let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
     let founder_registrations =
         measurement_founder_registrations(validators_path, chain_id, genesis_hash, limits)?;
-    let mut capacity_profile = provisional_measurement_capacity_profile(result_deadline_blocks);
-    if let Some(max_terminal_job_records) = max_terminal_job_records {
-        eyre::ensure!(
-            max_terminal_job_records > 0,
-            "Measurement terminal job record cap must be non-zero"
-        );
-        capacity_profile.max_terminal_job_records = max_terminal_job_records;
-    }
+    let capacity_profile = provisional_measurement_capacity_profile(result_deadline_blocks);
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
         activation_height,
@@ -3806,8 +3793,7 @@ fn provisional_measurement_capacity_profile(result_deadline_blocks: u64) -> Capa
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
         max_expirations_per_block: 1,
-        retry_backoff_blocks: 1,
-        max_terminal_job_records: 365,
+        ready_backoff_blocks: 1,
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,

@@ -241,8 +241,7 @@ fn full_node_mismatch_is_fatal() {
 fn every_non_completed_terminal_is_absorbing() {
     for (index, reason) in [
         EmbeddedTerminalReasonV1::Expired,
-        EmbeddedTerminalReasonV1::Conflicted,
-        EmbeddedTerminalReasonV1::Canceled,
+        EmbeddedTerminalReasonV1::Failed,
     ]
     .into_iter()
     .enumerate()
@@ -454,7 +453,7 @@ fn durable_checkpoint_pruning_removes_only_the_covered_terminal_job() {
         &mut jobs,
         terminal,
         EmbeddedJobEventV1::CanonicalClosed {
-            reason: EmbeddedTerminalReasonV1::Canceled,
+            reason: EmbeddedTerminalReasonV1::Failed,
         },
     );
     reduce(

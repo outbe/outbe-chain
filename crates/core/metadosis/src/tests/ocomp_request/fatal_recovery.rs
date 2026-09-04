@@ -12,10 +12,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     chain,
     error::{PrecompileError, Result},
-    storage::{
-        hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, PrecompileStorageProvider,
-        StorageHandle,
-    },
+    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -36,8 +33,7 @@ struct OneTributePartitionTree {
     parent_root: B256,
     parent_catalog_root: B256,
     parent_block_hash: B256,
-    worldwide_day: outbe_common::WorldwideDay,
-    partition_root: B256,
+    partition_roots: Vec<(outbe_common::WorldwideDay, B256)>,
 }
 
 impl AuthenticatedParentTree for OneTributePartitionTree {
@@ -74,8 +70,11 @@ impl AuthenticatedParentTree for OneTributePartitionTree {
         expected_parent_root: B256,
     ) -> Result<Option<B256>> {
         assert_eq!(expected_parent_root, self.parent_root);
-        Ok((partition == PartitionRef::TributeWwd(self.worldwide_day))
-            .then_some(self.partition_root))
+        let PartitionRef::TributeWwd(worldwide_day) = partition;
+        Ok(self
+            .partition_roots
+            .iter()
+            .find_map(|(candidate, root)| (*candidate == worldwide_day).then_some(*root)))
     }
 
     fn prepare_seal(
@@ -98,8 +97,7 @@ struct OneTributePartitionFactory {
     parent_root: B256,
     parent_catalog_root: B256,
     parent_block_hash: B256,
-    worldwide_day: outbe_common::WorldwideDay,
-    partition_root: B256,
+    partition_roots: Vec<(outbe_common::WorldwideDay, B256)>,
 }
 
 impl AuthenticatedParentTreeFactory for OneTributePartitionFactory {
@@ -110,8 +108,7 @@ impl AuthenticatedParentTreeFactory for OneTributePartitionFactory {
             parent_root: self.parent_root,
             parent_catalog_root: self.parent_catalog_root,
             parent_block_hash: self.parent_block_hash,
-            worldwide_day: self.worldwide_day,
-            partition_root: self.partition_root,
+            partition_roots: self.partition_roots.clone(),
         }))
     }
 }
@@ -145,12 +142,7 @@ fn live_intent(
         let limits = poc_schema_limits();
         let metadosis = MetadosisContract::new(storage.clone());
         let state = metadosis
-            .live_ocomp_fsm_states(
-                &limits,
-                crate::ocomp::state::JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .live_ocomp_fsm_states(&limits)
             .unwrap()
             .into_iter()
             .find(|state| state.projection().worldwide_day == wwd)
@@ -179,15 +171,43 @@ pub(super) fn begin_recovery_scope_for_wwd(
     wwd: outbe_common::WorldwideDay,
     block_number: u64,
 ) -> ExecutionScope {
+    provider.set_block_number(block_number);
+    StorageHandle::enter(provider, |storage| {
+        begin_recovery_scope_from_storage(storage, completed_scope, wwd, block_number)
+    })
+}
+
+pub(super) fn begin_recovery_scope_from_storage(
+    storage: StorageHandle<'_>,
+    completed_scope: &ExecutionScope,
+    wwd: outbe_common::WorldwideDay,
+    block_number: u64,
+) -> ExecutionScope {
+    begin_recovery_scope_for_wwds_from_storage(storage, completed_scope, &[wwd], block_number)
+}
+
+pub(super) fn begin_recovery_scope_for_wwds_from_storage(
+    storage: StorageHandle<'_>,
+    completed_scope: &ExecutionScope,
+    worldwide_days: &[outbe_common::WorldwideDay],
+    block_number: u64,
+) -> ExecutionScope {
     let parent_root = completed_scope.completed_sealed_root().unwrap();
     let parent_catalog_root = completed_scope.completed_catalog_root().unwrap();
-    let partition_root = completed_scope
-        .completed_partition_root(PartitionRef::TributeWwd(wwd))
-        .unwrap()
-        .root();
+    let partition_roots = worldwide_days
+        .iter()
+        .map(|wwd| {
+            (
+                *wwd,
+                completed_scope
+                    .completed_partition_root(PartitionRef::TributeWwd(*wwd))
+                    .unwrap()
+                    .root(),
+            )
+        })
+        .collect();
     let parent_block_hash = B256::repeat_byte(0x91);
-    provider.set_block_number(block_number);
-    provider
+    storage
         .sstore(
             COMPRESSED_ENTITIES_ADDRESS,
             U256::from(1),
@@ -201,15 +221,14 @@ pub(super) fn begin_recovery_scope_for_wwd(
                 parent_root,
                 parent_catalog_root,
                 parent_block_hash,
-                worldwide_day: wwd,
-                partition_root,
+                partition_roots,
             }),
             ACTIVE_COMMITMENT_SCHEME,
             block_number - 1,
             parent_block_hash,
         )
         .unwrap();
-    StorageHandle::enter(provider, |storage| begin_block(storage, &scope)).unwrap();
+    begin_block(storage, &scope).unwrap();
     scope
 }
 
@@ -293,20 +312,16 @@ fn assert_failed_day_recovery(
     });
 }
 
-fn assert_canceled_job(provider: &mut HashMapStorageProvider, intent_id: B256) -> OcompJobRecordV1 {
+fn assert_expired_job(provider: &mut HashMapStorageProvider, intent_id: B256) -> OcompJobRecordV1 {
     StorageHandle::enter(provider, |storage| {
         let record = OcompJobRecordV1::decode_canonical(
             &api::get_offchain_job(storage, intent_id).expect("terminal job evidence is retained"),
             &poc_schema_limits(),
         )
         .expect("canonical terminal job");
-        assert_eq!(record.status, OcompJobStatus::Canceled);
-        let terminal = record
-            .terminal
-            .as_ref()
-            .expect("canceled terminal evidence");
-        assert_eq!(terminal.outcome, OcompTerminalOutcome::Canceled);
-        assert_eq!(terminal.next_pending_nonce, None);
+        assert_eq!(record.status, OcompJobStatus::Expired);
+        let terminal = record.terminal.as_ref().expect("expired terminal evidence");
+        assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
         assert_eq!(terminal.completed_binding, None);
         record
     })
@@ -386,7 +401,7 @@ fn terminal_business_failure_fails_day_before_the_single_final_seal() {
 }
 
 #[test]
-fn skipped_voting_open_fails_only_the_day_and_returns_retained_lysis() {
+fn delayed_voting_open_preserves_the_single_job_until_its_deadline() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
@@ -423,14 +438,27 @@ fn skipped_voting_open_fails_only_the_day_and_returns_retained_lysis() {
         recovery_height,
         fixture.block_time + 2,
     )
-    .expect("missed exact open fails the WWD rather than the system transaction");
+    .expect("a delayed lifecycle tick opens the existing job");
+
+    let (_, opened) = live_intent(&mut provider, fixture.wwd);
+    assert_eq!(opened.status, OcompJobStatus::VotingOpen);
+    assert!(opened.terminal.is_none());
+
+    let expiry_scope = begin_recovery_scope(&mut provider, &fixture, finalized.deadline_height);
+    run_lifecycle_begin(
+        &mut provider,
+        &expiry_scope,
+        finalized.deadline_height,
+        fixture.block_time + 3,
+    )
+    .expect("the same job expires at its immutable deadline");
 
     assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_budget);
-    assert_canceled_job(&mut provider, intent_id);
+    assert_expired_job(&mut provider, intent_id);
 }
 
 #[test]
-fn skipped_awaiting_finality_deadline_fails_day_on_first_attempt() {
+fn skipped_awaiting_finality_deadline_expires_the_single_job() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
@@ -451,14 +479,14 @@ fn skipped_awaiting_finality_deadline_fails_day_on_first_attempt() {
         recovery_height,
         fixture.block_time + 65,
     )
-    .expect("missed first-attempt finality deadline fails only the WWD");
+    .expect("missed finality deadline expires the single job");
 
     assert_failed_day_recovery(
         &mut provider,
         &fixture,
         carry_over_before + retained_lysis_budget,
     );
-    assert_canceled_job(&mut provider, intent_id);
+    assert_expired_job(&mut provider, intent_id);
 
     let promis_after = StorageHandle::enter(&mut provider, |storage| {
         PromisLimitContract::new(storage)
@@ -484,7 +512,7 @@ fn skipped_awaiting_finality_deadline_fails_day_on_first_attempt() {
 }
 
 #[test]
-fn skipped_response_deadline_fails_day_and_retains_closed_vote_accountability() {
+fn skipped_response_deadline_expires_job_and_retains_closed_vote_accountability() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = prepare_request_fixture(&mut provider, true);
     run_terminal_request(&mut provider, &fixture);
@@ -529,11 +557,11 @@ fn skipped_response_deadline_fails_day_and_retains_closed_vote_accountability() 
         recovery_height,
         fixture.block_time + 3,
     )
-    .expect("missed response deadline fails only the WWD");
+    .expect("missed response deadline expires the single job");
 
     assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_budget);
-    let canceled = assert_canceled_job(&mut provider, intent_id);
-    let job_id = canceled.finalized.expect("finalized canceled job").job_id;
+    let expired = assert_expired_job(&mut provider, intent_id);
+    let job_id = expired.finalized.expect("finalized expired job").job_id;
     StorageHandle::enter(&mut provider, |storage| {
         let accountability = MetadosisContract::new(storage)
             .result_vote_accountability(job_id, &poc_schema_limits())
@@ -544,7 +572,7 @@ fn skipped_response_deadline_fails_day_and_retains_closed_vote_accountability() 
 }
 
 #[test]
-fn every_failed_day_recovery_mutation_is_atomic_and_retryable() {
+fn every_expired_day_recovery_mutation_is_atomic_and_retryable() {
     let (mut probe, fixture, scope, recovery_height, _) = prepare_skipped_finality_recovery();
     probe.fail_after_mutation_at(usize::MAX);
     run_lifecycle_begin(&mut probe, &scope, recovery_height, fixture.block_time + 65)
@@ -612,12 +640,12 @@ fn every_failed_day_recovery_mutation_is_atomic_and_retryable() {
             clean_ce_work,
             "retry CE work at {operation}"
         );
-        assert_canceled_job(&mut provider, intent_id);
+        assert_expired_job(&mut provider, intent_id);
     }
 }
 
 #[test]
-fn failed_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
+fn expired_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = super::prepare_ready_days_fixture(&mut provider, true);
     for (block_number, block_time) in [
@@ -641,17 +669,14 @@ fn failed_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage);
             let limits = poc_schema_limits();
-            let fsm_limits = crate::ocomp::state::JobFsmLimits {
-                max_terminal_records: 365,
-            };
             let failed = metadosis
-                .ocomp_fsm_state(fixture.first_wwd, &limits, fsm_limits)
+                .ocomp_fsm_state(fixture.first_wwd, &limits)
                 .unwrap()
                 .projection()
                 .live_intent_id
                 .unwrap();
             let survivor = metadosis
-                .ocomp_fsm_state(fixture.later_wwd, &limits, fsm_limits)
+                .ocomp_fsm_state(fixture.later_wwd, &limits)
                 .unwrap()
                 .projection()
                 .live_intent_id
@@ -672,7 +697,7 @@ fn failed_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
     )
     .expect("only the first missed WWD fails");
 
-    assert_canceled_job(&mut provider, failed_intent);
+    assert_expired_job(&mut provider, failed_intent);
     StorageHandle::enter(&mut provider, |storage| {
         let limits = poc_schema_limits();
         let metadosis = MetadosisContract::new(storage.clone());
@@ -690,6 +715,36 @@ fn failed_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
         assert_eq!(survivor.status, OcompJobStatus::AwaitingFinality);
         assert!(survivor.terminal.is_none());
     });
+}
+
+#[test]
+fn emergency_failure_cannot_construct_the_reserved_failed_job_state() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_request_fixture(&mut provider, true);
+    run_terminal_request(&mut provider, &fixture);
+    let (intent_id, before_record) = live_intent(&mut provider, fixture.wwd);
+    let recovery_height = fixture.block_number + 1;
+    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+    let storage_before = provider.storage.clone();
+    let events_before = provider.events.clone();
+
+    let error = run_direct_failed_day_recovery(
+        &mut provider,
+        &scope,
+        fixture.wwd,
+        recovery_height,
+        fixture.block_time + 1,
+    )
+    .expect_err("a live canonical job must be left for its deadline");
+
+    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert_eq!(provider.storage, storage_before);
+    assert_eq!(provider.events, events_before);
+    let (_, after_record) = live_intent(&mut provider, fixture.wwd);
+    assert_eq!(after_record, before_record);
+    assert_eq!(after_record.status, OcompJobStatus::AwaitingFinality);
+    assert_eq!(after_record.terminal, None);
+    assert_ne!(intent_id, B256::ZERO);
 }
 
 #[test]

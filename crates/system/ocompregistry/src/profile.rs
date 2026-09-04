@@ -75,8 +75,7 @@ pub(crate) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || capacity.max_activations_per_block != 1
         || capacity.max_ready_inspections_per_block != 1
         || capacity.max_expirations_per_block != 1
-        || capacity.retry_backoff_blocks != 1
-        || capacity.max_terminal_job_records != 365
+        || capacity.ready_backoff_blocks != 1
         || capacity.max_reference_currencies == 0
         || capacity.max_reference_currencies > max_reference_currencies
         || capacity.max_oracle_wwd_pair_entries == 0

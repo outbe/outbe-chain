@@ -3056,8 +3056,7 @@ mod tests {
         for unavailable in [
             OcompJobStatus::AwaitingFinality,
             OcompJobStatus::Expired,
-            OcompJobStatus::Conflicted,
-            OcompJobStatus::Canceled,
+            OcompJobStatus::Failed,
         ] {
             assert!(!super::ocomp_job_available_for_calculation(unavailable));
         }

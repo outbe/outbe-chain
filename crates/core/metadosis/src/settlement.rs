@@ -13,7 +13,7 @@ use crate::{
     commit::commit_outer_transition,
     constants::{RED_DAY_REDUCTION_COEF, SYMBOLIC_RATE},
     errors::MetadosisError,
-    ocomp::{schema::OcompRequestProfile, OcompRequestProfileExt},
+    ocomp::schema::OcompRequestProfile,
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
     schema::MetadosisContract,
@@ -114,7 +114,7 @@ pub(crate) fn process_ocomp_ready_candidate(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     current: &WwdProjection,
-    profile: &OcompRequestProfile,
+    _profile: &OcompRequestProfile,
 ) -> Result<()> {
     let wwd = current.worldwide_day;
     let limit_amount = current.metadosis_limit_amount;
@@ -178,7 +178,7 @@ pub(crate) fn process_ocomp_ready_candidate(
     // This order is protocol-relevant: snapshot while CE is active, enqueue
     // the OCOMP FSM, then commit the outer transition.
     metadosis.build_fidelity_league_snapshot(scope, parent, wwd, ctx.block.timestamp)?;
-    metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number, profile.fsm_limits())?;
+    metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
     commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)
 }
 

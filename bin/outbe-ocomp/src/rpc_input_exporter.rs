@@ -1043,7 +1043,7 @@ mod tests {
         ExpectedInputAuthorityV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
             job_id: B256::repeat_byte(2),
-            attempt: 3,
+            attempt: 0,
             checkpoint: CheckpointIdentityV1 {
                 finalized_block_number: 4,
                 finalized_block_hash: B256::repeat_byte(5),

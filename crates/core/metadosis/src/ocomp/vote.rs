@@ -25,7 +25,7 @@ use crate::{
         storage_corruption_message, vote_rejection_code::*,
     },
     precompile::IMetadosis,
-    reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent},
+    reducer::{reduce_outer_wwd, OuterWwdEvent},
     schema::MetadosisContract,
 };
 
@@ -166,32 +166,6 @@ fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
     }
 }
 
-pub(crate) fn result_vote_worldwide_day(
-    storage: StorageHandle<'_>,
-    data: &[u8],
-) -> Result<Option<outbe_common::WorldwideDay>> {
-    let limits = super::schema::poc_schema_limits();
-    let vote_bytes = match preflight_result_vote_calldata(data, &limits) {
-        Ok(bytes) => bytes,
-        Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let vote = match ResultVoteV1::decode_canonical(vote_bytes, &limits) {
-        Ok(vote) => vote,
-        Err(_) => return Ok(None),
-    };
-    let contract = MetadosisContract::new(storage.clone());
-    let Some(window) = contract.response_window_for_job(vote.job_id)? else {
-        return Ok(None);
-    };
-    let Some(record) = contract.ocomp_job_record(window.intent_id, &limits)? else {
-        return Err(storage_corruption_message(
-            "OCOMP response index points to a missing job",
-        ));
-    };
-    Ok(Some(outbe_common::WorldwideDay::new(record.intent.wwd)))
-}
-
 #[must_use]
 pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
@@ -238,7 +212,7 @@ pub fn resolve_historical_result_vote_participant(
             || finalized.deadline_height != response.deadline_height
             || !matches!(
                 record.status,
-                OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
+                OcompJobStatus::VotingOpen | OcompJobStatus::Completed
             )
         {
             return Err(storage_corruption_message(
@@ -410,7 +384,7 @@ impl MetadosisContract<'_> {
             }
             if !matches!(
                 record.status,
-                OcompJobStatus::VotingOpen | OcompJobStatus::Completed | OcompJobStatus::Conflicted
+                OcompJobStatus::VotingOpen | OcompJobStatus::Completed
             ) {
                 return Err(reject(
                     "OCOMP result vote requires an open or quorum-certified job",
@@ -502,18 +476,10 @@ impl MetadosisContract<'_> {
                     })?;
                     let completed_transition =
                         reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompCompleted)?;
-                    let conflict_transition = reduce_outer_wwd(
-                        Some(outer),
-                        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
-                    )?;
-                    let conflict_exhausted_transition =
-                        reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompAttemptsExhausted)?;
                     let apply_context = super::activation::QuorumApplyContext::new(
                         &storage,
                         scope,
                         &completed_transition,
-                        &conflict_transition,
-                        &conflict_exhausted_transition,
                         inclusion_height,
                         current_time,
                         limits,
@@ -534,14 +500,12 @@ impl MetadosisContract<'_> {
                         .ok_or_else(|| {
                             storage_corruption_message("OCOMP q-forming apply removed the job")
                         })?;
-                    if !matches!(
-                        applied.status,
-                        OcompJobStatus::Completed | OcompJobStatus::Conflicted
-                    ) || applied
-                        .finalized
-                        .as_ref()
-                        .and_then(|finalized| finalized.quorum.as_ref())
-                        != Some(formed)
+                    if !matches!(applied.status, OcompJobStatus::Completed)
+                        || applied
+                            .finalized
+                            .as_ref()
+                            .and_then(|finalized| finalized.quorum.as_ref())
+                            != Some(formed)
                     {
                         return Err(storage_corruption_message(
                             "OCOMP q-forming apply did not commit terminal quorum state",
@@ -573,11 +537,6 @@ impl MetadosisContract<'_> {
             };
             if at_height < key.deadline_height {
                 return Ok(ResponseWindowCloseReport::not_due());
-            }
-            if at_height > key.deadline_height {
-                return Err(storage_corruption_message(
-                    "OCOMP lifecycle skipped the exact response deadline",
-                ));
             }
             let record = self
                 .ocomp_job_record(key.intent_id, limits)?
@@ -708,9 +667,7 @@ impl MetadosisContract<'_> {
                         intent_id: key.intent_id,
                     }
                 }
-                OcompJobStatus::Completed | OcompJobStatus::Conflicted
-                    if finalized.quorum.is_some() =>
-                {
+                OcompJobStatus::Completed if finalized.quorum.is_some() => {
                     ResponseWindowCloseV1::QuorumPreserved {
                         intent_id: key.intent_id,
                     }

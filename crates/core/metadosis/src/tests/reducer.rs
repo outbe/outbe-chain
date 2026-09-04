@@ -73,29 +73,17 @@ fn outer_reducer_accepts_ocomp_request_only_from_ready() {
 
 #[test]
 fn outer_reducer_maps_only_typed_ocomp_terminal_signals() {
-    use crate::reducer::OcompRetryCause;
-
     let pending = projection(WwdStatus::OffchainPending);
     for (event, expected_kind, target) in [
         (
-            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
-            OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Expired),
-            WwdStatus::Ready,
-        ),
-        (
-            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
-            OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Conflicted),
-            WwdStatus::Ready,
+            OuterWwdEvent::OcompExpired,
+            OuterWwdTransitionKind::OcompExpired,
+            WwdStatus::Failed,
         ),
         (
             OuterWwdEvent::OcompCompleted,
             OuterWwdTransitionKind::OcompCompleted,
             WwdStatus::Completed,
-        ),
-        (
-            OuterWwdEvent::OcompAttemptsExhausted,
-            OuterWwdTransitionKind::OcompAttemptsExhausted,
-            WwdStatus::Failed,
         ),
     ] {
         let transition = reduce_outer_wwd(Some(&pending), event).unwrap();
@@ -113,11 +101,7 @@ fn outer_reducer_maps_only_typed_ocomp_terminal_signals() {
         WwdStatus::Completed,
         WwdStatus::Failed,
     ] {
-        for event in [
-            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
-            OuterWwdEvent::OcompCompleted,
-            OuterWwdEvent::OcompAttemptsExhausted,
-        ] {
+        for event in [OuterWwdEvent::OcompExpired, OuterWwdEvent::OcompCompleted] {
             assert!(
                 reduce_outer_wwd(Some(&projection(status)), event).is_err(),
                 "{status:?} accepted {event:?}"
@@ -301,8 +285,6 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
 
 #[test]
 fn outer_wwd_state_event_matrix_is_exhaustive() {
-    use crate::reducer::OcompRetryCause;
-
     let statuses = [
         WwdStatus::Forming,
         WwdStatus::LookbackDelay,
@@ -326,10 +308,8 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
         OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroGratisAllocation),
         OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
         OuterWwdEvent::OcompRequestCommitted,
-        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
-        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
+        OuterWwdEvent::OcompExpired,
         OuterWwdEvent::OcompCompleted,
-        OuterWwdEvent::OcompAttemptsExhausted,
         OuterWwdEvent::EmergencyFail,
     ];
 
@@ -389,8 +369,6 @@ fn expected_transition_at_process_time(
     status: WwdStatus,
     event: OuterWwdEvent,
 ) -> Option<(WwdStatus, WwdMembership, OuterWwdTransitionKind)> {
-    use crate::reducer::OcompRetryCause;
-
     let (target, kind) = match event {
         OuterWwdEvent::CreateDay => (status, OuterWwdTransitionKind::Noop),
         OuterWwdEvent::AdvanceDue { .. } => match status {
@@ -429,17 +407,12 @@ fn expected_transition_at_process_time(
             WwdStatus::OffchainPending,
             OuterWwdTransitionKind::OcompRequestCommitted,
         ),
-        OuterWwdEvent::OcompRetryScheduled(cause) if status == WwdStatus::OffchainPending => (
-            WwdStatus::Ready,
-            OuterWwdTransitionKind::OcompRetryScheduled(cause),
-        ),
+        OuterWwdEvent::OcompExpired if status == WwdStatus::OffchainPending => {
+            (WwdStatus::Failed, OuterWwdTransitionKind::OcompExpired)
+        }
         OuterWwdEvent::OcompCompleted if status == WwdStatus::OffchainPending => {
             (WwdStatus::Completed, OuterWwdTransitionKind::OcompCompleted)
         }
-        OuterWwdEvent::OcompAttemptsExhausted if status == WwdStatus::OffchainPending => (
-            WwdStatus::Failed,
-            OuterWwdTransitionKind::OcompAttemptsExhausted,
-        ),
         OuterWwdEvent::EmergencyFail if !status.is_terminal() => {
             (WwdStatus::Failed, OuterWwdTransitionKind::EmergencyFail)
         }
@@ -448,10 +421,8 @@ fn expected_transition_at_process_time(
         }
         OuterWwdEvent::ProcessReady(_)
         | OuterWwdEvent::OcompRequestCommitted
-        | OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired)
-        | OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted)
+        | OuterWwdEvent::OcompExpired
         | OuterWwdEvent::OcompCompleted
-        | OuterWwdEvent::OcompAttemptsExhausted
         | OuterWwdEvent::EmergencyFail => return None,
     };
     let membership = if target.is_terminal() {

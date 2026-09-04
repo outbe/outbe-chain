@@ -100,8 +100,6 @@ interface IMetadosis {
     event OffchainJobExpired(
         bytes32 indexed intentId,
         uint32 indexed wwd,
-        uint64 oldPendingNonce,
-        uint64 nextPendingNonce,
         uint64 expiredAtHeight
     );
 
@@ -112,15 +110,6 @@ interface IMetadosis {
         uint256 slashedBonded,
         uint64 recoveryDeadline,
         bool firstInWindow
-    );
-
-    event OffchainJobConflicted(
-        bytes32 indexed intentId,
-        bytes32 indexed jobId,
-        uint32 attempt,
-        uint64 oldPendingNonce,
-        uint64 nextPendingNonce,
-        bytes32 resultDigest
     );
 
     event LysisActivated(

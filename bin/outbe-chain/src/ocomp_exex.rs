@@ -287,12 +287,8 @@ fn classify_canonical_job(
             reason: EmbeddedTerminalReasonV1::Expired,
             has_finalized_job,
         },
-        OcompJobStatus::Conflicted => CanonicalJobDispositionV1::Closed {
-            reason: EmbeddedTerminalReasonV1::Conflicted,
-            has_finalized_job,
-        },
-        OcompJobStatus::Canceled => CanonicalJobDispositionV1::Closed {
-            reason: EmbeddedTerminalReasonV1::Canceled,
+        OcompJobStatus::Failed => CanonicalJobDispositionV1::Closed {
+            reason: EmbeddedTerminalReasonV1::Failed,
             has_finalized_job,
         },
         OcompJobStatus::VotingOpen | OcompJobStatus::Completed => {
@@ -2655,11 +2651,7 @@ mod tests {
         );
         for (status, reason) in [
             (OcompJobStatus::Expired, EmbeddedTerminalReasonV1::Expired),
-            (
-                OcompJobStatus::Conflicted,
-                EmbeddedTerminalReasonV1::Conflicted,
-            ),
-            (OcompJobStatus::Canceled, EmbeddedTerminalReasonV1::Canceled),
+            (OcompJobStatus::Failed, EmbeddedTerminalReasonV1::Failed),
         ] {
             for has_finalized_job in [false, true] {
                 assert_eq!(
@@ -2719,7 +2711,7 @@ mod tests {
         assert!(request_projection_is_closed(
             true,
             Some(EmbeddedJobStateV1::Closed),
-            Some(EmbeddedTerminalReasonV1::Canceled),
+            Some(EmbeddedTerminalReasonV1::Failed),
         ));
     }
 
@@ -2729,11 +2721,7 @@ mod tests {
             released_export_authority_for_status(OcompJobStatus::Expired, None).unwrap(),
             None
         );
-        for status in [
-            OcompJobStatus::Completed,
-            OcompJobStatus::Conflicted,
-            OcompJobStatus::Canceled,
-        ] {
+        for status in [OcompJobStatus::Completed, OcompJobStatus::Failed] {
             assert!(released_export_authority_for_status(status, None).is_err());
         }
     }
@@ -2770,11 +2758,7 @@ mod tests {
                 has_finalized_job: true,
             },
             CanonicalJobDispositionV1::Closed {
-                reason: EmbeddedTerminalReasonV1::Conflicted,
-                has_finalized_job: true,
-            },
-            CanonicalJobDispositionV1::Closed {
-                reason: EmbeddedTerminalReasonV1::Canceled,
+                reason: EmbeddedTerminalReasonV1::Failed,
                 has_finalized_job: true,
             },
         ] {

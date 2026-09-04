@@ -20,14 +20,6 @@ pub enum MetadosisError {
     )]
     InvalidOcompBudgetSplit { day_limit: U256, lysis_budget: U256 },
 
-    #[error(
-        "existing OCOMP request budget effect nonce {effect_nonce} is ahead of current nonce {current_nonce}"
-    )]
-    OcompBudgetEffectFromFuture {
-        effect_nonce: u64,
-        current_nonce: u64,
-    },
-
     #[error("existing OCOMP request budget receipt does not match the immutable day split")]
     OcompBudgetReceiptMismatch,
 
@@ -77,8 +69,7 @@ impl From<MetadosisError> for PrecompileError {
             | MetadosisError::VwapMustBeNonZero
             | MetadosisError::InvalidOcompBudgetSplit { .. }
             | MetadosisError::OcompDesisBriefHashMismatch => business_failure(message),
-            MetadosisError::OcompBudgetEffectFromFuture { .. }
-            | MetadosisError::OcompBudgetReceiptMismatch
+            MetadosisError::OcompBudgetReceiptMismatch
             | MetadosisError::OcompPreAdmissionNotInitialized { .. }
             | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
             | MetadosisError::OcompPreAdmissionWwdMismatch { .. }
@@ -138,6 +129,7 @@ pub(crate) mod activation_rejection_code {
     pub const COMMITTEE_SNAPSHOT_INVALID: u16 = 10;
     pub const RESULT_DIGEST_MISMATCH: u16 = 12;
     pub const RESULT_STRUCTURE_INVALID: u16 = 13;
+    pub const ACTIVATION_PRECONDITIONS_CHANGED: u16 = 14;
 }
 
 pub(crate) mod vote_rejection_code {
@@ -152,17 +144,6 @@ pub(crate) mod vote_rejection_code {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn future_budget_effect_is_fatal() {
-        let error: PrecompileError = MetadosisError::OcompBudgetEffectFromFuture {
-            effect_nonce: 2,
-            current_nonce: 1,
-        }
-        .into();
-
-        assert!(matches!(error, PrecompileError::Fatal(_)));
-    }
 
     #[test]
     fn durable_invariant_errors_are_fatal() {

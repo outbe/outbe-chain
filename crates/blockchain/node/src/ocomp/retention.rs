@@ -899,29 +899,36 @@ fn terminal_height_from_record(
     }
     match record.status {
         OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
-        OcompJobStatus::Completed
-        | OcompJobStatus::Expired
-        | OcompJobStatus::Conflicted
-        | OcompJobStatus::Canceled => {
-            let finalized = record.finalized.as_ref().ok_or_else(|| {
-                RetentionError::Source("terminal Job is missing finalized binding".to_owned())
-            })?;
+        OcompJobStatus::Completed | OcompJobStatus::Expired | OcompJobStatus::Failed => {
             let terminal = record.terminal.as_ref().ok_or_else(|| {
                 RetentionError::Source("terminal Job is missing terminal record".to_owned())
             })?;
-            if finalized.job_id != job_id
-                || finalized.finalized_request_block_hash != candidate.block_hash
-                || finalized.finalized_request_state_root != candidate.state_root
-                || terminal.terminal_height > observed_height
-            {
+            if terminal.terminal_height > observed_height {
                 return Err(RetentionError::Source(
                     "terminal Job binding differs from retained finalized Job".to_owned(),
                 ));
             }
+            let deadline_height = if let Some(finalized) = record.finalized.as_ref() {
+                if finalized.job_id != job_id
+                    || finalized.finalized_request_block_hash != candidate.block_hash
+                    || finalized.finalized_request_state_root != candidate.state_root
+                {
+                    return Err(RetentionError::Source(
+                        "terminal Job binding differs from retained finalized Job".to_owned(),
+                    ));
+                }
+                finalized.deadline_height
+            } else if record.status == OcompJobStatus::Completed {
+                return Err(RetentionError::Source(
+                    "completed Job is missing finalized binding".to_owned(),
+                ));
+            } else {
+                terminal.terminal_height
+            };
             retention_terminal_height_for_status(
                 record.status,
                 observed_height,
-                finalized.deadline_height,
+                deadline_height,
                 terminal.terminal_height,
             )
         }
@@ -3913,7 +3920,7 @@ pub(super) fn retention_terminal_height_for_status(
 ) -> Result<Option<u64>, RetentionError> {
     match status {
         OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
-        OcompJobStatus::Completed | OcompJobStatus::Conflicted => {
+        OcompJobStatus::Completed => {
             if terminal_height >= deadline_height {
                 return Err(RetentionError::Source(
                     "OCOMP quorum terminal height is outside its response window".to_owned(),
@@ -3921,7 +3928,7 @@ pub(super) fn retention_terminal_height_for_status(
             }
             Ok((observed_height >= deadline_height).then_some(deadline_height))
         }
-        OcompJobStatus::Expired | OcompJobStatus::Canceled => Ok(Some(terminal_height)),
+        OcompJobStatus::Expired | OcompJobStatus::Failed => Ok(Some(terminal_height)),
     }
 }
 

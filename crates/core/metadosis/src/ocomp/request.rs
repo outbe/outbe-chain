@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
@@ -19,10 +19,7 @@ use crate::{
     aggregate::WwdDayType,
     commit::plan_outer_transition,
     errors::storage_corruption_message,
-    ocomp_budget::{
-        apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
-        RequestBudgetEffect, RequestBudgetSplit,
-    },
+    ocomp_budget::{apply_fresh_request_budget_effect, RequestBudgetEffect, RequestBudgetSplit},
     pre_admission::{
         evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionInputs,
     },
@@ -33,7 +30,6 @@ use crate::{
 
 use super::{
     authority::current_ocomp_attempt_snapshot,
-    profile::OcompRequestProfileExt,
     schema::{poc_schema_limits, OcompRequestProfile},
     state::RequestEffectMode,
 };
@@ -69,12 +65,6 @@ enum TerminalRootSource {
     CompletedFixture,
 }
 
-#[derive(Clone, Copy)]
-enum RequestCommitKind {
-    Fresh,
-    Retry { predecessor_intent_id: B256 },
-}
-
 /// Executes the bounded end-zone request transition against the executor-owned
 /// provisional CE seal while the scope remains active for failure retirement.
 pub fn run_terminal_request(ctx: &BlockRuntimeContext<'_>, scope: &ExecutionScope) -> Result<()> {
@@ -97,10 +87,10 @@ pub(crate) fn due_ready_worldwide_day(
 ) -> Result<Option<WorldwideDay>> {
     let limits = poc_schema_limits();
     let metadosis = MetadosisContract::new(ctx.storage.clone());
-    let Some(profile) = metadosis.read_ocomp_request_profile(&limits)? else {
+    let Some(_profile) = metadosis.read_ocomp_request_profile(&limits)? else {
         return Ok(None);
     };
-    let Some(projection) = metadosis.next_ocomp_ready(&limits, profile.fsm_limits())? else {
+    let Some(projection) = metadosis.next_ocomp_ready(&limits)? else {
         return Ok(None);
     };
     Ok(projection
@@ -119,8 +109,7 @@ fn run_terminal_request_inner(
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(TerminalRequestOutcome::Inactive);
     };
-    let fsm_limits = profile.fsm_limits();
-    let Some(projection) = metadosis.next_ocomp_ready(&schema_limits, fsm_limits)? else {
+    let Some(projection) = metadosis.next_ocomp_ready(&schema_limits)? else {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     };
     let due_height = projection
@@ -129,9 +118,9 @@ fn run_terminal_request_inner(
     if ctx.block.block_number < due_height {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     }
-    if projection.terminal_records >= fsm_limits.max_terminal_records {
+    if projection.terminal_records != 0 || projection.pending_nonce != 0 {
         return Err(storage_corruption_message(
-            "OCOMP READY state persisted after its terminal retry cap",
+            "OCOMP READY state contains a prior job attempt",
         ));
     }
     let outer_transition = plan_outer_transition(
@@ -150,13 +139,7 @@ fn run_terminal_request_inner(
         roots,
     };
 
-    (|| {
-        if let Some(retained_lysis_budget) = projection.retained_lysis_budget {
-            return build_and_commit_retry(&mut metadosis, &request, retained_lysis_budget);
-        }
-        let outcome = build_and_commit_request(&mut metadosis, &request)?;
-        Ok(outcome)
-    })()
+    build_and_commit_request(&mut metadosis, &request)
 }
 
 // These are the complete inputs to one atomic terminal-request transition.
@@ -175,7 +158,6 @@ fn build_and_commit_request(
         roots,
     } = *request;
     let schema_limits = poc_schema_limits();
-    let fsm_limits = profile.fsm_limits();
     let exact_collection = roots.tribute;
     let ce_sealed_root = roots.sealed_root;
 
@@ -288,9 +270,9 @@ fn build_and_commit_request(
         logical_anchor: ctx.block.timestamp,
     };
 
-    let state = metadosis.ocomp_fsm_state(wwd, &schema_limits, fsm_limits)?;
+    let state = metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
     let mode = state
-        .request_effect_mode(lysis_budget)
+        .request_effect_mode()
         .map_err(|error| storage_corruption_message(error.to_string()))?;
     let authoritative_receipt = metadosis.request_budget_receipt(wwd, &schema_limits)?;
     let receipt =
@@ -370,176 +352,7 @@ fn build_and_commit_request(
         result_quorum_threshold: result_snapshot.quorum_threshold,
         custody_committee_epoch_hash: None,
     };
-    commit_and_emit_request(
-        metadosis,
-        request,
-        &intent,
-        &receipt,
-        RequestCommitKind::Fresh,
-    )
-}
-
-// A retry additionally carries the retained budget that must be rebound and
-// checked against the terminal record inside the same checkpoint.
-fn build_and_commit_retry(
-    metadosis: &mut MetadosisContract<'_>,
-    request: &TerminalRequestContext<'_, '_>,
-    retained_lysis_budget: U256,
-) -> Result<TerminalRequestOutcome> {
-    let TerminalRequestContext {
-        ctx,
-        profile: _,
-        wwd,
-        pending_nonce,
-        outer_transition: _,
-        roots,
-    } = *request;
-    let schema_limits = poc_schema_limits();
-    let (previous_intent_id, previous) = metadosis
-        .latest_terminal_job_record(wwd, &schema_limits)?
-        .ok_or_else(|| storage_corruption_message("OCOMP retry has no retained terminal job"))?;
-    let pinned_profile = metadosis
-        .read_ocomp_request_profile_for_bundle(
-            previous.intent.protocol_bundle_hash,
-            &schema_limits,
-        )?
-        .ok_or_else(|| storage_corruption_message("OCOMP retry authority is unavailable"))?;
-    let profile = &pinned_profile;
-    let terminal = previous
-        .terminal
-        .as_ref()
-        .ok_or_else(|| storage_corruption_message("OCOMP retry source has no terminal evidence"))?;
-    super::classify_retained_terminal(
-        previous.status,
-        terminal.outcome,
-        terminal.completed_binding.is_some(),
-    )?;
-    if terminal.next_pending_nonce != Some(pending_nonce)
-        || previous.intent.wwd != wwd.value()
-        || previous.intent.protocol_bundle_hash != profile.protocol_bundle_hash
-        || previous.intent.chain_id != profile.chain_id
-        || previous.intent.genesis_hash != profile.genesis_hash
-        || previous.intent.fork_id != profile.fork_id
-        || previous.intent.source_availability_policy_id != profile.source_availability_policy_id
-        || previous.intent.frozen_metadosis_values.lysis_budget != retained_lysis_budget
-    {
-        return Err(storage_corruption_message(
-            "OCOMP retry source binding is inconsistent",
-        ));
-    }
-
-    let exact_collection = roots.tribute;
-    let tribute = TributeContract::new(ctx.storage.clone()).pre_admission_projection(wwd)?;
-    let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
-    let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
-    if !tribute.is_sealed
-        || tribute.sealed_collection_root != exact_collection.root()
-        || tribute.sealed_collection_root != previous.intent.sealed_tribute_collection_root
-        || tribute.tribute_count != previous.intent.authenticated_day_count
-        || tribute.tribute_nominal_amount != previous.intent.authenticated_day_nominal
-        || tribute.source_generation
-            != previous
-                .intent
-                .activation_preconditions
-                .tribute
-                .source_generation
-        || nod_target.target_generation
-            != previous
-                .intent
-                .activation_preconditions
-                .nod
-                .target_generation
-        || nod_target.namespace_root_before
-            != previous
-                .intent
-                .activation_preconditions
-                .nod
-                .namespace_root_before
-        || contributor_target.expected_series_version
-            != previous
-                .intent
-                .activation_preconditions
-                .contributors
-                .expected_series_version
-    {
-        return Err(storage_corruption_message(
-            "OCOMP retry changed a frozen owner precondition",
-        ));
-    }
-    let envelope = metadosis
-        .read_pre_admission_envelope(wwd, &schema_limits)?
-        .ok_or_else(|| {
-            storage_corruption_message("OCOMP retry has no retained pre-admission envelope")
-        })?;
-    let envelope_hash = envelope.envelope_hash(&schema_limits).map_err(|error| {
-        storage_corruption_message(format!("hash retained OCOMP envelope: {error}"))
-    })?;
-    let envelope_projection = metadosis.ocomp_pre_admission_projection(wwd)?;
-    if envelope_hash != previous.intent.pre_admission_envelope_hash
-        || envelope_projection.envelope_hash != envelope_hash
-        || envelope_projection.state_version
-            != previous
-                .intent
-                .activation_preconditions
-                .metadosis
-                .state_version
-    {
-        return Err(storage_corruption_message(
-            "OCOMP retry envelope binding is inconsistent",
-        ));
-    }
-    let receipt = metadosis
-        .request_budget_receipt(wwd, &schema_limits)?
-        .ok_or_else(|| {
-            storage_corruption_message("OCOMP retry has no authoritative budget receipt")
-        })?;
-    let old_frozen = &previous.intent.frozen_metadosis_values;
-    let effect = RequestBudgetEffect {
-        protocol_bundle_hash: profile.protocol_bundle_hash,
-        wwd: wwd.value(),
-        pending_nonce,
-        day_type: old_frozen.day_type,
-        day_limit: old_frozen.day_limit,
-        lysis_budget: old_frozen.lysis_budget,
-        nominal_total: previous.intent.authenticated_day_nominal,
-        auction_entry_prices: old_frozen.auction_entry_prices.clone(),
-        logical_anchor: receipt.logical_anchor,
-    };
-    let receipt = validate_replayed_request_budget_effect(effect, &receipt)?;
-    let receipt_hash = receipt.receipt_hash(&schema_limits).map_err(|error| {
-        storage_corruption_message(format!("hash retained OCOMP request receipt: {error}"))
-    })?;
-    if receipt_hash != old_frozen.request_budget_split_receipt_hash {
-        return Err(storage_corruption_message(
-            "OCOMP retry request receipt hash changed",
-        ));
-    }
-
-    let attempt = u32::try_from(pending_nonce)
-        .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
-    let mut intent = previous.intent;
-    intent.pending_nonce = pending_nonce;
-    intent.attempt = attempt;
-    intent.ce_sealed_root = roots.sealed_root;
-    intent.logical_evaluation_height = ctx.block.block_number;
-    intent.logical_evaluation_time = ctx.block.timestamp;
-    intent.activation_preconditions.metadosis.pending_nonce = pending_nonce;
-    let result_snapshot = current_ocomp_attempt_snapshot(ctx.storage.clone())?;
-    intent.result_validator_set_epoch = result_snapshot.validator_set_epoch;
-    intent.result_committee_set_hash = result_snapshot.committee_set_hash;
-    intent.result_ocomp_binding_hash = result_snapshot.ocomp_binding_hash;
-    intent.result_member_count = result_snapshot.member_count;
-    intent.result_quorum_threshold = result_snapshot.quorum_threshold;
-    commit_and_emit_request(
-        metadosis,
-        request,
-        &intent,
-        &receipt,
-        RequestCommitKind::Retry {
-            predecessor_intent_id: previous_intent_id,
-        },
-    )
+    commit_and_emit_request(metadosis, request, &intent, &receipt)
 }
 
 fn commit_and_emit_request(
@@ -547,70 +360,27 @@ fn commit_and_emit_request(
     request: &TerminalRequestContext<'_, '_>,
     intent: &JobIntentV1,
     receipt: &RequestBudgetSplitReceiptV1,
-    kind: RequestCommitKind,
 ) -> Result<TerminalRequestOutcome> {
     let schema_limits = poc_schema_limits();
-    let intent_id = intent.intent_id(&schema_limits).map_err(|error| {
-        let operation = match kind {
-            RequestCommitKind::Fresh => "hash OCOMP intent",
-            RequestCommitKind::Retry { .. } => "hash OCOMP retry intent",
-        };
-        storage_corruption_message(format!("{operation}: {error}"))
-    })?;
+    let intent_id = intent
+        .intent_id(&schema_limits)
+        .map_err(|error| storage_corruption_message(format!("hash OCOMP intent: {error}")))?;
     let activation_preconditions_hash = intent
         .activation_preconditions
         .activation_preconditions_hash(&schema_limits)
         .map_err(|error| {
-            let operation = match kind {
-                RequestCommitKind::Fresh => "hash OCOMP activation preconditions",
-                RequestCommitKind::Retry { .. } => "hash OCOMP retry preconditions",
-            };
-            storage_corruption_message(format!("{operation}: {error}"))
+            storage_corruption_message(format!("hash OCOMP activation preconditions: {error}"))
         })?;
 
     request.ctx.with_checkpoint(|| {
         let mut registry = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone());
-        let mut release_predecessor = None;
         if registry.active_authority(&schema_limits)?.is_some() {
-            let (pinned_bundle, predecessor_to_release) = match kind {
-                RequestCommitKind::Fresh => {
-                    (registry.pin_lineage(intent_id, &schema_limits)?, None)
-                }
-                RequestCommitKind::Retry {
-                    predecessor_intent_id,
-                } => {
-                    #[cfg(any(test, feature = "test-utils"))]
-                    if registry.resolve_lineage(predecessor_intent_id)?.is_none() {
-                        (registry.pin_lineage(intent_id, &schema_limits)?, None)
-                    } else {
-                        (
-                            registry.pin_inherited_lineage(
-                                intent_id,
-                                predecessor_intent_id,
-                                &schema_limits,
-                            )?,
-                            Some(predecessor_intent_id),
-                        )
-                    }
-                    #[cfg(not(any(test, feature = "test-utils")))]
-                    {
-                        (
-                            registry.pin_inherited_lineage(
-                                intent_id,
-                                predecessor_intent_id,
-                                &schema_limits,
-                            )?,
-                            Some(predecessor_intent_id),
-                        )
-                    }
-                }
-            };
+            let pinned_bundle = registry.pin_lineage(intent_id, &schema_limits)?;
             if pinned_bundle != intent.protocol_bundle_hash {
                 return Err(storage_corruption_message(
                     "OCOMP intent bundle differs from its Registry lineage pin",
                 ));
             }
-            release_predecessor = predecessor_to_release;
         }
 
         metadosis.commit_ocomp_request(
@@ -618,20 +388,7 @@ fn commit_and_emit_request(
             intent,
             receipt,
             &schema_limits,
-            request.profile.fsm_limits(),
         )?;
-        if let Some(predecessor_intent_id) = release_predecessor {
-            let released = registry.release_lineage(
-                predecessor_intent_id,
-                request.ctx.block.block_number,
-                &schema_limits,
-            )?;
-            if !released {
-                return Err(storage_corruption_message(
-                    "OCOMP retry predecessor lineage was not pinned",
-                ));
-            }
-        }
         metadosis.emit(IMetadosis::OffchainJobRequested {
             intentId: intent_id,
             wwd: request.wwd.value(),
@@ -681,11 +438,6 @@ fn apply_or_validate_budget_effect(
         {
             apply_fresh_request_budget_effect(ctx.storage.clone(), effect)
         }
-        (RequestEffectMode::Replay { effect_nonce }, Some(existing))
-            if existing.pending_nonce == effect_nonce =>
-        {
-            validate_replayed_request_budget_effect(effect, existing)
-        }
         _ => Err(storage_corruption_message(
             "authoritative OCOMP receipt disagrees with request effect mode",
         )),
@@ -699,15 +451,9 @@ fn defer_ready(
     profile: &OcompRequestProfile,
 ) -> Result<()> {
     let next_check_height = at_height
-        .checked_add(profile.capacity_profile.retry_backoff_blocks)
+        .checked_add(profile.capacity_profile.ready_backoff_blocks)
         .ok_or_else(|| storage_corruption_message("OCOMP deferred height overflow"))?;
-    metadosis.defer_ocomp_ready(
-        wwd,
-        at_height,
-        next_check_height,
-        &poc_schema_limits(),
-        profile.fsm_limits(),
-    )
+    metadosis.defer_ocomp_ready(wwd, at_height, next_check_height, &poc_schema_limits())
 }
 
 fn protocol_day_type(value: WwdDayType) -> Result<DayType> {

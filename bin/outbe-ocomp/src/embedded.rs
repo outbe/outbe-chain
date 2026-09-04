@@ -30,8 +30,7 @@ impl EmbeddedJobGenerationV1 {
 pub enum EmbeddedTerminalReasonV1 {
     Completed,
     Expired,
-    Conflicted,
-    Canceled,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -336,9 +335,7 @@ impl EmbeddedOcompJobsV1 {
                             job.state != EmbeddedJobStateV1::Verified
                         }
                         Some(
-                            EmbeddedTerminalReasonV1::Expired
-                            | EmbeddedTerminalReasonV1::Conflicted
-                            | EmbeddedTerminalReasonV1::Canceled,
+                            EmbeddedTerminalReasonV1::Expired | EmbeddedTerminalReasonV1::Failed,
                         ) => false,
                     }
             })
@@ -370,11 +367,7 @@ fn reduce_local_completed(
     }
     if matches!(
         job.terminal_reason,
-        Some(
-            EmbeddedTerminalReasonV1::Expired
-                | EmbeddedTerminalReasonV1::Conflicted
-                | EmbeddedTerminalReasonV1::Canceled
-        )
+        Some(EmbeddedTerminalReasonV1::Expired | EmbeddedTerminalReasonV1::Failed)
     ) {
         return Ok(EmbeddedJobActionV1::ProtocolOwned);
     }

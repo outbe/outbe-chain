@@ -384,8 +384,8 @@ fn production_intent(block_number: u64) -> JobIntentV1 {
         genesis_hash: B256::repeat_byte(1),
         fork_id: B256::repeat_byte(2),
         wwd: 7,
-        pending_nonce: 1,
-        attempt: 1,
+        pending_nonce: 0,
+        attempt: 0,
         protocol_bundle_hash: B256::repeat_byte(3),
         ce_sealed_root: B256::repeat_byte(4),
         sealed_tribute_collection_key: B256::repeat_byte(5),
@@ -436,7 +436,7 @@ fn production_intent(block_number: u64) -> JobIntentV1 {
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: 7,
-                pending_nonce: 1,
+                pending_nonce: 0,
                 expected_status: MetadosisExpectedStatus::OffchainPending,
                 state_version: 1,
             },
@@ -448,6 +448,14 @@ fn production_intent(block_number: u64) -> JobIntentV1 {
         result_quorum_threshold: 3,
         custody_committee_epoch_hash: None,
     }
+}
+
+fn rebind_intent_worldwide_day(intent: &mut JobIntentV1, worldwide_day: u32) {
+    intent.wwd = worldwide_day;
+    intent.activation_preconditions.tribute.wwd = worldwide_day;
+    intent.activation_preconditions.nod.wwd = worldwide_day;
+    intent.activation_preconditions.contributors.worldwide_day = worldwide_day;
+    intent.activation_preconditions.metadosis.wwd = worldwide_day;
 }
 
 fn encoded_storage_slots(logical_key: B256, encoded: &[u8]) -> Vec<(B256, U256)> {
@@ -1185,9 +1193,7 @@ fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
         .expect("fixture JobId");
 
     let mut different = intended;
-    different.pending_nonce += 1;
-    different.attempt += 1;
-    different.activation_preconditions.metadosis.pending_nonce = different.pending_nonce;
+    rebind_intent_worldwide_day(&mut different, 8);
     let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
     let source = Arc::new(ProofReturningSource {
         inner: inner.clone(),
@@ -2960,16 +2966,16 @@ fn ocm_pin_001_poisoned_gc_work_observes_its_own_backoff_while_healthy_work_prog
 }
 
 #[test]
-fn ocm_pin_001_retained_predecessor_does_not_block_a_retry_job() {
+fn ocm_pin_001_retained_predecessor_does_not_block_a_later_independent_job() {
     let first_request = block(151, B256::repeat_byte(0x31), 1);
-    let retry_request = block(221, B256::repeat_byte(0x32), 2);
+    let later_request = block(221, B256::repeat_byte(0x32), 2);
     let first_candidate = candidate(&first_request, B256::repeat_byte(0x41));
-    let retry_candidate = candidate(&retry_request, B256::repeat_byte(0x42));
+    let later_candidate = candidate(&later_request, B256::repeat_byte(0x42));
     let first_job_id = B256::repeat_byte(0x51);
-    let retry_job_id = B256::repeat_byte(0x52);
+    let later_job_id = B256::repeat_byte(0x52);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (first_candidate, first_job_id),
-        (retry_candidate, retry_job_id),
+        (later_candidate, later_job_id),
     ]));
     let root = tempfile::tempdir().expect("multi-job journal root");
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
@@ -2994,12 +3000,12 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_retry_job() {
     assert_eq!(first_terminal.generation, 4);
 
     assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &retry_request),
+        DeterministicConsensusDriver::vote(&coordinator, &later_request),
         VoteOutcome::Positive,
         "a retained predecessor must not be a global OCOMP lock"
     );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &retry_request);
-    assert!(coordinator.is_exportable(retry_job_id));
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &later_request);
+    assert!(coordinator.is_exportable(later_job_id));
     assert_eq!(
         coordinator
             .observe_terminal(first_job_id, first_terminal.generation, 219)
@@ -3009,7 +3015,7 @@ fn ocm_pin_001_retained_predecessor_does_not_block_a_retry_job() {
     drop(coordinator);
 
     let restarted = OcompRetentionCoordinator::open(root.path(), source);
-    assert!(restarted.is_exportable(retry_job_id));
+    assert!(restarted.is_exportable(later_job_id));
     assert_eq!(
         restarted
             .observe_terminal(first_job_id, first_terminal.generation, 219)
@@ -3307,12 +3313,7 @@ fn ocm_pin_001_exported_record_reloads_every_live_export_by_job_id() {
     let second_request = block(221, B256::repeat_byte(0x32), 2);
     let first_intent = production_intent(first_request.number());
     let mut second_intent = production_intent(second_request.number());
-    second_intent.pending_nonce = 2;
-    second_intent.attempt = 2;
-    second_intent
-        .activation_preconditions
-        .metadosis
-        .pending_nonce = 2;
+    rebind_intent_worldwide_day(&mut second_intent, 8);
 
     let make_candidate = |request: &ConsensusBlock, intent: &JobIntentV1| {
         let intent_id = intent.intent_id(&limits).expect("fixture IntentId");
@@ -3569,8 +3570,8 @@ fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() 
 }
 
 #[test]
-fn ocm_pin_001_quorum_status_is_not_retention_terminal_before_response_deadline() {
-    for status in [OcompJobStatus::Completed, OcompJobStatus::Conflicted] {
+fn ocm_pin_001_completed_status_is_not_retention_terminal_before_response_deadline() {
+    for status in [OcompJobStatus::Completed] {
         assert_eq!(
             retention_terminal_height_for_status(status, 160, 165, 160).unwrap(),
             None,
@@ -3646,18 +3647,18 @@ fn ocm_pin_001_restart_keeps_quorum_complete_export_live_until_deadline() {
 #[test]
 fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
     let first_request = block(151, B256::repeat_byte(0x33), 3);
-    let retry_request = block(221, B256::repeat_byte(0x34), 4);
+    let later_request = block(221, B256::repeat_byte(0x34), 4);
     let first_candidate = candidate(&first_request, B256::repeat_byte(0x43));
-    let retry_candidate = candidate(&retry_request, B256::repeat_byte(0x44));
+    let later_candidate = candidate(&later_request, B256::repeat_byte(0x44));
     assert_eq!(
-        first_candidate.input_lease_id, retry_candidate.input_lease_id,
-        "fixture models a retry over byte-identical authenticated input"
+        first_candidate.input_lease_id, later_candidate.input_lease_id,
+        "fixture models independent journal records sharing one retained input lease"
     );
     let first_job_id = B256::repeat_byte(0x53);
-    let retry_job_id = B256::repeat_byte(0x54);
+    let later_job_id = B256::repeat_byte(0x54);
     let source = Arc::new(DeterministicProofSource::with_jobs([
         (first_candidate, first_job_id),
-        (retry_candidate, retry_job_id),
+        (later_candidate, later_job_id),
     ]));
     let root = tempfile::tempdir().expect("shared-lease journal root");
     let storage = Arc::new(MemoryStorage::default());
@@ -3714,19 +3715,19 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
         .observe_terminal(first_job_id, first_exported.generation, 219)
         .expect("first terminal");
     assert_eq!(
-        DeterministicConsensusDriver::vote(&coordinator, &retry_request),
+        DeterministicConsensusDriver::vote(&coordinator, &later_request),
         VoteOutcome::Positive
     );
-    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &retry_request);
-    let retry_finalized = ready_record(&coordinator);
-    let retry_exported = coordinator
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &later_request);
+    let later_finalized = ready_record(&coordinator);
+    let later_exported = coordinator
         .record_exported(
-            retry_job_id,
-            retry_finalized.generation,
+            later_job_id,
+            later_finalized.generation,
             10,
             B256::repeat_byte(0x92),
         )
-        .expect("retry export");
+        .expect("later independent export");
 
     coordinator
         .release_due(283)
@@ -3739,12 +3740,12 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
             .records
             .len(),
         1,
-        "the predecessor cannot collect input still referenced by its retry"
+        "the predecessor cannot collect input still referenced by another job"
     );
 
     coordinator
-        .observe_terminal(retry_job_id, retry_exported.generation, 300)
-        .expect("retry terminal");
+        .observe_terminal(later_job_id, later_exported.generation, 300)
+        .expect("later independent terminal");
     coordinator
         .release_due(364)
         .expect("last release")

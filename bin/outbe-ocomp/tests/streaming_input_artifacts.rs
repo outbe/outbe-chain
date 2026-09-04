@@ -76,7 +76,7 @@ fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
     let reader = FilesystemCasReader::open(&cas_root, cas_limits).unwrap();
     let identity = InputArtifactIdentity {
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 100,
             finalized_block_hash,
@@ -201,7 +201,7 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
     let day = WorldwideDay::new(20_260_901);
     let identity = InputArtifactIdentity {
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 100,
             finalized_block_hash,
@@ -438,7 +438,7 @@ fn durable_publisher_replays_10000_tributes_without_population_sized_results() {
     let reader = FilesystemCasReader::open(&cas_root, cas_limits).unwrap();
     let identity = InputArtifactIdentity {
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 100,
             finalized_block_hash,
@@ -646,7 +646,7 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
         &bundle,
         InputArtifactIdentity {
             job_id,
-            attempt: 1,
+            attempt: 0,
             checkpoint: CheckpointIdentityV1 {
                 finalized_block_number: 100,
                 finalized_block_hash,
