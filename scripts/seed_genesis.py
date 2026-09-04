@@ -1039,13 +1039,11 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
 #                  GemCostAmount=3 PayNoteDeposit=4
 #   StablesTarget: Unknown=0 Credis=1
 #
-# NodFactory is deliberately absent: a Nod's cost is discharged by spending a
-# PayNote at mine time, and the underlying assets reached the vault through
-# PAYNOTE_ADDRESS when the note was deposited.
+# NodFactory, IntexFactory and GemFactory are deliberately absent: their costs
+# are discharged by spending a PayNote, and the underlying assets reached the
+# vault through PAYNOTE_ADDRESS when the note was deposited.
 VAULT_ROUTER_LIQUIDITY_SOURCES = [
-    (INTEX_FACTORY_ADDRESS, 1),   # IntexCostAmount
     (CREDIS_FACTORY_ADDRESS, 2),  # CredisCostAmount
-    (GEM_FACTORY_ADDRESS, 3),     # GemCostAmount
     (PAYNOTE_ADDRESS, 4),         # PayNoteDeposit
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [

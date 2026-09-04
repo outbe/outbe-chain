@@ -157,9 +157,7 @@ fn settlement_quote_dispatch() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(
-            runtime::settle(&s, sid(7), holder(), holder(), U256::ZERO, &[]).is_err()
-        );
+        assert!(runtime::settle(&s, sid(7), holder(), holder(), U256::ZERO, &[]).is_err());
     });
 }
 
