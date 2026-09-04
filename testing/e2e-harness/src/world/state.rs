@@ -179,8 +179,8 @@ pub struct OcompAgentRewardObservationV1 {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct OcompPublicScenarioEvidenceV1 {
     pub job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub retry_completed_finality: Option<u64>,
+    pub followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    pub followup_completed_finality: Option<u64>,
     pub activation: Option<crate::world::rpc::OcompPublicActivationV1>,
     pub certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
@@ -195,9 +195,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub non_quorum_changed_binding_reverted: Option<bool>,
     pub non_quorum_state_unchanged: Option<bool>,
     pub expired_without_nod: Option<bool>,
-    pub failed_terminal_receipt: Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
-    pub failed_promis_limit: Option<alloy_primitives::U256>,
-    pub failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
+    pub expired_release_had_export: Option<bool>,
     pub held_late_vote_hash: Option<alloy_primitives::B256>,
     pub late_vote_reverted: Option<bool>,
     pub late_vote_inclusion_height: Option<u64>,
@@ -318,10 +316,13 @@ pub struct FixtureState {
     pub ocomp_successor_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Deterministic predecessor retention deadline observed after V1 release.
     pub ocomp_predecessor_retention_until: Option<u64>,
-    /// Finalized automatic successor to an expired public OCOMP request.
-    pub ocomp_retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Finalized height observed after the retry completed and finality advanced.
-    pub ocomp_retry_completed_finality: Option<u64>,
+    /// Finalized request for a later, independent WorldwideDay after a fault recovers.
+    pub ocomp_followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Finalized height observed after that independent job completes.
+    pub ocomp_followup_completed_finality: Option<u64>,
+    /// Whether the released terminal journal record retained an authenticated
+    /// export authority. `false` is the canonical no-ACK exporter-outage path.
+    pub ocomp_expired_release_had_export: Option<bool>,
     /// The two independently scheduled WWDs and processing timestamps used by
     /// the dynamic-membership overlap scenario.
     pub ocomp_dynamic_worldwide_days: Vec<u32>,
@@ -355,12 +356,6 @@ pub struct FixtureState {
     pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
     pub ocomp_non_quorum_state_unchanged: Option<bool>,
     pub ocomp_expired_without_nod: Option<bool>,
-    /// Canonical FAILED outcome captured after the bounded OCOMP attempt budget
-    /// is exhausted. These values are replay assertions, never control input.
-    pub ocomp_failed_terminal_receipt:
-        Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
-    pub ocomp_failed_promis_limit: Option<alloy_primitives::U256>,
-    pub ocomp_failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     /// A locally signed OCOMP transaction held by the deadline scenario until the
     /// exclusive boundary. Raw bytes are never published as scenario evidence.
     pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
@@ -531,8 +526,9 @@ impl Default for FixtureState {
             ocomp_successor_node_pids_after_activation: Vec::new(),
             ocomp_successor_job_request: None,
             ocomp_predecessor_retention_until: None,
-            ocomp_retry_job_request: None,
-            ocomp_retry_completed_finality: None,
+            ocomp_followup_job_request: None,
+            ocomp_followup_completed_finality: None,
+            ocomp_expired_release_had_export: None,
             ocomp_dynamic_worldwide_days: Vec::new(),
             ocomp_dynamic_processing_times: Vec::new(),
             ocomp_dynamic_tribute_tx_hashes: Vec::new(),
@@ -551,9 +547,6 @@ impl Default for FixtureState {
             ocomp_non_quorum_changed_binding_reverted: None,
             ocomp_non_quorum_state_unchanged: None,
             ocomp_expired_without_nod: None,
-            ocomp_failed_terminal_receipt: None,
-            ocomp_failed_promis_limit: None,
-            ocomp_failed_terminal_commitment: None,
             ocomp_held_late_vote_raw: None,
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
@@ -619,8 +612,8 @@ impl FixtureState {
     pub fn ocomp_public_scenario_evidence(&self) -> OcompPublicScenarioEvidenceV1 {
         OcompPublicScenarioEvidenceV1 {
             job_request: self.ocomp_job_request.clone(),
-            retry_job_request: self.ocomp_retry_job_request.clone(),
-            retry_completed_finality: self.ocomp_retry_completed_finality,
+            followup_job_request: self.ocomp_followup_job_request.clone(),
+            followup_completed_finality: self.ocomp_followup_completed_finality,
             activation: self.ocomp_activation.clone(),
             certified_generation: self.ocomp_certified_generation.clone(),
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
@@ -635,9 +628,7 @@ impl FixtureState {
             non_quorum_changed_binding_reverted: self.ocomp_non_quorum_changed_binding_reverted,
             non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
             expired_without_nod: self.ocomp_expired_without_nod,
-            failed_terminal_receipt: self.ocomp_failed_terminal_receipt.clone(),
-            failed_promis_limit: self.ocomp_failed_promis_limit,
-            failed_terminal_commitment: self.ocomp_failed_terminal_commitment.clone(),
+            expired_release_had_export: self.ocomp_expired_release_had_export,
             held_late_vote_hash: self.ocomp_held_late_vote_hash,
             late_vote_reverted: self.ocomp_late_vote_reverted,
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,

@@ -14,6 +14,7 @@ use alloy_primitives::B256;
 use cucumber::{given, then, when};
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_common::WorldwideDay;
+use outbe_node::ocomp::retention::{inspect_retention_journal, PinReleaseReason, PinStateV1};
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     result::{ActiveNodSetV1, LysisResultV1, NodActionV1, NodMembershipProofV1, ResultChunkV1},
@@ -5430,12 +5431,17 @@ fn restart_three_workers_for_quorum(world: &mut World) {
 
 #[then("the no-quorum job expires at its exclusive deadline without creating Nod")]
 fn no_quorum_job_expires_without_nod(world: &mut World) {
-    assert_job_expires_without_nod(world, &[0, 1], 0b0011, 0b1100, "two-vote");
+    assert_job_expires_without_nod(world, &[0, 1], 0b0011, 0b1100, true, "two-vote");
 }
 
-#[then("the zero-vote job expires at its exclusive deadline and finality continues")]
-fn zero_vote_job_expires_without_halt(world: &mut World) {
-    assert_job_expires_without_nod(world, &[], 0, 0b1111, "zero-vote");
+#[then("the unexported zero-vote job expires and reaches Released without an ACK")]
+fn unexported_zero_vote_job_expires_without_halt(world: &mut World) {
+    assert_job_expires_without_nod(world, &[], 0, 0b1111, false, "zero-vote unexported");
+}
+
+#[then("the exported zero-vote job expires at its exclusive deadline and finality continues")]
+fn exported_zero_vote_job_expires_without_halt(world: &mut World) {
+    assert_job_expires_without_nod(world, &[], 0, 0b1111, true, "zero-vote exported");
 }
 
 fn assert_job_expires_without_nod(
@@ -5443,6 +5449,7 @@ fn assert_job_expires_without_nod(
     expected_voters: &[u16],
     timely_bitmap: u8,
     missing_bitmap: u8,
+    expect_export: bool,
     fault_label: &str,
 ) {
     let request = world
@@ -5518,7 +5525,17 @@ fn assert_job_expires_without_nod(
             "expired no-quorum job emitted a Lysis apply event on port {port}"
         );
     }
-    let terminal_checkpoint = request.deadline_height.saturating_add(2);
+    let retention_blocks = world
+        .ocomp
+        .canonical_fork_install()
+        .expect("read canonical OCOMP retention profile")
+        .request_profile
+        .capacity_profile
+        .source_retention_after_terminal_blocks;
+    let terminal_checkpoint = request
+        .deadline_height
+        .saturating_add(retention_blocks)
+        .saturating_add(1);
     wait_for_common_finalized_checkpoint(world, terminal_checkpoint, fault_label);
     for port in world.validators.committee_ports() {
         let record = world
@@ -5542,30 +5559,114 @@ fn assert_job_expires_without_nod(
                 .expect("finality captured before no-quorum OCOMP fault"),
         "terminal checkpoint must advance beyond pre-fault finality"
     );
+    wait_for_released_retention(world, finalized.job_id, expect_export, fault_label);
     world.state.ocomp_vote_accountability = Some(accountability);
     world.state.ocomp_expired_without_nod = Some(true);
 }
 
-#[when("the stopped OCOMP workers restart for the automatic retry")]
-fn stopped_workers_restart_for_automatic_retry(world: &mut World) {
+fn wait_for_released_retention(
+    world: &mut World,
+    job_id: B256,
+    expect_export: bool,
+    fault_label: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut latest = vec![String::new(); 4];
+    loop {
+        let mut released = 0_usize;
+        for (validator_index, observation) in latest.iter_mut().enumerate() {
+            let root = world
+                .validators
+                .data_dir(validator_index)
+                .join("ocomp_retention");
+            match inspect_retention_journal(&root) {
+                Ok(snapshot) => {
+                    let matching = snapshot.records.iter().find_map(|(_, record)| {
+                        let PinStateV1::Released {
+                            job_id: Some(observed_job_id),
+                            source_generation,
+                            reason,
+                            observed_height,
+                            export,
+                            ..
+                        } = record.state
+                        else {
+                            return None;
+                        };
+                        (observed_job_id == job_id).then_some((
+                            source_generation,
+                            reason,
+                            observed_height,
+                            export,
+                        ))
+                    });
+                    if let Some((source_generation, reason, observed_height, export)) = matching {
+                        assert_eq!(
+                            reason,
+                            PinReleaseReason::RetentionSatisfied,
+                            "validator-{validator_index} released {fault_label} job for the wrong reason"
+                        );
+                        assert!(
+                            source_generation.is_some(),
+                            "validator-{validator_index} lost the released source generation"
+                        );
+                        assert_eq!(
+                            export.is_some(),
+                            expect_export,
+                            "validator-{validator_index} released {fault_label} job with unexpected export authority"
+                        );
+                        *observation = format!(
+                            "Released(reason={reason:?}, observed_height={observed_height}, export={})",
+                            export.is_some()
+                        );
+                        released += 1;
+                    } else {
+                        *observation = format!(
+                            "journal_generation={}, records={}, matching_job=absent",
+                            snapshot.generation,
+                            snapshot.records.len()
+                        );
+                    }
+                }
+                Err(error) => {
+                    *observation = format!("journal error at {}: {error}", root.display());
+                }
+            }
+        }
+        if released == 4 {
+            break;
+        }
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("consensus committee remains live while retention GC completes");
+        assert!(
+            Instant::now() < deadline,
+            "{fault_label} job {job_id:#x} did not reach durable Released on every validator: {latest:?}"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    world.state.ocomp_expired_release_had_export = Some(expect_export);
+}
+
+#[when("the stopped OCOMP workers restart after canonical expiry")]
+fn stopped_workers_restart_after_expiry(world: &mut World) {
     for validator_index in [2, 3] {
         world
             .ocomp
             .restart_worker(validator_index, 0)
             .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} Worker for automatic retry: {error}")
+                panic!("restart validator-{validator_index} Worker after canonical expiry: {error}")
             });
     }
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all OCOMP roles are live before the automatic retry");
-
-    wait_for_automatic_retry(world);
+        .expect("all OCOMP roles are live after canonical expiry");
 }
 
-#[when("all stopped OCOMP snapshot exporters restart for the automatic retry")]
-fn all_exporters_restart_for_automatic_retry(world: &mut World) {
+#[when("all stopped OCOMP snapshot exporters restart after canonical expiry")]
+fn all_exporters_restart_after_expiry(world: &mut World) {
     for validator_index in 0..4 {
         world
             .ocomp
@@ -5577,12 +5678,11 @@ fn all_exporters_restart_for_automatic_retry(world: &mut World) {
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all OCOMP roles are live before the automatic retry");
-    wait_for_automatic_retry(world);
+        .expect("all OCOMP roles are live after canonical expiry");
 }
 
-#[when("all stopped OCOMP workers restart for the automatic retry")]
-fn all_workers_restart_for_automatic_retry(world: &mut World) {
+#[when("all stopped OCOMP workers restart after canonical expiry")]
+fn all_workers_restart_after_expiry(world: &mut World) {
     for validator_index in 0..4 {
         world
             .ocomp
@@ -5594,250 +5694,282 @@ fn all_workers_restart_for_automatic_retry(world: &mut World) {
     world
         .ocomp
         .ensure_validator_roles_alive()
-        .expect("all OCOMP roles are live before the automatic retry");
-    wait_for_automatic_retry(world);
+        .expect("all OCOMP roles are live after canonical expiry");
 }
 
-fn wait_for_automatic_retry(world: &mut World) {
+#[then("the expired job remains terminal with no successor after process recovery")]
+fn expired_job_remains_terminal_without_successor(world: &mut World) {
     let original = world
         .state
         .ocomp_job_request
         .clone()
         .expect("expired public JobIntent");
-
-    let from_height = original.request_height.saturating_add(1);
-    let timeout = Instant::now() + Duration::from_secs(240);
-    let retry = loop {
-        let observed = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
-                world.rpc.finalized_ocomp_job_request_for_worldwide_day_on(
-                    port,
-                    from_height,
-                    original.worldwide_day,
-                )
-            })
-            .collect::<Vec<_>>();
-        if observed.iter().all(Option::is_some) {
-            let first = observed[0]
-                .clone()
-                .expect("all automatic retry requests are present");
-            assert!(
-                observed
-                    .iter()
-                    .all(|candidate| candidate.as_ref() == Some(&first)),
-                "validators expose different finalized automatic retry requests: {observed:?}"
-            );
-            if first.intent_id != original.intent_id {
-                break first;
-            }
-        }
-        world
-            .ocomp
-            .ensure_validator_roles_alive()
-            .expect("OCOMP roles remain live while waiting for the automatic retry");
-        assert!(
-            Instant::now() < timeout,
-            "expired OCOMP request did not produce a finalized automatic retry: original={original:?}, observed={observed:?}"
-        );
-        sleep(Duration::from_millis(250));
-    };
-
-    assert_eq!(retry.worldwide_day, original.worldwide_day);
-    assert_eq!(retry.attempt, original.attempt.saturating_add(1));
-    assert_eq!(
-        retry.pending_nonce,
-        original.pending_nonce.saturating_add(1)
-    );
-    assert!(retry.request_height > original.deadline_height);
-    assert!(retry.open_height > retry.request_height);
-    assert!(retry.deadline_height > retry.open_height);
-
     let ports = world.validators.committee_ports();
-    let original_records = ports
+    let current = ports
         .iter()
         .copied()
         .map(|port| {
             world
                 .rpc
-                .finalized_ocomp_job_record_on(port, original.intent_id)
+                .finalized_result(port)
+                .expect("validator finality after recovery")
         })
         .collect::<Vec<_>>();
-    let retry_records = ports
-        .iter()
-        .copied()
-        .map(|port| {
-            world
-                .rpc
-                .finalized_ocomp_job_record_on(port, retry.intent_id)
-        })
-        .collect::<Vec<_>>();
-    assert!(original_records.iter().all(Option::is_some));
-    assert!(retry_records.iter().all(Option::is_some));
-    let original_record = original_records[0]
-        .as_ref()
-        .expect("all expired records are present");
-    let retry_record = retry_records[0]
-        .as_ref()
-        .expect("all retry records are present");
-    assert!(
-        original_records
-            .iter()
-            .all(|candidate| candidate.as_ref() == Some(original_record)),
-        "validators expose different retained expired records"
-    );
-    assert!(
-        retry_records
-            .iter()
-            .all(|candidate| candidate.as_ref() == Some(retry_record)),
-        "validators expose different automatic retry records"
-    );
-    assert_eq!(original_record.status, OcompJobStatus::Expired);
-    assert!(
-        matches!(
-            retry_record.status,
-            OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen
-        ),
-        "automatic retry must remain preterminal before the completion step: {:?}",
-        retry_record.status
-    );
-    assert!(retry_record.terminal.is_none());
-    assert!(
-        retry_record
-            .finalized
-            .as_ref()
-            .is_none_or(|finalized| finalized.quorum.is_none()),
-        "automatic retry formed quorum before the four-vote completion assertion"
-    );
-    assert_eq!(
-        retry_record.intent.frozen_metadosis_values, original_record.intent.frozen_metadosis_values,
-        "automatic retry changed the frozen Metadosis values or request receipt"
-    );
-    assert_eq!(
-        retry_record.intent.protocol_bundle_hash,
-        original_record.intent.protocol_bundle_hash
-    );
-    assert_eq!(
-        retry_record.intent.pre_admission_envelope_hash,
-        original_record.intent.pre_admission_envelope_hash
-    );
-    assert_eq!(
-        retry_record.intent.activation_preconditions.tribute,
-        original_record.intent.activation_preconditions.tribute
-    );
-    assert_eq!(
-        retry_record.intent.activation_preconditions.nod,
-        original_record.intent.activation_preconditions.nod
-    );
-    assert_eq!(
-        retry_record.intent.activation_preconditions.contributors,
-        original_record.intent.activation_preconditions.contributors
-    );
-    assert!(
-        retry_record.intent.logical_evaluation_height
-            > original_record.intent.logical_evaluation_height
-    );
-    assert!(
-        retry_record.intent.logical_evaluation_time
-            > original_record.intent.logical_evaluation_time
-    );
-    world.state.ocomp_retry_job_request = Some(retry);
-}
+    let target = current
+        .into_iter()
+        .max()
+        .expect("four validator finality observations")
+        .saturating_add(2);
+    wait_for_common_finalized_checkpoint(world, target, "post-expiry process recovery");
 
-#[then("the retry preserves the frozen receipt and completes on every validator")]
-fn retry_preserves_receipt_and_completes(world: &mut World) {
-    let original = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("expired public JobIntent");
-    let retry = world
-        .state
-        .ocomp_retry_job_request
-        .clone()
-        .expect("finalized automatic retry JobIntent");
-    quorum_applies_lysis_and_creates_nod_for_request(
-        world,
-        retry.clone(),
-        PublicVoteSetExpectation::Exact(&[0, 1, 2, 3]),
-    );
-
-    let activation = world
-        .state
-        .ocomp_activation
-        .clone()
-        .expect("retry Lysis activation");
-    let target = activation.block_number.saturating_add(2);
-    for port in world.validators.committee_ports() {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, target, 60),
-            "validator on port {port} did not continue finalizing beyond retry completion"
-        );
-    }
-
-    let ports = world.validators.committee_ports();
-    let completed = ports
-        .iter()
-        .copied()
-        .map(|port| {
-            world
-                .rpc
-                .finalized_ocomp_job_record_on(port, retry.intent_id)
-        })
-        .collect::<Vec<_>>();
-    assert!(completed.iter().all(Option::is_some));
-    let completed_record = completed[0]
-        .as_ref()
-        .expect("all completed retry records are present");
-    assert!(
-        completed
-            .iter()
-            .all(|candidate| candidate.as_ref() == Some(completed_record)),
-        "validators expose different completed retry records"
-    );
-    assert_eq!(completed_record.status, OcompJobStatus::Completed);
-    let completed_binding = completed_record
-        .terminal
-        .as_ref()
-        .and_then(|terminal| terminal.completed_binding.as_ref())
-        .expect("retry completed binding");
-    assert_eq!(completed_binding.job_id, activation.job_id);
-    assert_eq!(completed_binding.result_digest, activation.result_digest);
-    assert_eq!(
-        completed_binding.terminal_receipt_hash,
-        activation.terminal_receipt_hash
-    );
-
+    let mut expired_job_id = None;
     for port in ports {
         let retained = world
             .rpc
-            .finalized_ocomp_job_record_on(port, original.intent_id)
-            .expect("retained expired predecessor");
+            .ocomp_job_record_at_on(port, original.intent_id, target)
+            .unwrap_or_else(|error| {
+                panic!("read expired job at post-recovery h{target} on port {port}: {error:#}")
+            });
         assert_eq!(retained.status, OcompJobStatus::Expired);
         assert_eq!(
             retained
                 .terminal
                 .as_ref()
-                .expect("expired predecessor terminal")
+                .expect("expired terminal remains present")
                 .outcome,
             OcompTerminalOutcome::Expired
         );
+        let observed_job_id = retained
+            .finalized
+            .as_ref()
+            .expect("expired record keeps finalized job identity")
+            .job_id;
+        if let Some(expected_job_id) = expired_job_id {
+            assert_eq!(
+                observed_job_id, expected_job_id,
+                "validators disagree on the expired canonical job id"
+            );
+        } else {
+            expired_job_id = Some(observed_job_id);
+        }
+        let successor = world
+            .rpc
+            .finalized_ocomp_job_request_for_worldwide_day_result_on(
+                port,
+                original.request_height.saturating_add(1),
+                original.worldwide_day,
+            )
+            .unwrap_or_else(|error| {
+                panic!("prove no successor request on RPC port {port}: {error:#}")
+            });
+        assert!(
+            successor.is_none(),
+            "expired job created a forbidden successor for the same WWD on port {port}: {successor:?}"
+        );
     }
-    let finalized = world
-        .validators
-        .committee_ports()
-        .into_iter()
-        .map(|port| world.rpc.finalized(port).expect("validator finality"))
-        .min()
-        .expect("four validator finality observations");
-    assert!(finalized >= target);
-    world.state.ocomp_retry_completed_finality = Some(finalized);
+    wait_for_released_retention(
+        world,
+        expired_job_id.expect("expired finalized job id after recovery"),
+        world
+            .state
+            .ocomp_expired_release_had_export
+            .expect("released export authority observation"),
+        "post-expiry process recovery",
+    );
     world
         .localnet
         .ensure_committee_alive()
-        .expect("all validators remain live after retry completion");
+        .expect("all validators remain live after terminal recovery");
+}
+
+#[when("one independent next-day Tribute is submitted after OCOMP recovery")]
+fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("expired public JobIntent");
+    let original_wwd = WorldwideDay::new(original.worldwide_day);
+    let followup_wwd = WorldwideDay::from_timestamp(
+        original_wwd
+            .start_timestamp()
+            .checked_add(86_400)
+            .expect("next WorldwideDay timestamp"),
+    )
+    .value();
+    assert_ne!(followup_wwd, original.worldwide_day);
+
+    let ports = world.validators.committee_ports();
+    let primary = world.validators.primary_port();
+    let schedule = world
+        .rpc
+        .metadosis_wwd_state_on(primary, followup_wwd)
+        .expect("independent next-day WorldwideDay exists");
+    assert!(
+        schedule.status <= 1,
+        "independent next-day WorldwideDay passed OFFERING before submission: {schedule:?}"
+    );
+    let offering_target = schedule
+        .lookback_end
+        .checked_add(1)
+        .expect("next-day OFFERING timestamp");
+    let _ = restart_committee_at_logical_time(world, offering_target);
+    let offering_deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+    loop {
+        let states = ports
+            .iter()
+            .copied()
+            .map(|port| world.rpc.metadosis_wwd_state_on(port, followup_wwd))
+            .collect::<Vec<_>>();
+        if states
+            .iter()
+            .all(|state| state.as_ref().is_some_and(|state| state.status == 2))
+        {
+            let first = states[0]
+                .as_ref()
+                .expect("all next-day OFFERING states are present");
+            assert!(
+                states
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(first)),
+                "validators disagree on the next-day OFFERING state: {states:?}"
+            );
+            break;
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("OCOMP roles remain live while the next day enters OFFERING");
+        assert!(
+            Instant::now() < offering_deadline,
+            "independent next-day WorldwideDay did not reach OFFERING: {states:?}"
+        );
+        sleep(Duration::from_millis(250));
+    }
+
+    let offerer = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0 next-day Tribute owner")
+        .evm_key()
+        .expect("validator-0 next-day Tribute key");
+    let tribute_tx = world
+        .rpc
+        .tribute_offer(&offerer, &followup_wwd.to_string())
+        .expect("submit independent next-day Tribute");
+    assert!(
+        world.rpc.wait_successful_receipt(&tribute_tx, 240),
+        "independent next-day Tribute transaction failed: {tribute_tx}"
+    );
+    world
+        .mongodb
+        .wait_for_tribute_projection(&tribute_tx, 240)
+        .expect("all exporters project the independent next-day Tribute");
+    world.state.tribute_tx_hash = Some(tribute_tx);
+
+    let processing_target =
+        first_protocol_cycle_at_or_after(world, schedule.scheduled_process_time);
+    let _ = restart_committee_at_logical_time(world, processing_target);
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("OCOMP roles survive the next-day processing-time restart");
+
+    let request_deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
+    let request = loop {
+        let observed = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_job_request_for_worldwide_day_result_on(
+                        port,
+                        original.deadline_height.saturating_add(1),
+                        followup_wwd,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "observe independent next-day OCOMP request on port {port}: {error:#}"
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        if observed.iter().all(Option::is_some) {
+            let first = observed[0]
+                .clone()
+                .expect("all independent next-day requests are present");
+            assert!(
+                observed
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(&first)),
+                "validators expose different independent next-day requests: {observed:?}"
+            );
+            break first;
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("OCOMP roles remain live while waiting for the next-day request");
+        assert!(
+            Instant::now() < request_deadline,
+            "independent next-day OCOMP request was not finalized: {observed:?}"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    assert_eq!(request.worldwide_day, followup_wwd);
+    assert_eq!(request.pending_nonce, 0);
+    assert_eq!(request.attempt, 0);
+    assert_ne!(request.intent_id, original.intent_id);
+    assert!(request.request_height > original.deadline_height);
+    world.state.ocomp_followup_job_request = Some(request);
+}
+
+#[then("the independent OCOMP job completes on every validator")]
+fn independent_ocomp_job_completes_on_every_validator(world: &mut World) {
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("expired original JobIntent");
+    let followup = world
+        .state
+        .ocomp_followup_job_request
+        .clone()
+        .expect("independent next-day JobIntent");
+    quorum_applies_lysis_and_creates_nod_for_request(
+        world,
+        followup.clone(),
+        PublicVoteSetExpectation::Exact(&[0, 1, 2, 3]),
+    );
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("independent next-day Lysis activation");
+    let target = activation.block_number.saturating_add(2);
+    wait_for_common_finalized_checkpoint(world, target, "independent next-day completion");
+    for port in world.validators.committee_ports() {
+        let completed = world
+            .rpc
+            .ocomp_job_record_at_on(port, followup.intent_id, target)
+            .unwrap_or_else(|error| {
+                panic!("read completed independent job at h{target} on port {port}: {error:#}")
+            });
+        assert_eq!(completed.status, OcompJobStatus::Completed);
+        let expired = world
+            .rpc
+            .ocomp_job_record_at_on(port, original.intent_id, target)
+            .unwrap_or_else(|error| {
+                panic!("read original expired job at h{target} on port {port}: {error:#}")
+            });
+        assert_eq!(expired.status, OcompJobStatus::Expired);
+    }
+    world.state.ocomp_followup_completed_finality = Some(target);
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("all validators remain live after the independent job completes");
 }
 
 #[then("all four OCOMP domains run their node-facing production roles")]

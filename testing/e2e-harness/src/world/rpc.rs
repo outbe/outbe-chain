@@ -2841,6 +2841,29 @@ impl Rpc {
         self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, Some(worldwide_day))
     }
 
+    /// Observe one exact WorldwideDay while preserving transport, response
+    /// shape, canonicality, and protocol-decoding failures. Negative assertions
+    /// must use this method: an unavailable RPC is not proof that no request
+    /// exists.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request_for_worldwide_day_result_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        worldwide_day: u32,
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
+        self.finalized_ocomp_job_request_result_on_url(
+            &self.url(port),
+            from_height,
+            Some(worldwide_day),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "observe finalized OCOMP request for WWD {worldwide_day} from h{from_height} on RPC port {port}"
+            )
+        })
+    }
+
     #[cfg(feature = "ocomp-integration")]
     fn finalized_ocomp_job_request_on_url(
         &self,
@@ -2848,13 +2871,37 @@ impl Rpc {
         from_height: u64,
         worldwide_day: Option<u32>,
     ) -> Option<OcompPublicJobRequestV1> {
+        self.finalized_ocomp_job_request_result_on_url(rpc_url, from_height, worldwide_day)
+            .ok()
+            .flatten()
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn finalized_ocomp_job_request_result_on_url(
+        &self,
+        rpc_url: &str,
+        from_height: u64,
+        worldwide_day: Option<u32>,
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
-        let finalized_height = eth::finalized_number(rpc_url)?;
+        let finalized_block = eth::raw_json_result(
+            rpc_url,
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )
+        .wrap_err("read finalized block")?;
+        let finalized_number = finalized_block
+            .get("number")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("finalized block omitted number"))?;
+        let finalized_height =
+            u64::from_str_radix(finalized_number.trim_start_matches("0x"), 16)
+                .wrap_err_with(|| format!("decode finalized height {finalized_number}"))?;
         if finalized_height < from_height {
-            return None;
+            return Ok(None);
         }
         let topic0 = keccak256(EVENT_SIGNATURE.as_bytes());
-        let logs = eth::raw_json_with_params(
+        let logs = eth::raw_json_result(
             rpc_url,
             "eth_getLogs",
             serde_json::json!([{
@@ -2863,64 +2910,130 @@ impl Rpc {
                 "toBlock": format!("0x{finalized_height:x}"),
                 "topics": [format!("{topic0:#x}")]
             }]),
-        )?;
-        let logs = logs.as_array()?;
-        let log = select_ocomp_job_request_log(logs, worldwide_day)?;
-        let topics = log.get("topics")?.as_array()?;
-        if topics.len() != 3 || topics[0].as_str()? != format!("{topic0:#x}") {
-            return None;
-        }
-        let intent_id = topics[1].as_str()?.parse::<B256>().ok()?;
-        let worldwide_day = u32::try_from(parse_rpc_word(topics[2].as_str()?)?).ok()?;
-        let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
-        if data.len() != 3 * 32 {
-            return None;
-        }
-        let pending_nonce = u64::try_from(U256::from_be_slice(&data[0..32])).ok()?;
-        let attempt = u32::try_from(U256::from_be_slice(&data[32..64])).ok()?;
-        let activation_preconditions_hash = B256::from_slice(&data[64..96]);
-        let request_height = u64::from_str_radix(
-            log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
-            16,
         )
-        .ok()?;
-        if request_height < from_height || request_height > finalized_height {
-            return None;
-        }
-        let request_block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
-        if eth::block_hash(rpc_url, request_height)?
+        .wrap_err_with(|| {
+            format!("read OCOMP request logs through finalized h{finalized_height}")
+        })?;
+        let logs = logs
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs returned a non-array response"))?;
+        let Some(log) = select_ocomp_job_request_log_result(logs, worldwide_day)? else {
+            return Ok(None);
+        };
+        let topics = log
+            .get("topics")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted topics"))?;
+        ensure!(
+            topics.len() == 3,
+            "OffchainJobRequested log has {} topics, expected 3",
+            topics.len()
+        );
+        let observed_topic0 = topics[0]
+            .as_str()
+            .ok_or_else(|| eyre!("OffchainJobRequested topic0 is not a string"))?;
+        ensure!(
+            observed_topic0.eq_ignore_ascii_case(&format!("{topic0:#x}")),
+            "OffchainJobRequested topic0 mismatch"
+        );
+        let intent_id = topics[1]
+            .as_str()
+            .ok_or_else(|| eyre!("OffchainJobRequested intent topic is not a string"))?
             .parse::<B256>()
-            .ok()?
-            != request_block_hash
-        {
-            return None;
-        }
-        let encoded_record = eth::read_call_at(
+            .wrap_err("decode OffchainJobRequested intent id")?;
+        let worldwide_day = topics[2]
+            .as_str()
+            .and_then(parse_rpc_word)
+            .and_then(|word| u32::try_from(word).ok())
+            .ok_or_else(|| eyre!("decode OffchainJobRequested WorldwideDay"))?;
+        let data_hex = log
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted data"))?;
+        let data = hex::decode(data_hex.trim_start_matches("0x"))
+            .wrap_err("decode OffchainJobRequested data")?;
+        ensure!(
+            data.len() == 3 * 32,
+            "OffchainJobRequested data has {} bytes, expected 96",
+            data.len()
+        );
+        let pending_nonce = u64::try_from(U256::from_be_slice(&data[0..32]))
+            .wrap_err("decode OffchainJobRequested pending nonce")?;
+        let attempt = u32::try_from(U256::from_be_slice(&data[32..64]))
+            .wrap_err("decode OffchainJobRequested attempt")?;
+        let activation_preconditions_hash = B256::from_slice(&data[64..96]);
+        let request_number = log
+            .get("blockNumber")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted blockNumber"))?;
+        let request_height = u64::from_str_radix(request_number.trim_start_matches("0x"), 16)
+            .wrap_err_with(|| format!("decode request block number {request_number}"))?;
+        ensure!(
+            request_height >= from_height && request_height <= finalized_height,
+            "request h{request_height} is outside scanned finalized range h{from_height}..=h{finalized_height}"
+        );
+        let request_block_hash = log
+            .get("blockHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted blockHash"))?
+            .parse::<B256>()
+            .wrap_err("decode OffchainJobRequested block hash")?;
+        let canonical_block_hash = eth::block_commitment_result(rpc_url, request_height)
+            .wrap_err_with(|| format!("read canonical request block h{request_height}"))?
+            .0;
+        ensure!(
+            canonical_block_hash == request_block_hash,
+            "request log block hash {request_block_hash:#x} is not canonical {canonical_block_hash:#x} at h{request_height}"
+        );
+        let encoded_record = eth::read_call_at_result(
             rpc_url,
             addresses::WWD_ADDR,
             &IMetadosis::getOffchainJobCall {
                 intentId: intent_id,
             },
             finalized_height,
-        )?;
+        )
+        .map_err(|error| eyre!(error))
+        .wrap_err_with(|| format!("read finalized OCOMP job {intent_id:#x}"))?;
         let limits = poc_schema_limits();
-        let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits).ok()?;
-        let finalized = record.finalized.as_ref()?;
-        if record.intent.intent_id(&limits).ok()? != intent_id
-            || record.intent.wwd != worldwide_day
-            || record.intent.pending_nonce != pending_nonce
-            || record.intent.attempt != attempt
-            || record
+        let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits)
+            .wrap_err("decode finalized OCOMP job record")?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or_else(|| eyre!("requested OCOMP job is not finalized"))?;
+        ensure!(
+            record.intent.intent_id(&limits)? == intent_id,
+            "job intent id mismatch"
+        );
+        ensure!(
+            record.intent.wwd == worldwide_day,
+            "job WorldwideDay mismatch"
+        );
+        ensure!(
+            record.intent.pending_nonce == pending_nonce,
+            "job pending nonce mismatch"
+        );
+        ensure!(record.intent.attempt == attempt, "job attempt mismatch");
+        ensure!(
+            record
                 .intent
                 .activation_preconditions
-                .activation_preconditions_hash(&limits)
-                .ok()?
-                != activation_preconditions_hash
-            || finalized.deadline_height <= finalized.open_height
-        {
-            return None;
-        }
-        Some(OcompPublicJobRequestV1 {
+                .activation_preconditions_hash(&limits)?
+                == activation_preconditions_hash,
+            "job activation preconditions hash mismatch"
+        );
+        ensure!(
+            finalized.deadline_height > finalized.open_height,
+            "job deadline is not after open height"
+        );
+        let transaction_hash = log
+            .get("transactionHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted transactionHash"))?
+            .parse::<B256>()
+            .wrap_err("decode OffchainJobRequested transaction hash")?;
+        Ok(Some(OcompPublicJobRequestV1 {
             intent_id,
             worldwide_day,
             pending_nonce,
@@ -2931,8 +3044,8 @@ impl Rpc {
             activation_preconditions_hash,
             request_height,
             request_block_hash,
-            transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
-        })
+            transaction_hash,
+        }))
     }
 
     /// Read and decode the canonical finalized job record on one validator.
@@ -4538,21 +4651,30 @@ fn parse_rpc_word(encoded: &str) -> Option<U256> {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn select_ocomp_job_request_log(
+fn select_ocomp_job_request_log_result(
     logs: &[serde_json::Value],
     worldwide_day: Option<u32>,
-) -> Option<&serde_json::Value> {
-    logs.iter().rev().find(|log| {
-        worldwide_day.is_none_or(|expected| {
-            log.get("topics")
-                .and_then(serde_json::Value::as_array)
-                .and_then(|topics| topics.get(2))
-                .and_then(serde_json::Value::as_str)
-                .and_then(parse_rpc_word)
-                .and_then(|word| u32::try_from(word).ok())
-                == Some(expected)
-        })
-    })
+) -> Result<Option<&serde_json::Value>> {
+    let Some(expected) = worldwide_day else {
+        return Ok(logs.last());
+    };
+    for log in logs.iter().rev() {
+        let topics = log
+            .get("topics")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted topics"))?;
+        let encoded_day = topics
+            .get(2)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted WorldwideDay topic"))?;
+        let observed = parse_rpc_word(encoded_day)
+            .and_then(|word| u32::try_from(word).ok())
+            .ok_or_else(|| eyre!("decode OffchainJobRequested WorldwideDay topic {encoded_day}"))?;
+        if observed == expected {
+            return Ok(Some(log));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4722,7 +4844,7 @@ mod ocomp_tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
+    fn job_request_selection_keeps_the_requested_day_visible_after_later_requests() {
         let day = |worldwide_day: u32| {
             serde_json::json!({
                 "topics": [
@@ -4737,9 +4859,17 @@ mod ocomp_tests {
         let logs = vec![requested.clone(), later_retry];
 
         assert_eq!(
-            select_ocomp_job_request_log(&logs, Some(20260807)),
-            Some(&requested)
+            select_ocomp_job_request_log_result(&logs, Some(20260807)).unwrap(),
+            Some(&requested),
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn job_request_selection_does_not_treat_malformed_rpc_data_as_absence() {
+        let logs = vec![serde_json::json!({"topics": ["0x00", "0x00"]})];
+
+        assert!(select_ocomp_job_request_log_result(&logs, Some(20260807)).is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]
