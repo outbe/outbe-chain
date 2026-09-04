@@ -19,6 +19,7 @@ pub(crate) struct RequestBudgetEffect {
     pub day_type: DayType,
     pub day_limit: U256,
     pub lysis_budget: U256,
+    pub nominal_total: U256,
     pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
     pub logical_anchor: u64,
 }
@@ -31,26 +32,20 @@ pub(crate) struct RequestBudgetSplit {
 }
 
 impl RequestBudgetSplit {
-    pub(crate) fn derive(day_limit: U256, lysis_budget: U256) -> Result<Self> {
-        let auction_base =
-            day_limit
-                .checked_sub(lysis_budget)
-                .ok_or(MetadosisError::InvalidOcompBudgetSplit {
-                    day_limit,
-                    lysis_budget,
-                })?;
-        let reconstructed = lysis_budget.checked_add(auction_base).ok_or(
-            MetadosisError::InvalidOcompBudgetSplit {
-                day_limit,
-                lysis_budget,
-            },
-        )?;
-        if reconstructed != day_limit {
-            return Err(MetadosisError::InvalidOcompBudgetSplit {
-                day_limit,
-                lysis_budget,
-            }
-            .into());
+    /// The day auctions what it earned beyond the symbolic share, capped by the
+    /// day limit. Limit headroom a weak day leaves over is issued by nobody.
+    pub(crate) fn derive(day_limit: U256, lysis_budget: U256, nominal_total: U256) -> Result<Self> {
+        let invalid = || MetadosisError::InvalidOcompBudgetSplit {
+            day_limit,
+            lysis_budget,
+        };
+        let auction_base = nominal_total
+            .min(day_limit)
+            .checked_sub(lysis_budget)
+            .ok_or_else(invalid)?;
+        let split_total = lysis_budget.checked_add(auction_base).ok_or_else(invalid)?;
+        if split_total > day_limit {
+            return Err(invalid().into());
         }
         Ok(Self {
             day_limit,
@@ -70,11 +65,14 @@ pub(crate) fn apply_fresh_request_budget_effect(
     storage: StorageHandle<'_>,
     request: RequestBudgetEffect,
 ) -> Result<RequestBudgetSplitReceiptV1> {
-    let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
+    let split = RequestBudgetSplit::derive(
+        request.day_limit,
+        request.lysis_budget,
+        request.nominal_total,
+    )?;
     let receipt = expected_receipt(&request, split, request.pending_nonce)?;
     let green = request.day_type == DayType::Green;
-    // One checkpoint: a red day writes both the brief and the carry-over, and
-    // neither may survive the other's failure.
+    // One checkpoint: the brief and the carry-over credit may not survive each other's failure.
     storage.with_checkpoint(|| {
         let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
             storage.clone(),
@@ -88,9 +86,9 @@ pub(crate) fn apply_fresh_request_budget_effect(
         if receipt.desis_brief_hash != Some(actual) {
             return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
         }
-        if !green {
+        if !receipt.carry_over_credit.is_zero() {
             let delta = PromisLimitContract::new(storage.clone())
-                .checked_add_carry_over(split.auction_base)?;
+                .checked_add_carry_over(receipt.carry_over_credit)?;
             if delta.credited != receipt.carry_over_credit {
                 return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
             }
@@ -117,7 +115,11 @@ pub(crate) fn validate_replayed_request_budget_effect(
         }
         .into());
     }
-    let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
+    let split = RequestBudgetSplit::derive(
+        request.day_limit,
+        request.lysis_budget,
+        request.nominal_total,
+    )?;
     let expected = expected_receipt(&request, split, existing.pending_nonce)?;
     if existing != &expected {
         return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
@@ -130,18 +132,20 @@ fn expected_receipt(
     split: RequestBudgetSplit,
     effect_nonce: u64,
 ) -> Result<RequestBudgetSplitReceiptV1> {
-    let (destination, briefed_supply, carry_over_credit) = match request.day_type {
-        DayType::Green => (
-            BudgetSplitDestination::DesisAuction,
-            split.auction_base,
-            U256::ZERO,
-        ),
-        DayType::Red => (
-            BudgetSplitDestination::CarryOver,
-            U256::ZERO,
-            split.auction_base,
-        ),
+    let (destination, briefed_supply) = match request.day_type {
+        DayType::Green => (BudgetSplitDestination::DesisAuction, split.auction_base),
+        DayType::Red => (BudgetSplitDestination::CarryOver, U256::ZERO),
     };
+    // Whatever the day does not brief stays on the warehouse: the base a red day never opens, and
+    // the limit headroom above the day's own nominal.
+    let carry_over_credit = split
+        .day_limit
+        .checked_sub(split.lysis_budget)
+        .and_then(|rest| rest.checked_sub(briefed_supply))
+        .ok_or(MetadosisError::InvalidOcompBudgetSplit {
+            day_limit: split.day_limit,
+            lysis_budget: split.lysis_budget,
+        })?;
     let desis_brief_hash = Some(
         desis_request_brief_hash(
             request.protocol_bundle_hash,

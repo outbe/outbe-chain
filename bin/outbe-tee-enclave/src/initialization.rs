@@ -431,9 +431,19 @@ impl InitializationState {
                 .then_some(())
                 .ok_or("remote session command denied by enclave capability matrix");
         }
-        self.manifest()
+        let manifest = self
+            .manifest()
             .map_err(|_| "initialization state unavailable")?
             .ok_or("enclave is not initialized")?;
+        if matches!(
+            request,
+            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+                | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. }
+        ) && (!self.gramine_direct_dev_evidence_allowed
+            || manifest.attestation_mode != AttestationMode::GramineDirectDev)
+        {
+            return Err("GramineDirectDev onboarding is forbidden by the initialized network");
+        }
         command_allowed_for_environment(
             command_class(request),
             offer_key_ready,
@@ -634,10 +644,12 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
         | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
         | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
-        | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. } => {
+        | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
+        | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
         | EnclaveRequest::ApplyFidelityCohortOp { .. }
@@ -658,6 +670,15 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
 /// [`InitializationState::authorize_command`]; this only labels counters.
 pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry::RequestClassLabel {
     use crate::telemetry::RequestClassLabel;
+    match request {
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+            return RequestClassLabel::DevSourceSeal
+        }
+        EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
+            return RequestClassLabel::DevRecipientIngest
+        }
+        _ => {}
+    }
     match command_class(request) {
         CommandClass::Never => RequestClassLabel::Never,
         CommandClass::Initialized => RequestClassLabel::Initialized,

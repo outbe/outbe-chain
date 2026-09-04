@@ -2,16 +2,17 @@
 pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
-import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "./Create3Deploy.sol";
 
 /// @title BaseScript
 /// @author Outbe
 /// @notice Shared deployment plumbing: a deterministic CREATE3 factory plus salt-versioned,
 ///         idempotent UUPS proxy deployment through it.
-/// @dev The factory is deployed once per chain through the canonical CREATE2 deployer
-///      (`CREATE2_FACTORY`, inherited from `Script`) at a pinned salt, so it has the same address
-///      on every chain. Proxy addresses then depend only on `(factory, deployer, salt)`.
+/// @dev The factory is deployed once per chain from contracts/shared (`mise run
+///      deploy-create3-factory` there) and passed in as `CREATE3_FACTORY_ADDRESS`; only that
+///      project may build it, since its address depends on the bytecode its compiler emits.
+///      Proxy addresses then depend only on `(factory, deployer, salt)`.
 abstract contract BaseScript is Script {
     /// @notice CREATE3 salt version. Env-overridable via `SALT_VERSION` so a test run can target a
     ///         throwaway address set without disturbing the pinned production set; blank/unset = production.
@@ -20,21 +21,12 @@ abstract contract BaseScript is Script {
         if (bytes(version).length == 0) version = "v3.0.0";
     }
 
-    /// @notice Pinned salt for the CREATE3 factory itself.
-    bytes32 internal constant FACTORY_SALT = keccak256("outbe-intex:Create3Factory:v1.0.0");
-
-    /// @notice Deploy the CREATE3 factory deterministically if absent, else return the existing one.
-    /// @return factory The CREATE3 factory at its deterministic, cross-chain-identical address.
-    function ensureCreate3Factory() public returns (Create3Factory factory) {
-        require(CREATE2_FACTORY.code.length != 0, "Arachnid CREATE2 deployer not present on this chain");
-        bytes memory initCode = type(Create3Factory).creationCode;
-        address predicted = vm.computeCreate2Address(FACTORY_SALT, keccak256(initCode), CREATE2_FACTORY);
-        if (predicted.code.length == 0) {
-            (bool ok,) = CREATE2_FACTORY.call(abi.encodePacked(FACTORY_SALT, initCode));
-            require(ok, "Create3Factory deploy failed");
-            require(predicted.code.length != 0, "Create3Factory missing after deploy");
-        }
-        return Create3Factory(predicted);
+    /// @notice The protocol-wide CREATE3 factory, deployed from contracts/shared.
+    /// @return factory The factory at `CREATE3_FACTORY_ADDRESS`; reverts if nothing is deployed there.
+    function create3Factory() public view returns (Create3Factory factory) {
+        address f = vm.envAddress("CREATE3_FACTORY_ADDRESS");
+        require(f.code.length != 0, "Create3Factory not deployed - deploy it from contracts/shared first");
+        return Create3Factory(f);
     }
 
     /// @notice Predict a proxy address without deploying.

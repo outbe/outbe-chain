@@ -30,7 +30,6 @@ async fn boundary_requirement_is_derived_from_parent_snapshot_not_local_served_f
         planned_activation_height: 0,
         vrf_material_version: 0,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -78,7 +77,6 @@ async fn boundary_requirement_uses_marshal_ancestry_after_block_cache_eviction()
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -119,7 +117,6 @@ async fn boundary_requirement_finds_deep_committed_boundary() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -180,7 +177,6 @@ async fn boundary_requirement_finds_boundary_committed_at_late_activation_height
         planned_activation_height,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -229,7 +225,6 @@ async fn boundary_requirement_uses_hash_lookup_when_height_lookup_is_stale() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -280,7 +275,6 @@ async fn boundary_requirement_rejects_missing_canonical_parent_after_stale_heigh
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -311,7 +305,6 @@ async fn boundary_requirement_reports_backfill_not_ready() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -341,7 +334,6 @@ async fn boundary_requirement_rejects_same_epoch_conflict() {
         planned_activation_height: 120,
         vrf_material_version: 1,
         is_validator_set_change: false,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();

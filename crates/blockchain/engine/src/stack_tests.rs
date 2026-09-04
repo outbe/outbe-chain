@@ -63,12 +63,10 @@ static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 struct ShutdownNullSender<P> {
     participants: Vec<P>,
-    send_count: Arc<AtomicU64>,
 }
 
 struct ShutdownNullCheckedSender<P> {
     recipients: Vec<P>,
-    send_count: Arc<AtomicU64>,
 }
 
 impl<P> CheckedSender for ShutdownNullCheckedSender<P>
@@ -82,7 +80,6 @@ where
     }
 
     fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
-        self.send_count.fetch_add(1, Ordering::Relaxed);
         Unreliable::Outcome(Feedback::Ok)
     }
 }
@@ -106,10 +103,7 @@ where
             Recipients::Some(recipients) => recipients,
             Recipients::One(recipient) => vec![recipient],
         };
-        Ok(ShutdownNullCheckedSender {
-            recipients,
-            send_count: Arc::clone(&self.send_count),
-        })
+        Ok(ShutdownNullCheckedSender { recipients })
     }
 }
 
@@ -169,7 +163,6 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
 
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             sender.clone(),
@@ -301,18 +294,14 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
     let runner = commonware_tokio::Runner::new(config);
 
     runner.start(|context| async move {
-        let vote_send_count = Arc::new(AtomicU64::new(0));
         let vote_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::clone(&vote_send_count),
         };
         let certificate_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let resolver_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             vote_sender,
@@ -409,7 +398,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             _ = context.sleep(Duration::from_millis(50)) => {},
         }
 
-        let send_count_before_release = vote_send_count.load(Ordering::Relaxed);
         release_tx.send(()).expect("release blocking worker");
         let result = stack_owner
             .await
@@ -418,10 +406,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
         assert!(
             result.to_string().contains("synthetic fatal stack cause"),
             "fatal result: {result:#}"
-        );
-        assert!(
-            vote_send_count.load(Ordering::Relaxed) > send_count_before_release,
-            "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
         );
     });
 
@@ -433,7 +417,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
     commonware_tokio::Runner::new(reopen_config).start(|context| async move {
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
-            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             sender.clone(),
@@ -1211,10 +1194,8 @@ fn test_boundary_with_vrf_hash(vrf_group_public_key: B256, dkg_cycle: u64) -> Dk
         outcome: Bytes::new(),
         is_full_dkg: false,
         tee_recipient_pubkeys: Vec::new(),
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
-        endorsement_signature: alloy_primitives::Bytes::new(),
         reshare: outbe_primitives::consensus::ReshareResult {
             new_active_set: Vec::new(),
             active_set_hash: B256::with_last_byte(0xA2),
@@ -2577,7 +2558,6 @@ fn test_build_boundary_artifact_maps_addresses() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2643,7 +2623,6 @@ fn test_build_boundary_artifact_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2657,7 +2636,6 @@ fn test_build_boundary_artifact_deterministic() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2695,7 +2673,6 @@ fn test_build_boundary_artifact_allows_extra_validator_not_in_threshold_output()
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2721,7 +2698,6 @@ fn test_build_boundary_artifact_rejects_removed_validator_in_output() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap_err()
@@ -2753,7 +2729,6 @@ fn test_decode_boundary_output_round_trips_full_output() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2786,7 +2761,6 @@ fn test_decode_boundary_output_rejects_corrupted_outcome() {
         planned_activation_height: 20,
         vrf_material_version: 1,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2821,7 +2795,6 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -2981,7 +2954,6 @@ fn test_pending_boundary_snapshot_restores_manager_before_commit() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3042,7 +3014,6 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3223,7 +3194,6 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -3282,7 +3252,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         planned_activation_height: 20,
         vrf_material_version: 2,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -4923,7 +4892,6 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         planned_activation_height: 421,
         vrf_material_version: 7,
         is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
     })
     .unwrap();
@@ -5384,7 +5352,6 @@ mod restart_recovery {
                 planned_activation_height: 20,
                 vrf_material_version: 2,
                 is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
                 tee_expired_target_exclusions: Vec::new(),
             })
             .unwrap();

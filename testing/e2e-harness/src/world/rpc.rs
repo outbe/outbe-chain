@@ -2359,19 +2359,54 @@ impl Rpc {
 
     /// Read one canonical COEN/ISO rate together with its publication point.
     pub fn oracle_rate_data(&self, port: u16, iso_code: u16) -> Option<OracleRateDataV1> {
+        self.oracle_rate_data_for_pair(
+            port,
+            Address::ZERO,
+            outbe_primitives::asset_type::currency_address(iso_code),
+        )
+    }
+
+    /// Read one configured Oracle pair together with its publication point.
+    pub fn oracle_rate_data_for_pair(
+        &self,
+        port: u16,
+        base: Address,
+        quote: Address,
+    ) -> Option<OracleRateDataV1> {
         let result = eth::read_call(
             &self.url(port),
             outbe_primitives::addresses::ORACLE_ADDRESS,
-            &IOracle::getExchangeRateDataCall {
-                base: Address::ZERO,
-                quote: outbe_primitives::asset_type::currency_address(iso_code),
-            },
+            &IOracle::getExchangeRateDataCall { base, quote },
         )?;
         Some(OracleRateDataV1 {
             rate: result.rate,
             last_block: result.lastBlock,
             last_timestamp: result.lastTimestamp,
         })
+    }
+
+    /// Most recent published volume for one Oracle pair.
+    pub fn oracle_latest_volume(&self, port: u16, base: Address, quote: Address) -> Option<U256> {
+        let history = eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getPriceSnapshotHistoryCall {
+                base,
+                quote,
+                count: 1,
+            },
+        )?;
+        history.volumes.first().copied()
+    }
+
+    /// `(success, abstain, miss)` for one validator's current Oracle slash window.
+    pub fn oracle_penalty_counts(&self, port: u16, validator: Address) -> Option<(u64, u64, u64)> {
+        let progress = eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getSlashWindowProgressCall { validator },
+        )?;
+        Some((progress.success, progress.abstain, progress.miss))
     }
 
     /// Read the canonical chain-owned Oracle vote period used by production

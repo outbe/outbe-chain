@@ -1,22 +1,53 @@
 #!/usr/bin/env python3
-"""Independent integer reference for the six-decimal daily COEN emission cap."""
+"""Independent Decimal reference for the founder daily COEN emission curve."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from decimal import Decimal, ROUND_FLOOR, getcontext
 from pathlib import Path
 
 
 SCALE_1E6 = 1_000_000
-INITIAL_DAY_EMISSION = (1 << 30) * SCALE_1E6
+INITIAL_DAY_EMISSION = (1 << 28) * SCALE_1E6
 FLOOR_DAY_EMISSION = (1 << 26) * SCALE_1E6
-FLOOR_DAY_THRESHOLD = 2_920
-K_NUM = 94_952
-K_DEN = 100_000_000
-TAYLOR_TERMS = 32
-PIN_DAYS = (0, 1, 365, 730, 1_460, 2_190, 2_919, 2_920)
+FLOOR_DAY_THRESHOLD = 3_072
+PIN_DAYS = (
+    0,
+    1,
+    365,
+    512,
+    730,
+    1_024,
+    1_025,
+    1_460,
+    2_048,
+    2_190,
+    2_919,
+    2_920,
+    3_071,
+    3_072,
+)
 DEFAULT_VECTORS = Path(__file__).with_name("vectors.json")
+
+getcontext().prec = 100
+
+
+def tanh(value: Decimal) -> Decimal:
+    exp_twice_value = (value * 2).exp()
+    return (exp_twice_value - 1) / (exp_twice_value + 1)
+
+
+# Founder formula. Keep these as expressions so this reference verifies the
+# requested curve rather than copying constants produced by the Rust code.
+P = Decimal(26) * Decimal(2) ** 26 / Decimal(3)
+K1 = Decimal(128)
+K2 = K1 * 3
+A = (P - Decimal(2) ** 28) / tanh(Decimal(512) / (2 * K1))
+O1 = (Decimal(2) ** 28 + P) / 2 - A / 2
+D = (P - Decimal(2) ** 26) / tanh(Decimal(1024) / (2 * K2))
+O2 = (P + Decimal(2) ** 26) / 2 + D / 2
 
 
 def day_emission_limit(day_number: int) -> int:
@@ -25,20 +56,16 @@ def day_emission_limit(day_number: int) -> int:
     if day_number >= FLOOR_DAY_THRESHOLD:
         return FLOOR_DAY_EMISSION
 
-    positive_sum = INITIAL_DAY_EMISSION
-    negative_sum = 0
-    term = INITIAL_DAY_EMISSION
-    for index in range(1, TAYLOR_TERMS):
-        term = term * K_NUM * day_number // (K_DEN * index)
-        if term == 0:
-            break
-        if index % 2:
-            negative_sum += term
-        else:
-            positive_sum += term
+    day = Decimal(day_number)
+    if day_number <= 1_024:
+        emission = O1 + A / (1 + (-(day - 512) / K1).exp())
+    else:
+        emission = O2 - D / (1 + (-(day - 2048) / K2).exp())
 
-    reward = max(positive_sum - negative_sum, 0)
-    return max(reward, FLOOR_DAY_EMISSION)
+    emission_units = int(
+        (emission * SCALE_1E6).to_integral_value(rounding=ROUND_FLOOR)
+    )
+    return max(emission_units, FLOOR_DAY_EMISSION)
 
 
 def build_vectors() -> dict[str, object]:
@@ -48,15 +75,18 @@ def build_vectors() -> dict[str, object]:
     ]
     return {
         "schema": "outbe-emission-scale6-v1",
-        "algorithm": "alternating-taylor-amount-domain-floor-v1",
+        "algorithm": "founder-two-phase-sigmoid-decimal-floor-v1",
         "constants": {
             "units_per_coen": str(SCALE_1E6),
             "initial_day_emission_units": str(INITIAL_DAY_EMISSION),
             "floor_day_emission_units": str(FLOOR_DAY_EMISSION),
             "floor_day_threshold": FLOOR_DAY_THRESHOLD,
-            "k_num": str(K_NUM),
-            "k_den": str(K_DEN),
-            "taylor_terms": TAYLOR_TERMS,
+            "p": "26 * 2**26 / 3",
+            "k1": "128",
+            "k2": "K1 * 3",
+            "phase_one_midpoint_day": 512,
+            "phase_split_day": 1_024,
+            "phase_two_midpoint_day": 2_048,
         },
         "pins": [
             {"day": day, "emission_units": str(day_emission_limit(day))}
@@ -80,8 +110,10 @@ def check_vectors(path: Path) -> None:
     values = [int(row["emission_units"]) for row in parsed["days"]]
     if len(values) != FLOOR_DAY_THRESHOLD + 1:
         raise SystemExit("emission vector must cover every day through the floor threshold")
-    if any(current > previous for previous, current in zip(values, values[1:])):
-        raise SystemExit("emission vector is not monotonic non-increasing")
+    if any(current < previous for previous, current in zip(values, values[1:1_025])):
+        raise SystemExit("emission vector decreases before the phase-one peak")
+    if any(current > previous for previous, current in zip(values[1_024:], values[1_025:])):
+        raise SystemExit("emission vector increases after the phase-one peak")
     if values[-1] != FLOOR_DAY_EMISSION:
         raise SystemExit("threshold vector does not equal the emission floor")
 

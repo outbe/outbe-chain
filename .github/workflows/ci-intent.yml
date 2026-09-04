@@ -7,12 +7,14 @@ on:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
       - "contracts/intent/**"
+      - "contracts/shared/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
       - "contracts/intent/**"
+      - "contracts/shared/**"
 
 permissions:
   contents: read

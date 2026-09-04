@@ -249,6 +249,16 @@ impl ProjectionRuntimeRecoveryHandle {
 pub struct FinalizedProjectionSink {
     runtime: ProjectionRuntime,
     durable_checkpoint: Option<ProjectionCheckpoint>,
+    provider_recovery_floor: Option<ProjectionCheckpoint>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FinalizedTargetReconciliationV1 {
+    AwaitingProviderRecovery,
+    Process {
+        target: ProjectionCheckpoint,
+        recovered_floor: Option<ProjectionCheckpoint>,
+    },
 }
 
 impl FinalizedProjectionSink {
@@ -272,7 +282,6 @@ impl FinalizedProjectionSink {
             .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))
     }
 
-    #[must_use]
     pub fn runtime_recovery_handle(&self) -> eyre::Result<ProjectionRuntimeRecoveryHandle> {
         Ok(ProjectionRuntimeRecoveryHandle {
             writer: self.runtime.writer.clone(),
@@ -294,6 +303,55 @@ impl FinalizedProjectionSink {
                 checkpoint: self.durable_checkpoint,
                 error: failure,
             });
+    }
+
+    /// Reconciles a sampled provider finalized target with the durable projection floor.
+    ///
+    /// Reth can temporarily expose no finalized marker, or an older marker, while restoring its
+    /// forkchoice state after restart. That state is recoverable only when the durable checkpoint
+    /// still has the exact canonical hash validated at startup. Readiness remains closed until the
+    /// provider reaches the floor again; a same-height identity conflict remains fatal.
+    pub fn reconcile_finalized_target(
+        &mut self,
+        target: Option<ProjectionCheckpoint>,
+    ) -> eyre::Result<FinalizedTargetReconciliationV1> {
+        let Some(durable) = self.durable_checkpoint else {
+            return Ok(match target {
+                Some(target) => FinalizedTargetReconciliationV1::Process {
+                    target,
+                    recovered_floor: None,
+                },
+                None => {
+                    publish_status(
+                        &self.runtime.readiness_publisher,
+                        ProjectionStatus::CatchingUp { checkpoint: None },
+                        None,
+                    );
+                    FinalizedTargetReconciliationV1::AwaitingProviderRecovery
+                }
+            });
+        };
+        let provider_target =
+            target.map(|target| FinalizedTarget::new(target.block_number, target.block_hash));
+        let reconciled = require_finalized_checkpoint(durable, provider_target)?;
+        let Some(reconciled) = reconciled else {
+            self.provider_recovery_floor = Some(durable);
+            publish_status(
+                &self.runtime.readiness_publisher,
+                ProjectionStatus::CatchingUp {
+                    checkpoint: Some(durable),
+                },
+                provider_target,
+            );
+            return Ok(FinalizedTargetReconciliationV1::AwaitingProviderRecovery);
+        };
+        Ok(FinalizedTargetReconciliationV1::Process {
+            target: ProjectionCheckpoint {
+                block_number: reconciled.number,
+                block_hash: reconciled.hash,
+            },
+            recovered_floor: self.provider_recovery_floor.take(),
+        })
     }
 
     /// Publishes projection readiness against the coordinator's sampled finalized target.
@@ -414,6 +472,10 @@ impl FinalizedProjectionSink {
         Self {
             runtime,
             durable_checkpoint,
+            // A reopened durable projection must prove this exact canonical floor once more at
+            // the live provider boundary before processing resumes. This also covers a provider
+            // marker that jumps from behind the floor to above it before the first poll.
+            provider_recovery_floor: durable_checkpoint,
         }
     }
 }
@@ -746,7 +808,7 @@ where
         .wrap_err("read local Reth finalized checkpoint for offchain-data validation")?
         .map(|block| FinalizedTarget::new(block.number, block.hash));
     if let Some(checkpoint) = projector.state().checkpoint {
-        let local_finalized = require_finalized_checkpoint(checkpoint, local_finalized)?;
+        let reconciled = require_finalized_checkpoint(checkpoint, local_finalized)?;
         match canonical_hashes
             .block_hash(checkpoint.block_number)
             .wrap_err("read canonical Reth hash for offchain-data checkpoint validation")?
@@ -764,14 +826,11 @@ where
                 checkpoint.block_hash
             )),
         }
-        if checkpoint.block_number == local_finalized.number {
+        if reconciled.is_some_and(|target| checkpoint.block_number == target.number) {
             publish_status(
                 &readiness_publisher,
                 ProjectionStatus::Ready { checkpoint },
-                Some(FinalizedTarget::new(
-                    local_finalized.number,
-                    local_finalized.hash,
-                )),
+                local_finalized,
             );
         } else {
             publish_status(
@@ -779,10 +838,7 @@ where
                 ProjectionStatus::CatchingUp {
                     checkpoint: Some(checkpoint),
                 },
-                Some(FinalizedTarget::new(
-                    local_finalized.number,
-                    local_finalized.hash,
-                )),
+                local_finalized,
             );
         }
     } else {
@@ -823,22 +879,12 @@ where
 fn require_finalized_checkpoint(
     checkpoint: ProjectionCheckpoint,
     local_finalized: Option<FinalizedTarget>,
-) -> eyre::Result<FinalizedTarget> {
+) -> eyre::Result<Option<FinalizedTarget>> {
     let Some(local_finalized) = local_finalized else {
-        bail!(
-            "projection_ahead_of_execution: Mongo checkpoint {} ({}) exists before local Reth finality",
-            checkpoint.block_number,
-            checkpoint.block_hash
-        );
+        return Ok(None);
     };
-    if checkpoint.block_number > local_finalized.number.saturating_add(1) {
-        bail!(
-            "projection_ahead_of_execution: Mongo checkpoint {} ({}) is ahead of local Reth finalized {} ({})",
-            checkpoint.block_number,
-            checkpoint.block_hash,
-            local_finalized.number,
-            local_finalized.hash
-        );
+    if checkpoint.block_number > local_finalized.number {
+        return Ok(None);
     }
     if checkpoint.block_number == local_finalized.number
         && checkpoint.block_hash != local_finalized.hash
@@ -851,7 +897,7 @@ fn require_finalized_checkpoint(
             local_finalized.hash
         );
     }
-    Ok(local_finalized)
+    Ok(Some(local_finalized))
 }
 
 /// OCOMP-specific interpretation of a durable Mongo projection checkpoint.
@@ -1960,9 +2006,10 @@ mod tests {
         record_finalized_target, record_or_publish_finalized_target, require_finalized_checkpoint,
         run_projection_loop, spawn_detached_projection_work, supervise_projection_future,
         validate_projection_network, DurableProjectionWrite, FinalizedProjectionSink,
-        FinalizedTarget, OcompProjectionContainment, OffchainDataProjectionConfig,
-        ProjectionRuntime, ProjectionRuntimeRecoveryHandle, ProjectionRuntimeRecoveryV1,
-        ProjectionWriteDeadlineError, RuntimeBodyFailure, PROJECTION_RECOVERY_DEADLINE,
+        FinalizedTarget, FinalizedTargetReconciliationV1, OcompProjectionContainment,
+        OffchainDataProjectionConfig, ProjectionRuntime, ProjectionRuntimeRecoveryHandle,
+        ProjectionRuntimeRecoveryV1, ProjectionWriteDeadlineError, RuntimeBodyFailure,
+        PROJECTION_RECOVERY_DEADLINE,
     };
     use alloy_consensus::Header;
     use alloy_eips::BlockNumHash;
@@ -2240,13 +2287,15 @@ mod tests {
     }
 
     #[test]
-    fn persisted_checkpoint_requires_an_actual_reth_finalized_identity() {
+    fn persisted_checkpoint_waits_for_reth_finality_marker_recovery() {
         let checkpoint = ProjectionCheckpoint {
             block_number: 4,
             block_hash: B256::repeat_byte(0x44),
         };
-        let error = require_finalized_checkpoint(checkpoint, None).unwrap_err();
-        assert!(error.to_string().contains("before local Reth finality"));
+        assert_eq!(
+            require_finalized_checkpoint(checkpoint, None).unwrap(),
+            None
+        );
 
         assert_eq!(
             require_finalized_checkpoint(
@@ -2254,15 +2303,17 @@ mod tests {
                 Some(FinalizedTarget::new(3, B256::repeat_byte(0x33))),
             )
             .expect("one-block crash-consistency gap must recover"),
-            FinalizedTarget::new(3, B256::repeat_byte(0x33)),
+            None,
         );
 
-        let error = require_finalized_checkpoint(
-            checkpoint,
-            Some(FinalizedTarget::new(2, B256::repeat_byte(0x22))),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("ahead of local Reth finalized"));
+        assert_eq!(
+            require_finalized_checkpoint(
+                checkpoint,
+                Some(FinalizedTarget::new(2, B256::repeat_byte(0x22))),
+            )
+            .expect("a transiently stale finality marker must recover"),
+            None,
+        );
 
         let error = require_finalized_checkpoint(
             checkpoint,
@@ -2279,7 +2330,13 @@ mod tests {
                 Some(FinalizedTarget::new(4, checkpoint.block_hash)),
             )
             .unwrap(),
-            FinalizedTarget::new(4, checkpoint.block_hash),
+            Some(FinalizedTarget::new(4, checkpoint.block_hash)),
+        );
+
+        let ahead = FinalizedTarget::new(5, B256::repeat_byte(0x55));
+        assert_eq!(
+            require_finalized_checkpoint(checkpoint, Some(ahead)).unwrap(),
+            Some(ahead),
         );
     }
 
@@ -2463,7 +2520,7 @@ mod tests {
         let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
         let reader: StorageReaderHandle = overlay.clone();
         let logical_writer: StorageWriterHandle = overlay.clone();
-        let durable_writer: StorageWriterHandle = storage;
+        let durable_writer: StorageWriterHandle = storage.clone();
         let projector =
             OffchainDataProjection::open(projection_config, reader.clone(), logical_writer)
                 .unwrap();
@@ -2489,6 +2546,26 @@ mod tests {
         let first = empty_finalized_frame(1, 1);
         let second = empty_finalized_frame(2, 2);
         let conflicting_second = empty_finalized_frame(2, 3);
+        let first_target = ProjectionCheckpoint {
+            block_number: first.identity().number,
+            block_hash: first.identity().hash,
+        };
+
+        assert_eq!(
+            sink.reconcile_finalized_target(Some(first_target)).unwrap(),
+            FinalizedTargetReconciliationV1::Process {
+                target: first_target,
+                recovered_floor: None,
+            },
+        );
+        assert_eq!(
+            sink.reconcile_finalized_target(None).unwrap(),
+            FinalizedTargetReconciliationV1::AwaitingProviderRecovery,
+        );
+        assert_eq!(
+            readiness.current(),
+            ProjectionStatus::CatchingUp { checkpoint: None }
+        );
 
         let first_checkpoint = sink.project_frame(&first).unwrap();
         sink.publish_progress(ProjectionCheckpoint {
@@ -2511,12 +2588,89 @@ mod tests {
             }
         );
 
+        assert_eq!(
+            sink.reconcile_finalized_target(None).unwrap(),
+            FinalizedTargetReconciliationV1::AwaitingProviderRecovery,
+        );
+        assert_eq!(
+            readiness.current(),
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(durable_p),
+            }
+        );
+        assert_eq!(
+            sink.reconcile_finalized_target(Some(first_checkpoint))
+                .unwrap(),
+            FinalizedTargetReconciliationV1::AwaitingProviderRecovery,
+        );
+        assert_eq!(
+            sink.reconcile_finalized_target(Some(durable_p)).unwrap(),
+            FinalizedTargetReconciliationV1::Process {
+                target: durable_p,
+                recovered_floor: Some(durable_p),
+            },
+        );
+        sink.publish_progress(durable_p).unwrap();
+        assert_eq!(
+            readiness.current(),
+            ProjectionStatus::Ready {
+                checkpoint: durable_p,
+            }
+        );
+        assert!(sink
+            .reconcile_finalized_target(Some(ProjectionCheckpoint {
+                block_number: durable_p.block_number,
+                block_hash: B256::repeat_byte(0xff),
+            }))
+            .is_err());
+
         assert_eq!(sink.project_frame(&first).unwrap(), durable_p);
         let error = sink.project_frame(&conflicting_second).unwrap_err();
         assert!(error
             .to_string()
             .contains("conflicts with durable projection hash"));
         assert_eq!(sink.durable_checkpoint(), Some(durable_p));
+
+        drop(sink);
+        let overlay = Arc::new(PendingOverlayStorage::new(storage.clone()));
+        let reader: StorageReaderHandle = overlay.clone();
+        let logical_writer: StorageWriterHandle = overlay.clone();
+        let durable_writer: StorageWriterHandle = storage;
+        let projector =
+            OffchainDataProjection::open(projection_config, reader.clone(), logical_writer)
+                .unwrap();
+        let (readiness_publisher, _readiness) = projection_readiness(
+            ProjectionCheckpoint {
+                block_number: 0,
+                block_hash: projection_config.genesis_hash,
+            },
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(durable_p),
+            },
+        );
+        let (runtime_failure_tx, runtime_failure_rx) = tokio::sync::watch::channel(None);
+        let mut restarted = FinalizedProjectionSink::from_runtime(ProjectionRuntime {
+            projector,
+            readiness_publisher,
+            projection_config,
+            _reader: reader,
+            overlay: Some(overlay),
+            writer: durable_writer,
+            _writer_lease: None,
+            runtime_failure_sender: Some(runtime_failure_tx),
+            runtime_failure_receiver: Some(runtime_failure_rx),
+        });
+        let ahead = ProjectionCheckpoint {
+            block_number: durable_p.block_number + 1,
+            block_hash: B256::repeat_byte(0x33),
+        };
+        assert_eq!(
+            restarted.reconcile_finalized_target(Some(ahead)).unwrap(),
+            FinalizedTargetReconciliationV1::Process {
+                target: ahead,
+                recovered_floor: Some(durable_p),
+            },
+        );
     }
 
     #[test]

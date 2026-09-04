@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";

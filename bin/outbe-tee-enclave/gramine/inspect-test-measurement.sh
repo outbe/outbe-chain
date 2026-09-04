@@ -20,6 +20,7 @@ gramine-manifest \
   -Dentrypoint="${ENTRY}" \
   -Dtee_dir=/tee \
   -Dremote_attestation=dcap \
+  -Dqvl_host_dir=/qvl \
   -Dnetwork_descriptor="${NETWORK_DESCRIPTOR}" \
   outbe-tee-enclave.manifest.template \
   outbe-tee-enclave.manifest

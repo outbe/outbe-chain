@@ -99,10 +99,6 @@ fn derive_validator_recovery_follower_args(
     Ok(follower)
 }
 
-fn validator_projection_identity(index: usize) -> String {
-    format!("validator-{index}")
-}
-
 impl Localnet {
     /// Provision a production full-node enclave with its persistent Reth and
     /// EVM identities. The global EVM key owns both the Registry association
@@ -203,13 +199,12 @@ impl Localnet {
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
-        self.launch_certified_follower_with_args(name, name, index, args, Vec::new())
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
     }
 
     fn launch_certified_follower_with_args(
         &mut self,
         name: &str,
-        projection_identity: &str,
         index: usize,
         args: Vec<String>,
         protocol_environment: Vec<(&'static str, String)>,
@@ -225,12 +220,7 @@ impl Localnet {
         }
         command.args(&args);
         attach_log(&mut command, &node_dir)?;
-        let guard = self.spawn_node_with_projection_identity(
-            name,
-            projection_identity,
-            &node_dir,
-            command,
-        )?;
+        let guard = self.spawn_node(name, index, &node_dir, command)?;
         self.followers.insert(name.to_owned(), guard);
         Ok(())
     }
@@ -276,10 +266,8 @@ impl Localnet {
             .entry(index)
             .or_insert(original);
         let protocol_environment = validator_protocol_environment(&self.start_opts);
-        let projection_identity = validator_projection_identity(index);
         self.launch_certified_follower_with_args(
             &name,
-            &projection_identity,
             index,
             follower_args,
             protocol_environment,
@@ -406,7 +394,7 @@ mod tests {
             "validator restart must retain byte-for-byte original argv"
         );
         assert_eq!(
-            super::validator_projection_identity(3),
+            super::super::node_slot_projection_identity(3),
             "validator-3",
             "recovery follower must reuse the validator's durable projection identity"
         );

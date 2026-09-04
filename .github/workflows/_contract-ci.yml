@@ -25,7 +25,9 @@ env:
 jobs:
   format:
     name: Forge Format
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -35,15 +37,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
       - name: Check formatting
         run: forge fmt --check
 
   compile:
     name: Compile Contracts
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -64,7 +65,9 @@ jobs:
   test:
     name: Foundry Tests
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -84,7 +87,9 @@ jobs:
 
   lint:
     name: Forge Lint
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -108,7 +113,9 @@ jobs:
   abi:
     name: ABI Export Check
     if: ${{ inputs.abi-check }}
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -127,14 +134,6 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
-      - name: Install mise
-        uses: jdx/mise-action@v2
-        with:
-          install: false
-
-      - name: Ensure jq is installed
-        run: jq --version || (sudo apt-get update && sudo apt-get install -y jq)
-
       - name: Export ABI
         run: mise run export-abi
 
@@ -148,7 +147,9 @@ jobs:
 
   ci-success:
     name: ci success
-    runs-on: depot-ubuntu-24.04
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     if: always()
     needs:
       - format
@@ -160,6 +161,10 @@ jobs:
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
+        env:
+          # The job container runs as a different UID than the host runner.
+          # Keep Python from leaving an undeletable __pycache__ in _actions.
+          PYTHONDONTWRITEBYTECODE: "1"
         with:
           allowed-skips: test,abi
           jobs: ${{ toJSON(needs) }}

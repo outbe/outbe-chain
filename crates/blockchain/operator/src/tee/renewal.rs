@@ -44,7 +44,7 @@ pub trait RenewalEnclaveV1 {
         &mut self,
         _intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64]> {
-        eyre::bail!("renewal enclave does not support GramineDirectDev intent signing")
+        eyre::bail!("renewal enclave does not support GramineDirectDev intent signing");
     }
 }
 
@@ -687,7 +687,7 @@ mod tests {
             _intent: &RegistrationIntentV1,
         ) -> Result<GeneratedDcapQuoteV1> {
             self.dcap_calls += 1;
-            eyre::bail!("DCAP must not be invoked for GramineDirectDev renewal")
+            eyre::bail!("DCAP must not be invoked for GramineDirectDev renewal");
         }
 
         fn sign_registration_intent_dev_v1(
@@ -709,7 +709,7 @@ mod tests {
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
-            eyre::bail!("unused transaction_receipt")
+            eyre::bail!("unused transaction_receipt");
         }
 
         async fn logs(
@@ -719,19 +719,19 @@ mod tests {
             _from_block: &str,
             _to_block: &str,
         ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs")
+            eyre::bail!("unused logs");
         }
 
         async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number")
+            eyre::bail!("unused block_by_number");
         }
 
         async fn finalized_block(&self) -> Result<serde_json::Value> {
-            eyre::bail!("unused finalized_block")
+            eyre::bail!("unused finalized_block");
         }
 
         async fn call_at(&self, _to: Address, _data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
-            eyre::bail!("unused call_at")
+            eyre::bail!("unused call_at");
         }
     }
 
@@ -753,11 +753,11 @@ mod tests {
         }
 
         async fn send_raw_transaction(&self, _raw_transaction: &[u8]) -> Result<String> {
-            eyre::bail!("unused send_raw_transaction")
+            eyre::bail!("unused send_raw_transaction");
         }
 
         async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
-            eyre::bail!("unused tee_renewal_schedule_v1")
+            eyre::bail!("unused tee_renewal_schedule_v1");
         }
     }
 
@@ -786,11 +786,11 @@ mod tests {
             _from_block: &str,
             _to_block: &str,
         ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs")
+            eyre::bail!("unused logs");
         }
 
         async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number")
+            eyre::bail!("unused block_by_number");
         }
 
         async fn finalized_block(&self) -> Result<serde_json::Value> {
@@ -820,7 +820,7 @@ mod tests {
                     ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(9)),
                 );
             }
-            eyre::bail!("unexpected Registry call")
+            eyre::bail!("unexpected Registry call");
         }
     }
 
@@ -830,15 +830,15 @@ mod tests {
         }
 
         async fn gas_price(&self) -> Result<U256> {
-            eyre::bail!("restart replay regenerated gas price")
+            eyre::bail!("restart replay regenerated gas price");
         }
 
         async fn transaction_count(&self, _address: Address) -> Result<u64> {
-            eyre::bail!("restart replay regenerated account nonce")
+            eyre::bail!("restart replay regenerated account nonce");
         }
 
         async fn balance(&self, _address: Address) -> Result<U256> {
-            eyre::bail!("restart replay rechecked preparation balance")
+            eyre::bail!("restart replay rechecked preparation balance");
         }
 
         async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {

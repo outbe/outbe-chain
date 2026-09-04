@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {console} from "forge-std/console.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
 /// @title DeployOrigin
@@ -26,7 +26,7 @@ contract DeployOrigin is BaseScript {
 
         vm.startBroadcast(pk);
 
-        Create3Factory factory = ensureCreate3Factory();
+        Create3Factory factory = create3Factory();
 
         address router = deployProxy(
             factory,

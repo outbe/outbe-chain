@@ -6,16 +6,16 @@ import {console2} from "forge-std/console2.sol";
 import {Scope} from "the-compact/src/types/Scope.sol";
 import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
 
-import {CreateX} from "./0_DeployCreateX.s.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 
-/// @dev Deploys RouterAllocator + the composition {Router} via CreateX. The Router talks to the `crosschain` hub's
+/// @dev Deploys RouterAllocator + the composition {Router} via Create3Factory. The Router talks to the `crosschain` hub's
 ///      `ERC7786Bridge` (no LayerZero endpoint / eids here - the protocol lives on the bridge).
 ///
 /// Required env vars:
 ///   DEPLOYER_PK      - deployer private key
-///   CREATEX_ADDRESS  - deployed CreateX factory
+///   CREATE3_FACTORY_ADDRESS - deployed Create3Factory (from contracts/shared)
 ///   CONTRACT_SALT    - salt string for deterministic deployment
 ///   COMPACT_ADDRESS  - The Compact address
 ///   AUCTION_ADDRESS  - deployed Auction (immutable on the router)
@@ -25,7 +25,7 @@ import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 contract DeployRouter is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        address createX = vm.envAddress("CREATEX_ADDRESS");
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         string memory salt = vm.envString("CONTRACT_SALT");
         address compact = vm.envAddress("COMPACT_ADDRESS");
         address auction = vm.envAddress("AUCTION_ADDRESS");
@@ -33,20 +33,20 @@ contract DeployRouter is Script {
         address escrow = vm.envOr("ESCROW_ADDRESS", address(0));
 
         vm.startBroadcast(deployerPrivateKey);
-        (address router, address allocator) = deployRouter(createX, salt, bridge, compact, escrow, auction);
+        (address router, address allocator) = deployRouter(factory, salt, bridge, compact, escrow, auction);
         vm.stopBroadcast();
 
         console2.log("RouterAllocator:", allocator);
         console2.log("Router:", router);
     }
 
-    function getRouterSaltHash(string memory salt) public view returns (bytes32) {
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        return keccak256(abi.encodePacked("Router", salt, vm.addr(deployerPrivateKey)));
+    /// @dev The factory namespaces this with the caller, so the deployer is not mixed in here.
+    function getRouterSalt(string memory salt) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked("Router", salt));
     }
 
     function deployRouter(
-        address createX,
+        address factory,
         string memory salt,
         address bridge,
         address compact,
@@ -58,11 +58,11 @@ contract DeployRouter is Script {
         allocatorAddr = address(allocator);
 
         address routerOwner = vm.envAddress("ROUTER_OWNER");
-        bytes32 saltHash = getRouterSaltHash(salt);
+        bytes32 routerSalt = getRouterSalt(salt);
         bytes memory bytecode = abi.encodePacked(
             type(Router).creationCode, abi.encode(bridge, routerOwner, compact, lockTag, escrow, auction)
         );
 
-        router = CreateX(createX).deployCreate3(saltHash, bytecode);
+        router = Create3Factory(factory).deploy(routerSalt, bytecode);
     }
 }

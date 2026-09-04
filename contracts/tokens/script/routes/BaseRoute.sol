@@ -6,22 +6,30 @@ import {console2} from "forge-std/console2.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import {CreateX} from "../0_DeployCreateX.s.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+
+enum SyntheticSource {
+    Erc7802,
+    TokenFactory
+}
 
 /// @dev Everything a route needs to be deployed, except the token's creation code - that one cannot be data, since
 ///      `type(T).creationCode` is a compile-time construct. Each route file in `script/routes/` supplies both.
 struct RouteSpec {
-    /// @dev Salt label of the token. Part of the CREATE3 address: changing it moves every deployment of this route.
+    /// @dev Salt label of the token, and - suffixed with `Bridge` - of its bridge. Part of both CREATE3 addresses:
+    ///      changing it moves every deployment of this route.
     string tokenLabel;
-    /// @dev Salt label of the bridge. Same warning.
-    string bridgeLabel;
     /// @dev Which chain holds the canonical token - Outbe (WCOEN) or the external chain (USDT).
     bool canonicalOnOutbe;
     /// @dev Env var naming an already-deployed canonical token to adopt instead of deploying one - the issuer's USDT
     ///      on a real network. Read only on the chain where this route is canonical.
     string canonicalTokenEnv;
+    /// @dev Env var naming an already-deployed synthetic token to adopt - a factory-issued stablecoin, which CREATE3
+    ///      cannot place. Read only on the chain where this route is synthetic.
+    string syntheticTokenEnv;
+    SyntheticSource syntheticSource;
 }
 
 /// @dev Route-agnostic half of the deployment: guards, salts, address prediction, and the deploy sequence itself.
@@ -32,7 +40,7 @@ struct RouteSpec {
 ///      on one chain and the ERC-7802 synthetic on another.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
-/// Optional env: `OWNER_ADDRESS` (default: deployer), `ALLOW_EOA_OWNER`, `CREATEX_ADDRESS`,
+/// Optional env: `OWNER_ADDRESS` (default: deployer), `ALLOW_EOA_OWNER`, `CREATE3_FACTORY_ADDRESS`,
 ///   the route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 abstract contract BaseRoute is Script {
     bytes4 internal constant SET_TOKEN_BRIDGE_SELECTOR = bytes4(keccak256("setTokenBridge(address)"));
@@ -42,6 +50,7 @@ abstract contract BaseRoute is Script {
     error OwnerMustBeMultisigContract(address owner, uint256 chainId);
     error DomainTooLarge(uint256 chainId);
     error UndeclaredChain(uint256 chainId);
+    error SyntheticTokenNotSet(string env);
 
     // ================================================ Env accessors ================================================
 
@@ -77,23 +86,24 @@ abstract contract BaseRoute is Script {
 
     // ==================================================== Salt =====================================================
 
-    /// @dev The deployer is part of the salt so a third party cannot squat the address with their own bytecode.
-    ///      Consequence: every chain must be deployed from the same key, or the addresses diverge.
-    function _saltHash(string memory label, string memory salt, address deployer) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(label, salt, deployer));
+    /// @dev The factory namespaces this with its caller, so a third party cannot squat the address with
+    ///      their own bytecode. Consequence: every chain must be deployed from the same key, or the
+    ///      addresses diverge.
+    function _salt(string memory label, string memory salt) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(label, salt));
     }
 
-    function _tokenAddress(address createX, string memory salt, RouteSpec memory spec) internal view returns (address) {
-        return CreateX(createX).computeCreate3Address(_saltHash(spec.tokenLabel, salt, _deployer()));
+    function _tokenAddress(address factory, string memory salt, RouteSpec memory spec) internal view returns (address) {
+        return Create3Factory(factory).predict(_deployer(), _salt(spec.tokenLabel, salt));
     }
 
     /// @dev Lets the configure and send scripts drop every address env var.
-    function _bridgeAddress(address createX, string memory salt, RouteSpec memory spec)
+    function _bridgeAddress(address factory, string memory salt, RouteSpec memory spec)
         internal
         view
         returns (address)
     {
-        return CreateX(createX).computeCreate3Address(_saltHash(spec.bridgeLabel, salt, _deployer()));
+        return Create3Factory(factory).predict(_deployer(), _salt(string.concat(spec.tokenLabel, "Bridge"), salt));
     }
 
     // =================================================== Guards ====================================================
@@ -181,7 +191,7 @@ abstract contract BaseRoute is Script {
     ///
     ///      No broadcast is opened here on purpose: the entrypoints open a single one, and the tests call this
     ///      directly.
-    function _deployRoute(address createX, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
+    function _deployRoute(address factory, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
         internal
         returns (address token, address tokenBridge)
     {
@@ -194,38 +204,50 @@ abstract contract BaseRoute is Script {
         address hub = vm.envAddress("BRIDGE_ADDRESS");
         _requireCode(hub);
 
-        bytes32 tokenSalt = _saltHash(spec.tokenLabel, salt, _deployer());
-        bytes32 bridgeSalt = _saltHash(spec.bridgeLabel, salt, _deployer());
+        bytes32 tokenSalt = _salt(spec.tokenLabel, salt);
+        bytes32 bridgeSalt = _salt(string.concat(spec.tokenLabel, "Bridge"), salt);
 
-        // Both addresses are known before either contract exists, so the bridge's immutable `token_` and the token's
-        // `setTokenBridge` no longer impose a deploy order - only a code-existence one.
-        token = CreateX(createX).computeCreate3Address(tokenSalt);
-        tokenBridge = CreateX(createX).computeCreate3Address(bridgeSalt);
+        // The two candidates for the token address, resolved independently:
+        //   - `configured`: it already exists and is not ours to place - the issuer's USDT on a real network, or a
+        //     factory-issued stablecoin on Outbe. Its address is then whatever the operator says.
+        //   - `predicted`: where CREATE3 will put it if this script places it.
+        address configured = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
+        address predicted = Create3Factory(factory).predict(_deployer(), tokenSalt);
 
-        // A canonical token may already exist and not be ours to place - the issuer's USDT on a real network. Its
-        // address is then whatever it is, but the bridge address stays deterministic: the token only enters the
-        // bridge's constructor args, and CREATE3 ignores those.
-        address existing = canonical ? vm.envOr(spec.canonicalTokenEnv, address(0)) : address(0);
-        if (existing != address(0)) {
-            token = existing;
+        if (configured != address(0)) {
+            token = configured;
             _requireCode(token);
-        } else if (token.code.length == 0) {
-            CreateX(createX).deployCreate3(tokenSalt, tokenInitCode);
+        } else if (!canonical && spec.syntheticSource == SyntheticSource.TokenFactory) {
+            // Issued by governance, never by this script, so it must be named or nothing.
+            revert SyntheticTokenNotSet(spec.syntheticTokenEnv);
+        } else {
+            token = predicted;
+            if (token.code.length == 0) Create3Factory(factory).deploy(tokenSalt, tokenInitCode);
         }
 
+        // Known before the bridge exists, and unaffected by which branch above ran: the token only enters the
+        // constructor args, and CREATE3 ignores those.
+        tokenBridge = Create3Factory(factory).predict(_deployer(), bridgeSalt);
+
         if (tokenBridge.code.length == 0) {
-            ERC7786TokenBridge.TokenBridgeMode mode =
-                canonical ? ERC7786TokenBridge.TokenBridgeMode.LockUnlock : ERC7786TokenBridge.TokenBridgeMode.BurnMint;
-            CreateX(createX)
-                .deployCreate3(
-                    bridgeSalt,
-                    abi.encodePacked(type(ERC7786TokenBridge).creationCode, abi.encode(token, hub, owner, mode))
-                );
+            bytes memory args = abi.encode(token, hub, owner, _bridgeMode(spec, canonical));
+            Create3Factory(factory).deploy(bridgeSalt, abi.encodePacked(type(ERC7786TokenBridge).creationCode, args));
         }
         _requireBridgeOwnerOnGuardedChain(tokenBridge);
 
         // Only the ERC-7802 side has a token->bridge link, and it must be set after the bridge exists.
-        if (existing == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
+        if (configured == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
+    }
+
+    /// @dev The canonical side always takes custody; the synthetic side follows how its token is issued.
+    function _bridgeMode(RouteSpec memory spec, bool canonical)
+        internal
+        pure
+        returns (ERC7786TokenBridge.TokenBridgeMode)
+    {
+        if (canonical) return ERC7786TokenBridge.TokenBridgeMode.LockUnlock;
+        if (spec.syntheticSource == SyntheticSource.Erc7802) return ERC7786TokenBridge.TokenBridgeMode.BurnMint;
+        return ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint;
     }
 
     function _setTokenBridge(address token, address tokenBridge, string memory label) internal {

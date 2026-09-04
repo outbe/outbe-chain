@@ -49,9 +49,7 @@ contract LockAmountParityTest is Test {
     /// @dev At the real per-Intex escrow basis (`promis_load`) both sides agree and stay well inside uint128.
     function test_Parity_AtPromisLoadBasis() public view {
         // qty = uint16 max, rate = 1e6 (100% of basis) -> the largest live lock at this basis.
-        uint128 expected = uint128(
-            uint256(type(uint16).max) * PROMIS_LOAD_MINOR * NATIVE_UNITS_PER_PROTOCOL_UNIT
-        );
+        uint128 expected = uint128(uint256(type(uint16).max) * PROMIS_LOAD_MINOR * NATIVE_UNITS_PER_PROTOCOL_UNIT);
         assertEq(
             this.bnbLockAmount(type(uint16).max, PROMIS_LOAD_MINOR, SCALE_1E6),
             this.desisLockAmount(type(uint16).max, PROMIS_LOAD_MINOR, SCALE_1E6)
@@ -63,9 +61,7 @@ contract LockAmountParityTest is Test {
     function test_Parity_AtUint128Boundary() public view {
         uint128 basis = uint128(type(uint128).max / NATIVE_UNITS_PER_PROTOCOL_UNIT);
         uint128 expected = uint128(uint256(basis) * NATIVE_UNITS_PER_PROTOCOL_UNIT);
-        assertEq(
-            this.bnbLockAmount(1, basis, SCALE_1E6), this.desisLockAmount(1, basis, SCALE_1E6)
-        );
+        assertEq(this.bnbLockAmount(1, basis, SCALE_1E6), this.desisLockAmount(1, basis, SCALE_1E6));
         assertEq(this.bnbLockAmount(1, basis, SCALE_1E6), expected);
         assertLe(expected, type(uint128).max);
     }

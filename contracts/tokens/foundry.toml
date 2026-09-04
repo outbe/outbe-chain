@@ -15,8 +15,16 @@ via_ir = true
 
 remappings = [
     "forge-std/=dependencies/forge-std-1.16.1/src/",
-    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/"
+    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/",
+    # Canonical precompile interfaces (IStablecoin, ...). Same form as contracts/intex/foundry.toml,
+    # so the Solidity here and the Rust `sol!("contracts/precompiles/src/IStablecoin.sol")` binding
+    # read one source and cannot drift.
+    "@precompiles/=../precompiles/src/",
+    # Protocol-wide Solidity shared across the contracts/* projects (Create3Factory, ...).
+    "@shared/=../shared/src/"
 ]
+# @shared files import their own vendored deps by relative path, which land outside this project.
+allow_paths = ["../shared/src"]
 
 gas_reports = ["*"]
 fs_permissions = [{ access = "read-write", path = "./" }]

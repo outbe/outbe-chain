@@ -447,6 +447,23 @@ def feeder_config(
 ) -> str:
     oracle = config.get("oracle", {}).get("config", {})
     price_provider = str(config.get("price_provider", "mock_http"))
+    source_quote = str(
+        config.get(
+            "price_source_quote",
+            "840" if price_provider == "mock_http" else "USDT",
+        )
+    )
+    if price_provider == "mock_http":
+        provider_endpoint = f'''[[provider_endpoints]]
+name = "mock_http"
+rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"'''
+    elif price_provider in {"binance", "kraken", "okx", "gate", "huobi", "mexc", "coinbase"}:
+        websocket = str(config.get("price_feed_websocket", "")).strip()
+        websocket_line = f'\nwebsocket = "{websocket}"' if websocket else ""
+        provider_endpoint = f'''[[provider_endpoints]]
+name = "{price_provider}"{websocket_line}'''
+    else:
+        provider_endpoint = ""
     return f"""# Price oracle feeder for validator-{index}.
 [chain]
 rpc_endpoint = "http://127.0.0.1:{port_of(config, "rpc_port")}"
@@ -467,22 +484,22 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 
 # The feeder only accepts provider names from its built-in list (mock, pyth,
 # chainlink, binance, kraken, okx, gate, huobi, mexc, coinbase, mock_http); an
-# invented name is rejected at startup. `mock_http` is the plain REST client
-# the Outbe price service speaks.
-[[provider_endpoints]]
-name = "{price_provider}"
-rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"
-websocket = "{config.get("price_feed_websocket", "prc.testnet.outbe.net")}"
+# invented name is rejected at startup. `mock_http` uses the configured REST
+# endpoint; exchange providers use live WebSocket market streams.
+{provider_endpoint}
 
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-chain_denom = "unit"
-providers = ["{price_provider}"]
+
+[[currency_pairs.sources]]
+provider = "{price_provider}"
+base = "COEN"
+quote = "{source_quote}"
 
 [[deviation_thresholds]]
 base = "COEN"
-threshold = 2.0
+threshold = "2.0"
 """
 
 

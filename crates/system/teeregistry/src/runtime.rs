@@ -16,8 +16,8 @@ pub struct TeeBootstrapData {
     pub dkg_transcript_hash: B256,
     pub committee_snapshot_block: u64,
     pub committee_snapshot_hash: B256,
-    /// Encoded DKG group public key (constant term) of the bootstrapping committee.
-    /// The verification key for reshare endorsements; stored chunked on-chain.
+    /// Encoded DKG group public key (constant term) of the bootstrapping committee,
+    /// stored chunked on-chain as part of the founding bootstrap record.
     pub tribute_offer_group_public_key: alloy_primitives::Bytes,
 }
 
@@ -71,10 +71,8 @@ impl TeeRegistry<'_> {
         self.announced_recipient_x25519.read(&validator)
     }
 
-    /// Store the active committee's DKG group public key (constant term), chunked
-    /// into 32-byte words plus a byte length. The reshare endorsement verify reads
-    /// it back via [`Self::prior_group_public_key`]. Written at bootstrap and updated
-    /// on each reshare activation so the NEXT reshare verifies against this set.
+    /// Store the founding committee's DKG group public key from the canonical
+    /// bootstrap payload, chunked into 32-byte words plus a byte length.
     pub fn set_group_public_key(&mut self, bytes: &[u8]) -> Result<()> {
         let len = u32::try_from(bytes.len())
             .map_err(|_| PrecompileError::Revert("group public key too large".to_string()))?;
@@ -87,25 +85,6 @@ impl TeeRegistry<'_> {
             self.group_public_key.write(&idx, B256::from(word))?;
         }
         Ok(())
-    }
-
-    /// The active committee's stored group public key bytes (empty until set). The
-    /// verification key for a prior-committee reshare endorsement.
-    pub fn prior_group_public_key(&self) -> Result<Vec<u8>> {
-        let len = self.group_public_key_len.read()? as usize;
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-        let words = len.div_ceil(32);
-        let mut out = Vec::with_capacity(words * 32);
-        for i in 0..words {
-            let idx = u32::try_from(i).map_err(|_| {
-                PrecompileError::Revert("group public key index overflow".to_string())
-            })?;
-            out.extend_from_slice(self.group_public_key.read(&idx)?.as_slice());
-        }
-        out.truncate(len);
-        Ok(out)
     }
 
     /// Write the one-time bootstrap result.
@@ -134,32 +113,6 @@ impl TeeRegistry<'_> {
         self.set_group_public_key(&data.tribute_offer_group_public_key)?;
 
         self.bootstrapped.write(true)?;
-        Ok(())
-    }
-
-    /// Validate the new committee's reshare evidence against the already
-    /// registered role-neutral NodeHost bindings. Each entry is
-    /// `(validator, recipient_x25519, attestation_pub, noise_static_pub)`. The
-    /// offer key is PRESERVED across a reshare, so the offer-key / bootstrapped /
-    /// policy / snapshot slots are NOT touched - only the rotating per-validator
-    /// enclave keys. Native-only: called from the begin-zone `BoundaryOutcome`
-    /// handler after the artifact is validated.
-    pub fn record_reshare_registrations(
-        &mut self,
-        registrations: &[(Address, B256, B256, B256)],
-    ) -> Result<()> {
-        for (validator, recipient_x25519, attestation_pub, noise_static_pub) in registrations {
-            let node_hash = self.validator_v1_node_hash.read(validator)?;
-            if node_hash.is_zero()
-                || self.v1_node_recipient_x25519.read(&node_hash)? != *recipient_x25519
-                || self.v1_node_attestation_ed25519.read(&node_hash)? != *attestation_pub
-                || self.v1_node_noise_responder_x25519.read(&node_hash)? != *noise_static_pub
-            {
-                return Err(PrecompileError::Revert(
-                    "reshare registration does not match the validator's NodeHost binding".into(),
-                ));
-            }
-        }
         Ok(())
     }
 }

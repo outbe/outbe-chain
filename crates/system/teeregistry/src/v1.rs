@@ -25,8 +25,8 @@ use outbe_primitives::tee_attestation_v1::{
 };
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_tee::dcap_protocol::{
-    dcap_evidence_hash_v1, DcapOnboardingArtifactV1, DcapPlatformTcbStatusV1, DcapVerdictV1,
-    DcapVerificationOutcomeV1,
+    dcap_evidence_hash_v1, DcapOnboardingArtifactV1, DcapOnboardingContextV1,
+    DcapPlatformTcbStatusV1, DcapVerdictV1, DcapVerificationOutcomeV1,
 };
 
 pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::{
@@ -825,7 +825,7 @@ impl TeeRegistry<'_> {
         }
         let artifact = outcome.artifact.as_ref().ok_or_else(|| {
             PrecompileError::Fatal(
-                "created DcapRequired registration has no purpose-bound onboarding artifact".into(),
+                "created registration has no purpose-bound onboarding artifact".into(),
             )
         })?;
         let context = artifact.context;
@@ -1200,6 +1200,54 @@ impl TeeRegistry<'_> {
             claims: &claims,
             evidence_hash,
         })?;
+        let onboarding_artifact = if onboarding_artifact.is_some()
+            || !issue_onboarding_artifact
+            || registration == V1RegistrationOutcome::Idempotent
+        {
+            onboarding_artifact
+        } else if policy.attestation_mode == AttestationMode::GramineDirectDev {
+            if expected_operation != AttestationOperationV1::RegisterEnclave {
+                return Err(PrecompileError::Fatal(
+                    "onboarding artifact requested for a non-registration operation".into(),
+                ));
+            }
+            let offer_public = self.offer_public_key()?;
+            if offer_public.is_zero() {
+                return Err(PrecompileError::Fatal(
+                    "GramineDirectDev registration requires the OST3 offer-key commitment".into(),
+                ));
+            }
+            let context = DcapOnboardingContextV1 {
+                chain_id: intent.chain_id,
+                genesis_hash: intent.genesis_hash,
+                intent_hash: intent.intent_hash().map_err(|error| {
+                    revert_codec("GramineDirectDev registration intent is invalid", error)
+                })?,
+                node_id_hash: intent.node_id.node_id_hash().map_err(|error| {
+                    revert_codec("GramineDirectDev node identity is invalid", error)
+                })?,
+                enclave_id: intent.enclave_id,
+                binding_id: intent.binding_id,
+                policy_hash: intent.policy_hash,
+                recipient_x25519: intent.recipient_x25519,
+                tribute_offer_public: offer_public.0,
+                key_epoch: self.key_epoch()?,
+                tribute_offer_epoch: self.tribute_offer_epoch()?,
+            };
+            Some(
+                outbe_tee::prepare_gramine_direct_dev_onboarding_artifact_v1(context).map_err(
+                    |error| {
+                        PrecompileError::Fatal(format!(
+                            "purpose-bound GramineDirectDev onboarding artifact failed: {error}"
+                        ))
+                    },
+                )?,
+            )
+        } else {
+            return Err(PrecompileError::Fatal(
+                "created registration has no purpose-bound onboarding artifact".into(),
+            ));
+        };
         Ok(V1OnboardingOutcome {
             registration,
             artifact: onboarding_artifact,

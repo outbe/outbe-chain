@@ -26,6 +26,12 @@ use crate::world::validators::RegistrationIdentity;
 use super::Localnet;
 
 const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+const PRODUCTION_NO_ATTEST_REJECTION: &str = "production DCAP release refuses runtime attestation \
+none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)";
+
+fn has_exact_production_no_attest_rejection(log: &str) -> bool {
+    log.contains(PRODUCTION_NO_ATTEST_REJECTION)
+}
 
 fn retry_node_offer_read(real_sgx: bool, attempt: usize, error: &TransportError) -> bool {
     real_sgx
@@ -46,6 +52,24 @@ pub(crate) struct ManualRenewalStatusObservationV1 {
     pub finalized_timestamp: u64,
     pub valid_until: u64,
     pub journal_state: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualRenewalCliOutcomeV1 {
+    Finalized,
+    NotDue,
+    Unexpected,
+}
+
+fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1 {
+    let output = output.trim_start();
+    if output.starts_with("Finalized {") {
+        ManualRenewalCliOutcomeV1::Finalized
+    } else if output.starts_with("NotDue {") {
+        ManualRenewalCliOutcomeV1::NotDue
+    } else {
+        ManualRenewalCliOutcomeV1::Unexpected
+    }
 }
 
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
@@ -115,7 +139,7 @@ impl Localnet {
             .env("RUST_LOG", "info,outbe_consensus::follow=debug")
             .args(&process_args);
         attach_log(&mut command, &vd)?;
-        let guard = self.spawn_node(&name, &vd, command)?;
+        let guard = self.spawn_node(&name, index, &vd, command)?;
         self.followers.insert(name, guard);
         Ok(())
     }
@@ -579,7 +603,7 @@ impl Localnet {
         index: usize,
     ) -> Result<ManualRenewalObservationV1> {
         let vd = self.cfg.validator_dir(index);
-        Sh::new(&self.cfg).cli_required(args![
+        let output = Sh::new(&self.cfg).cli_required(args![
             "tee",
             "renew",
             "--enclave-socket",
@@ -593,8 +617,24 @@ impl Localnet {
             "--private-key",
             read_evm_key(&vd)?,
         ])?;
+        match classify_manual_renewal_cli_output(&output) {
+            ManualRenewalCliOutcomeV1::Finalized => {}
+            ManualRenewalCliOutcomeV1::NotDue => {
+                return Err(eyre!(
+                    "manual renewal remained NotDue after the harness entered the finalized renewal window for node {index}: {output}"
+                ));
+            }
+            ManualRenewalCliOutcomeV1::Unexpected => {
+                return Err(eyre!(
+                    "manual renewal returned an unexpected successful result for node {index}: {output}"
+                ));
+            }
+        }
         let journal_path = vd.join("data/tee-renewal-v1/journal.json");
-        let journal: serde_json::Value = serde_json::from_slice(&fs::read(&journal_path)?)?;
+        let journal: serde_json::Value = serde_json::from_slice(
+            &fs::read(&journal_path)
+                .wrap_err_with(|| format!("read finalized renewal journal {journal_path:?}"))?,
+        )?;
         if journal
             .pointer("/lifecycle/state")
             .and_then(|value| value.as_str())
@@ -663,6 +703,7 @@ impl Localnet {
             enclave_bin: self.real_enclave_bin()?,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: true,
@@ -692,9 +733,7 @@ impl Localnet {
             .join("enclave-no-attest-downgrade.log");
         let log = fs::read_to_string(&log_path)
             .wrap_err_with(|| format!("read downgrade log {}", log_path.display()))?;
-        if !log.contains("production DCAP release refuses runtime attestation sgx-no-attest")
-            && !log.contains("does not satisfy DcapRequired")
-        {
+        if !has_exact_production_no_attest_rejection(&log) {
             bail!("downgrade runtime did not report a fail-closed DCAP policy rejection");
         }
         if log.contains("unsealed offer key + group signature")
@@ -707,14 +746,6 @@ impl Localnet {
 
     pub fn stop_node_enclave(&mut self, index: usize) {
         self.enclaves.remove(&index);
-    }
-
-    /// Move one complete harness-owned node slot without changing any identity
-    /// or key material. Production nodes keep their directory in place; this
-    /// exists only because the harness reserves distinct numeric port slots.
-    pub fn move_role_neutral_node_slot(&mut self, from: usize, to: usize) -> Result<()> {
-        self.stop_node_enclave(from);
-        self.move_datadir(&format!("validator-{from}"), &format!("validator-{to}"))
     }
 
     pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -799,6 +830,7 @@ impl Localnet {
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
                 .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
+            dev_network_binding: self.dev_network_binding_hex()?,
             launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
@@ -878,7 +910,7 @@ impl Localnet {
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216").args(&a);
         attach_log(&mut cmd, &vd)?;
-        let guard = self.spawn_node(&format!("validator-{index}"), &vd, cmd)?;
+        let guard = self.spawn_node(&format!("validator-{index}"), index, &vd, cmd)?;
         self.validators.insert(index, guard);
         Ok(())
     }
@@ -980,6 +1012,26 @@ mod tests {
     }
 
     #[test]
+    fn manual_renewal_cli_result_is_checked_before_reading_the_journal() {
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "Finalized {\n    finalized_height: 42,\n    valid_until: 99,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::Finalized
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "NotDue {\n    finalized_height: 41,\n    opens_at_timestamp: 98,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::NotDue
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output("Submitted { transaction_hash: 0x01 }"),
+            ManualRenewalCliOutcomeV1::Unexpected
+        );
+    }
+
+    #[test]
     fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
         let args = full_node_joiner_role_args(
             "p2p-secret",
@@ -1018,5 +1070,18 @@ mod tests {
             root.join("validator-0/data/keys/dkg_polynomial.hex")
         );
         assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
+    }
+
+    #[test]
+    fn downgrade_log_requires_the_exact_production_no_attest_rejection() {
+        assert!(has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "runtime mode does not satisfy DcapRequired"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation sgx-no-attest"
+        ));
     }
 }

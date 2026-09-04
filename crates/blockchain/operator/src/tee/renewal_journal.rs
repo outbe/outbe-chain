@@ -841,15 +841,16 @@ mod tests {
 
         let encoded = serde_json::to_value(snapshot).unwrap();
         let object = encoded.as_object().unwrap();
-        assert_eq!(
-            object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["generation", "lifecycle", "version"]
-        );
+        let mut object_keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+        object_keys.sort_unstable();
+        assert_eq!(object_keys, ["generation", "lifecycle", "version"]);
         let lifecycle = object["lifecycle"].as_object().unwrap();
         assert_eq!(lifecycle["state"], "prepared");
         let attempt = lifecycle["attempt"].as_object().unwrap();
+        let mut attempt_keys = attempt.keys().map(String::as_str).collect::<Vec<_>>();
+        attempt_keys.sort_unstable();
         assert_eq!(
-            attempt.keys().map(String::as_str).collect::<Vec<_>>(),
+            attempt_keys,
             [
                 "calldata",
                 "calldataHash",

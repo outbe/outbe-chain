@@ -541,7 +541,7 @@ class StorageBuilder:
         An oracle pair is 40 bytes and a storage word is 32, so the value spans
         the key's mapping slot and the one after it - base then quote, the same
         layout Solidity gives `mapping(K => struct { address; address; })`.
-        Callers pass the pair already canonical; nothing here sorts it.
+        Callers pass the pair in its registered orientation; nothing here sorts it.
         """
         slot = int(mapping_key(key_bytes, base_slot), 16)
         self.set_raw_slot(slot, int.from_bytes(asset_address(base), "big"))
@@ -722,6 +722,15 @@ def address_pair(base: str, quote: str) -> bytes:
     """
     low, high = sorted((asset_address(base), asset_address(quote)))
     return low + high
+
+
+def is_iso_asset_address(address: bytes) -> bool:
+    """Mirror `AssetType::IsoCurrency` for an already encoded asset address."""
+    raw = int.from_bytes(address, "big")
+    if not ISO_MARKER <= raw <= ISO_MARKER | 0x999:
+        return False
+    bcd = raw - ISO_MARKER
+    return all(((bcd >> shift) & 0xF) <= 9 for shift in (0, 4, 8, 12))
 
 
 # --- Seeders ---
@@ -1385,6 +1394,38 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 60: retired policy-rate mapping
       slots 74-75: policy_rate_currencies / policy_rate
     """
+    pair_keys: dict[tuple[str, str], bytes] = {}
+    pairs = config.get("pairs", [])
+    validated_pairs = []
+
+    for idx, pair in enumerate(pairs, start=1):
+        base = pair["base"]
+        quote = pair["quote"]
+        base_address = asset_address(base)
+        quote_address = asset_address(quote)
+        if base_address == quote_address:
+            raise ValueError(
+                f"oracle pair must contain two different assets: same asset {base}/{quote}"
+            )
+        h = address_pair(base, quote)
+        key = (base, quote)
+        if key in pair_keys:
+            raise ValueError(f"duplicate oracle pair: {base}/{quote}")
+        # The key is order-independent, so the inverse is the same pair.
+        if h in pair_keys.values():
+            raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
+        # This seeder writes slot 43 directly, bypassing `register_pair`, so it
+        # owes the same directional invariant: generic markets preserve their
+        # configured orientation, while COEN/ISO is always COEN base, ISO quote.
+        if is_iso_asset_address(base_address) and quote_address == bytes(20):
+            raise ValueError(
+                f"oracle COEN/ISO pair must use COEN base and ISO quote: {base}/{quote}"
+            )
+        pair_keys[key] = h
+        validated_pairs.append((idx, pair, base, quote, h))
+
+    # Validate the complete registry before writing any Oracle slot. This keeps
+    # direct seeding and create_genesis.py fail-closed on invalid input.
     cfg = config.get("config", {})
     storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
     storage.set_slot(1, parse_int(cfg.get("reward_band", "20000000000000000")))
@@ -1401,35 +1442,16 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     storage.set_slot(5, parse_int(cfg.get("lookback_duration", 86400)))
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
-
-    pair_keys: dict[tuple[str, str], bytes] = {}
-    pair_ids: dict[tuple[str, str], int] = {}
-    pairs = config.get("pairs", [])
     storage.set_slot(8, len(pairs))
 
-    for idx, pair in enumerate(pairs, start=1):
-        base = pair["base"]
-        quote = pair["quote"]
-        h = address_pair(base, quote)
+    pair_ids: dict[tuple[str, str], int] = {}
+    for idx, pair, base, quote, h in validated_pairs:
         key = (base, quote)
-        if key in pair_keys:
-            raise ValueError(f"duplicate oracle pair: {base}/{quote}")
-        # The key is order-independent, so the inverse is the same pair.
-        if h in pair_keys.values():
-            raise ValueError(f"oracle pair already registered inverted: {base}/{quote}")
-        # This seeder writes slot 43 directly, bypassing `register_pair`, so it
-        # owes the same invariant: only the canonical orientation is stored, and
-        # `require_pair` relies on that rather than re-reading the entry.
-        if asset_address(base) > asset_address(quote):
-            raise ValueError(
-                f"oracle pair must be canonical (base <= quote): {base}/{quote}"
-            )
-        pair_keys[key] = h
         pair_ids[key] = idx
 
         storage.set_mapping(10, h, idx)
         storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_by_index (macro slot 43), canonical orientation.
+        # pair_by_index (macro slot 43), configured orientation.
         storage.set_mapping_pair(43, u32_bytes(idx), base, quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))

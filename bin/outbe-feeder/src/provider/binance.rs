@@ -5,7 +5,8 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{CandlePrice, Provider, TickerPrice};
+use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
+use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Binance symbol.
 /// Returns `None` for pairs Binance doesn't support (e.g. custom tokens).
@@ -101,12 +102,14 @@ impl Provider for BinanceProvider {
                 }
             };
 
-            let price: f64 = data.last_price.parse().unwrap_or(0.0);
-            let volume: f64 = data.volume.parse().unwrap_or(0.0);
-
-            if price > 0.0 {
-                let key = format!("{base}/{quote}");
-                result.insert(key, TickerPrice { price, volume });
+            let key = format!("{base}/{quote}");
+            if let Some(ticker) = checked_ticker(
+                "binance",
+                &key,
+                FixedValue::parse(&data.last_price),
+                VolumeInput::Present(FixedValue::parse(&data.volume)),
+            ) {
+                result.insert(key, ticker);
             }
         }
 
@@ -175,21 +178,15 @@ impl Provider for BinanceProvider {
                     continue;
                 }
                 let timestamp = kline[0].as_u64().unwrap_or(0) / 1000; // ms -> s
-                let close: f64 = kline[4]
-                    .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-                let volume: f64 = kline[5]
-                    .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-
-                if close > 0.0 {
-                    candles.push(CandlePrice {
-                        price: close,
-                        volume,
-                        timestamp,
-                    });
+                let key = format!("{base}/{quote}");
+                if let Some(candle) = checked_candle(
+                    "binance",
+                    &key,
+                    kline[4].as_str().and_then(FixedValue::parse),
+                    VolumeInput::Present(kline[5].as_str().and_then(FixedValue::parse)),
+                    timestamp,
+                ) {
+                    candles.push(candle);
                 }
             }
 

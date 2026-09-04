@@ -9,6 +9,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
+    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -194,6 +195,12 @@ impl Config {
         self.ports.port(Service::OcompSupervisor, i)
     }
 
+    /// Per-node loopback control endpoint shared by the embedded OCOMP ExEx
+    /// client and its external SnapshotExporter server.
+    pub fn ocomp_discovery_control_address(&self, i: usize) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], self.ports.port(Service::OcompMessage, i)))
+    }
+
     /// Salvo observability endpoint for one of validator `i`'s OCOMP Workers.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub fn ocomp_worker_port(&self, i: usize, worker_ordinal: u32) -> u16 {
@@ -304,6 +311,18 @@ mod tests {
 
         assert_eq!(cfg.primary_port(), 18545);
         assert_eq!(cfg.tee_port(joiner), cfg.http_port(joiner) + 1);
+        assert_eq!(
+            cfg.ocomp_discovery_control_address(joiner).port(),
+            cfg.ocomp_endpoint_port(joiner) + 1
+        );
+        assert!(cfg
+            .ocomp_discovery_control_address(joiner)
+            .ip()
+            .is_loopback());
+        assert_ne!(
+            cfg.ocomp_discovery_control_address(joiner),
+            cfg.ocomp_discovery_control_address(0)
+        );
         assert!(cfg.http_port(14) > cfg.http_port(joiner));
         assert!(cfg.consensus_port(15) > cfg.http_port(14));
         assert_eq!(cfg.ocomp_endpoint_port(15), cfg.consensus_port(15) + 1);

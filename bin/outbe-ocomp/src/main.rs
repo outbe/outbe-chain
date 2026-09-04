@@ -440,16 +440,21 @@ enum SnapshotExporterCompletionV1 {
     },
 }
 
+type SnapshotExporterLaneControlsV1 = BTreeMap<B256, SnapshotExporterLaneControlV1>;
+type SnapshotExporterCompletionReceiverV1 =
+    tokio::sync::mpsc::UnboundedReceiver<SnapshotExporterCompletionV1>;
+type SnapshotExporterLaneSpawnResultV1 = Result<
+    (
+        SnapshotExporterLaneControlsV1,
+        SnapshotExporterCompletionReceiverV1,
+    ),
+    Box<dyn std::error::Error>,
+>;
+
 fn spawn_snapshot_exporter_lanes(
     lanes: BTreeMap<B256, SnapshotExporterLaneV1>,
     observability: Arc<SnapshotExporterObservabilityServerV1>,
-) -> Result<
-    (
-        BTreeMap<B256, SnapshotExporterLaneControlV1>,
-        tokio::sync::mpsc::UnboundedReceiver<SnapshotExporterCompletionV1>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> SnapshotExporterLaneSpawnResultV1 {
     let (completion_tx, completion_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut controls = BTreeMap::new();
     for (bundle_hash, mut lane) in lanes {
@@ -1101,20 +1106,12 @@ mod tests {
         let genesis_hash = B256::repeat_byte(0x31);
         let limits = poc_schema_limits();
         let root = tempfile::tempdir().unwrap();
-        let corrupt_spool = DiscoverySpoolV1::open(
-            root.path().join("corrupt"),
-            chain_id,
-            genesis_hash,
-            limits.clone(),
-        )
-        .unwrap();
-        let healthy_spool = DiscoverySpoolV1::open(
-            root.path().join("healthy"),
-            chain_id,
-            genesis_hash,
-            limits.clone(),
-        )
-        .unwrap();
+        let corrupt_spool =
+            DiscoverySpoolV1::open(root.path().join("corrupt"), chain_id, genesis_hash, limits)
+                .unwrap();
+        let healthy_spool =
+            DiscoverySpoolV1::open(root.path().join("healthy"), chain_id, genesis_hash, limits)
+                .unwrap();
         let corrupt_spec = test_support::finalized_job_spec(0x41, 100, chain_id, genesis_hash);
         let healthy_spec = test_support::finalized_job_spec(0x51, 101, chain_id, genesis_hash);
         let (corrupt_reference, _) = corrupt_spool.put_offer(7, &corrupt_spec).unwrap();

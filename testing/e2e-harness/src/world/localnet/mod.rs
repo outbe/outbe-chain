@@ -369,14 +369,10 @@ impl Localnet {
     /// already attached to `<node_dir>/node.log` by the caller (via
     /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
-        self.spawn_node_with_projection_identity(label, label, node_dir, cmd)
-    }
-
-    fn spawn_node_with_projection_identity(
+    fn spawn_node(
         &self,
         label: &str,
-        projection_identity: &str,
+        index: usize,
         node_dir: &Path,
         mut cmd: Command,
     ) -> Result<ChildGuard> {
@@ -392,7 +388,11 @@ impl Localnet {
         )
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
-            self.projection_database_name(projection_identity),
+            self.projection_database_name(&node_slot_projection_identity(index)),
+        )
+        .env(
+            "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
+            self.cfg.ocomp_discovery_control_address(index).to_string(),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -497,6 +497,10 @@ impl Localnet {
     }
 }
 
+fn node_slot_projection_identity(index: usize) -> String {
+    format!("validator-{index}")
+}
+
 fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
     if let Some(option) = args.iter().find(|arg| {
         arg.as_str() == "--node-evm-key"
@@ -515,7 +519,10 @@ fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
 /// explicit operator-selected/default deadline.
 fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
     if mode.passes_sgx_devices() {
-        cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "300");
+        cmd.env(
+            "OUTBE_TEE_IO_TIMEOUT_SECS",
+            crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS,
+        );
     }
 }
 
@@ -598,13 +605,26 @@ mod tests {
     fn co_located_hardware_lane_alone_widens_enclave_io_timeout() {
         use crate::env::TeeMode;
 
-        assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("300"));
+        assert_eq!(
+            configured_timeout(TeeMode::Real).as_deref(),
+            Some(crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
+        );
         assert_eq!(
             configured_timeout(TeeMode::SgxNoAttest).as_deref(),
-            Some("300")
+            Some(crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
         );
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
+    }
+
+    #[test]
+    fn projection_identity_is_bound_to_the_node_slot_not_its_runtime_role() {
+        assert_eq!(node_slot_projection_identity(4), "validator-4");
+        assert_ne!(
+            node_slot_projection_identity(4),
+            Localnet::joiner_full_node_name(4),
+            "the FullNode process label must not select its durable Mongo projection"
+        );
     }
 
     #[test]

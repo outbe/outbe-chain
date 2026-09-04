@@ -368,7 +368,7 @@ mod tests {
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
-            eyre::bail!("unused transaction_receipt")
+            eyre::bail!("unused transaction_receipt");
         }
 
         async fn logs(
@@ -378,11 +378,11 @@ mod tests {
             _from_block: &str,
             _to_block: &str,
         ) -> Result<Vec<serde_json::Value>> {
-            eyre::bail!("unused logs")
+            eyre::bail!("unused logs");
         }
 
         async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
-            eyre::bail!("unused block_by_number")
+            eyre::bail!("unused block_by_number");
         }
 
         async fn finalized_block(&self) -> Result<serde_json::Value> {
@@ -411,7 +411,7 @@ mod tests {
                     ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(7)),
                 );
             }
-            eyre::bail!("unexpected Registry call")
+            eyre::bail!("unexpected Registry call");
         }
     }
 
@@ -421,19 +421,19 @@ mod tests {
         }
 
         async fn gas_price(&self) -> Result<U256> {
-            eyre::bail!("unused gas_price")
+            eyre::bail!("unused gas_price");
         }
 
         async fn transaction_count(&self, _address: Address) -> Result<u64> {
-            eyre::bail!("unused transaction_count")
+            eyre::bail!("unused transaction_count");
         }
 
         async fn balance(&self, _address: Address) -> Result<U256> {
-            eyre::bail!("unused balance")
+            eyre::bail!("unused balance");
         }
 
         async fn send_raw_transaction(&self, _raw_transaction: &[u8]) -> Result<String> {
-            eyre::bail!("unused send_raw_transaction")
+            eyre::bail!("unused send_raw_transaction");
         }
 
         async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {

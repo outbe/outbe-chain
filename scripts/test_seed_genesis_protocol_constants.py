@@ -27,6 +27,55 @@ SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
+    def test_oracle_seed_preserves_configured_generic_pair_orientation(self):
+        storage = seed_genesis.StorageBuilder()
+        token = "0x1111111111111111111111111111111111111111"
+
+        seed_genesis.seed_oracle(
+            storage,
+            {"pairs": [{"base": token, "quote": "840"}]},
+        )
+
+        slot = int(seed_genesis.mapping_key(seed_genesis.u32_bytes(1), 43), 16)
+        self.assertEqual(
+            storage.entries[seed_genesis.hex32(slot)],
+            seed_genesis.hex32(int.from_bytes(seed_genesis.asset_address(token), "big")),
+        )
+        self.assertEqual(
+            storage.entries[seed_genesis.hex32(slot + 1)],
+            seed_genesis.hex32(int.from_bytes(seed_genesis.asset_address("840"), "big")),
+        )
+
+    def test_oracle_seed_rejects_iso_to_coen_and_inverse_duplicates(self):
+        with self.assertRaisesRegex(ValueError, "COEN base"):
+            seed_genesis.seed_oracle(
+                seed_genesis.StorageBuilder(),
+                {"pairs": [{"base": "840", "quote": "COEN"}]},
+            )
+
+        with self.assertRaisesRegex(ValueError, "inverted"):
+            seed_genesis.seed_oracle(
+                seed_genesis.StorageBuilder(),
+                {
+                    "pairs": [
+                        {"base": "840", "quote": "0x1111111111111111111111111111111111111111"},
+                        {"base": "0x1111111111111111111111111111111111111111", "quote": "840"},
+                    ]
+                },
+            )
+
+    def test_oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address(self):
+        token = "0x1111111111111111111111111111111111111111"
+        for base, quote in (("COEN", "native"), ("840", "840"), (token, token)):
+            with self.subTest(base=base, quote=quote):
+                storage = seed_genesis.StorageBuilder()
+                with self.assertRaisesRegex(ValueError, "same asset"):
+                    seed_genesis.seed_oracle(
+                        storage,
+                        {"pairs": [{"base": base, "quote": quote}]},
+                    )
+                self.assertEqual(storage.entries, {})
+
     def test_checked_in_genesis_fixtures_use_scale18_native_balances(self):
         node_fixture = json.loads(
             (REPO_ROOT / "crates/blockchain/node/tests/assets/genesis.json").read_text()

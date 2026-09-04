@@ -156,24 +156,6 @@ pub struct ReshareResult {
     pub active_set_hash: B256,
 }
 
-/// One validator's TEE key registration carried in a reshare `BoundaryOutcome`
-/// (R5) so the begin-zone handler can re-register the new committee's enclaves
-/// on-chain after a tribute-offer reshare. The offer key itself is PRESERVED
-/// across a reshare, so `tribute_offer_public_key` is unchanged; only the
-/// per-validator enclave keys rotate to the new committee.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TeeReshareRegistration {
-    /// Validator EVM address (the `TeeRegistry` key).
-    pub validator: Address,
-    /// Enclave X25519 recipient public key (clients encrypt offers to the group
-    /// key; this addresses share-relay to the right enclave).
-    pub recipient_x25519: B256,
-    /// Enclave Ed25519 attestation public key (per-offer attestation verify).
-    pub attestation_pub: B256,
-    /// Enclave Noise-IK static public key (channel pin).
-    pub noise_static_pub: B256,
-}
-
 /// Canonical DKG boundary artifact carried in block `header.extra_data`.
 ///
 /// This artifact is the execution-facing chain record of a DKG outcome at an
@@ -219,11 +201,6 @@ pub struct DkgBoundaryArtifact {
     /// right enclaves. Empty until the tribute DKG slice
     /// populates it; OART wire `v0.07`.
     pub tee_recipient_pubkeys: Vec<(Address, B256)>,
-    /// Per-validator TEE key re-registrations for the activated committee after a
-    /// tribute-offer reshare (R5). Empty except at a reshare boundary; the
-    /// begin-zone `BoundaryOutcome` handler writes these into `TeeRegistry`. The
-    /// offer key is preserved across a reshare. OART wire `v0.08`.
-    pub tee_reshare_registrations: Vec<TeeReshareRegistration>,
     /// Canonical storage-order list of ValidatorSet target members excluded at
     /// the exact DKG freeze block because their DcapRequired lease was not ready.
     /// This is the only authority for the narrow replayable expiry demotion.
@@ -232,13 +209,6 @@ pub struct DkgBoundaryArtifact {
     /// Honest voters compare the complete locally frozen artifact, including
     /// both this commitment and the ordered list.
     pub tee_expired_target_exclusions_hash: B256,
-    /// Prior- (outgoing-) committee threshold GROUP signature over
-    /// `reshare_endorsement_message(chain_id, committee_set_hash, offer_pub)`,
-    /// authorizing the incoming committee's TEE re-registrations. The begin-zone
-    /// handler verifies it against the stored prior group public key before applying
-    /// `tee_reshare_registrations` - so a malicious supermajority of the NEW committee
-    /// cannot self-authorize. Empty except at a reshare boundary. OART wire `v0.09`.
-    pub endorsement_signature: Bytes,
 }
 
 /// A single validator entry for genesis initialization.

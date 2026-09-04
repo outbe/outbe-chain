@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {console} from "forge-std/console.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -34,7 +34,7 @@ contract DeployTarget is BaseScript {
 
         vm.startBroadcast(pk);
 
-        Create3Factory factory = ensureCreate3Factory();
+        Create3Factory factory = create3Factory();
 
         // Shared NFT collection + bridge: on a remote target these deploy here; on the origin loopback
         // target they already exist on this chain, so idempotent deployProxy returns the existing ones.
