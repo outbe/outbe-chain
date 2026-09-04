@@ -5,6 +5,7 @@
 //! roots or chain state.
 
 use std::{
+    path::{Path, PathBuf},
     str::FromStr as _,
     thread::{self, sleep},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -5575,10 +5576,7 @@ fn wait_for_released_retention(
     loop {
         let mut released = 0_usize;
         for (validator_index, observation) in latest.iter_mut().enumerate() {
-            let root = world
-                .validators
-                .data_dir(validator_index)
-                .join("ocomp_retention");
+            let root = retention_journal_root(&world.validators.data_dir(validator_index));
             match inspect_retention_journal(&root) {
                 Ok(snapshot) => {
                     let matching = snapshot.records.iter().find_map(|(_, record)| {
@@ -5647,6 +5645,10 @@ fn wait_for_released_retention(
         sleep(Duration::from_millis(250));
     }
     world.state.ocomp_expired_release_had_export = Some(expect_export);
+}
+
+fn retention_journal_root(node_data_dir: &Path) -> PathBuf {
+    node_data_dir.join("consensus").join("ocomp_retention")
 }
 
 #[when("the stopped OCOMP workers restart after canonical expiry")]
@@ -6469,9 +6471,9 @@ mod tests {
         dynamic_live_ports_after_jail, dynamic_oracle_refresh_timestamp,
         dynamic_pre_restart_vote_baseline_ready, first_protocol_cycle_at_or_after_interval,
         joiner_restart_is_in_safe_early_epoch_window, monotonic_progress_decision,
-        post_restart_convergence_target, public_vote_set_matches, BoundedCompletionDecision,
-        ProgressWaitDecision, PublicVoteSetExpectation, RestartBarrierDecision,
-        RestartBarrierState, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        post_restart_convergence_target, public_vote_set_matches, retention_journal_root,
+        BoundedCompletionDecision, ProgressWaitDecision, PublicVoteSetExpectation,
+        RestartBarrierDecision, RestartBarrierState, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
     use crate::world::rpc::OcompPublicVoteAccountabilityV1;
 
@@ -6495,6 +6497,14 @@ mod tests {
             missing_bitmap: None,
             equivocation_bitmap: None,
         }
+    }
+
+    #[test]
+    fn retention_evidence_reads_the_node_consensus_storage_root() {
+        assert_eq!(
+            retention_journal_root(std::path::Path::new("/scenario/validator-0/data")),
+            std::path::PathBuf::from("/scenario/validator-0/data/consensus/ocomp_retention")
+        );
     }
 
     #[test]
