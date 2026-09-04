@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::types::StorageKey;
+use outbe_primitives::time::WorldwideDay;
 
 /// EVM storage layout for the Agent Reward contract.
 ///

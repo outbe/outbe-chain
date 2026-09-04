@@ -3,7 +3,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::{keccak256, B256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
@@ -26,6 +25,7 @@ use outbe_offchain_data::{ProjectionConfig, ProjectionState};
 use outbe_offchain_storage::{
     MongoStorage, MongoStorageConfig, StorageError, StorageErrorKind, StorageReaderHandle,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::RetainedTributePin;
 use thiserror::Error;
 

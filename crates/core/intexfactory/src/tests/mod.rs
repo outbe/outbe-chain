@@ -1,6 +1,5 @@
 use alloy_primitives::{address, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
@@ -9,6 +8,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;

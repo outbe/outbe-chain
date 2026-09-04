@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
-outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-ocomp-protocol.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }

@@ -1,6 +1,5 @@
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
@@ -18,6 +17,7 @@ use outbe_ocomp_protocol::{
     state::{OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
     vote::OcompQuorumV1,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},

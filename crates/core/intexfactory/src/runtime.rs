@@ -3,11 +3,11 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_common::WorldwideDay;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
@@ -589,7 +589,7 @@ pub(crate) fn contributor_payout_round(
     };
     let contributor_count = outbe_intex::api::certified_contributor_generation(
         storage,
-        outbe_common::WorldwideDay::new(worldwide_day),
+        outbe_primitives::time::WorldwideDay::new(worldwide_day),
     )?
     .map_or(0, |generation| generation.contributor_count);
     Ok(crate::precompile::IIntexFactory::ContributorRound {

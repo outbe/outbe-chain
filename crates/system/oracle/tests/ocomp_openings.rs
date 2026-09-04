@@ -1,11 +1,11 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_oracle::{
     evaluate_oracle_opening_v1, oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1,
     OracleOcompError, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES, MAX_OCOMP_REFERENCE_CURRENCIES,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::ORACLE_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},

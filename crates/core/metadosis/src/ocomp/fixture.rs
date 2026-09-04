@@ -62,7 +62,7 @@ impl MetadosisContract<'_> {
                     "terminal-history fixture requires a voting-open job",
                 ));
             }
-            let wwd = outbe_common::WorldwideDay::new(base_record.intent.wwd);
+            let wwd = outbe_primitives::time::WorldwideDay::new(base_record.intent.wwd);
             if self.terminal_intent_count(wwd)? != 0 {
                 return Err(storage_corruption_message(
                     "invalid OCOMP terminal-history fixture request",

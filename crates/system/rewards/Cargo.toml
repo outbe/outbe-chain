@@ -26,7 +26,6 @@ tracing.workspace = true
 ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
-outbe-common.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol.workspace = true
 outbe-promislimit.workspace = true

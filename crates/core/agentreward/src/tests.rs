@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::checked_protocol_to_native;
 
 use outbe_gemfactory::schema::GemTypes;

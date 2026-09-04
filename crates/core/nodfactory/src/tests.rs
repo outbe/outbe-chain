@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
@@ -11,6 +10,7 @@ use outbe_nod::{
     NodRepositoryReader,
 };
 use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,

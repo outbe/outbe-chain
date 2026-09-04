@@ -173,7 +173,7 @@ impl PersistedModel {
     fn observe(
         self,
         provider: &mut HashMapStorageProvider,
-        wwd: outbe_common::WorldwideDay,
+        wwd: outbe_primitives::time::WorldwideDay,
         intent_id: B256,
     ) -> TestCaseResult {
         StorageHandle::enter(provider, |storage| {
@@ -271,7 +271,10 @@ fn submit_vote(
     })
 }
 
-fn public_intent(provider: &mut HashMapStorageProvider, wwd: outbe_common::WorldwideDay) -> B256 {
+fn public_intent(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_primitives::time::WorldwideDay,
+) -> B256 {
     let (intent_id, event_wwd, pending_nonce, attempt, activation_preconditions_hash) = {
         let requested = provider
             .get_ordered_events()
@@ -312,7 +315,7 @@ fn public_intent(provider: &mut HashMapStorageProvider, wwd: outbe_common::World
 
 struct ExpiringProductionFixture {
     scope: outbe_compressed_entities::ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     intent_id: B256,
     deadline_height: u64,
     command_time: u64,
@@ -1493,7 +1496,7 @@ fn finalized_open_and_deadline(
 fn drive_day_to_voting_open(
     provider: &mut HashMapStorageProvider,
     scope: &outbe_compressed_entities::ExecutionScope,
-    expected_wwd: outbe_common::WorldwideDay,
+    expected_wwd: outbe_primitives::time::WorldwideDay,
     request_block: u64,
     request_time: u64,
     finality_hashes: (B256, B256),
@@ -1539,7 +1542,7 @@ fn drive_day_to_voting_open(
 
 fn seed_near_cap_history(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     live_intent_id: B256,
 ) {
     StorageHandle::enter(provider, |storage| {

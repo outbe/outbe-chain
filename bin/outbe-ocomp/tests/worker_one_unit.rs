@@ -8,7 +8,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_finalized_output_run,
@@ -77,6 +76,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
+use outbe_primitives::time::WorldwideDay;
 use tempfile::tempdir;
 
 struct RunningWorker {

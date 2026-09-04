@@ -1,11 +1,11 @@
 // OCOMP-TEST-ID: OCM-FSM-001
 
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_metadosis::model::{
     transition_rules, DayPhase, JobFsmCommand, JobFsmLimits, JobFsmState, JobFsmTransitionKind,
     ReadyAttemptSnapshot, RequestEffectMode,
 };
+use outbe_primitives::time::WorldwideDay;
 
 const WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 const REQUEST_HEIGHT: u64 = 40;
@@ -455,7 +455,7 @@ fn two_worldwide_days_generated_sequences_stay_independent() {
     let limits = JobFsmLimits {
         max_terminal_records: 16,
     };
-    let other_wwd = outbe_common::WorldwideDay::new(WWD.value() + 1);
+    let other_wwd = outbe_primitives::time::WorldwideDay::new(WWD.value() + 1);
     let mut lanes = [
         (
             JobFsmState::initial_ready(WWD, REQUEST_HEIGHT),

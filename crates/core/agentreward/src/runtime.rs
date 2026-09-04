@@ -1,9 +1,9 @@
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
 
 /// ISO 4217 code both currency axes of an agent reward Gem carry. Agent rewards

@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     delete, mint, read, retire_partition, BodyInput, EntityRef, ExecutionScope, ParentBodySource,
     PartitionRef, RetirementOutcome, VerifiedBody, WwdEntityId,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::TributeError;
 use crate::precompile::ITribute;

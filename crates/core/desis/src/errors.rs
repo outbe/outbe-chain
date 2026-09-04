@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

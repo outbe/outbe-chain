@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, RetirementOutcome};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;

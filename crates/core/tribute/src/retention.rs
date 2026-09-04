@@ -8,7 +8,6 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_stored_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
@@ -17,6 +16,7 @@ use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, ScanEntry, ScanRequest, StorageReaderHandle,
     StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     repository::{namespace, primary_key, TRIBUTES_NAMESPACE},

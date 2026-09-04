@@ -1,6 +1,6 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::contract;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     storage::types::{Mapping, Slot, StorageBytes, StorageVec},

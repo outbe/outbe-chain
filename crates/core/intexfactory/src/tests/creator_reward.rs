@@ -592,21 +592,21 @@ fn install_generation_with_total(
     registry
         .ocomp_contributor_root
         .write(
-            &outbe_common::WorldwideDay::new(WWD),
+            &outbe_primitives::time::WorldwideDay::new(WWD),
             contributor_root(leaves),
         )
         .unwrap();
     registry
         .ocomp_eligible_nominal_total
         .write(
-            &outbe_common::WorldwideDay::new(WWD),
+            &outbe_primitives::time::WorldwideDay::new(WWD),
             eligible_nominal_total,
         )
         .unwrap();
     registry
         .ocomp_contributor_metadata
         .write(
-            &outbe_common::WorldwideDay::new(WWD),
+            &outbe_primitives::time::WorldwideDay::new(WWD),
             metadata_word(1, count),
         )
         .unwrap();
@@ -618,15 +618,21 @@ fn install_empty_generation(storage: &StorageHandle<'_>) {
     let registry = outbe_intex::IntexContract::new(storage.clone());
     registry
         .ocomp_contributor_root
-        .write(&outbe_common::WorldwideDay::new(WWD), contributor_root(&[]))
+        .write(
+            &outbe_primitives::time::WorldwideDay::new(WWD),
+            contributor_root(&[]),
+        )
         .unwrap();
     registry
         .ocomp_eligible_nominal_total
-        .write(&outbe_common::WorldwideDay::new(WWD), U256::ZERO)
+        .write(&outbe_primitives::time::WorldwideDay::new(WWD), U256::ZERO)
         .unwrap();
     registry
         .ocomp_contributor_metadata
-        .write(&outbe_common::WorldwideDay::new(WWD), metadata_word(1, 0))
+        .write(
+            &outbe_primitives::time::WorldwideDay::new(WWD),
+            metadata_word(1, 0),
+        )
         .unwrap();
 }
 
@@ -645,7 +651,7 @@ fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorL
 fn deliver_proceeds(storage: &StorageHandle<'_>, amount: U256) {
     outbe_intex::api::arm_proceeds(
         storage,
-        outbe_common::WorldwideDay::new(WWD),
+        outbe_primitives::time::WorldwideDay::new(WWD),
         &[CHAIN],
         DEADLINE_FUTURE,
     )
@@ -875,7 +881,7 @@ fn day_without_contributor_authority_holds_the_pot_until_the_deadline() {
         install_generation(&s, &leaves);
         runtime::try_settle_proceeds(
             &s,
-            outbe_common::WorldwideDay::new(WWD),
+            outbe_primitives::time::WorldwideDay::new(WWD),
             DEADLINE_FUTURE - 1,
         )
         .unwrap();
@@ -893,7 +899,7 @@ fn legacy_day_keeps_using_the_cursor_path() {
         let owners = [contrib(1), contrib(2)];
         outbe_intex::api::record_contributors(
             &s,
-            outbe_common::WorldwideDay::new(WWD),
+            outbe_primitives::time::WorldwideDay::new(WWD),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(100u64)),
@@ -949,11 +955,17 @@ fn late_proceeds_after_an_ownerless_certified_day_burn() {
         let registry = outbe_intex::IntexContract::new(s.clone());
         registry
             .ocomp_contributor_root
-            .write(&outbe_common::WorldwideDay::new(WWD), B256::repeat_byte(1))
+            .write(
+                &outbe_primitives::time::WorldwideDay::new(WWD),
+                B256::repeat_byte(1),
+            )
             .unwrap();
         registry
             .ocomp_contributor_metadata
-            .write(&outbe_common::WorldwideDay::new(WWD), metadata_word(1, 0))
+            .write(
+                &outbe_primitives::time::WorldwideDay::new(WWD),
+                metadata_word(1, 0),
+            )
             .unwrap();
         deliver_proceeds(&s, U256::from(500u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);

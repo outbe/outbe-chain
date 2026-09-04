@@ -69,7 +69,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0708);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7100000000000000000000000000000000000071");
@@ -1301,16 +1301,16 @@ fn seed_ce_genesis(storage: &StorageHandle<'_>) {
 
 struct PreparedRequestFixture {
     scope: ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
 
 struct ReadyDaysFixture {
     scope: ExecutionScope,
-    first_wwd: outbe_common::WorldwideDay,
-    later_wwd: outbe_common::WorldwideDay,
-    third_wwd: outbe_common::WorldwideDay,
+    first_wwd: outbe_primitives::time::WorldwideDay,
+    later_wwd: outbe_primitives::time::WorldwideDay,
+    third_wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
@@ -1329,7 +1329,7 @@ fn prepare_request_fixture_with_day_type(
 ) -> PreparedRequestFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0709);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 23;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7200000000000000000000000000000000000072");
@@ -1433,9 +1433,9 @@ fn prepare_ready_days_fixture(
 ) -> ReadyDaysFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let first_wwd = outbe_common::WorldwideDay::new(2026_0710);
-    let later_wwd = outbe_common::WorldwideDay::new(2026_0711);
-    let third_wwd = outbe_common::WorldwideDay::new(2026_0712);
+    let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0710);
+    let later_wwd = outbe_primitives::time::WorldwideDay::new(2026_0711);
+    let third_wwd = outbe_primitives::time::WorldwideDay::new(2026_0712);
     let block_number = 29;
     let block_time = third_wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let mut profile = request_profile();
@@ -1553,7 +1553,7 @@ struct RequestObservables {
 
 fn request_observables(
     storage: StorageHandle<'_>,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> RequestObservables {
     RequestObservables {
         fsm: MetadosisContract::new(storage.clone())
@@ -1593,7 +1593,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0709);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7200000000000000000000000000000000000072");

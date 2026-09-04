@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
