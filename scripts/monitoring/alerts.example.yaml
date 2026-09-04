@@ -612,6 +612,22 @@ groups:
         annotations:
           summary: "OCOMP Worker {{ $labels.instance }} is disconnected or its loop is stale"
 
+      - alert: OutbeOcompWorkerUnitFailuresSustained
+        expr: sum by(job, instance) (increase(outbe_ocomp_worker_units_completed_total{outcome="failed"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP Worker {{ $labels.instance }} is repeatedly failing work units"
+          description: |
+            At least one work unit has failed in every rolling five-minute
+            window for ten minutes. Local retries remain bound to the same
+            canonical JobId and deadline; they cannot establish an on-chain
+            Failed state or extend the response window. Inspect Worker and
+            SnapshotExporter logs, retained input, disk capacity, and MongoDB
+            before the canonical job expires.
+
       - alert: OutbeOcompVoteSubmissionFailures
         expr: increase(outbe_ocomp_vote_submission_failures_total[5m]) > 0
         labels:
