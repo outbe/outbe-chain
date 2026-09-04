@@ -23,9 +23,8 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_WINDOW` / `CALL_THRESHOLD` pair.
 pub const CALL_BREACH_DAYS: u32 = 21;
 
-/// Settlement window opened by the call. Settlement stays open on unchanged
-/// terms throughout; whatever remains when it lapses is voided.
-pub const CALL_WINDOW_SECS: u64 = 14 * 24 * 60 * 60;
+/// Settlement window opened by the call.
+pub const CALL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
 
 /// Day count convention for interest accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;
