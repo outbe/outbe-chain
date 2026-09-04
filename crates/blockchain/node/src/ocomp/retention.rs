@@ -5,7 +5,7 @@
 //! typed Metadosis record before this coordinator persists anything.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -35,6 +35,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_offchain_data::TributeRetentionSelector;
+use outbe_offchain_storage::StorageErrorKind;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
     error::PrecompileError,
@@ -45,8 +46,8 @@ use outbe_primitives::{
     },
     OutbeHeader, OutbeReceipt,
 };
-use outbe_tribute::RetainedTributePin;
 pub use outbe_tribute::RetainedTributeWriter;
+use outbe_tribute::{RetainedTributePin, TributeRepositoryError};
 use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
 
@@ -74,7 +75,7 @@ const JOURNAL_MAX_BYTES: usize =
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
-const RETAINED_GC_PROGRESS_POLL: Duration = Duration::from_millis(25);
+const RETAINED_GC_PROGRESS_POLL: Duration = Duration::from_millis(100);
 const RETAINED_GC_IDLE_POLL: Duration = Duration::from_secs(1);
 const RETAINED_GC_RETRY_BACKOFF: Duration = Duration::from_secs(5);
 const JOURNAL_RECOVERY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -1314,11 +1315,148 @@ fn transition_retention_status(inner: &mut CoordinatorInner, status: RetentionSt
     inner.status = status;
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RetainedGcWorkId {
+    key: B256,
+    generation: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct RetainedGcRetrySchedule {
+    deadlines: HashMap<RetainedGcWorkId, Instant>,
+    global_deadline: Option<Instant>,
+}
+
+impl RetainedGcRetrySchedule {
+    fn retain_pending(&mut self, pending: &[RetainedGcWorkId]) {
+        let pending = pending.iter().copied().collect::<HashSet<_>>();
+        self.deadlines.retain(|work, _| pending.contains(work));
+    }
+
+    fn is_eligible(&self, work: RetainedGcWorkId, now: Instant) -> bool {
+        self.deadlines
+            .get(&work)
+            .is_none_or(|deadline| *deadline <= now)
+    }
+
+    fn defer(&mut self, work: RetainedGcWorkId, now: Instant) {
+        self.deadlines.insert(work, now + RETAINED_GC_RETRY_BACKOFF);
+    }
+
+    fn clear(&mut self, work: RetainedGcWorkId) {
+        self.deadlines.remove(&work);
+    }
+
+    fn next_delay(&self, now: Instant) -> Option<Duration> {
+        self.deadlines
+            .values()
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .min()
+    }
+
+    fn defer_global(&mut self, now: Instant) {
+        self.global_deadline = Some(now + RETAINED_GC_RETRY_BACKOFF);
+    }
+
+    fn clear_global(&mut self) {
+        self.global_deadline = None;
+    }
+
+    fn global_delay(&self, now: Instant) -> Option<Duration> {
+        self.global_deadline
+            .filter(|deadline| *deadline > now)
+            .map(|deadline| deadline.saturating_duration_since(now))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetainedGcFailureClass {
+    ItemData,
+    StorageUnavailable,
+    StorageBackend,
+    StorageDeadline,
+    WriterLeaseLost,
+    Internal,
+}
+
+impl RetainedGcFailureClass {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ItemData => "item_data",
+            Self::StorageUnavailable => "storage_unavailable",
+            Self::StorageBackend => "storage_backend",
+            Self::StorageDeadline => "storage_deadline",
+            Self::WriterLeaseLost => "writer_lease_lost",
+            Self::Internal => "internal",
+        }
+    }
+}
+
+struct RetainedGcItemFailure {
+    work: RetainedGcWorkId,
+    class: RetainedGcFailureClass,
+    error: RetentionError,
+}
+
+struct RetainedGcCycleFailure {
+    class: RetainedGcFailureClass,
+    error: RetentionError,
+    report: Option<Box<RetainedGcCycleReport>>,
+}
+
+enum RetainedGcAttemptFailure {
+    Item(RetainedGcItemFailure),
+    Global {
+        class: RetainedGcFailureClass,
+        error: RetentionError,
+    },
+}
+
+impl RetainedGcAttemptFailure {
+    fn global(error: RetentionError) -> Self {
+        Self::Global {
+            class: RetainedGcFailureClass::Internal,
+            error,
+        }
+    }
+
+    fn into_error(self) -> RetentionError {
+        match self {
+            Self::Item(failure) => failure.error,
+            Self::Global { error, .. } => error,
+        }
+    }
+}
+
+enum RetainedGcAttemptOutcome {
+    Completed(DurablePinAck),
+    PageProgress,
+    NoLongerPending,
+}
+
 struct RetainedGcCycleReport {
     pending: usize,
+    deferred: usize,
     completed: u64,
     pages: u64,
-    failures: Vec<(B256, RetentionError)>,
+    failures: Vec<RetainedGcItemFailure>,
+    next_retry_delay: Option<Duration>,
+}
+
+enum RetainedGcScheduledCycle {
+    DeferredGlobal(Duration),
+    Ran(RetainedGcCycleReport),
+}
+
+#[cfg(test)]
+pub(crate) struct RetainedGcCycleTestReport {
+    pub global_deferred: bool,
+    pub pending: usize,
+    pub deferred: usize,
+    pub completed: u64,
+    pub pages: u64,
+    pub item_failures: usize,
+    pub retry_entries: usize,
 }
 
 /// Node-owned independently keyed multi-job OCOMP pin coordinator.
@@ -2651,15 +2789,23 @@ impl OcompRetentionCoordinator {
         &self,
         finalized_height: u64,
     ) -> Result<Option<DurablePinAck>, RetentionError> {
-        for key in self.gc_candidate_keys(finalized_height)? {
-            if let Some(ack) = self.release_due_key(key, finalized_height)? {
-                return Ok(Some(ack));
+        for work in self.gc_candidate_work(finalized_height)? {
+            match self.release_due_work(work, finalized_height) {
+                Ok(RetainedGcAttemptOutcome::Completed(ack)) => return Ok(Some(ack)),
+                Ok(
+                    RetainedGcAttemptOutcome::PageProgress
+                    | RetainedGcAttemptOutcome::NoLongerPending,
+                ) => {}
+                Err(error) => return Err(error.into_error()),
             }
         }
         Ok(None)
     }
 
-    fn gc_candidate_keys(&self, finalized_height: u64) -> Result<Vec<B256>, RetentionError> {
+    fn gc_candidate_work(
+        &self,
+        finalized_height: u64,
+    ) -> Result<Vec<RetainedGcWorkId>, RetentionError> {
         let inner = self.lock()?;
         if let Some(error) = retention_status_error(&inner.status) {
             return Err(error);
@@ -2673,47 +2819,154 @@ impl OcompRetentionCoordinator {
                 PinStateV1::Terminal { release_height, .. }
                     if release_height <= finalized_height =>
                 {
-                    Some(*key)
+                    Some(RetainedGcWorkId {
+                        key: *key,
+                        generation: record.generation,
+                    })
                 }
-                PinStateV1::GcPending { .. } => Some(*key),
-                PinStateV1::OrphanGcPending { .. } => Some(*key),
+                PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. } => {
+                    Some(RetainedGcWorkId {
+                        key: *key,
+                        generation: record.generation,
+                    })
+                }
                 _ => None,
             })
             .collect())
     }
 
-    fn run_gc_cycle(&self, finalized_height: u64) -> Result<RetainedGcCycleReport, RetentionError> {
-        let keys = self.gc_candidate_keys(finalized_height)?;
+    fn run_gc_cycle(
+        &self,
+        finalized_height: u64,
+        now: Instant,
+        retry_schedule: &mut RetainedGcRetrySchedule,
+        current_time: &mut impl FnMut() -> Instant,
+    ) -> Result<RetainedGcCycleReport, RetainedGcCycleFailure> {
+        let work_items =
+            self.gc_candidate_work(finalized_height)
+                .map_err(|error| RetainedGcCycleFailure {
+                    class: RetainedGcFailureClass::Internal,
+                    error,
+                    report: None,
+                })?;
+        retry_schedule.retain_pending(&work_items);
         let mut report = RetainedGcCycleReport {
-            pending: keys.len(),
+            pending: work_items.len(),
+            deferred: 0,
             completed: 0,
             pages: 0,
             failures: Vec::new(),
+            next_retry_delay: None,
         };
-        for key in keys {
-            match self.release_due_key(key, finalized_height) {
-                Ok(Some(_)) => report.completed = report.completed.saturating_add(1),
-                Ok(None) => report.pages = report.pages.saturating_add(1),
-                Err(error) => report.failures.push((key, error)),
+        for work in work_items {
+            if !retry_schedule.is_eligible(work, now) {
+                report.deferred = report.deferred.saturating_add(1);
+                continue;
+            }
+            match self.release_due_work(work, finalized_height) {
+                Ok(RetainedGcAttemptOutcome::Completed(_)) => {
+                    retry_schedule.clear(work);
+                    report.completed = report.completed.saturating_add(1);
+                }
+                Ok(RetainedGcAttemptOutcome::PageProgress) => {
+                    retry_schedule.clear(work);
+                    report.pages = report.pages.saturating_add(1);
+                }
+                Ok(RetainedGcAttemptOutcome::NoLongerPending) => {
+                    retry_schedule.clear(work);
+                }
+                Err(RetainedGcAttemptFailure::Item(failure)) => {
+                    retry_schedule.defer(failure.work, current_time());
+                    report.deferred = report.deferred.saturating_add(1);
+                    report.failures.push(failure);
+                }
+                Err(RetainedGcAttemptFailure::Global { class, error }) => {
+                    report.next_retry_delay = retry_schedule.next_delay(current_time());
+                    return Err(RetainedGcCycleFailure {
+                        class,
+                        error,
+                        report: Some(Box::new(report)),
+                    });
+                }
             }
         }
+        report.next_retry_delay = retry_schedule.next_delay(current_time());
         Ok(report)
     }
 
-    #[cfg(test)]
-    pub(crate) fn run_gc_cycle_for_test(
+    fn run_scheduled_gc_cycle(
         &self,
         finalized_height: u64,
-    ) -> Result<(u64, u64, usize), RetentionError> {
-        let report = self.run_gc_cycle(finalized_height)?;
-        Ok((report.completed, report.pages, report.failures.len()))
+        now: Instant,
+        retry_schedule: &mut RetainedGcRetrySchedule,
+        mut current_time: impl FnMut() -> Instant,
+    ) -> Result<RetainedGcScheduledCycle, RetainedGcCycleFailure> {
+        if let Some(delay) = retry_schedule.global_delay(now) {
+            return Ok(RetainedGcScheduledCycle::DeferredGlobal(delay));
+        }
+        match self.run_gc_cycle(finalized_height, now, retry_schedule, &mut current_time) {
+            Ok(report) => {
+                retry_schedule.clear_global();
+                Ok(RetainedGcScheduledCycle::Ran(report))
+            }
+            Err(failure) => {
+                retry_schedule.defer_global(current_time());
+                Err(failure)
+            }
+        }
     }
 
-    fn release_due_key(
+    #[cfg(test)]
+    pub(crate) fn run_gc_cycle_with_retry_for_test(
         &self,
-        key: B256,
         finalized_height: u64,
-    ) -> Result<Option<DurablePinAck>, RetentionError> {
+        now: Instant,
+        retry_schedule: &mut RetainedGcRetrySchedule,
+    ) -> Result<RetainedGcCycleTestReport, RetentionError> {
+        self.run_gc_cycle_with_retry_clock_for_test(finalized_height, now, now, retry_schedule)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_gc_cycle_with_retry_clock_for_test(
+        &self,
+        finalized_height: u64,
+        eligibility_now: Instant,
+        retry_now: Instant,
+        retry_schedule: &mut RetainedGcRetrySchedule,
+    ) -> Result<RetainedGcCycleTestReport, RetentionError> {
+        match self
+            .run_scheduled_gc_cycle(finalized_height, eligibility_now, retry_schedule, || {
+                retry_now
+            })
+            .map_err(|failure| failure.error)?
+        {
+            RetainedGcScheduledCycle::DeferredGlobal(_) => Ok(RetainedGcCycleTestReport {
+                global_deferred: true,
+                pending: 0,
+                deferred: 0,
+                completed: 0,
+                pages: 0,
+                item_failures: 0,
+                retry_entries: retry_schedule.deadlines.len(),
+            }),
+            RetainedGcScheduledCycle::Ran(report) => Ok(RetainedGcCycleTestReport {
+                global_deferred: false,
+                pending: report.pending,
+                deferred: report.deferred,
+                completed: report.completed,
+                pages: report.pages,
+                item_failures: report.failures.len(),
+                retry_entries: retry_schedule.deadlines.len(),
+            }),
+        }
+    }
+
+    fn release_due_work(
+        &self,
+        work: RetainedGcWorkId,
+        finalized_height: u64,
+    ) -> Result<RetainedGcAttemptOutcome, RetainedGcAttemptFailure> {
+        let key = work.key;
         let projection_fence = self.projection_fence.clone();
         let _projection_guard = projection_fence
             .as_ref()
@@ -2722,10 +2975,11 @@ impl OcompRetentionCoordinator {
                     .gc_claim_guard()
                     .map_err(RetentionError::InvalidTransition)
             })
-            .transpose()?;
-        let mut inner = self.lock()?;
+            .transpose()
+            .map_err(RetainedGcAttemptFailure::global)?;
+        let mut inner = self.lock().map_err(RetainedGcAttemptFailure::global)?;
         if let Some(error) = retention_status_error(&inner.status) {
-            return Err(error);
+            return Err(RetainedGcAttemptFailure::global(error));
         }
         let Some(record) = inner
             .registry
@@ -2733,8 +2987,11 @@ impl OcompRetentionCoordinator {
             .and_then(|registry| registry.records.get(&key))
             .copied()
         else {
-            return Ok(None);
+            return Ok(RetainedGcAttemptOutcome::NoLongerPending);
         };
+        if record.generation != work.generation {
+            return Ok(RetainedGcAttemptOutcome::NoLongerPending);
+        }
         let gc_record = match record.state {
             PinStateV1::Terminal {
                 candidate,
@@ -2764,24 +3021,27 @@ impl OcompRetentionCoordinator {
                                 export,
                             },
                         )
-                        .map(Some);
+                        .map(RetainedGcAttemptOutcome::Completed)
+                        .map_err(RetainedGcAttemptFailure::global);
                 }
-                let ack = self.persist_next(
-                    &mut inner,
-                    key,
-                    record,
-                    PinStateV1::GcPending {
-                        candidate,
-                        job_id,
-                        finality_recorded_height,
-                        open_height,
-                        deadline_height,
-                        source_generation,
-                        export,
-                        terminal_height,
-                        release_height,
-                    },
-                )?;
+                let ack = self
+                    .persist_next(
+                        &mut inner,
+                        key,
+                        record,
+                        PinStateV1::GcPending {
+                            candidate,
+                            job_id,
+                            finality_recorded_height,
+                            open_height,
+                            deadline_height,
+                            source_generation,
+                            export,
+                            terminal_height,
+                            release_height,
+                        },
+                    )
+                    .map_err(RetainedGcAttemptFailure::global)?;
                 inner
                     .registry
                     .as_ref()
@@ -2790,10 +3050,11 @@ impl OcompRetentionCoordinator {
                     .filter(|current| current.generation == ack.generation)
                     .ok_or(RetentionError::InvalidTransition(
                         "GC claim disappeared after durable publication",
-                    ))?
+                    ))
+                    .map_err(RetainedGcAttemptFailure::global)?
             }
             PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. } => record,
-            _ => return Ok(None),
+            _ => return Ok(RetainedGcAttemptOutcome::NoLongerPending),
         };
         drop(inner);
         drop(_projection_guard);
@@ -2837,12 +3098,12 @@ impl OcompRetentionCoordinator {
             .as_ref()
             .expect("GcPending is unreachable without retained Tribute storage")
             .release_input_lease_page(candidate.input_lease_id)
-            .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?;
+            .map_err(|error| classify_retained_gc_failure(key, gc_record.generation, error))?;
         if !complete {
-            return Ok(None);
+            return Ok(RetainedGcAttemptOutcome::PageProgress);
         }
 
-        let mut inner = self.lock()?;
+        let mut inner = self.lock().map_err(RetainedGcAttemptFailure::global)?;
         let current = inner
             .registry
             .as_ref()
@@ -2850,14 +3111,16 @@ impl OcompRetentionCoordinator {
             .copied()
             .ok_or(RetentionError::InvalidTransition(
                 "GC claim disappeared before completion",
-            ))?;
+            ))
+            .map_err(RetainedGcAttemptFailure::global)?;
         if current != gc_record {
-            return Err(RetentionError::InvalidTransition(
-                "GC claim changed before completion",
+            return Err(RetainedGcAttemptFailure::global(
+                RetentionError::InvalidTransition("GC claim changed before completion"),
             ));
         }
         self.persist_next(&mut inner, key, current, completed_state)
-            .map(Some)
+            .map(RetainedGcAttemptOutcome::Completed)
+            .map_err(RetainedGcAttemptFailure::global)
     }
 
     pub fn is_signable(&self, job_id: B256) -> bool {
@@ -3085,6 +3348,51 @@ impl OcompRetentionCoordinator {
     }
 }
 
+fn classify_retained_gc_failure(
+    key: B256,
+    generation: u64,
+    source: TributeRepositoryError,
+) -> RetainedGcAttemptFailure {
+    let (item_local, class) = match &source {
+        TributeRepositoryError::Storage(storage) => match storage.kind() {
+            StorageErrorKind::Corruption => (true, RetainedGcFailureClass::ItemData),
+            StorageErrorKind::Unavailable => (false, RetainedGcFailureClass::StorageUnavailable),
+            StorageErrorKind::Backend => (false, RetainedGcFailureClass::StorageBackend),
+            StorageErrorKind::RequestDeadline => (false, RetainedGcFailureClass::StorageDeadline),
+            StorageErrorKind::WriterLeaseLost => (false, RetainedGcFailureClass::WriterLeaseLost),
+            StorageErrorKind::InvalidArgument => (false, RetainedGcFailureClass::Internal),
+        },
+        TributeRepositoryError::CanonicalBody(_)
+        | TributeRepositoryError::MalformedIndexKey { .. }
+        | TributeRepositoryError::NonEmptyIndexValue { .. }
+        | TributeRepositoryError::RetainedDayMismatch { .. }
+        | TributeRepositoryError::RetainedIdentity(_)
+        | TributeRepositoryError::RetainedCommitment(_)
+        | TributeRepositoryError::ConflictingRetainedBody { .. }
+        | TributeRepositoryError::RetainedCommitmentMismatch { .. }
+        | TributeRepositoryError::RetainedMetadata { .. }
+        | TributeRepositoryError::DanglingRetainedIndex { .. }
+        | TributeRepositoryError::MissingRetainedIndex { .. }
+        | TributeRepositoryError::NonAscendingRetainedPage { .. }
+        | TributeRepositoryError::InvalidRetainedCursor { .. }
+        | TributeRepositoryError::InvalidRetainedContinuation { .. }
+        | TributeRepositoryError::RetainedNamespaceMismatch { .. } => {
+            (true, RetainedGcFailureClass::ItemData)
+        }
+        _ => (false, RetainedGcFailureClass::Internal),
+    };
+    let error = RetentionError::RetainedTributeGc(source.to_string());
+    if item_local {
+        RetainedGcAttemptFailure::Item(RetainedGcItemFailure {
+            work: RetainedGcWorkId { key, generation },
+            class,
+            error,
+        })
+    } else {
+        RetainedGcAttemptFailure::Global { class, error }
+    }
+}
+
 fn atomic_max(target: &AtomicU64, value: u64) {
     let mut current = target.load(Ordering::Acquire);
     while value > current {
@@ -3130,6 +3438,19 @@ fn spawn_retained_gc_worker(
         .map_err(RetentionError::RetainedTributeGcWorkerSpawn)
 }
 
+pub(crate) fn retained_gc_next_wake_delay(
+    made_page_progress: bool,
+    next_retry_delay: Option<Duration>,
+) -> Duration {
+    let progress_delay = made_page_progress.then_some(RETAINED_GC_PROGRESS_POLL);
+    progress_delay
+        .into_iter()
+        .chain(next_retry_delay)
+        .min()
+        .unwrap_or(RETAINED_GC_IDLE_POLL)
+        .min(RETAINED_GC_IDLE_POLL)
+}
+
 fn run_retained_gc_worker(
     coordinator: Weak<OcompRetentionCoordinator>,
     signal: Arc<RetainedGcSignal>,
@@ -3137,6 +3458,7 @@ fn run_retained_gc_worker(
     let mut observed_epoch = 0_u64;
     let mut journal_recovery_failures = 0_u32;
     let mut next_journal_recovery: Option<Instant> = None;
+    let mut retry_schedule = RetainedGcRetrySchedule::default();
     loop {
         let Some(coordinator) = coordinator.upgrade() else {
             return;
@@ -3240,38 +3562,105 @@ fn run_retained_gc_worker(
             }
         }
 
-        let report = match coordinator.run_gc_cycle(finalized_height) {
-            Ok(report) => report,
-            Err(error) => {
+        let cycle_started_at = Instant::now();
+        let report = match coordinator.run_scheduled_gc_cycle(
+            finalized_height,
+            cycle_started_at,
+            &mut retry_schedule,
+            Instant::now,
+        ) {
+            Ok(RetainedGcScheduledCycle::DeferredGlobal(delay)) => {
+                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds")
+                    .set(delay.as_secs_f64());
+                drop(coordinator);
+                wait_for_gc_signal(&signal, &mut observed_epoch, delay);
+                continue;
+            }
+            Ok(RetainedGcScheduledCycle::Ran(report)) => {
+                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds").set(0.0);
+                report
+            }
+            Err(failure) => {
+                if let Some(report) = &failure.report {
+                    record_retained_gc_report(report);
+                }
                 metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
-                tracing::warn!(%error, "OCOMP retained-input GC journal scan failed; retrying independently of ExEx");
+                metrics::gauge!("outbe_ocomp_retained_gc_global_retry_next_delay_seconds")
+                    .set(RETAINED_GC_RETRY_BACKOFF.as_secs_f64());
+                metrics::counter!(
+                    "outbe_ocomp_retained_gc_retry_attempts_total",
+                    "scope" => "global",
+                    "failure_class" => failure.class.as_str()
+                )
+                .increment(1);
+                metrics::counter!(
+                    "outbe_ocomp_retained_gc_failures_total",
+                    "scope" => "global",
+                    "failure_class" => failure.class.as_str()
+                )
+                .increment(1);
+                metrics::counter!(
+                    "outbe_ocomp_retained_gc_worker_cycles_total",
+                    "result" => "global_error",
+                    "failure_class" => failure.class.as_str()
+                )
+                .increment(1);
+                tracing::warn!(
+                    failure_class = failure.class.as_str(),
+                    error = %failure.error,
+                    "OCOMP retained-input GC global failure; retrying independently of ExEx"
+                );
                 wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_RETRY_BACKOFF);
                 continue;
             }
         };
-        metrics::gauge!("outbe_ocomp_retained_gc_pending_jobs").set(report.pending as f64);
-        metrics::counter!("outbe_ocomp_retained_gc_page_attempts_total")
-            .increment(report.completed + report.pages + report.failures.len() as u64);
-        metrics::counter!("outbe_ocomp_retained_gc_completed_total").increment(report.completed);
-        metrics::counter!("outbe_ocomp_retained_gc_pages_total").increment(report.pages);
-        for (key, error) in &report.failures {
-            metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
-            tracing::warn!(
-                candidate_block_hash = %key,
-                %error,
-                "OCOMP retained-input GC failed for one lease; other leases continue"
-            );
-        }
-        drop(coordinator);
+        metrics::counter!(
+            "outbe_ocomp_retained_gc_worker_cycles_total",
+            "result" => "success"
+        )
+        .increment(1);
+        record_retained_gc_report(&report);
         let made_progress = report.completed != 0 || report.pages != 0;
-        let delay = if made_progress && report.pending != 0 {
-            RETAINED_GC_PROGRESS_POLL
-        } else if !report.failures.is_empty() {
-            RETAINED_GC_RETRY_BACKOFF
-        } else {
-            RETAINED_GC_IDLE_POLL
-        };
+        let delay = retained_gc_next_wake_delay(made_progress, report.next_retry_delay);
+        drop(coordinator);
         wait_for_gc_signal(&signal, &mut observed_epoch, delay);
+    }
+}
+
+fn record_retained_gc_report(report: &RetainedGcCycleReport) {
+    metrics::gauge!("outbe_ocomp_retained_gc_pending_jobs").set(report.pending as f64);
+    metrics::gauge!("outbe_ocomp_retained_gc_deferred_jobs").set(report.deferred as f64);
+    metrics::gauge!("outbe_ocomp_retained_gc_retry_next_delay_seconds").set(
+        report
+            .next_retry_delay
+            .map_or(0.0, |delay| delay.as_secs_f64()),
+    );
+    metrics::counter!("outbe_ocomp_retained_gc_page_attempts_total")
+        .increment(report.completed + report.pages + report.failures.len() as u64);
+    metrics::counter!("outbe_ocomp_retained_gc_completed_total").increment(report.completed);
+    metrics::counter!("outbe_ocomp_retained_gc_pages_total").increment(report.pages);
+    for failure in &report.failures {
+        metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
+        metrics::counter!(
+            "outbe_ocomp_retained_gc_retry_attempts_total",
+            "scope" => "item",
+            "failure_class" => failure.class.as_str()
+        )
+        .increment(1);
+        metrics::counter!(
+            "outbe_ocomp_retained_gc_failures_total",
+            "scope" => "item",
+            "failure_class" => failure.class.as_str()
+        )
+        .increment(1);
+        tracing::warn!(
+            candidate_block_hash = %failure.work.key,
+            generation = failure.work.generation,
+            failure_class = failure.class.as_str(),
+            error = %failure.error,
+            retry_delay_seconds = RETAINED_GC_RETRY_BACKOFF.as_secs(),
+            "OCOMP retained-input GC failed for one lease; other leases continue"
+        );
     }
 }
 
@@ -4212,5 +4601,46 @@ impl<'a> JournalReader<'a> {
             return Err(RetentionError::MalformedJournal("trailing bytes"));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retained_gc_retry_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn retry_schedule_is_scoped_by_journal_record_and_generation() {
+        let now = Instant::now();
+        let first = RetainedGcWorkId {
+            key: B256::repeat_byte(0xa1),
+            generation: 7,
+        };
+        let second = RetainedGcWorkId {
+            key: B256::repeat_byte(0xa2),
+            generation: 3,
+        };
+        let first_successor = RetainedGcWorkId {
+            key: first.key,
+            generation: first.generation + 1,
+        };
+        let mut schedule = RetainedGcRetrySchedule::default();
+
+        // Different journal records remain independent even when their durable
+        // records happen to refer to the same input lease.
+        schedule.defer(first, now);
+        assert!(schedule.is_eligible(second, now));
+        schedule.defer(second, now);
+        assert_eq!(schedule.deadlines.len(), 2);
+
+        // Re-reading durable work drops the stale generation without carrying
+        // its old deadline into the successor state.
+        schedule.retain_pending(&[first_successor, second]);
+        assert_eq!(schedule.deadlines.len(), 1);
+        assert!(schedule.is_eligible(first_successor, now));
+        assert!(!schedule.is_eligible(second, now + Duration::from_millis(100)));
+        assert!(schedule.is_eligible(second, now + RETAINED_GC_RETRY_BACKOFF));
+
+        schedule.clear(second);
+        assert!(schedule.deadlines.is_empty());
     }
 }

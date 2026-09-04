@@ -529,6 +529,21 @@ groups:
             for ten minutes. This is storage pressure, not a consensus halt;
             the GC worker retries leases independently.
 
+      - alert: OutbeOcompRetainedGcPartialStall
+        expr: outbe_ocomp_retained_gc_deferred_jobs > 0 or outbe_ocomp_retained_gc_global_retry_next_delay_seconds > 0
+        for: 10m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retained-input garbage collection is partially stalled"
+          description: |
+            At least one durable GC item has remained deferred, or a global
+            retained-storage failure has remained active, for ten minutes.
+            Healthy jobs may still be advancing, so the aggregate stalled
+            alert can remain green. Inspect retry failure_class metrics,
+            MongoDB health, disk capacity, and the node logs.
+
       - alert: OutbeOcompFinalizedLoopErrors
         expr: increase(outbe_ocomp_finalized_loop_errors_total[5m]) > 0
         labels:

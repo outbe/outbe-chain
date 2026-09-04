@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::BlockNumHash;
@@ -31,6 +31,7 @@ use outbe_ocomp_protocol::{
         POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::{BoundedBytes, ProofBytes},
+    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{
         intent_storage_key, job_id_from_intent_id, ActivationPreconditionsV1,
         AuctionEntryPriceSource, CertifiedParentAccountingMetadataV2,
@@ -63,12 +64,13 @@ use outbe_validatorset::{
 use crate::finalized_frame::FinalizedFrame;
 use crate::ocomp::retention::{
     inspect_retention_journal, journal_recovery_backoff, observe_finalized_request,
-    ocomp_snapshot_contains_key_at, retention_pressure_watermark_for_test,
-    retention_terminal_height_for_status, seed_retention_journal_for_test, CandidateFinalityV1,
-    CandidatePinV1, ExportAuthorityV1, FinalizedInputProofSource, FinalizedJobPinV1,
-    FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator, OcompRetentionService,
-    OcompSnapshotEligibilityV1, PinRecordV1, PinReleaseReason, PinStateV1, RetentionError,
-    RetentionStatus, RethFinalizedInputProofSource, SharedOcompRetentionSelector,
+    ocomp_snapshot_contains_key_at, retained_gc_next_wake_delay,
+    retention_pressure_watermark_for_test, retention_terminal_height_for_status,
+    seed_retention_journal_for_test, CandidateFinalityV1, CandidatePinV1, ExportAuthorityV1,
+    FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability,
+    OcompRetentionCoordinator, OcompRetentionService, OcompSnapshotEligibilityV1, PinRecordV1,
+    PinReleaseReason, PinStateV1, RetainedGcRetrySchedule, RetentionError, RetentionStatus,
+    RethFinalizedInputProofSource, SharedOcompRetentionSelector,
 };
 #[derive(Clone, Default)]
 struct DeterministicProofSource {
@@ -1879,12 +1881,33 @@ fn retain_fixture_tribute(
     candidate: CandidatePinV1,
     marker: u8,
 ) -> (RetainedTributePin, RetainedTributeReader) {
+    let (pin, retained_reader, retain) = fixture_tribute_retention(storage, candidate, marker);
+    storage
+        .apply_atomic(&retain)
+        .expect("fixture retained transaction");
+    (pin, retained_reader)
+}
+
+fn fixture_tribute_retention(
+    storage: &Arc<MemoryStorage>,
+    candidate: CandidatePinV1,
+    marker: u8,
+) -> (RetainedTributePin, RetainedTributeReader, AtomicWriteBatch) {
+    fixture_tribute_retention_with_digest(storage, candidate, [marker; 32], marker)
+}
+
+fn fixture_tribute_retention_with_digest(
+    storage: &Arc<MemoryStorage>,
+    candidate: CandidatePinV1,
+    digest: [u8; 32],
+    owner_marker: u8,
+) -> (RetainedTributePin, RetainedTributeReader, AtomicWriteBatch) {
     let day = WorldwideDay::new(candidate.wwd);
-    let tribute_id = WwdEntityId::from_day_and_digest(day, [marker; 32]);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, digest);
     TributeRepositoryWriter::new(storage.clone(), storage.clone())
         .put(&TributeData {
             tribute_id,
-            owner: Address::repeat_byte(marker.wrapping_add(1)),
+            owner: Address::repeat_byte(owner_marker.wrapping_add(1)),
             worldwide_day: day,
             issuance_amount_minor: U256::from(10),
             issuance_currency: 840,
@@ -1899,14 +1922,22 @@ fn retain_fixture_tribute(
         worldwide_day: day,
     };
     let retained_reader = RetainedTributeReader::new(storage.clone());
-    storage
-        .apply_atomic(
-            &retained_reader
-                .plan_retain_current(pin, tribute_id)
-                .expect("fixture retained copy"),
-        )
-        .expect("fixture retained transaction");
-    (pin, retained_reader)
+    let retain = retained_reader
+        .plan_retain_current(pin, tribute_id)
+        .expect("fixture retained copy");
+    (pin, retained_reader, retain)
+}
+
+fn retain_fixture_tributes(storage: &Arc<MemoryStorage>, candidate: CandidatePinV1, count: usize) {
+    for index in 0..count {
+        let mut digest = [0_u8; 32];
+        digest[..8].copy_from_slice(&(index as u64).to_be_bytes());
+        let (_, _, retain) =
+            fixture_tribute_retention_with_digest(storage, candidate, digest, 0xe1);
+        storage
+            .apply_atomic(&retain)
+            .expect("fixture retained page member");
+    }
 }
 
 #[test]
@@ -2256,6 +2287,26 @@ fn ocm_pin_001_journal_recovery_backoff_is_capped_without_an_attempt_limit() {
         .collect::<Vec<_>>();
     assert_eq!(seconds, vec![1, 2, 4, 8, 16, 32, 60, 60, 60]);
     assert_eq!(journal_recovery_backoff(u32::MAX), Duration::from_secs(60));
+}
+
+#[test]
+fn ocm_pin_001_retained_gc_wake_delay_prefers_100ms_progress_and_earlier_retries() {
+    assert_eq!(
+        retained_gc_next_wake_delay(true, None),
+        Duration::from_millis(100)
+    );
+    assert_eq!(
+        retained_gc_next_wake_delay(true, Some(Duration::from_secs(5))),
+        Duration::from_millis(100)
+    );
+    assert_eq!(
+        retained_gc_next_wake_delay(true, Some(Duration::from_millis(50))),
+        Duration::from_millis(50)
+    );
+    assert_eq!(
+        retained_gc_next_wake_delay(false, None),
+        Duration::from_secs(1)
+    );
 }
 
 #[test]
@@ -2699,7 +2750,7 @@ fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
 }
 
 #[test]
-fn ocm_pin_001_one_failed_lease_does_not_block_other_gc_work() {
+fn ocm_pin_001_global_storage_failure_aborts_the_cycle_before_other_gc_work() {
     let first_request = block(100, B256::repeat_byte(0x81), 6);
     let second_request = block(101, B256::repeat_byte(0x82), 7);
     let mut first_candidate = candidate(&first_request, B256::repeat_byte(0x83));
@@ -2739,12 +2790,20 @@ fn ocm_pin_001_one_failed_lease_does_not_block_other_gc_work() {
             .expect("terminal job enters durable GC queue");
     }
 
-    let (completed, pages, failures) = coordinator
-        .run_gc_cycle_for_test(185)
-        .expect("GC cycle scans every due lease");
-    assert_eq!((completed, pages, failures), (1, 0, 1));
+    let started_at = Instant::now();
+    let mut retry_schedule = RetainedGcRetrySchedule::default();
+    let failure_at = started_at + Duration::from_secs(2);
+    assert!(matches!(
+        coordinator.run_gc_cycle_with_retry_clock_for_test(
+            185,
+            started_at,
+            failure_at,
+            &mut retry_schedule,
+        ),
+        Err(RetentionError::RetainedTributeGc(_))
+    ));
     let states = inspect_retention_journal(root.path())
-        .expect("inspect fair GC cycle")
+        .expect("inspect globally failed GC cycle")
         .records;
     assert_eq!(
         states
@@ -2756,16 +2815,148 @@ fn ocm_pin_001_one_failed_lease_does_not_block_other_gc_work() {
     assert_eq!(
         states
             .iter()
-            .filter(|(_, record)| matches!(record.state, PinStateV1::Released { .. }))
+            .filter(|(_, record)| matches!(record.state, PinStateV1::Terminal { .. }))
             .count(),
         1
     );
-    assert_eq!(
-        coordinator
-            .run_gc_cycle_for_test(185)
-            .expect("failed lease retries independently"),
-        (1, 0, 0)
+    let deferred = coordinator
+        .run_gc_cycle_with_retry_for_test(
+            185,
+            failure_at + Duration::from_millis(100),
+            &mut retry_schedule,
+        )
+        .expect("closure wake cannot bypass global storage backoff");
+    assert!(deferred.global_deferred);
+    assert_eq!(deferred.pending, 0);
+    assert_eq!(deferred.completed, 0);
+    assert_eq!(deferred.pages, 0);
+    assert_eq!(deferred.item_failures, 0);
+    assert_eq!(deferred.retry_entries, 0);
+
+    let recovered = coordinator
+        .run_gc_cycle_with_retry_for_test(
+            185,
+            failure_at + Duration::from_secs(5),
+            &mut retry_schedule,
+        )
+        .expect("global storage recovery retries durable work at its deadline");
+    assert!(!recovered.global_deferred);
+    assert_eq!(recovered.pending, 2);
+    assert_eq!(recovered.completed, 2);
+    assert_eq!(recovered.pages, 0);
+    assert_eq!(recovered.item_failures, 0);
+    assert_eq!(recovered.retry_entries, 0);
+}
+
+#[test]
+fn ocm_pin_001_poisoned_gc_work_observes_its_own_backoff_while_healthy_work_progresses() {
+    let poisoned_request = block(100, B256::repeat_byte(0xc1), 6);
+    let healthy_request = block(101, B256::repeat_byte(0xc2), 7);
+    let mut poisoned_candidate = candidate(&poisoned_request, B256::repeat_byte(0xc3));
+    let mut healthy_candidate = candidate(&healthy_request, B256::repeat_byte(0xc4));
+    poisoned_candidate.input_lease_id = B256::repeat_byte(0xd1);
+    healthy_candidate.input_lease_id = B256::repeat_byte(0xd2);
+    let poisoned_job = B256::repeat_byte(0xc5);
+    let healthy_job = B256::repeat_byte(0xc6);
+    let source = Arc::new(DeterministicProofSource::with_jobs([
+        (poisoned_candidate, poisoned_job),
+        (healthy_candidate, healthy_job),
+    ]));
+    let root = tempfile::tempdir().expect("per-work retry journal root");
+    let storage = Arc::new(MemoryStorage::default());
+    let (_, _, poisoned_retain) = fixture_tribute_retention(&storage, poisoned_candidate, 0xd3);
+    let poisoned_index_repair =
+        AtomicWriteBatch::from_operations(vec![poisoned_retain.operations()[1].clone()]);
+    storage
+        .apply_atomic(&AtomicWriteBatch::from_operations(vec![poisoned_retain
+            .operations()[0]
+            .clone()]))
+        .expect("fixture poisoned retained body without its index");
+    let release_page_limit =
+        usize::try_from(OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard)
+            .expect("generated retained release page limit");
+    retain_fixture_tributes(&storage, healthy_candidate, release_page_limit + 1);
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
     );
+
+    for (request, job, terminal_height) in [
+        (&poisoned_request, poisoned_job, 120),
+        (&healthy_request, healthy_job, 121),
+    ] {
+        assert_eq!(
+            DeterministicConsensusDriver::vote(&coordinator, request),
+            VoteOutcome::Positive
+        );
+        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        let finalized = ready_record(&coordinator);
+        coordinator
+            .observe_terminal(job, finalized.generation, terminal_height)
+            .expect("terminal job enters durable GC queue");
+    }
+
+    let started_at = Instant::now();
+    let mut retry_schedule = RetainedGcRetrySchedule::default();
+    let first = coordinator
+        .run_gc_cycle_with_retry_for_test(185, started_at, &mut retry_schedule)
+        .expect("first fair GC cycle");
+    assert!(!first.global_deferred);
+    assert_eq!(first.pending, 2);
+    assert_eq!(first.completed, 0);
+    assert_eq!(first.pages, 1);
+    assert_eq!(first.item_failures, 1);
+    assert_eq!(first.deferred, 1);
+    assert_eq!(first.retry_entries, 1);
+
+    let early = coordinator
+        .run_gc_cycle_with_retry_for_test(
+            185,
+            started_at + Duration::from_millis(100),
+            &mut retry_schedule,
+        )
+        .expect("healthy progress wake cannot bypass poison backoff");
+    assert!(!early.global_deferred);
+    assert_eq!(early.pending, 2);
+    assert_eq!(early.completed, 1);
+    assert_eq!(early.pages, 0);
+    assert_eq!(early.item_failures, 0);
+    assert_eq!(early.deferred, 1);
+    assert_eq!(early.retry_entries, 1);
+
+    let before_deadline = coordinator
+        .run_gc_cycle_with_retry_for_test(
+            185,
+            started_at + Duration::from_millis(4_999),
+            &mut retry_schedule,
+        )
+        .expect("finalized wake before the deadline remains deferred");
+    assert!(!before_deadline.global_deferred);
+    assert_eq!(before_deadline.pending, 1);
+    assert_eq!(before_deadline.completed, 0);
+    assert_eq!(before_deadline.pages, 0);
+    assert_eq!(before_deadline.item_failures, 0);
+    assert_eq!(before_deadline.deferred, 1);
+    assert_eq!(before_deadline.retry_entries, 1);
+
+    storage
+        .apply_atomic(&poisoned_index_repair)
+        .expect("repair poisoned retained index");
+    let recovered = coordinator
+        .run_gc_cycle_with_retry_for_test(
+            185,
+            started_at + Duration::from_secs(5),
+            &mut retry_schedule,
+        )
+        .expect("poisoned work retries at its deadline");
+    assert!(!recovered.global_deferred);
+    assert_eq!(recovered.pending, 1);
+    assert_eq!(recovered.completed, 1);
+    assert_eq!(recovered.pages, 0);
+    assert_eq!(recovered.item_failures, 0);
+    assert_eq!(recovered.deferred, 0);
+    assert_eq!(recovered.retry_entries, 0);
 }
 
 #[test]
