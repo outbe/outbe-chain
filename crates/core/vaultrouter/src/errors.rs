@@ -70,6 +70,18 @@ pub enum VaultRouterError {
     ReceiverNotDeployed,
     #[error("undecodable sub-call return: {0}")]
     UndecodableReturn(&'static str),
+    #[error("same vault rebalance")]
+    SameVaultRebalance,
+    #[error("invalid rebalance amount")]
+    InvalidRebalanceAmount,
+    #[error("rebalance vault not registered: {0}")]
+    RebalanceVaultNotRegistered(Address),
+    #[error("rebalance input exceeds max: required={required}, max_amount_to={max_amount_to}")]
+    RebalanceInputExceedsMax { required: U256, max_amount_to: U256 },
+    #[error("unsupported asset decimals: {0}")]
+    UnsupportedAssetDecimals(u8),
+    #[error("cca not active: {0}")]
+    CcaNotActive(Address),
 }
 
 impl From<VaultRouterError> for PrecompileError {

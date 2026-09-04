@@ -25,6 +25,10 @@ use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
 /// This precompile's own address (`address(this)` in the Solidity original).
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
+/// Ceiling on a registered asset's `decimals()` accepted by `rebalance`; every scaling
+/// below this bound is an exact power-of-ten multiply or a single ceiling divide.
+const MAX_ASSET_DECIMALS: u8 = 18;
+
 // ---------------------------------------------------------------------------
 // owner gate
 // ---------------------------------------------------------------------------
@@ -400,6 +404,169 @@ pub(crate) fn withdraw(
 }
 
 // ---------------------------------------------------------------------------
+// rebalance
+// ---------------------------------------------------------------------------
+
+/// `rebalance`: moves `amount` of liquidity from `vault_from` to `vault_to`. The caller
+/// supplies `asset_to` (the destination vault's underlying asset) at the oracle cross rate
+/// and receives `asset_from` in return, so the router never holds a standing allowance and
+/// never sources liquidity itself - the caller must have approved this router for at least
+/// the required amount beforehand. `max_amount_to` bounds what the router may pull if the
+/// rate moved between the caller's quote and this call.
+pub(crate) fn rebalance(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    vault_from: Address,
+    vault_to: Address,
+    amount: U256,
+    max_amount_to: U256,
+) -> Result<U256> {
+    if !outbe_cca::api::is_active(&storage, caller)? {
+        return Err(VaultRouterError::CcaNotActive(caller).into());
+    }
+    if vault_from == vault_to {
+        return Err(VaultRouterError::SameVaultRebalance.into());
+    }
+    if amount.is_zero() {
+        return Err(VaultRouterError::InvalidRebalanceAmount.into());
+    }
+
+    let (asset_from, asset_to) = registered_rebalance_assets(&storage, vault_from, vault_to)?;
+    let amount_to = rebalance_amount_to(&storage, asset_from, asset_to, amount)?;
+    if amount_to > max_amount_to {
+        return Err(VaultRouterError::RebalanceInputExceedsMax {
+            required: amount_to,
+            max_amount_to,
+        }
+        .into());
+    }
+
+    let required_shares = vault_preview_withdraw(&storage, vault_from, amount)?;
+    let available_shares = erc20_balance_of(&storage, vault_from, SELF)?;
+    if available_shares < required_shares {
+        return Err(VaultRouterError::InsufficientSharesForWithdraw {
+            available: available_shares,
+            required: required_shares,
+        }
+        .into());
+    }
+
+    storage.with_checkpoint(|| {
+        // Receive before paying: an unapproved or short caller reverts here, before either
+        // vault is touched.
+        erc20_transfer_from(&storage, asset_to, caller, SELF, amount_to)?;
+        let minted = vault_deposit(&storage, vault_to, amount_to, SELF)?;
+
+        let burned = vault_withdraw(&storage, vault_from, amount, SELF, SELF)?;
+        erc20_transfer(&storage, asset_from, caller, amount)?;
+
+        let mut contract = VaultRouterContract::new(storage.clone());
+        contract.emit(IVaultRouter::LiquidityRebalanced {
+            cca: caller,
+            vaultFrom: vault_from,
+            vaultTo: vault_to,
+            assetsWithdrawn: amount,
+            burnedShares: burned,
+            assetsDeposited: amount_to,
+            mintedShares: minted,
+        })?;
+        Ok(amount_to)
+    })
+}
+
+/// `previewRebalance`: what a `rebalance` of `amount` from `vault_from` to `vault_to` would
+/// require the caller to supply, so it can approve exactly that before calling.
+pub(crate) fn preview_rebalance(
+    storage: &StorageHandle<'_>,
+    vault_from: Address,
+    vault_to: Address,
+    amount: U256,
+) -> Result<(Address, Address, U256)> {
+    if vault_from == vault_to {
+        return Err(VaultRouterError::SameVaultRebalance.into());
+    }
+    let (asset_from, asset_to) = registered_rebalance_assets(storage, vault_from, vault_to)?;
+    let amount_to = rebalance_amount_to(storage, asset_from, asset_to, amount)?;
+    Ok((asset_from, asset_to, amount_to))
+}
+
+/// Resolves both vaults' underlying assets and confirms each vault is still registered
+/// under its own asset - the enumerable set membership `addVault`/`removeVault` maintain,
+/// not `vault_reference_currencies`, which has an upgrade-compatibility hole for vaults
+/// registered before the ISO index existed (see `remove_vault` above).
+fn registered_rebalance_assets(
+    storage: &StorageHandle<'_>,
+    vault_from: Address,
+    vault_to: Address,
+) -> Result<(Address, Address)> {
+    let asset_from = vault_asset(storage, vault_from)?;
+    let asset_to = vault_asset(storage, vault_to)?;
+    let contract = VaultRouterContract::new(storage.clone());
+    if !contract.asset_vault_set(asset_from).contains(&vault_from)? {
+        return Err(VaultRouterError::RebalanceVaultNotRegistered(vault_from).into());
+    }
+    if !contract.asset_vault_set(asset_to).contains(&vault_to)? {
+        return Err(VaultRouterError::RebalanceVaultNotRegistered(vault_to).into());
+    }
+    Ok((asset_from, asset_to))
+}
+
+/// `amount` of `asset_from` re-expressed in `asset_to`. Identical assets short-circuit at
+/// 1:1 with no oracle read and no decimal scaling. Otherwise the two assets' ISO 4217
+/// currencies are converted through the oracle's COEN cross rate (a no-op read when both
+/// share a currency) and the two tokens' native decimals are rescaled around it, ordered so
+/// only one rounding survives - always upwards, in the vault's favour.
+fn rebalance_amount_to(
+    storage: &StorageHandle<'_>,
+    asset_from: Address,
+    asset_to: Address,
+    amount: U256,
+) -> Result<U256> {
+    if asset_from == asset_to {
+        return Ok(amount);
+    }
+
+    let decimals_from = erc20_decimals(storage, asset_from)?;
+    let decimals_to = erc20_decimals(storage, asset_to)?;
+    if decimals_from > MAX_ASSET_DECIMALS {
+        return Err(VaultRouterError::UnsupportedAssetDecimals(decimals_from).into());
+    }
+    if decimals_to > MAX_ASSET_DECIMALS {
+        return Err(VaultRouterError::UnsupportedAssetDecimals(decimals_to).into());
+    }
+
+    let iso_from = asset_iso_code(storage, asset_from)?;
+    let iso_to = asset_iso_code(storage, asset_to)?;
+
+    if decimals_to >= decimals_from {
+        let scaled = rescale_decimals(amount, decimals_from, decimals_to)?;
+        outbe_oracle::api::fresh_currency_cross_rate(storage.clone(), iso_from, iso_to, scaled)
+    } else {
+        let converted = outbe_oracle::api::fresh_currency_cross_rate(
+            storage.clone(),
+            iso_from,
+            iso_to,
+            amount,
+        )?;
+        rescale_decimals(converted, decimals_from, decimals_to)
+    }
+}
+
+/// Rescales `amount` from `from_decimals` to `to_decimals`. Scaling up is an exact
+/// power-of-ten multiply; scaling down rounds up.
+fn rescale_decimals(amount: U256, from_decimals: u8, to_decimals: u8) -> Result<U256> {
+    match to_decimals.cmp(&from_decimals) {
+        core::cmp::Ordering::Equal => Ok(amount),
+        core::cmp::Ordering::Greater => amount
+            .checked_mul(U256::from(10u64).pow(U256::from(to_decimals - from_decimals)))
+            .ok_or_else(|| VaultRouterError::InvalidRebalanceAmount.into()),
+        core::cmp::Ordering::Less => {
+            Ok(amount.div_ceil(U256::from(10u64).pow(U256::from(from_decimals - to_decimals))))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // views
 // ---------------------------------------------------------------------------
 
@@ -459,6 +626,23 @@ fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Addres
     let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
     IERC20::balanceOfCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("ERC20 balanceOf").into())
+}
+
+fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {
+    let ret = storage.staticcall(token, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("ERC20 decimals").into())
+}
+
+fn erc20_transfer(
+    storage: &StorageHandle<'_>,
+    token: Address,
+    to: Address,
+    amount: U256,
+) -> Result<()> {
+    let calldata = IERC20::transferCall { to, amount }.abi_encode();
+    storage.call(token, U256::ZERO, calldata.into())?;
+    Ok(())
 }
 
 fn vault_asset(storage: &StorageHandle<'_>, vault: Address) -> Result<Address> {

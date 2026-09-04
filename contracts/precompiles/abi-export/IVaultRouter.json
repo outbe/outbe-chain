@@ -236,6 +236,79 @@
   },
   {
     "type": "function",
+    "name": "previewRebalance",
+    "inputs": [
+      {
+        "name": "vaultFrom",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "vaultTo",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetsAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "assetFrom",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetTo",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rebalance",
+    "inputs": [
+      {
+        "name": "vaultFrom",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "vaultTo",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetsAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAmountTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "referenceCurrencyAssets",
     "inputs": [
       {
@@ -441,6 +514,55 @@
   },
   {
     "type": "event",
+    "name": "LiquidityRebalanced",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vaultFrom",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vaultTo",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "assetsWithdrawn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "burnedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "assetsDeposited",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mintedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LiquiditySourceAdded",
     "inputs": [
       {
@@ -610,6 +732,17 @@
   },
   {
     "type": "error",
+    "name": "CcaNotActive",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InsufficientSharesForWithdraw",
     "inputs": [
       {
@@ -636,6 +769,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidRebalanceAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidReferenceCurrency",
     "inputs": []
   },
@@ -648,6 +786,33 @@
     "type": "error",
     "name": "LiquidityTargetNotFound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RebalanceInputExceedsMax",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAmountTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RebalanceVaultNotRegistered",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -677,6 +842,22 @@
         "name": "currentOwner",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SameVaultRebalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedAssetDecimals",
+    "inputs": [
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   }
