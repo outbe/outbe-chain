@@ -750,11 +750,14 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
             .iter()
             .copied()
             .map(|port| {
-                world.rpc.finalized_ocomp_job_request_for_worldwide_day_on(
-                    port,
-                    job_a_request.request_height + 1,
-                    job_b_wwd,
-                )
+                world
+                    .rpc
+                    .finalized_ocomp_job_request_for_worldwide_day_on(
+                        port,
+                        job_a_request.request_height + 1,
+                        job_b_wwd,
+                    )
+                    .unwrap_or_else(|error| panic!("observe job B on port {port}: {error:#}"))
             })
             .collect::<Vec<_>>();
         if requests.iter().all(Option::is_some) {
@@ -2837,6 +2840,9 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
                 world
                     .rpc
                     .finalized_ocomp_job_request_on(port, activation_height)
+                    .unwrap_or_else(|error| {
+                        panic!("observe OCOMP request on port {port}: {error:#}")
+                    })
             })
             .collect::<Vec<_>>();
         if observed.iter().all(Option::is_some) {
@@ -3280,11 +3286,14 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
             .iter()
             .copied()
             .map(|port| {
-                world.rpc.finalized_ocomp_job_request_for_worldwide_day_on(
-                    port,
-                    from_height,
-                    successor_wwd_value,
-                )
+                world
+                    .rpc
+                    .finalized_ocomp_job_request_for_worldwide_day_on(
+                        port,
+                        from_height,
+                        successor_wwd_value,
+                    )
+                    .unwrap_or_else(|error| panic!("observe V2 request on port {port}: {error:#}"))
             })
             .collect::<Vec<_>>();
         if observed.iter().all(Option::is_some) {
@@ -5147,6 +5156,7 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
                 world
                     .rpc
                     .finalized_ocomp_job_request_on(port, activation_height)
+                    .unwrap_or_else(|error| panic!("observe job A on port {port}: {error:#}"))
             })
             .collect::<Vec<_>>();
         if requests.iter().all(Option::is_some) {
@@ -5779,7 +5789,7 @@ fn expired_job_remains_terminal_without_successor(world: &mut World) {
                 panic!("prove no successor request on RPC port {port}: {error:#}")
             });
         assert!(
-            successor.is_none(),
+            successor.is_absent(),
             "expired job created a forbidden successor for the same WWD on port {port}: {successor:?}"
         );
     }
@@ -5855,7 +5865,7 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
                 panic!("prove no pre-seeded next-day JobIntent on RPC port {port}: {error:#}")
             });
         assert!(
-            existing.is_none(),
+            existing.is_absent(),
             "recovery fixture pre-seeded a forbidden next-day JobIntent on RPC port {port}: {existing:?}"
         );
     }
@@ -5901,6 +5911,7 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
                         original.deadline_height.saturating_add(1),
                         followup_wwd,
                     )
+                    .and_then(|observation| observation.into_bound_request())
                     .unwrap_or_else(|error| {
                         panic!(
                             "observe independent next-day OCOMP request on port {port}: {error:#}"

@@ -26,7 +26,7 @@ use outbe_nodfactory::certified_read::active_nod_set;
 use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1,
     profile::poc_schema_limits,
-    state::{ActiveGenerationV1, OcompJobRecordV1},
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     vote::OcompVoteAccountabilityV1,
 };
 #[cfg(feature = "ocomp-integration")]
@@ -173,6 +173,7 @@ pub struct MetadosisWorldwideDayTerminalReceiptV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicJobRequestV1 {
     pub intent_id: B256,
+    pub job_id: B256,
     pub worldwide_day: u32,
     pub pending_nonce: u64,
     pub attempt: u32,
@@ -183,6 +184,43 @@ pub struct OcompPublicJobRequestV1 {
     pub request_height: u64,
     pub request_block_hash: B256,
     pub transaction_hash: B256,
+}
+
+/// A request event can be finalized before the later canonical job binding.
+/// Absence is deliberately distinct from a present request that is not ready.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OcompRequestObservation {
+    Absent,
+    AwaitingFinality {
+        intent_id: B256,
+    },
+    TerminalWithoutBinding {
+        intent_id: B256,
+        status: OcompJobStatus,
+    },
+    Bound(OcompPublicJobRequestV1),
+}
+
+#[cfg(feature = "ocomp-integration")]
+impl OcompRequestObservation {
+    /// Negative assertions accept only a successfully observed absence.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// Positive bounded polls may wait for absence/pending, but cannot wait
+    /// forever for a request that has already terminated without a binding.
+    pub fn into_bound_request(self) -> Result<Option<OcompPublicJobRequestV1>> {
+        match self {
+            Self::Absent | Self::AwaitingFinality { .. } => Ok(None),
+            Self::Bound(request) => Ok(Some(request)),
+            Self::TerminalWithoutBinding { intent_id, status } => Err(eyre!(
+                "OCOMP request {intent_id:#x} terminated as {status:?} before job binding"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2815,7 +2853,10 @@ impl Rpc {
     /// provide any of its bindings. The returned block hash is checked against
     /// the canonical block independently read from the same validator.
     #[cfg(feature = "ocomp-integration")]
-    pub fn finalized_ocomp_job_request(&self, from_height: u64) -> Option<OcompPublicJobRequestV1> {
+    pub fn finalized_ocomp_job_request(
+        &self,
+        from_height: u64,
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height, None)
     }
 
@@ -2825,19 +2866,20 @@ impl Rpc {
         &self,
         port: u16,
         from_height: u64,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, None)
     }
 
     /// Observe the latest finalized OCOMP request for one exact WorldwideDay.
-    /// Later retry-chain events for another day cannot hide the requested job.
+    /// Later events for another day cannot hide the requested job. A valid
+    /// pending request returns `None` only on this positive-poll interface.
     #[cfg(feature = "ocomp-integration")]
     pub fn finalized_ocomp_job_request_for_worldwide_day_on(
         &self,
         port: u16,
         from_height: u64,
         worldwide_day: u32,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, Some(worldwide_day))
     }
 
@@ -2851,7 +2893,7 @@ impl Rpc {
         port: u16,
         from_height: u64,
         worldwide_day: u32,
-    ) -> Result<Option<OcompPublicJobRequestV1>> {
+    ) -> Result<OcompRequestObservation> {
         self.finalized_ocomp_job_request_result_on_url(
             &self.url(port),
             from_height,
@@ -2870,10 +2912,9 @@ impl Rpc {
         rpc_url: &str,
         from_height: u64,
         worldwide_day: Option<u32>,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_result_on_url(rpc_url, from_height, worldwide_day)
-            .ok()
-            .flatten()
+            .and_then(OcompRequestObservation::into_bound_request)
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2882,7 +2923,7 @@ impl Rpc {
         rpc_url: &str,
         from_height: u64,
         worldwide_day: Option<u32>,
-    ) -> Result<Option<OcompPublicJobRequestV1>> {
+    ) -> Result<OcompRequestObservation> {
         const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
         let finalized_block = eth::raw_json_result(
             rpc_url,
@@ -2898,7 +2939,7 @@ impl Rpc {
             u64::from_str_radix(finalized_number.trim_start_matches("0x"), 16)
                 .wrap_err_with(|| format!("decode finalized height {finalized_number}"))?;
         if finalized_height < from_height {
-            return Ok(None);
+            return Ok(OcompRequestObservation::Absent);
         }
         let topic0 = keccak256(EVENT_SIGNATURE.as_bytes());
         let logs = eth::raw_json_result(
@@ -2918,7 +2959,7 @@ impl Rpc {
             .as_array()
             .ok_or_else(|| eyre!("eth_getLogs returned a non-array response"))?;
         let Some(log) = select_ocomp_job_request_log_result(logs, worldwide_day)? else {
-            return Ok(None);
+            return Ok(OcompRequestObservation::Absent);
         };
         let topics = log
             .get("topics")
@@ -2978,9 +3019,9 @@ impl Rpc {
             .ok_or_else(|| eyre!("OffchainJobRequested log omitted blockHash"))?
             .parse::<B256>()
             .wrap_err("decode OffchainJobRequested block hash")?;
-        let canonical_block_hash = eth::block_commitment_result(rpc_url, request_height)
-            .wrap_err_with(|| format!("read canonical request block h{request_height}"))?
-            .0;
+        let (canonical_block_hash, canonical_state_root, _) =
+            eth::block_commitment_result(rpc_url, request_height)
+                .wrap_err_with(|| format!("read canonical request block h{request_height}"))?;
         ensure!(
             canonical_block_hash == request_block_hash,
             "request log block hash {request_block_hash:#x} is not canonical {canonical_block_hash:#x} at h{request_height}"
@@ -2998,13 +3039,13 @@ impl Rpc {
         let limits = poc_schema_limits();
         let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits)
             .wrap_err("decode finalized OCOMP job record")?;
-        let finalized = record
-            .finalized
-            .as_ref()
-            .ok_or_else(|| eyre!("requested OCOMP job is not finalized"))?;
         ensure!(
             record.intent.intent_id(&limits)? == intent_id,
             "job intent id mismatch"
+        );
+        ensure!(
+            record.intent_height == request_height,
+            "job request height mismatch"
         );
         ensure!(
             record.intent.wwd == worldwide_day,
@@ -3023,18 +3064,36 @@ impl Rpc {
                 == activation_preconditions_hash,
             "job activation preconditions hash mismatch"
         );
-        ensure!(
-            finalized.deadline_height > finalized.open_height,
-            "job deadline is not after open height"
-        );
         let transaction_hash = log
             .get("transactionHash")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| eyre!("OffchainJobRequested log omitted transactionHash"))?
             .parse::<B256>()
             .wrap_err("decode OffchainJobRequested transaction hash")?;
-        Ok(Some(OcompPublicJobRequestV1 {
+        // Validate every event/record binding before declaring any request
+        // present, including the legitimate pre-binding interval.
+        let Some(finalized) = record.finalized.as_ref() else {
+            return Ok(if record.status == OcompJobStatus::AwaitingFinality {
+                OcompRequestObservation::AwaitingFinality { intent_id }
+            } else {
+                OcompRequestObservation::TerminalWithoutBinding {
+                    intent_id,
+                    status: record.status,
+                }
+            });
+        };
+        ensure!(
+            finalized.finalized_request_block_hash == canonical_block_hash
+                && finalized.finalized_request_state_root == canonical_state_root,
+            "finalized job request commitment mismatch"
+        );
+        ensure!(
+            finalized.finality_recorded_height <= finalized_height,
+            "job binding is ahead of sampled finalized state"
+        );
+        Ok(OcompRequestObservation::Bound(OcompPublicJobRequestV1 {
             intent_id,
+            job_id: finalized.job_id,
             worldwide_day,
             pending_nonce,
             attempt,
@@ -4780,6 +4839,11 @@ fn decode_nod_materialization_progress(
         block_number: u64::try_from(word(4)).ok()?,
     })
 }
+
+#[cfg(test)]
+#[cfg(feature = "ocomp-integration")]
+#[path = "rpc_ocomp_observation_tests.rs"]
+mod ocomp_observation_tests;
 
 #[cfg(test)]
 mod ocomp_tests {
