@@ -4,8 +4,9 @@
 //! validators to bootstrap, which enclave mode, whether we have `sudo`. Each
 //! Gherkin scenario declares what it *needs* via tags. The runner matches the
 //! two: a scenario the environment can't satisfy is **skipped**, or - with
-//! `--all` - turned into a **failure**. Explicit `@real-sgx` scenarios remain
-//! skipped outside the DCAP lane even under `--all`.
+//! `--all` - turned into a **failure**. Scenarios pinned to a different explicit
+//! TEE execution profile remain skipped even under `--all`; each profile has
+//! its own lane.
 //!
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
@@ -13,7 +14,9 @@
 //!   - `validators-N`     -> requires `--validators == N` (N parsed from the tag).
 //!   - `tee`              -> requires an enabled enclave mode.
 //!   - `sudo`             -> requires `sudo` (no `--no-sudo`).
-//!   - `real-sgx`         -> always skipped outside `--tee real`, regardless of `--all`.
+//!   - explicit TEE profile tags (`real-sgx`, `sgx-no-attest`,
+//!     `gramine-direct`) -> always skipped outside that profile, regardless of
+//!     `--all`.
 //!   - `todo`             -> always skipped (unimplemented stub), regardless of `--all`.
 
 use std::path::{Path, PathBuf};
@@ -49,8 +52,9 @@ pub enum TeeMode {
 }
 
 /// Co-located hardware enclaves share one physical EPC, so SGX E2E subprocesses
-/// need a wider host/enclave I/O deadline than production's fail-fast default.
-pub(crate) const CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS: &str = "300";
+/// need one wider budget for both individual enclave calls and the complete
+/// block-1 TEE bootstrap. Production/testnet defaults are not changed.
+pub(crate) const CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS: u64 = 1_800;
 
 impl TeeMode {
     /// Whether an enclave is launched.
@@ -175,6 +179,17 @@ pub struct EnvCli {
     #[arg(long)]
     pub evidence_dir: Option<PathBuf>,
 
+    /// Build manifest produced by `outbe-e2e-build` for the exact binaries
+    /// admitted into this run. Required for every executable scenario.
+    #[arg(long)]
+    pub artifact_manifest: Option<PathBuf>,
+
+    /// Hard wall-clock deadline for one scenario, including setup, teardown,
+    /// evidence capture, and log audit. A timeout tears down owned processes
+    /// and exits non-zero with a durable timeout record.
+    #[arg(long, default_value_t = 3_600)]
+    pub scenario_timeout_secs: u64,
+
     /// Exact Metadosis P0 parity case. Test-only: validates and retains the
     /// removed process input inherited by every node child.
     #[arg(long, value_enum)]
@@ -247,6 +262,8 @@ pub struct Environment {
     pub repo: PathBuf,
     pub data_dir: PathBuf,
     pub evidence_dir: Option<PathBuf>,
+    pub artifact_manifest: Option<PathBuf>,
+    pub scenario_timeout_secs: u64,
     pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
     pub ocomp_bin: PathBuf,
@@ -284,6 +301,8 @@ impl Environment {
             debug: cli.debug,
             data_dir: cli.data_dir.clone().unwrap_or_else(default_data_dir),
             evidence_dir: cli.evidence_dir.clone(),
+            artifact_manifest: cli.artifact_manifest.clone(),
+            scenario_timeout_secs: cli.scenario_timeout_secs,
             metadosis_p0,
             chain_bin: cli
                 .chain_bin
@@ -350,6 +369,8 @@ impl Default for Environment {
             repo: None,
             data_dir: None,
             evidence_dir: None,
+            artifact_manifest: None,
+            scenario_timeout_secs: 3_600,
             metadosis_p0_case: None,
             chain_bin: None,
             ocomp_bin: None,
@@ -539,9 +560,13 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
         return Decision::Skip("not implemented (@todo)".to_string());
     }
     let requirement = unmet(feature, scenario, env);
-    let dcap_unavailable =
-        has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real);
-    decide_requirement(requirement, env.all, dcap_unavailable)
+    let profile_mismatch = (has_tag(feature, scenario, "real-sgx")
+        && !matches!(env.tee_mode, TeeMode::Real))
+        || (has_tag(feature, scenario, "sgx-no-attest")
+            && !env.tee_mode.satisfies_sgx_no_attest_requirement())
+        || (has_tag(feature, scenario, "gramine-direct")
+            && !env.tee_mode.satisfies_gramine_direct_requirement());
+    decide_requirement(requirement, env.all, profile_mismatch)
 }
 
 fn decide_requirement(requirement: Option<String>, run_all: bool, force_skip: bool) -> Decision {
@@ -750,6 +775,54 @@ mod tests {
 
         assert!(matches!(
             decide(&feature, scenario, &env),
+            Decision::Skip(_)
+        ));
+    }
+
+    #[test]
+    fn explicit_tee_profiles_are_disjoint_even_under_all() {
+        let no_attest_feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/tribute.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse SGX-no-attest feature");
+        let no_attest = no_attest_feature
+            .scenarios
+            .first()
+            .expect("SGX-no-attest scenario");
+        let direct_feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/intex.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse gramine-direct feature");
+        let direct = direct_feature
+            .scenarios
+            .first()
+            .expect("gramine-direct scenario");
+
+        let no_attest_env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            all: true,
+            sudo: true,
+            ..Environment::default()
+        };
+        assert_eq!(
+            decide(&no_attest_feature, no_attest, &no_attest_env),
+            Decision::Run
+        );
+        assert!(matches!(
+            decide(&direct_feature, direct, &no_attest_env),
+            Decision::Skip(_)
+        ));
+
+        let direct_env = Environment {
+            tee_mode: TeeMode::GramineDirect,
+            all: true,
+            ..Environment::default()
+        };
+        assert_eq!(decide(&direct_feature, direct, &direct_env), Decision::Run);
+        assert!(matches!(
+            decide(&no_attest_feature, no_attest, &direct_env),
             Decision::Skip(_)
         ));
     }

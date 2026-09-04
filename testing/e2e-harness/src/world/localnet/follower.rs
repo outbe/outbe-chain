@@ -2,6 +2,8 @@
 
 use std::fs;
 use std::process::Command;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use eyre::{bail, ensure, eyre, Result};
 
@@ -200,6 +202,112 @@ impl Localnet {
         self.extend_real_sgx_startup_timeout(&mut args);
 
         self.launch_certified_follower_with_args(name, index, args, Vec::new())
+    }
+
+    /// Launch the real certified-follower command while deliberately omitting
+    /// the mandatory enclave endpoint. This is a negative acceptance probe:
+    /// production startup must fail before RPC/network service is available.
+    pub fn launch_enclave_less_follower(
+        &mut self,
+        name: &str,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        let node_dir = self.cfg.validator_dir(index);
+        fs::create_dir_all(node_dir.join("logs"))?;
+        self.ensure_node_key_material(index)?;
+        let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
+        if !reth_secret_path.is_file() {
+            fs::write(&reth_secret_path, random_hex_32()?)?;
+        }
+        let p2p_secret_file = proc::normalized_secret_file(&reth_secret_path)?;
+        let mut args = self.reth_base_args(&node_dir, index);
+        args.extend(args![
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
+        ]);
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+    }
+
+    /// Launch a production follower whose execution head advances only from its
+    /// certified HTTP upstream and whose transaction pool has no P2P gossip
+    /// path. This isolates the real pending-staleness policy from block
+    /// production without mocking the node or its canonical-state stream.
+    pub fn launch_isolated_txpool_follower(
+        &mut self,
+        name: &str,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        ensure!(
+            self.start_opts.is_txpool_eviction_profile,
+            "isolated txpool follower requires the explicit eviction profile"
+        );
+        let node_dir = self.cfg.validator_dir(index);
+        fs::create_dir_all(node_dir.join("logs"))?;
+        let p2p_secret_file = proc::normalized_secret_file(&node_dir.join("reth-p2p-secret.hex"))?;
+        let mut args = self.reth_base_args(&node_dir, index);
+        args.extend(args![
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
+            "--disable-discovery",
+            "--tee-enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
+            "--txpool.outbe.pending-staleness-secs",
+            "20",
+            "--txpool.lifetime",
+            "30s",
+        ]);
+        self.extend_real_sgx_startup_timeout(&mut args);
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+    }
+
+    /// Require an owned negative-probe follower to terminate with the exact
+    /// startup guardrail. Missing process ownership or a missing log is an
+    /// error, never evidence that the guardrail worked.
+    pub fn wait_for_follower_guardrail(
+        &mut self,
+        name: &str,
+        index: usize,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let exited = self
+                .followers
+                .get_mut(name)
+                .ok_or_else(|| eyre!("negative follower {name} is not owned by the scenario"))?
+                .exited();
+            if exited {
+                let log_path = self.cfg.validator_dir(index).join("node.log");
+                let log = fs::read_to_string(&log_path).map_err(|error| {
+                    eyre!(
+                        "read required negative follower log {}: {error}",
+                        log_path.display()
+                    )
+                })?;
+                ensure!(
+                    log.contains(expected),
+                    "negative follower exited without required guardrail {expected:?}:\n{log}"
+                );
+                self.followers.remove(name);
+                return Ok(());
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "enclave-less follower remained running past its fail-closed startup deadline"
+            );
+            sleep(Duration::from_millis(100));
+        }
     }
 
     fn launch_certified_follower_with_args(

@@ -274,7 +274,10 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "1800"]);
+            args.extend(args![
+                "--tee-bootstrap-timeout-secs",
+                crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS
+            ]);
         }
     }
 
@@ -389,10 +392,6 @@ impl Localnet {
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
             self.projection_database_name(&node_slot_projection_identity(index)),
-        )
-        .env(
-            "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
-            self.cfg.ocomp_discovery_control_address(index).to_string(),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -426,7 +425,7 @@ impl Localnet {
     /// intra-run belt-and-suspenders between scenarios). It is scoped to this
     /// run's unique data subdir + enclave run tag, so it never touches another
     /// run's nodes/containers.
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<()> {
         // Stateless signal-path backstop for the harness-owned price feeder.
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
@@ -453,13 +452,14 @@ impl Localnet {
             let enclaves = format!("outbe-tee-enclave.*{}", self.dir());
             self.sh()
                 .sudo_best_effort("pkill", &["-9", "-f", &enclaves]);
-            return;
+        } else {
+            let tee_sweep = format!(
+                "docker ps -aq --filter name=outbe-tee-gramine-{}- | xargs -r docker rm -f",
+                self.cfg.run_tag
+            );
+            self.sh().sudo_best_effort("bash", &["-c", &tee_sweep]);
         }
-        let tee_sweep = format!(
-            "docker ps -aq --filter name=outbe-tee-gramine-{}- | xargs -r docker rm -f",
-            self.cfg.run_tag
-        );
-        self.sh().sudo_best_effort("bash", &["-c", &tee_sweep]);
+        self.cleanup_radicle_runtime()
     }
 
     /// Remove `cfg.dir` (this localnet's scenario dir, or the whole run dir when
@@ -470,6 +470,7 @@ impl Localnet {
     /// can't unlink - drop those with `sudo rm` first. Everything else the
     /// harness created itself, and a failure to remove it is a real error.
     pub fn wipe(&self) -> Result<()> {
+        self.cleanup_radicle_runtime()?;
         if !self.cfg.dir.exists() {
             return Ok(());
         }
@@ -486,14 +487,13 @@ impl Localnet {
     /// Post-run teardown: shut down all nodes + enclave containers, leaving the
     /// data dir (logs/chain state) intact for inspection. Invoked from the
     /// cucumber `after` hook (and the SIGINT handler).
-    pub fn teardown(&mut self) {
-        self.shutdown();
+    pub fn teardown(&mut self) -> Result<()> {
+        self.shutdown()
     }
 
     /// Stop the localnet (alias for [`teardown`](Self::teardown)).
     pub fn stop(&mut self) -> Result<()> {
-        self.shutdown();
-        Ok(())
+        self.shutdown()
     }
 }
 
@@ -521,7 +521,7 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
     if mode.passes_sgx_devices() {
         cmd.env(
             "OUTBE_TEE_IO_TIMEOUT_SECS",
-            crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS,
+            crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS.to_string(),
         );
     }
 }
@@ -605,14 +605,9 @@ mod tests {
     fn co_located_hardware_lane_alone_widens_enclave_io_timeout() {
         use crate::env::TeeMode;
 
-        assert_eq!(
-            configured_timeout(TeeMode::Real).as_deref(),
-            Some(crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
-        );
-        assert_eq!(
-            configured_timeout(TeeMode::SgxNoAttest).as_deref(),
-            Some(crate::env::CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
-        );
+        let expected = Some(crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS.to_string());
+        assert_eq!(configured_timeout(TeeMode::Real), expected);
+        assert_eq!(configured_timeout(TeeMode::SgxNoAttest), expected);
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
     }
@@ -658,10 +653,24 @@ mod tests {
         assert_eq!(localnet.tee_bootstrap_wait_attempts(), 372);
         let mut args = Vec::new();
         localnet.extend_real_sgx_startup_timeout(&mut args);
+        let bootstrap_timeout = args[1]
+            .parse::<u64>()
+            .expect("numeric hardware-SGX bootstrap timeout");
+        let io_timeout = configured_timeout(crate::env::TeeMode::SgxNoAttest)
+            .expect("hardware-SGX enclave I/O override")
+            .parse::<u64>()
+            .expect("numeric hardware-SGX enclave I/O timeout");
         assert_eq!(
             args,
-            ["--tee-bootstrap-timeout-secs", "1800"],
+            vec![
+                "--tee-bootstrap-timeout-secs".to_owned(),
+                crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS.to_string()
+            ],
             "the node deadline must stay inside the harness observation envelope"
+        );
+        assert!(
+            io_timeout >= bootstrap_timeout,
+            "an individual SGX request must not expire before the enclosing bootstrap budget"
         );
     }
 

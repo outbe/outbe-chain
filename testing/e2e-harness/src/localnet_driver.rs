@@ -218,6 +218,8 @@ impl LocalnetCli {
             repo: Some(self.repo.clone()),
             data_dir: Some(self.data_dir.clone()),
             evidence_dir: None,
+            artifact_manifest: None,
+            scenario_timeout_secs: 3_600,
             metadosis_p0_case: None,
             chain_bin: Some(self.repo.join("target/release/outbe-chain")),
             ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),
@@ -865,7 +867,7 @@ fn cleanup_run_scoped(cli: &LocalnetCli) -> Result<()> {
     let env = cli.environment(Some(&receipt.port_blocks))?;
     let config = Config::resolve(&env);
     let mut localnet = Localnet::new(config);
-    localnet.teardown();
+    localnet.teardown()?;
     MongoDb::teardown_managed_for_run(&env);
     Ok(())
 }

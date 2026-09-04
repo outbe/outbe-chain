@@ -445,6 +445,90 @@ groups:
             The node has finalized blocks waiting, but the single shared
             projection/discovery checkpoint has not advanced for two minutes.
 
+      - alert: OutbeOcompClosureStalled
+        expr: outbe_ocomp_closure_lag_blocks > 0 and changes(outbe_ocomp_closure_checkpoint_number[2m]) == 0
+        for: 1m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP canonical closure is stalled"
+          description: |
+            Finalized OCOMP input has not reached durable terminal closure for
+            two minutes. SnapshotExporter ACK is not required for canonical
+            expiry, so this indicates a node-side retention or spool failure.
+
+      - alert: OutbeOcompRetentionJournalUnavailable
+        expr: outbe_ocomp_retention_journal_unavailable == 1
+        for: 30s
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retention journal storage is unavailable"
+          description: |
+            This node is fail-closed: a validator withholds proposals and
+            positive votes, while OCOMP finalized processing and retained-data
+            GC wait for automatic journal recovery. Check free bytes and
+            inodes, read-only mounts, permissions, and kernel/filesystem I/O
+            errors. Do not delete `pin.v1`, `pin.v1.tmp`, or retained inputs.
+            After repairing storage, confirm a successful recovery attempt,
+            this gauge returning to zero, and closure checkpoint progress.
+
+      - alert: OutbeOcompRetentionJournalQuarantined
+        expr: outbe_ocomp_retention_journal_quarantined == 1
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retention journal has an integrity ambiguity"
+          description: |
+            Automatic journal mutation and retained-data deletion are stopped
+            because one durable authority cannot be selected safely. Remove
+            the affected validator from duty when operationally possible,
+            stop that node, and preserve byte-for-byte copies of `pin.v1` and
+            `pin.v1.tmp` plus filesystem diagnostics. Repair from a known-good
+            authority and restart; never delete a valid non-successor temp to
+            silence this alert.
+
+      - alert: OutbeOcompRetentionJournalRecoveryStopped
+        expr: (outbe_ocomp_retention_journal_unavailable == 1) unless on(instance) (sum by(instance) (increase(outbe_ocomp_retention_journal_recovery_attempts_total[3m])) > 0)
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retention journal recovery loop is not running"
+          description: |
+            Journal storage remains unavailable but no recovery result was
+            recorded for three minutes. Inspect the node logs and supervisor,
+            repair storage first, then restart one affected node at a time.
+
+      - alert: OutbeOcompRetainedGcErrors
+        expr: increase(outbe_ocomp_retained_gc_errors_total[5m]) > 0
+        labels:
+          severity: warning
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retained-input garbage collection is retrying"
+          description: |
+            At least one durable retained-input lease could not be collected.
+            Finalized processing continues; inspect MongoDB health and storage
+            capacity before the backlog grows.
+
+      - alert: OutbeOcompRetainedGcStalled
+        expr: outbe_ocomp_retained_gc_pending_jobs > 0 and increase(outbe_ocomp_retained_gc_pages_total[10m]) == 0 and increase(outbe_ocomp_retained_gc_completed_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          subsystem: ocomp
+        annotations:
+          summary: "OCOMP retained-input garbage collection is stalled"
+          description: |
+            Durable GC work exists but no lease page or completion has advanced
+            for ten minutes. This is storage pressure, not a consensus halt;
+            the GC worker retries leases independently.
+
       - alert: OutbeOcompFinalizedLoopErrors
         expr: increase(outbe_ocomp_finalized_loop_errors_total[5m]) > 0
         labels:
@@ -465,17 +549,6 @@ groups:
             The node-side OCOMP reader has stopped and will not resume without
             operator recovery. This state is sticky, so the alert remains red
             after the one-shot error counter ages out of its query window.
-
-      - alert: OutbeOcompDiscoveryControlErrors
-        expr: increase(outbe_ocomp_discovery_control_errors_total[5m]) > 0
-        labels:
-          severity: critical
-          subsystem: ocomp
-        annotations:
-          summary: "OCOMP durable offer could not reach SnapshotExporter"
-          description: |
-            The offer remains durable and is retried every tick. Restore the
-            SnapshotExporter control endpoint and verify pending offers drain.
 
       - alert: OutbeOcompDiscoveryOfferPending
         expr: outbe_ocomp_discovery_pending_offers > 0

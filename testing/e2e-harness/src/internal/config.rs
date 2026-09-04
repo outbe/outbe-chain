@@ -9,9 +9,11 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    net::SocketAddr,
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
 };
+
+use sha2::{Digest as _, Sha256};
 
 use crate::env::{Environment, TeeMode};
 use crate::internal::ports::{Ports, Service};
@@ -67,6 +69,9 @@ pub(crate) struct Config {
     /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep -
     /// independent of ports.
     pub run_tag: String,
+    /// Short, run-scoped root for Unix-domain control sockets. Persistent
+    /// Radicle state remains under `dir`; only bounded UDS paths live here.
+    pub radicle_runtime_root: PathBuf,
     /// This scenario's 1-based id, or `0` for the run-level config (which only
     /// sweeps, and never names a container).
     pub scenario: usize,
@@ -83,6 +88,7 @@ impl Config {
     /// sweep and the end-of-run wipe, both of which act on the whole run.
     pub fn resolve(env: &Environment) -> Self {
         let run_tag = dir_tag(&env.data_dir);
+        let radicle_runtime_root = short_radicle_runtime_root(&env.data_dir);
         let projection_database_prefix = format!("outbe_e2e_{:016x}", stable_hash(&run_tag));
         Self {
             repo: env.repo.clone(),
@@ -114,6 +120,7 @@ impl Config {
             validators: env.validators,
             ports: env.ports.clone(),
             run_tag,
+            radicle_runtime_root,
             scenario: 0,
             tee_mode: env.tee_mode,
             sudo: env.sudo,
@@ -195,12 +202,6 @@ impl Config {
         self.ports.port(Service::OcompSupervisor, i)
     }
 
-    /// Per-node loopback control endpoint shared by the embedded OCOMP ExEx
-    /// client and its external SnapshotExporter server.
-    pub fn ocomp_discovery_control_address(&self, i: usize) -> SocketAddr {
-        SocketAddr::from(([127, 0, 0, 1], self.ports.port(Service::OcompMessage, i)))
-    }
-
     /// Salvo observability endpoint for one of validator `i`'s OCOMP Workers.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub fn ocomp_worker_port(&self, i: usize, worker_ordinal: u32) -> u16 {
@@ -237,6 +238,23 @@ impl Config {
         self.dir.join(format!("validator-{i}"))
     }
 
+    /// Private runtime directory for this scenario's Radicle control sockets.
+    pub fn radicle_scenario_runtime_dir(&self) -> PathBuf {
+        self.radicle_runtime_root
+            .join(format!("scenario-{}", self.scenario))
+    }
+
+    /// Stable, bounded control socket path for one validator/joiner/follower.
+    pub fn radicle_control_socket(&self, i: usize) -> PathBuf {
+        self.radicle_scenario_runtime_dir()
+            .join(format!("v{i}.sock"))
+    }
+
+    /// Stable, bounded control socket path for the independent source node.
+    pub fn user_radicle_control_socket(&self) -> PathBuf {
+        self.radicle_scenario_runtime_dir().join("user.sock")
+    }
+
     /// Exact projection database assigned to validator `i`.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub fn validator_projection_database(&self, i: usize) -> String {
@@ -245,6 +263,11 @@ impl Config {
             self.projection_database_prefix, self.scenario
         )
     }
+}
+
+fn short_radicle_runtime_root(run_dir: &Path) -> PathBuf {
+    let digest = Sha256::digest(run_dir.as_os_str().as_bytes());
+    PathBuf::from("/tmp").join(format!("outbe-e2e-rad-{}", hex::encode(&digest[..16])))
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -311,18 +334,6 @@ mod tests {
 
         assert_eq!(cfg.primary_port(), 18545);
         assert_eq!(cfg.tee_port(joiner), cfg.http_port(joiner) + 1);
-        assert_eq!(
-            cfg.ocomp_discovery_control_address(joiner).port(),
-            cfg.ocomp_endpoint_port(joiner) + 1
-        );
-        assert!(cfg
-            .ocomp_discovery_control_address(joiner)
-            .ip()
-            .is_loopback());
-        assert_ne!(
-            cfg.ocomp_discovery_control_address(joiner),
-            cfg.ocomp_discovery_control_address(0)
-        );
         assert!(cfg.http_port(14) > cfg.http_port(joiner));
         assert!(cfg.consensus_port(15) > cfg.http_port(14));
         assert_eq!(cfg.ocomp_endpoint_port(15), cfg.consensus_port(15) + 1);
@@ -342,8 +353,43 @@ mod tests {
 
         assert_eq!(scenario.dir, env.data_dir.join("scenario-3"));
         assert_eq!(scenario.run_tag, run.run_tag);
+        assert_eq!(scenario.radicle_runtime_root, run.radicle_runtime_root);
         assert!(scenario.dir.starts_with(&run.dir));
         assert_eq!(scenario.validator_dir(2), scenario.dir.join("validator-2"));
+    }
+
+    #[test]
+    fn radicle_socket_paths_are_short_disjoint_and_restart_stable() {
+        let env = Environment {
+            data_dir: PathBuf::from("/tmp").join("very-long-component-".repeat(32)),
+            ..Environment::default()
+        };
+        let s1 = Config::for_scenario(&env, 1);
+        let s2 = Config::for_scenario(&env, 2);
+        let v0 = s1.radicle_control_socket(0);
+        let v1 = s1.radicle_control_socket(1);
+        let user = s1.user_radicle_control_socket();
+
+        for path in [&v0, &v1, &user, &s2.radicle_control_socket(0)] {
+            assert!(
+                path.as_os_str().as_bytes().len() < 104,
+                "Unix socket path is not portable: {}",
+                path.display()
+            );
+        }
+        assert_eq!(v0, Config::for_scenario(&env, 1).radicle_control_socket(0));
+        assert_ne!(v0, v1);
+        assert_ne!(v0, user);
+        assert_ne!(v0, s2.radicle_control_socket(0));
+
+        let other_run = Environment {
+            data_dir: PathBuf::from("/tmp/a-different-run"),
+            ..Environment::default()
+        };
+        assert_ne!(
+            v0,
+            Config::for_scenario(&other_run, 1).radicle_control_socket(0)
+        );
     }
 
     /// Two scenarios never name the same container, and the run-level sweep

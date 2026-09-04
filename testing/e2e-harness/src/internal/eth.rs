@@ -229,7 +229,6 @@ where
 }
 
 /// `eth_call` a view function and decode its return while preserving the failure.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn read_call_result<C: SolCall>(
     url: &str,
     to: Address,
@@ -287,6 +286,36 @@ where
 }
 
 /// Execute a typed view against the exact canonical state at `height`.
+pub(crate) fn read_call_at_result<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> std::result::Result<C::Return, String>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let endpoint = url
+            .parse()
+            .map_err(|error| format!("invalid RPC URL: {error}"))?;
+        let provider = ProviderBuilder::new().connect_http(endpoint);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        let out = provider
+            .call(tx)
+            .block(BlockId::number(height))
+            .await
+            .map_err(|error| format!("eth_call at h{height} failed: {error}"))?;
+        C::abi_decode_returns(&out).map_err(|error| format!("ABI decode failed: {error}"))
+    })
+}
+
+/// Execute a typed view against the exact canonical state at `height`, or
+/// return `None` on transport, execution, or decoding failure.
 pub(crate) fn read_call_at<C: SolCall>(
     url: &str,
     to: Address,
@@ -296,20 +325,7 @@ pub(crate) fn read_call_at<C: SolCall>(
 where
     C::Return: Send + 'static,
 {
-    let url = url.to_string();
-    let data = call.abi_encode();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        let out = provider
-            .call(tx)
-            .block(BlockId::number(height))
-            .await
-            .ok()?;
-        C::abi_decode_returns(&out).ok()
-    })
+    read_call_at_result(url, to, call, height).ok()
 }
 
 /// Require a typed view call to fail specifically as an EVM revert at the
@@ -420,14 +436,21 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
 
 /// Canonical hash, state root and protocol header artifacts for one block.
 pub(crate) fn block_commitment(url: &str, height: u64) -> Option<(B256, B256, Bytes)> {
+    block_commitment_result(url, height).ok()
+}
+
+/// Canonical hash, state root and protocol header artifacts for one exact block,
+/// preserving transport and missing-block failures.
+pub(crate) fn block_commitment_result(url: &str, height: u64) -> Result<(B256, B256, Bytes)> {
     let url = url.to_string();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
         let block = provider
             .get_block_by_number(BlockNumberOrTag::Number(height))
             .await
-            .ok()??;
-        Some((
+            .map_err(|error| eyre!("read canonical block {height}: {error}"))?
+            .ok_or_else(|| eyre!("canonical block {height} is unavailable"))?;
+        Ok((
             block.header.hash,
             block.header.state_root,
             block.header.extra_data.clone(),
@@ -696,6 +719,12 @@ pub(crate) fn send_call<C: SolCall>(
             tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
                 .await
                 .map_err(|_| eyre!("timed out waiting for public call receipt"))??;
+        if !receipt.status() {
+            return Err(eyre!(
+                "public contract call reverted in transaction {:#x}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(format!("{:#x}", receipt.transaction_hash))
     })
 }

@@ -11,11 +11,11 @@ use xshell::Shell;
 
 use super::config::Config;
 use super::proc::redact_args_for_log;
-use crate::env::{TeeMode, CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS};
+use crate::env::{TeeMode, CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS};
 
-fn cli_io_timeout_override(mode: TeeMode) -> Option<&'static str> {
+fn cli_io_timeout_override(mode: TeeMode) -> Option<u64> {
     mode.passes_sgx_devices()
-        .then_some(CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
+        .then_some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
 }
 
 pub(crate) struct Sh<'a> {
@@ -42,7 +42,7 @@ impl<'a> Sh<'a> {
             .quiet()
             .ignore_status();
         if let Some(timeout) = cli_io_timeout_override(self.cfg.tee_mode) {
-            cmd = cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", timeout);
+            cmd = cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", timeout.to_string());
         }
         Ok(cmd.output()?)
     }
@@ -180,11 +180,11 @@ mod tests {
     fn hardware_sgx_cli_uses_the_co_located_io_timeout() {
         assert_eq!(
             cli_io_timeout_override(TeeMode::Real),
-            Some(CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
+            Some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
         );
         assert_eq!(
             cli_io_timeout_override(TeeMode::SgxNoAttest),
-            Some(CO_LOCATED_HARDWARE_SGX_IO_TIMEOUT_SECS)
+            Some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
         );
     }
 

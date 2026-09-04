@@ -85,11 +85,18 @@ fn unauthorized_proposal(world: &mut World) {
 fn unauthorized_proposal_preserves_state(world: &mut World, id: u64) {
     for port in validator_ports(world) {
         assert!(
-            !world.rpc.vote_status_on(port, id).visible,
+            !world
+                .rpc
+                .vote_status_on(port, id)
+                .expect("observe unauthorized proposal absence")
+                .visible,
             "unauthorized proposal #{id} became visible on RPC {port}"
         );
         assert!(
-            world.rpc.scheduled_update_on(port, id).is_none(),
+            world
+                .rpc
+                .scheduled_update_absent_on(port, id)
+                .expect("observe unauthorized schedule absence"),
             "unauthorized proposal #{id} created a schedule on RPC {port}"
         );
     }
@@ -159,13 +166,19 @@ fn propose_update_version(world: &mut World, name: &str, version: u64, info: &st
     expr = "proposal {int} is pending, targets the update module, and carries the activation height"
 )]
 fn proposal_pending(world: &mut World, id: u64) {
-    let mut vs = world.rpc.vote_status(id);
+    let mut vs = world
+        .rpc
+        .vote_status(id)
+        .expect("observe update proposal status");
     for _ in 0..10 {
         if vs.visible {
             break;
         }
         sleep(Duration::from_secs(3));
-        vs = world.rpc.vote_status(id);
+        vs = world
+            .rpc
+            .vote_status(id)
+            .expect("observe update proposal status");
     }
     assert!(vs.visible, "proposal #{id} not visible after propose");
     assert_eq!(vs.status, "pending", "proposal should be pending");
@@ -235,7 +248,10 @@ fn repeat_yes_vote(world: &mut World, name: String, id: u64) {
     expr = "the duplicate vote reverts and proposal {int} still has {int} yes votes on every validator"
 )]
 fn duplicate_vote_preserves_tally(world: &mut World, id: u64, yes: u64) {
-    let status = world.rpc.vote_status(id);
+    let status = world
+        .rpc
+        .vote_status(id)
+        .expect("observe proposal after duplicate vote");
     assert_eq!(
         status.status, "pending",
         "duplicate changed proposal status"
@@ -275,7 +291,10 @@ fn validator_ports(world: &World) -> Vec<u16> {
 
 #[then(expr = "proposal {int} and its votes are identical on every validator")]
 fn proposal_parity(world: &mut World, id: u64) {
-    let expected = world.rpc.vote_status(id);
+    let expected = world
+        .rpc
+        .vote_status(id)
+        .expect("observe proposal on primary RPC");
     assert!(
         expected.visible,
         "proposal #{id} must be visible on primary"
@@ -297,7 +316,10 @@ fn proposal_parity(world: &mut World, id: u64) {
             world.rpc.head(port),
             world.rpc.finalized(port)
         );
-        let actual = world.rpc.vote_status_on(port, id);
+        let actual = world
+            .rpc
+            .vote_status_on(port, id)
+            .expect("observe proposal on peer RPC");
         assert_eq!(
             actual.status, expected.status,
             "proposal status on RPC {port}"
@@ -348,8 +370,11 @@ fn approved_schedule_parity(world: &mut World) {
     assert_eq!(expected.status, 0, "schedule must still be waiting");
     for port in validator_ports(world) {
         assert_eq!(
-            world.rpc.scheduled_update_on(port, world.state.proposal_id),
-            Some(expected.clone()),
+            world
+                .rpc
+                .scheduled_update_on(port, world.state.proposal_id)
+                .expect("scheduled update on peer"),
+            expected.clone(),
             "scheduled update on RPC {port}"
         );
     }
@@ -358,13 +383,19 @@ fn approved_schedule_parity(world: &mut World) {
 #[then(expr = "proposal {int} is errored without a schedule on every validator")]
 fn errored_without_schedule(world: &mut World, id: u64) {
     assert!(
-        world.rpc.wait_vote_status(id, "error", 60),
+        world
+            .rpc
+            .wait_vote_status(id, "error", 60)
+            .expect("observe conflicting proposal status"),
         "conflicting proposal #{id} did not become errored"
     );
     proposal_parity(world, id);
     for port in validator_ports(world) {
         assert!(
-            world.rpc.scheduled_update_on(port, id).is_none(),
+            world
+                .rpc
+                .scheduled_update_absent_on(port, id)
+                .expect("observe errored schedule absence"),
             "errored proposal #{id} created a schedule on RPC {port}"
         );
     }
@@ -376,8 +407,14 @@ fn approval_and_schedule_are_atomic(world: &mut World, id: u64) {
         let mut approved = Vec::new();
         let mut scheduled = Vec::new();
         for _ in 0..20 {
-            approved = world.rpc.proposal_approved_event_blocks(port, id);
-            scheduled = world.rpc.scheduled_update_created_event_blocks(port, id);
+            approved = world
+                .rpc
+                .proposal_approved_event_blocks(port, id)
+                .expect("observe finalized proposal approval events");
+            scheduled = world
+                .rpc
+                .scheduled_update_created_event_blocks(port, id)
+                .expect("observe finalized schedule creation events");
             if approved.len() == 1 && scheduled.len() == 1 {
                 break;
             }
@@ -412,7 +449,7 @@ fn activated_update_parity(world: &mut World) {
         let scheduled = world
             .rpc
             .scheduled_update_on(port, world.state.proposal_id)
-            .unwrap_or_else(|| panic!("scheduled update missing on RPC {port}"));
+            .unwrap_or_else(|error| panic!("scheduled update missing on RPC {port}: {error:#}"));
         assert_eq!(scheduled.status, 1, "schedule status on RPC {port}");
     }
 }
@@ -429,7 +466,7 @@ fn activation_converges_after_boundary_restart(world: &mut World) {
                 && world
                     .rpc
                     .scheduled_update_on(*port, id)
-                    .is_some_and(|scheduled| scheduled.status == 1)
+                    .is_ok_and(|scheduled| scheduled.status == 1)
         });
         if converged {
             break;
@@ -447,7 +484,10 @@ fn activation_converges_after_boundary_restart(world: &mut World) {
 #[then(expr = "proposal {int} is expired without an update schedule on every validator")]
 fn expired_without_schedule(world: &mut World, id: u64) {
     assert!(
-        world.rpc.wait_vote_status(id, "expired", 60),
+        world
+            .rpc
+            .wait_vote_status(id, "expired", 60)
+            .expect("observe expired proposal status"),
         "proposal #{id} did not expire"
     );
     proposal_parity(world, id);
@@ -458,7 +498,10 @@ fn expired_without_schedule(world: &mut World, id: u64) {
             "update read API is unavailable on RPC {port}"
         );
         assert!(
-            world.rpc.scheduled_update_on(port, id).is_none(),
+            world
+                .rpc
+                .scheduled_update_absent_on(port, id)
+                .expect("observe expired schedule absence"),
             "expired proposal unexpectedly created a schedule on RPC {port}"
         );
     }
@@ -514,13 +557,19 @@ fn still_pending_with_votes(world: &mut World, id: u64, yes: u64) {
     // The just-fired votes may still be settling; poll until the tally is in,
     // bounded so we stay inside the voting window (bail out the moment the
     // proposal leaves `pending`).
-    let mut vs = world.rpc.vote_status(id);
+    let mut vs = world
+        .rpc
+        .vote_status(id)
+        .expect("observe proposal vote tally");
     for _ in 0..8 {
         if vs.yes >= yes || vs.status != "pending" {
             break;
         }
         sleep(Duration::from_secs(2));
-        vs = world.rpc.vote_status(id);
+        vs = world
+            .rpc
+            .vote_status(id)
+            .expect("observe proposal vote tally");
     }
     assert_eq!(vs.status, "pending", "proposal should still be pending");
     assert_eq!(vs.yes, yes, "yes tally");
@@ -545,7 +594,10 @@ fn still_pending_with_votes(world: &mut World, id: u64, yes: u64) {
 fn pass_vote_deadline(world: &mut World) {
     let deadline = world.state.vote_deadline.expect("deadline captured");
     let port = world.validators.primary_port();
-    let h = world.rpc.wait_block_gt(port, deadline, 80).unwrap_or(0);
+    let h = world
+        .rpc
+        .wait_block_gt(port, deadline, 80)
+        .expect("committee RPC must pass vote deadline");
     assert!(
         h > deadline,
         "did not pass vote deadline {deadline} (got {h})"
@@ -557,7 +609,10 @@ fn pass_vote_deadline(world: &mut World) {
 #[then(expr = "proposal {int} is approved and the scheduled update matches the proposal")]
 fn approved_and_scheduled(world: &mut World, id: u64) {
     assert!(
-        world.rpc.wait_vote_status(id, "approved", 60),
+        world
+            .rpc
+            .wait_vote_status(id, "approved", 60)
+            .expect("observe approved update proposal"),
         "proposal not approved after deadline"
     );
     let su = world.rpc.scheduled_update(id).expect("scheduled update");
@@ -582,7 +637,10 @@ fn approved_and_scheduled(world: &mut World, id: u64) {
 fn pass_activation_height(world: &mut World) {
     let activation = world.state.activation_height.expect("activation captured");
     let port = world.validators.primary_port();
-    let h = world.rpc.wait_block_gt(port, activation, 180).unwrap_or(0);
+    let h = world
+        .rpc
+        .wait_block_gt(port, activation, 180)
+        .expect("committee RPC must pass activation height");
     assert!(
         h > activation,
         "did not pass activation {activation} (got {h})"
@@ -596,7 +654,10 @@ fn approach_activation_height(world: &mut World) {
     let activation = world.state.activation_height.expect("activation captured");
     let target = activation.saturating_sub(1);
     let port = world.validators.primary_port();
-    let h = world.rpc.wait_block(port, target, 180).unwrap_or(0);
+    let h = world
+        .rpc
+        .wait_block(port, target, 180)
+        .expect("committee RPC must approach activation height");
     assert!(
         h >= target,
         "did not approach activation {activation} (want head>={target}, got {h})"
@@ -619,7 +680,10 @@ fn does_not_pass_activation(world: &mut World) {
         }
         sleep(Duration::from_secs(1));
     }
-    let head = world.rpc.head(port).unwrap_or(0);
+    let head = world
+        .rpc
+        .head(port)
+        .expect("read fail-closed committee head below activation");
     assert!(
         head < activation,
         "expected stall below activation {activation}, head={head}"
@@ -664,7 +728,11 @@ fn log_reports_unsupported_fatal(world: &mut World, name: String) {
         if world
             .localnet
             .log_has(idx, "cannot activate protocol version")
-            || world.localnet.log_has(idx, "binary supports at most")
+            .expect("read required owned process log")
+            || world
+                .localnet
+                .log_has(idx, "binary supports at most")
+                .expect("read required owned process log")
         {
             found = true;
             break;
@@ -744,7 +812,7 @@ fn upgraded_binary_resumes_committee(world: &mut World) {
         let scheduled = world
             .rpc
             .scheduled_update_on(port, world.state.proposal_id)
-            .unwrap_or_else(|| panic!("scheduled update missing on RPC {port}"));
+            .unwrap_or_else(|error| panic!("scheduled update missing on RPC {port}: {error:#}"));
         assert_eq!(scheduled.status, 1, "schedule not activated on RPC {port}");
     }
     proposal_parity(world, world.state.proposal_id);
@@ -809,7 +877,10 @@ fn validator_still_running(world: &mut World, name: String) {
         !world.localnet.validator_exited(validator.index),
         "validator-{} exited after oversized listProposals (log panic={})",
         validator.index,
-        world.localnet.log_has(validator.index, "panicked"),
+        world
+            .localnet
+            .log_has(validator.index, "panicked")
+            .expect("read required owned process log"),
     );
     let port = world.validators.http_port(validator.index);
     assert!(

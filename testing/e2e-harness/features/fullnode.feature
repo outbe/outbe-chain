@@ -12,10 +12,20 @@ Feature: FullNode synchronization, failover, promotion, and replay
     Then the follower reaches the committee finalized checkpoint with matching hash and state root
     When a second follower chains off the first
     Then the chained follower reaches lockstep with the committee
+    And the canonical reshare handoff is authenticated by both followers
     When the follower loses its only upstream while the committee advances
     Then the disconnected follower makes no unverified finalized progress
     When the follower switches to a healthy upstream and restarts from its durable datadir
     Then the follower reaches the committee finalized checkpoint with matching hash and state root
+    And the canonical reshare handoff is authenticated by both followers
+
+  @sgx-no-attest @sudo @fullnode-enclave-guardrail
+  Scenario: A FullNode without its mandatory enclave fails closed without harming finality
+    Given a fresh localnet with a short epoch
+    And the committee has reached a usable height
+    When a certified FullNode is launched without its mandatory enclave
+    Then the FullNode exits on the mandatory TEE guardrail before opening RPC
+    And the committee finalizes two new blocks after the rejected FullNode startup
 
   @pfs-008-06 @pfs-008-07 @pfs-008-08
   Scenario: Warm promotion survives duplicate readiness and boundary restarts

@@ -2077,9 +2077,13 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
 
+        let supervisor_address = SocketAddr::from((
+            [127, 0, 0, 1],
+            self.cfg.ocomp_endpoint_port(usize::from(validator_index)),
+        ));
         let mut command = self.release_role_command(validator_index);
+        configure_snapshot_exporter_command(&mut command, supervisor_address);
         command
-            .arg(role_name)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -2101,12 +2105,6 @@ impl OcompTopology {
         let validator_index = usize::from(validator_index);
         command
             .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-            .env(
-                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
-                self.cfg
-                    .ocomp_discovery_control_address(validator_index)
-                    .to_string(),
-            )
             .env(
                 "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
                 &self.cfg.projection_mongodb_uri,
@@ -2147,9 +2145,11 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
         let index = usize::from(validator_index);
+        let supervisor_address =
+            SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_endpoint_port(index)));
         let mut command = self.release_role_command(validator_index);
+        configure_snapshot_exporter_command(&mut command, supervisor_address);
         command
-            .arg(role_name)
             .current_dir(&self.cfg.repo)
             .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
             .env(
@@ -2169,10 +2169,6 @@ impl OcompTopology {
             );
         command
             .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
-            .env(
-                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS",
-                self.cfg.ocomp_discovery_control_address(index).to_string(),
-            )
             .env(
                 "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
                 &self.cfg.projection_mongodb_uri,
@@ -2381,6 +2377,40 @@ impl OcompTopology {
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_snapshot_exporter(&mut self, validator_index: u8) -> Result<()> {
         self.restart_snapshot_exporter_inner(validator_index, EXPORTER_RESTART_ATTEMPTS)
+    }
+
+    /// Wait until every validator has durably committed the export for the
+    /// exact finalized job. Workers are intentionally irrelevant here: the
+    /// job-id-scoped `receipt.ref` is the SnapshotExporter's commit marker.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn wait_for_committed_exports(&mut self, job_id: B256, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.ensure_validator_roles_alive()?;
+            let mut pending = Vec::new();
+            for validator_index in self.validator_indices()? {
+                let receipt_root = self
+                    .domain_root(validator_index)?
+                    .join("exporter-v1")
+                    .join("receipts")
+                    .join(hex::encode(job_id));
+                let prepared = fs::read(receipt_root.join("prepared.ref"));
+                let committed = fs::read(receipt_root.join("receipt.ref"));
+                if !matches!(prepared, Ok(ref bytes) if !bytes.is_empty())
+                    || !matches!(committed, Ok(ref bytes) if !bytes.is_empty())
+                {
+                    pending.push(validator_index);
+                }
+            }
+            if pending.is_empty() {
+                return Ok(());
+            }
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "SnapshotExporters did not durably commit job {job_id:#x} for validators {pending:?}"
+            );
+            sleep(Duration::from_millis(100));
+        }
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2837,6 +2867,14 @@ fn configure_release_layout(command: &mut Command, base_path: &Path, validator_i
     command
         .env(OCOMP_BASE_PATH_ENV, base_path)
         .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn configure_snapshot_exporter_command(command: &mut Command, supervisor_address: SocketAddr) {
+    command
+        .arg("snapshot-exporter")
+        .arg("--supervisor-address")
+        .arg(supervisor_address.to_string());
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4051,14 +4089,21 @@ mod tests {
     #[test]
     fn release_ocomp_layout_uses_the_scenario_base_and_never_the_debug_override() {
         let mut command = Command::new("outbe-ocomp");
-        command.arg("snapshot-exporter");
         configure_release_layout(&mut command, Path::new("/tmp/release-e2e"), 7);
+        configure_snapshot_exporter_command(&mut command, "127.0.0.1:30471".parse().unwrap());
 
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(args, vec!["snapshot-exporter"]);
+        assert_eq!(
+            args,
+            vec![
+                "snapshot-exporter",
+                "--supervisor-address",
+                "127.0.0.1:30471"
+            ]
+        );
         assert!(!args.iter().any(|arg| arg == "--development-root"));
 
         let environment = command

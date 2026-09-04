@@ -173,13 +173,19 @@ fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: St
         .expect("submit L2 registry proposal");
     assert!(world.rpc.wait_tx(&tx, 40), "proposal tx not mined: {tx}");
 
-    let mut proposal = world.rpc.vote_status(proposal_id);
+    let mut proposal = world
+        .rpc
+        .vote_status(proposal_id)
+        .expect("observe L2 registry proposal");
     for _ in 0..10 {
         if proposal.visible {
             break;
         }
         sleep(Duration::from_secs(2));
-        proposal = world.rpc.vote_status(proposal_id);
+        proposal = world
+            .rpc
+            .vote_status(proposal_id)
+            .expect("observe L2 registry proposal");
     }
     assert!(proposal.visible, "proposal #{proposal_id} is not visible");
     assert_eq!(proposal.status, "pending");
@@ -198,13 +204,19 @@ fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: St
             .cast_vote(&validator, proposal_id, true)
             .expect("cast L2 registry vote");
     }
-    let mut proposal = world.rpc.vote_status(proposal_id);
+    let mut proposal = world
+        .rpc
+        .vote_status(proposal_id)
+        .expect("observe L2 registry proposal votes");
     for _ in 0..10 {
         if proposal.yes == 3 {
             break;
         }
         sleep(Duration::from_secs(2));
-        proposal = world.rpc.vote_status(proposal_id);
+        proposal = world
+            .rpc
+            .vote_status(proposal_id)
+            .expect("observe L2 registry proposal votes");
     }
     assert_eq!(proposal.status, "pending");
     assert_eq!(proposal.yes, 3);
@@ -212,13 +224,16 @@ fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: St
     let height = world
         .rpc
         .wait_block_gt(world.validators.primary_port(), deadline, 80)
-        .unwrap_or_default();
+        .expect("chain progress past L2 registry proposal deadline");
     assert!(
         height > deadline,
         "did not pass proposal deadline {deadline}"
     );
     assert!(
-        world.rpc.wait_vote_status(proposal_id, "approved", 60),
+        world
+            .rpc
+            .wait_vote_status(proposal_id, "approved", 60)
+            .expect("observe L2 registry proposal approval"),
         "L2 registry proposal #{proposal_id} was not approved"
     );
 }

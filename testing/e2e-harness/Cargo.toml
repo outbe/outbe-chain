@@ -144,6 +144,10 @@ name = "outbe-e2e"
 path = "src/main.rs"
 
 [[bin]]
+name = "outbe-e2e-build"
+path = "src/bin/outbe-e2e-build.rs"
+
+[[bin]]
 name = "outbe-release-sgx-e2e"
 path = "src/bin/outbe-release-sgx-e2e.rs"
 required-features = ["release-sgx-e2e"]

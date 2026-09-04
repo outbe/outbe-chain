@@ -19,6 +19,7 @@ use crate::world::World;
 
 const FOLLOWER1_SLOT: usize = 14;
 const FOLLOWER2_SLOT: usize = 15;
+const ENCLAVE_LESS_FOLLOWER: &str = "enclave-less-follower";
 
 /// Hold readiness until the current DKG target has already been frozen, while
 /// leaving enough blocks for the readiness transaction to finalize before the
@@ -142,6 +143,56 @@ fn production_full_node_follower(world: &mut World) {
         .localnet
         .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 0)
         .expect("launch production FullNode follower");
+}
+
+#[when("a certified FullNode is launched without its mandatory enclave")]
+fn launch_enclave_less_follower(world: &mut World) {
+    let primary = world.validators.primary_port();
+    world.state.marker_height = Some(
+        world
+            .rpc
+            .finalized_result(primary)
+            .expect("capture finalized checkpoint before enclave-less follower probe"),
+    );
+    world
+        .localnet
+        .launch_enclave_less_follower(ENCLAVE_LESS_FOLLOWER, FOLLOWER1_SLOT, 0)
+        .expect("launch owned enclave-less follower negative probe");
+}
+
+#[then("the FullNode exits on the mandatory TEE guardrail before opening RPC")]
+fn enclave_less_follower_fails_closed(world: &mut World) {
+    world
+        .localnet
+        .wait_for_follower_guardrail(
+            ENCLAVE_LESS_FOLLOWER,
+            FOLLOWER1_SLOT,
+            "mandatory GramineDirectDev ChainSpec requires --tee-enclave-socket before node startup",
+            Duration::from_secs(20),
+        )
+        .expect("enclave-less follower must fail on the exact production guardrail");
+    assert!(
+        world
+            .rpc
+            .head(world.validators.http_port(FOLLOWER1_SLOT))
+            .is_none(),
+        "enclave-less follower opened its RPC service before failing"
+    );
+}
+
+#[then("the committee finalizes two new blocks after the rejected FullNode startup")]
+fn committee_survives_rejected_follower(world: &mut World) {
+    let target = world
+        .state
+        .marker_height
+        .expect("pre-probe finalized height")
+        .saturating_add(2);
+    for port in world.validators.committee_ports() {
+        assert!(
+            world.rpc.wait_finalized_at_least(port, target, 60),
+            "validator on port {port} did not finalize after enclave-less follower rejection"
+        );
+    }
 }
 
 #[when("the fifth production FullNode with its own enclave syncs from the committee")]
@@ -317,6 +368,54 @@ fn chained_lockstep(world: &mut World) {
     );
 }
 
+#[then("the canonical reshare handoff is authenticated by both followers")]
+fn chained_followers_authenticate_preannounce(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let through = world
+        .rpc
+        .finalized_result(primary)
+        .expect("read finalized height for committee handoff evidence");
+    let handoff = world
+        .rpc
+        .latest_finalized_committee_handoff(primary, through)
+        .expect("find exact finalized CommitteePreAnnounce and boundary pair");
+    let terminal_height = handoff.boundary_height.saturating_add(2);
+    let expected_preannounce = world
+        .rpc
+        .checkpoint_at(primary, handoff.preannounce_height)
+        .expect("primary pre-announce checkpoint");
+    let expected_boundary = world
+        .rpc
+        .checkpoint_at(primary, handoff.boundary_height)
+        .expect("primary boundary checkpoint");
+    for (name, port) in [
+        ("follower", world.validators.http_port(FOLLOWER1_SLOT)),
+        ("follower2", world.validators.http_port(FOLLOWER2_SLOT)),
+    ] {
+        assert!(
+            world.rpc.wait_finalized_at_least(port, terminal_height, 90),
+            "{name} did not finalize beyond authenticated epoch {} handoff",
+            handoff.epoch
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, handoff.preannounce_height)
+                .unwrap_or_else(|error| panic!("read {name} pre-announce checkpoint: {error:#}")),
+            expected_preannounce,
+            "{name} imported a different CommitteePreAnnounce carrier"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, handoff.boundary_height)
+                .unwrap_or_else(|error| panic!("read {name} boundary checkpoint: {error:#}")),
+            expected_boundary,
+            "{name} imported a different successor boundary"
+        );
+    }
+}
+
 /// S3 - kill validator-3 mid-epoch and restart it.
 #[when("a validator is killed and restarted mid-epoch")]
 fn validator_catchup(world: &mut World) {
@@ -381,7 +480,10 @@ fn warm_promotion(world: &mut World) {
         "promotion readiness reached too late: head {head}, activation {activation}"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "warm joiner participated before readiness and activation boundary"
     );
     world.state.activation_height = Some(activation);
@@ -415,7 +517,10 @@ fn resubmit_promotion_readiness(world: &mut World) {
         "duplicate readiness changed the joiner from PENDING before activation"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "duplicate readiness made the joiner participate before activation"
     );
 }
@@ -465,7 +570,10 @@ fn promotion_boundary_and_recovery(world: &mut World) {
 
     for _ in 0..120 {
         let head = world.rpc.head(primary).expect("committee head");
-        let participant = world.rpc.is_participant(primary, &addr);
+        let participant = world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation");
         if head < activation {
             assert!(
                 !participant,
@@ -483,7 +591,10 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         "joiner activated before planned boundary {activation}"
     );
     assert!(
-        world.rpc.is_participant(primary, &addr),
+        world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "warm joiner was not a participant after activation boundary"
     );
     let restarted_validator = world.validators.http_port(3);
@@ -537,15 +648,21 @@ fn promotion_boundary_and_recovery(world: &mut World) {
             "DKG share state differs on RPC port {port}"
         );
         assert!(
-            world.rpc.is_participant(port, &addr),
+            world
+                .rpc
+                .is_participant(port, &addr)
+                .expect("observe consensus participation"),
             "participant state differs on RPC port {port}"
         );
     }
     assert!(
-        world.localnet.enclave_log_has(
-            idx,
-            "unsealed offer key + group signature <- /tee/sealed_root.bin"
-        ),
+        world
+            .localnet
+            .enclave_log_has(
+                idx,
+                "unsealed offer key + group signature <- /tee/sealed_root.bin"
+            )
+            .expect("read required owned process log"),
         "warm-promoted enclave did not restore its EGETKEY-sealed state"
     );
     assert!(
@@ -568,7 +685,10 @@ fn promoted_activates(world: &mut World) {
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
 
     assert!(
-        world.rpc.wait_participant(primary, &addr, 60),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 60)
+            .expect("wait for observable consensus participation"),
         "warm-promoted node never became a consensus participant"
     );
     sleep(Duration::from_secs(20));

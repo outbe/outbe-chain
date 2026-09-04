@@ -38,10 +38,10 @@ use outbe_ocomp_protocol::{
         JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
         NodTargetPreconditionV1, ParentProofKind, ReferenceEntryPriceV1, TributeInputBindingV1,
     },
-    state::{OcompJobRecordV1, OcompJobStatus},
+    state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
 };
 use outbe_offchain_data::TributeRetentionSelector;
-use outbe_offchain_storage::{MemoryStorage, StorageWriter as _};
+use outbe_offchain_storage::{AtomicWriteBatch, MemoryStorage, StorageError, StorageWriter};
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, types::StorageKey as _, StorageHandle},
@@ -62,13 +62,13 @@ use outbe_validatorset::{
 
 use crate::finalized_frame::FinalizedFrame;
 use crate::ocomp::retention::{
-    inspect_retention_journal, observe_finalized_request, ocomp_snapshot_contains_key_at,
-    retention_pressure_watermark_for_test, retention_terminal_height_for_status,
-    seed_retention_journal_for_test, CandidateFinalityV1, CandidatePinV1, ExportAuthorityV1,
-    FinalizedInputProofSource, FinalizedJobPinV1, FinalizedSnapshotArmer, JournalDurability,
-    OcompRetentionCoordinator, OcompRetentionService, OcompSnapshotEligibilityV1, PinRecordV1,
-    PinReleaseReason, PinStateV1, RetentionError, RetentionStatus, RethFinalizedInputProofSource,
-    SharedOcompRetentionSelector,
+    inspect_retention_journal, journal_recovery_backoff, observe_finalized_request,
+    ocomp_snapshot_contains_key_at, retention_pressure_watermark_for_test,
+    retention_terminal_height_for_status, seed_retention_journal_for_test, CandidateFinalityV1,
+    CandidatePinV1, ExportAuthorityV1, FinalizedInputProofSource, FinalizedJobPinV1,
+    FinalizedSnapshotArmer, JournalDurability, OcompRetentionCoordinator, OcompRetentionService,
+    OcompSnapshotEligibilityV1, PinRecordV1, PinReleaseReason, PinStateV1, RetentionError,
+    RetentionStatus, RethFinalizedInputProofSource, SharedOcompRetentionSelector,
 };
 #[derive(Clone, Default)]
 struct DeterministicProofSource {
@@ -596,6 +596,152 @@ fn unified_finalized_frame_supplies_retention_receipts_without_a_second_read() {
             .is_none(),
         "the finalized path must not call the pending/canonical receipt reader"
     );
+}
+
+#[test]
+fn unified_retention_waits_for_and_copies_canonical_finalized_job() {
+    let ProductionCandidateFixture {
+        request,
+        candidate,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    let receipts = pending_receipts
+        .lock()
+        .expect("pending receipt fixture")
+        .take()
+        .expect("fixture receipts")
+        .1;
+    let frame = FinalizedFrame::for_test(
+        BlockNumHash::new(request.number(), request.block_hash()),
+        request.header().inner.parent_hash,
+        request.header().inner.state_root,
+        Block::default(),
+        receipts,
+    );
+    let observation = observe_finalized_request(&frame)
+        .expect("frame observation")
+        .expect("request observation");
+    let root = tempfile::tempdir().expect("journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source);
+
+    coordinator
+        .reconcile_finalized_frame(&frame, Some(observation))
+        .expect("request frame reconciliation");
+    assert!(matches!(
+        ready_record(&coordinator),
+        PinRecordV1 {
+            generation: 1,
+            state: PinStateV1::Tentative { candidate: actual },
+        } if actual == candidate
+    ));
+
+    let intent = production_intent(request.number());
+    let limits = poc_schema_limits();
+    let job_id = intent
+        .job_id(candidate.block_hash, candidate.state_root, &limits)
+        .expect("fixture JobId");
+    let canonical = OcompJobRecordV1 {
+        intent,
+        intent_height: candidate.block_number,
+        status: OcompJobStatus::AwaitingFinality,
+        finalized: Some(OcompFinalizedJobV1 {
+            job_id,
+            finalized_request_block_hash: candidate.block_hash,
+            finalized_request_state_root: candidate.state_root,
+            finality_recorded_height: candidate.block_number + 1,
+            open_height: candidate.block_number + 5,
+            deadline_height: candidate.block_number + 15,
+            quorum: None,
+        }),
+        terminal: None,
+    };
+
+    let ack = coordinator
+        .bind_canonical_finalized_job(candidate.block_hash, &canonical)
+        .expect("canonical finalized job binding");
+    assert_eq!(ack.generation, 2);
+    assert_eq!(
+        coordinator
+            .finalized_job_record(job_id)
+            .expect("finalized retention record"),
+        (
+            2,
+            FinalizedJobPinV1 {
+                candidate,
+                job_id,
+                finality_recorded_height: candidate.block_number + 1,
+                open_height: candidate.block_number + 5,
+                deadline_height: candidate.block_number + 15,
+            }
+        )
+    );
+}
+
+#[test]
+fn canonical_finalized_job_mismatch_cannot_mutate_tentative_retention() {
+    let ProductionCandidateFixture {
+        request,
+        candidate,
+        source,
+        pending_receipts,
+    } = production_candidate_source();
+    let receipts = pending_receipts
+        .lock()
+        .expect("pending receipt fixture")
+        .take()
+        .expect("fixture receipts")
+        .1;
+    let frame = FinalizedFrame::for_test(
+        BlockNumHash::new(request.number(), request.block_hash()),
+        request.header().inner.parent_hash,
+        request.header().inner.state_root,
+        Block::default(),
+        receipts,
+    );
+    let observation = observe_finalized_request(&frame)
+        .expect("frame observation")
+        .expect("request observation");
+    let root = tempfile::tempdir().expect("journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source);
+    coordinator
+        .reconcile_finalized_frame(&frame, Some(observation))
+        .expect("request frame reconciliation");
+
+    let intent = production_intent(request.number());
+    let limits = poc_schema_limits();
+    let job_id = intent
+        .job_id(candidate.block_hash, candidate.state_root, &limits)
+        .expect("fixture JobId");
+    let mismatched = OcompJobRecordV1 {
+        intent,
+        intent_height: candidate.block_number + 1,
+        status: OcompJobStatus::AwaitingFinality,
+        finalized: Some(OcompFinalizedJobV1 {
+            job_id,
+            finalized_request_block_hash: candidate.block_hash,
+            finalized_request_state_root: candidate.state_root,
+            finality_recorded_height: candidate.block_number + 1,
+            open_height: candidate.block_number + 5,
+            deadline_height: candidate.block_number + 15,
+            quorum: None,
+        }),
+        terminal: None,
+    };
+
+    assert!(matches!(
+        coordinator.bind_canonical_finalized_job(candidate.block_hash, &mismatched),
+        Err(RetentionError::InvalidTransition(
+            "canonical finalized job does not match retained request candidate"
+        ))
+    ));
+    assert!(matches!(
+        ready_record(&coordinator),
+        PinRecordV1 {
+            generation: 1,
+            state: PinStateV1::Tentative { candidate: actual },
+        } if actual == candidate
+    ));
 }
 
 fn unverified_proof(candidate: CandidatePinV1, intent: &JobIntentV1) -> FinalizedIntentProofV1 {
@@ -1443,6 +1589,7 @@ fn ocm_pin_001_orphan_releases_and_remains_non_signable_after_restart() {
                 state: PinStateV1::Released {
                     candidate,
                     job_id: None,
+                    source_generation: None,
                     reason: PinReleaseReason::Orphaned,
                     observed_height: canonical.number(),
                     export: None,
@@ -1464,7 +1611,7 @@ fn ocm_pin_001_orphan_releases_and_remains_non_signable_after_restart() {
 }
 
 #[test]
-fn tentative_pin_selects_exact_day_and_orphan_finality_garbage_collects_its_retained_body() {
+fn tentative_pin_selects_exact_day_and_orphan_finality_queues_retained_gc() {
     let request = block(100, B256::repeat_byte(0x62), 0x63);
     let canonical = block(100, B256::repeat_byte(0x64), 0x65);
     let candidate = candidate(&request, B256::repeat_byte(0x66));
@@ -1524,9 +1671,32 @@ fn tentative_pin_selects_exact_day_and_orphan_finality_garbage_collects_its_reta
         .expect("fixture current retirement");
 
     DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &canonical);
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::OrphanGcPending {
+            candidate: orphaned,
+            observed_height,
+        } if orphaned == candidate && observed_height == canonical.number()
+    ));
+    assert_eq!(
+        TributeRetentionSelector::active_pin_for(&coordinator, day).unwrap(),
+        None
+    );
+    assert_eq!(
+        retained_reader
+            .list_by_day(pin, None, 10)
+            .expect("orphan retained source before background GC")
+            .records
+            .len(),
+        1
+    );
+    coordinator
+        .release_due(canonical.number())
+        .expect("background orphan GC")
+        .expect("orphan retained input is released");
     assert!(retained_reader
         .list_by_day(pin, None, 10)
-        .expect("orphan retained source")
+        .expect("orphan retained source after background GC")
         .records
         .is_empty());
     assert!(matches!(
@@ -1548,19 +1718,77 @@ enum FailSync {
 
 struct FailOnceDurability {
     point: FailSync,
+    armed: AtomicBool,
     failed: AtomicBool,
+}
+
+struct RecoverableDurabilityOutage {
+    point: FailSync,
+    unavailable: AtomicBool,
+}
+
+struct FailFirstAtomicWrite {
+    inner: Arc<MemoryStorage>,
+    failed: AtomicBool,
+}
+
+impl StorageWriter for FailFirstAtomicWrite {
+    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
+        if !self.failed.swap(true, Ordering::SeqCst) {
+            return Err(StorageError::Unavailable {
+                source: Box::new(io::Error::other("injected retained GC outage")),
+            });
+        }
+        self.inner.apply_atomic(batch)
+    }
 }
 
 impl FailOnceDurability {
     fn at(point: FailSync) -> Self {
         Self {
             point,
+            armed: AtomicBool::new(true),
             failed: AtomicBool::new(false),
         }
     }
 
+    fn disarmed(point: FailSync) -> Self {
+        Self {
+            point,
+            armed: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::SeqCst);
+    }
+
     fn should_fail(&self, point: FailSync) -> bool {
-        self.point == point && !self.failed.swap(true, Ordering::SeqCst)
+        self.point == point
+            && self.armed.load(Ordering::SeqCst)
+            && !self.failed.swap(true, Ordering::SeqCst)
+    }
+}
+
+impl RecoverableDurabilityOutage {
+    fn at(point: FailSync) -> Self {
+        Self {
+            point,
+            unavailable: AtomicBool::new(false),
+        }
+    }
+
+    fn fail(&self) {
+        self.unavailable.store(true, Ordering::SeqCst);
+    }
+
+    fn restore(&self) {
+        self.unavailable.store(false, Ordering::SeqCst);
+    }
+
+    fn should_fail(&self, point: FailSync) -> bool {
+        self.point == point && self.unavailable.load(Ordering::SeqCst)
     }
 }
 
@@ -1575,6 +1803,24 @@ impl JournalDurability for FailOnceDurability {
     fn sync_directory(&self, directory: &File) -> io::Result<()> {
         if self.should_fail(FailSync::Directory) {
             return Err(io::Error::other("injected directory fsync failure"));
+        }
+        directory.sync_all()
+    }
+}
+
+impl JournalDurability for RecoverableDurabilityOutage {
+    fn sync_file(&self, file: &File) -> io::Result<()> {
+        if self.should_fail(FailSync::File) {
+            return Err(io::Error::other("injected recoverable file fsync outage"));
+        }
+        file.sync_all()
+    }
+
+    fn sync_directory(&self, directory: &File) -> io::Result<()> {
+        if self.should_fail(FailSync::Directory) {
+            return Err(io::Error::other(
+                "injected recoverable directory fsync outage",
+            ));
         }
         directory.sync_all()
     }
@@ -1602,7 +1848,7 @@ fn ocm_pin_001_crash_recovery_multi_job_and_ambiguous_restart_are_safe() {
     );
     assert!(matches!(
         coordinator.status(),
-        RetentionStatus::Quarantined { .. }
+        RetentionStatus::Unavailable { .. }
     ));
     assert!(fsync_root.path().join("pin.v1.tmp").is_file());
     assert!(!fsync_root.path().join("pin.v1").exists());
@@ -1625,11 +1871,13 @@ fn ocm_pin_001_crash_recovery_multi_job_and_ambiguous_restart_are_safe() {
         VoteOutcome::Positive
     );
     drop(initial);
+    let successor_durability = Arc::new(FailOnceDurability::disarmed(FailSync::File));
     let interrupted_successor = OcompRetentionCoordinator::open_with_durability(
         successor_root.path(),
         source.clone(),
-        Arc::new(FailOnceDurability::at(FailSync::File)),
+        successor_durability.clone(),
     );
+    successor_durability.arm();
     assert_eq!(
         DeterministicConsensusDriver::vote(&interrupted_successor, &second),
         VoteOutcome::Abstained
@@ -1707,8 +1955,224 @@ fn ocm_pin_001_crash_recovery_multi_job_and_ambiguous_restart_are_safe() {
     assert!(directory_fsync_root.path().join("pin.v1").is_file());
     assert!(matches!(
         directory_fsync.status(),
+        RetentionStatus::Unavailable { .. }
+    ));
+}
+
+#[test]
+fn ocm_pin_001_transient_journal_io_recovers_in_process_without_restart() {
+    for point in [FailSync::File, FailSync::Directory] {
+        let request = block(100, B256::repeat_byte(0x36), 6);
+        let candidate = candidate(&request, B256::repeat_byte(0x46));
+        let source = Arc::new(DeterministicProofSource::with_jobs([(
+            candidate,
+            B256::repeat_byte(0x56),
+        )]));
+        let root = tempfile::tempdir().expect("recoverable journal root");
+        let durability = Arc::new(RecoverableDurabilityOutage::at(point));
+        let coordinator = Arc::new(OcompRetentionCoordinator::open_with_durability(
+            root.path(),
+            source,
+            durability.clone(),
+        ));
+        let selector = SharedOcompRetentionSelector::new();
+        selector
+            .install(Arc::clone(&coordinator))
+            .expect("install journal recovery worker");
+        durability.fail();
+
+        assert_eq!(
+            DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
+            VoteOutcome::Abstained,
+            "a candidate must not be acknowledged while its journal write is not durable"
+        );
+        assert!(matches!(
+            coordinator.status(),
+            RetentionStatus::Unavailable { .. }
+        ));
+        selector.notify_finalized_height(request.number());
+
+        durability.restore();
+        selector.notify_finalized_height(request.number());
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        loop {
+            match coordinator.status() {
+                RetentionStatus::Ready(_) => break,
+                RetentionStatus::Unavailable { .. } => {}
+                RetentionStatus::Quarantined { reason } => {
+                    panic!("recoverable journal outage became quarantined: {reason}")
+                }
+                RetentionStatus::Empty => {}
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "journal did not recover in process after storage was restored"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
+            VoteOutcome::Positive,
+            "the same candidate must resume after durable journal recovery"
+        );
+    }
+}
+
+#[test]
+fn ocm_pin_001_existing_export_authority_fails_closed_during_journal_recovery() {
+    let first = block(100, B256::repeat_byte(0x39), 8);
+    let second = block(101, B256::repeat_byte(0x3a), 9);
+    let first_candidate = candidate(&first, B256::repeat_byte(0x49));
+    let second_candidate = candidate(&second, B256::repeat_byte(0x4a));
+    let first_job = B256::repeat_byte(0x59);
+    let second_job = B256::repeat_byte(0x5a);
+    let source = Arc::new(DeterministicProofSource::with_jobs([
+        (first_candidate, first_job),
+        (second_candidate, second_job),
+    ]));
+    let root = tempfile::tempdir().expect("recoverable journal root");
+    let durability = Arc::new(RecoverableDurabilityOutage::at(FailSync::File));
+    let coordinator = Arc::new(OcompRetentionCoordinator::open_with_durability(
+        root.path(),
+        source.clone(),
+        durability.clone(),
+    ));
+    let selector = SharedOcompRetentionSelector::new();
+    selector
+        .install(Arc::clone(&coordinator))
+        .expect("install journal recovery worker");
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(coordinator.as_ref(), &first),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), coordinator.as_ref(), &first);
+    let source_generation = coordinator
+        .finalized_job_record(first_job)
+        .expect("finalized source generation")
+        .0;
+    coordinator
+        .record_exported(first_job, source_generation, 9, B256::repeat_byte(0x69))
+        .expect("export authority");
+    assert!(coordinator.is_signable(first_job));
+
+    durability.fail();
+    assert_eq!(
+        DeterministicConsensusDriver::vote(coordinator.as_ref(), &second),
+        VoteOutcome::Abstained
+    );
+    assert!(matches!(
+        coordinator.status(),
+        RetentionStatus::Unavailable { .. }
+    ));
+    assert!(!coordinator.is_signable(first_job));
+    assert!(!coordinator.is_exportable(first_job));
+    assert!(matches!(
+        coordinator.discovery_job_records(first_job),
+        Err(RetentionError::JournalUnavailable { .. })
+    ));
+    assert!(matches!(
+        coordinator.confirm_export_ack(first_job, source_generation, 9, B256::repeat_byte(0x69),),
+        Err(RetentionError::JournalUnavailable { .. })
+    ));
+
+    selector.notify_finalized_height(second.number());
+    durability.restore();
+    selector.notify_finalized_height(second.number());
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    while !matches!(coordinator.status(), RetentionStatus::Ready(_)) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "journal did not recover while prior export authority was withheld"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(coordinator.is_signable(first_job));
+}
+
+#[test]
+fn ocm_pin_001_ambiguous_journal_stays_quarantined_without_automatic_mutation() {
+    let first = block(100, B256::repeat_byte(0x37), 6);
+    let second = block(101, B256::repeat_byte(0x38), 7);
+    let first_candidate = candidate(&first, B256::repeat_byte(0x47));
+    let second_candidate = candidate(&second, B256::repeat_byte(0x48));
+    let root = tempfile::tempdir().expect("ambiguous journal root");
+    seed_retention_journal_for_test(
+        root.path(),
+        1,
+        first_candidate.block_hash,
+        vec![(
+            first_candidate.block_hash,
+            PinRecordV1 {
+                generation: 1,
+                state: PinStateV1::Tentative {
+                    candidate: first_candidate,
+                },
+            },
+        )],
+    )
+    .expect("seed authoritative journal");
+    let conflicting = tempfile::tempdir().expect("conflicting successor root");
+    seed_retention_journal_for_test(
+        conflicting.path(),
+        2,
+        second_candidate.block_hash,
+        vec![(
+            second_candidate.block_hash,
+            PinRecordV1 {
+                generation: 2,
+                state: PinStateV1::Tentative {
+                    candidate: second_candidate,
+                },
+            },
+        )],
+    )
+    .expect("seed non-exact successor");
+    fs::copy(
+        conflicting.path().join("pin.v1"),
+        root.path().join("pin.v1.tmp"),
+    )
+    .expect("install non-exact temporary successor");
+    let journal_before = fs::read(root.path().join("pin.v1")).expect("read journal before open");
+    let temporary_before =
+        fs::read(root.path().join("pin.v1.tmp")).expect("read temporary before open");
+
+    let coordinator = Arc::new(OcompRetentionCoordinator::open(
+        root.path(),
+        Arc::new(DeterministicProofSource::default()),
+    ));
+    assert!(matches!(
+        coordinator.status(),
         RetentionStatus::Quarantined { .. }
     ));
+    let selector = SharedOcompRetentionSelector::new();
+    selector
+        .install(Arc::clone(&coordinator))
+        .expect("install quarantined journal worker");
+    std::thread::sleep(Duration::from_millis(50));
+
+    assert!(matches!(
+        coordinator.status(),
+        RetentionStatus::Quarantined { .. }
+    ));
+    assert_eq!(
+        fs::read(root.path().join("pin.v1")).expect("read preserved journal"),
+        journal_before
+    );
+    assert_eq!(
+        fs::read(root.path().join("pin.v1.tmp")).expect("read preserved temporary"),
+        temporary_before
+    );
+}
+
+#[test]
+fn ocm_pin_001_journal_recovery_backoff_is_capped_without_an_attempt_limit() {
+    let seconds = (0..9)
+        .map(|failure| journal_recovery_backoff(failure).as_secs())
+        .collect::<Vec<_>>();
+    assert_eq!(seconds, vec![1, 2, 4, 8, 16, 32, 60, 60, 60]);
+    assert_eq!(journal_recovery_backoff(u32::MAX), Duration::from_secs(60));
 }
 
 #[test]
@@ -1816,7 +2280,7 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         .release_due(184)
         .expect("release transition")
         .expect("release is due");
-    assert_eq!(released.generation, terminal.generation + 1);
+    assert_eq!(released.generation, terminal.generation + 2);
     assert!(retained_reader
         .list_by_day(pin, None, 10)
         .expect("exact job retained source after release")
@@ -1834,6 +2298,232 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
             ..
         } if current == job_id
     ));
+}
+
+#[test]
+fn ocm_pin_001_gc_pending_survives_mongo_failure_and_releases_without_export_ack() {
+    let request = block(100, B256::repeat_byte(0x76), 6);
+    let candidate = candidate(&request, B256::repeat_byte(0x77));
+    let job_id = B256::repeat_byte(0x78);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("GC recovery journal root");
+    let storage = Arc::new(MemoryStorage::default());
+    let day = WorldwideDay::new(candidate.wwd);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, [0x79; 32]);
+    let tribute = TributeData {
+        tribute_id,
+        owner: Address::repeat_byte(0x7A),
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: false,
+    };
+    TributeRepositoryWriter::new(storage.clone(), storage.clone())
+        .put(&tribute)
+        .expect("fixture current Tribute");
+    let pin = RetainedTributePin {
+        input_lease_id: candidate.input_lease_id,
+        worldwide_day: day,
+    };
+    let retained_reader = RetainedTributeReader::new(storage.clone());
+    let retain = retained_reader
+        .plan_retain_current(pin, tribute_id)
+        .expect("fixture retained copy");
+    storage
+        .apply_atomic(&retain)
+        .expect("fixture retained transaction");
+    let failing_writer = Arc::new(FailFirstAtomicWrite {
+        inner: storage.clone(),
+        failed: AtomicBool::new(false),
+    });
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), failing_writer)),
+    );
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    let finalized = ready_record(&coordinator);
+    coordinator
+        .observe_terminal(job_id, finalized.generation, 120)
+        .expect("canonical expiry becomes durable Terminal");
+    assert!(matches!(
+        coordinator.release_due(184),
+        Err(RetentionError::RetainedTributeGc(_))
+    ));
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::GcPending {
+            job_id: current,
+            source_generation,
+            export: None,
+            ..
+        } if current == job_id && source_generation == finalized.generation
+    ));
+    assert!(coordinator
+        .confirm_export_ack(job_id, finalized.generation, 9, B256::repeat_byte(0x7E))
+        .is_err());
+    assert_eq!(
+        retained_reader
+            .list_by_day(pin, None, 10)
+            .expect("retained source after failed GC")
+            .records
+            .len(),
+        1
+    );
+    drop(coordinator);
+
+    let restarted = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source,
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+    );
+    restarted
+        .release_due(184)
+        .expect("restart retries durable GcPending")
+        .expect("restart completes retained-input GC");
+    assert_eq!(
+        restarted
+            .released_job_authority(job_id)
+            .expect("read released authority")
+            .expect("canonical expiry authority remains durable")
+            .export,
+        None
+    );
+    assert!(restarted
+        .confirm_export_ack(job_id, finalized.generation, 9, B256::repeat_byte(0x7E))
+        .is_err());
+    assert!(retained_reader
+        .list_by_day(pin, None, 10)
+        .expect("retained source after successful retry")
+        .records
+        .is_empty());
+}
+
+#[test]
+fn ocm_pin_001_background_gc_recovers_due_work_from_the_durable_journal() {
+    let request = block(100, B256::repeat_byte(0x7B), 6);
+    let candidate = candidate(&request, B256::repeat_byte(0x7C));
+    let job_id = B256::repeat_byte(0x7D);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("background GC journal root");
+    let storage = Arc::new(MemoryStorage::default());
+    let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage)),
+    ));
+    assert_eq!(
+        DeterministicConsensusDriver::vote(coordinator.as_ref(), &request),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), coordinator.as_ref(), &request);
+    let finalized = ready_record(coordinator.as_ref());
+    coordinator
+        .observe_terminal(job_id, finalized.generation, 120)
+        .expect("canonical expiry becomes durable Terminal");
+
+    let selector = SharedOcompRetentionSelector::new();
+    selector
+        .install(Arc::clone(&coordinator))
+        .expect("install retention GC worker");
+    selector.notify_finalized_height(184);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if matches!(
+            ready_record(coordinator.as_ref()).state,
+            PinStateV1::Released {
+                job_id: Some(current),
+                source_generation: Some(source_generation),
+                export: None,
+                ..
+            } if current == job_id && source_generation == finalized.generation
+        ) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "journal-driven background GC did not release due work"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn ocm_pin_001_one_failed_lease_does_not_block_other_gc_work() {
+    let first_request = block(100, B256::repeat_byte(0x81), 6);
+    let second_request = block(101, B256::repeat_byte(0x82), 7);
+    let mut first_candidate = candidate(&first_request, B256::repeat_byte(0x83));
+    let mut second_candidate = candidate(&second_request, B256::repeat_byte(0x84));
+    first_candidate.input_lease_id = B256::repeat_byte(0x91);
+    second_candidate.input_lease_id = B256::repeat_byte(0x92);
+    let first_job = B256::repeat_byte(0x85);
+    let second_job = B256::repeat_byte(0x86);
+    let source = Arc::new(DeterministicProofSource::with_jobs([
+        (first_candidate, first_job),
+        (second_candidate, second_job),
+    ]));
+    let root = tempfile::tempdir().expect("fair GC journal root");
+    let storage = Arc::new(MemoryStorage::default());
+    let failing_writer = Arc::new(FailFirstAtomicWrite {
+        inner: storage.clone(),
+        failed: AtomicBool::new(false),
+    });
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage, failing_writer)),
+    );
+
+    for (request, job, terminal_height) in [
+        (&first_request, first_job, 120),
+        (&second_request, second_job, 121),
+    ] {
+        assert_eq!(
+            DeterministicConsensusDriver::vote(&coordinator, request),
+            VoteOutcome::Positive
+        );
+        DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, request);
+        let finalized = ready_record(&coordinator);
+        coordinator
+            .observe_terminal(job, finalized.generation, terminal_height)
+            .expect("terminal job enters durable GC queue");
+    }
+
+    let (completed, pages, failures) = coordinator
+        .run_gc_cycle_for_test(185)
+        .expect("GC cycle scans every due lease");
+    assert_eq!((completed, pages, failures), (1, 0, 1));
+    let states = inspect_retention_journal(root.path())
+        .expect("inspect fair GC cycle")
+        .records;
+    assert_eq!(
+        states
+            .iter()
+            .filter(|(_, record)| matches!(record.state, PinStateV1::GcPending { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        states
+            .iter()
+            .filter(|(_, record)| matches!(record.state, PinStateV1::Released { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        coordinator
+            .run_gc_cycle_for_test(185)
+            .expect("failed lease retries independently"),
+        (1, 0, 0)
+    );
 }
 
 #[test]
@@ -1986,11 +2676,12 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
                     finality_recorded_height: 100,
                     open_height: 104,
                     deadline_height: 180,
-                    export: ExportAuthorityV1 {
+                    source_generation: 1,
+                    export: Some(ExportAuthorityV1 {
                         source_generation: 1,
                         lease_generation: 1,
                         manifest_hash: B256::repeat_byte(0x71),
-                    },
+                    }),
                     terminal_height: 200,
                     release_height: 264,
                 },
@@ -2006,11 +2697,12 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
                     finality_recorded_height: 100,
                     open_height: 104,
                     deadline_height: 180,
-                    export: ExportAuthorityV1 {
+                    source_generation: 2,
+                    export: Some(ExportAuthorityV1 {
                         source_generation: 2,
                         lease_generation: 1,
                         manifest_hash: B256::repeat_byte(0x72),
-                    },
+                    }),
                     terminal_height: 400,
                     release_height: 464,
                 },
@@ -2026,6 +2718,7 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
                 state: PinStateV1::Released {
                     candidate,
                     job_id: (ordinal % 2 == 0).then(|| keccak256(ordinal.to_be_bytes())),
+                    source_generation: (ordinal % 2 == 0).then_some(ordinal.saturating_add(1)),
                     reason: if ordinal % 2 == 0 {
                         PinReleaseReason::RetentionSatisfied
                     } else {
@@ -2053,6 +2746,7 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
 
     let source = Arc::new(DeterministicProofSource::default());
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+    coordinator.set_closure_checkpoint_for_test(u64::MAX);
     assert_eq!(
         inspect_retention_journal(root.path())
             .unwrap()
@@ -2066,17 +2760,21 @@ fn ocm_pin_001_pressure_watermark_compacts_only_released_records_and_survives_re
         .expect("one due terminal transitions");
     drop(coordinator);
     let new_candidate = pressure_candidate(99_999);
+    let compaction_durability = Arc::new(FailOnceDurability::disarmed(FailSync::File));
     let interrupted_compaction = OcompRetentionCoordinator::open_with_durability(
         root.path(),
         source.clone(),
-        Arc::new(FailOnceDurability::at(FailSync::File)),
+        compaction_durability.clone(),
     );
+    compaction_durability.arm();
+    interrupted_compaction.set_closure_checkpoint_for_test(u64::MAX);
     assert!(interrupted_compaction
         .record_tentative(new_candidate)
         .is_err());
     assert!(root.path().join("pin.v1.tmp").is_file());
     drop(interrupted_compaction);
     let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+    coordinator.set_closure_checkpoint_for_test(u64::MAX);
     assert!(matches!(coordinator.status(), RetentionStatus::Ready(_)));
     coordinator
         .record_tentative(new_candidate)
@@ -2299,7 +2997,7 @@ fn ocm_pin_001_finalized_state_drives_terminal_retention_after_export_ack() {
 }
 
 #[test]
-fn ocm_pin_001_terminal_state_never_releases_unexported_input() {
+fn ocm_pin_001_terminal_state_retires_unexported_input_after_evidence_window() {
     let request = block(151, B256::repeat_byte(0x37), 7);
     let candidate = candidate(&request, B256::repeat_byte(0x47));
     let job_id = B256::repeat_byte(0x57);
@@ -2315,19 +3013,61 @@ fn ocm_pin_001_terminal_state_never_releases_unexported_input() {
     let finalized = ready_record(&coordinator);
     source.observe_terminal(job_id, 160);
     coordinator
-        .reconcile_finalized(&block(400, B256::repeat_byte(0x38), 8))
-        .expect("terminal observation is retryable while exporter is unavailable");
+        .reconcile_finalized(&block(160, B256::repeat_byte(0x38), 8))
+        .expect("terminal observation closes retention while exporter is unavailable");
 
-    assert_eq!(ready_record(&coordinator), finalized);
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Terminal {
+            job_id: current,
+            source_generation,
+            export: None,
+            terminal_height: 160,
+            release_height: 224,
+            ..
+        } if current == job_id && source_generation == finalized.generation
+    ));
+    let discovery = coordinator
+        .discovery_job_records(job_id)
+        .expect("terminal job retains its exact discovery identity until retirement");
+    assert_eq!(discovery.len(), 1);
+    assert_eq!(discovery[0].0, finalized.generation);
     assert!(coordinator
-        .release_due(10_000)
+        .confirm_export_ack(job_id, finalized.generation, 9, B256::repeat_byte(0x49),)
+        .is_err());
+    assert!(!coordinator.is_exportable(job_id));
+    assert!(!coordinator.is_signable(job_id));
+    drop(coordinator);
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source);
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Terminal {
+            job_id: current,
+            export: None,
+            ..
+        } if current == job_id
+    ));
+    assert!(coordinator
+        .release_due(223)
         .expect("release scan")
         .is_none());
-    assert!(coordinator.is_exportable(job_id));
+    coordinator
+        .release_due(224)
+        .expect("release at evidence-window boundary")
+        .expect("terminal record released");
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Released {
+            job_id: Some(current),
+            reason: PinReleaseReason::RetentionSatisfied,
+            export: None,
+            ..
+        } if current == job_id
+    ));
 }
 
 #[test]
-fn ocm_pin_001_production_open_automatically_releases_due_terminal_across_restart() {
+fn ocm_pin_001_finalized_reconciliation_leaves_due_terminal_for_the_gc_worker() {
     let request = block(151, B256::repeat_byte(0x6A), 0x6B);
     let candidate = candidate(&request, B256::repeat_byte(0x6C));
     let job_id = B256::repeat_byte(0x6D);
@@ -2360,7 +3100,18 @@ fn ocm_pin_001_production_open_automatically_releases_due_terminal_across_restar
 
     coordinator
         .reconcile_finalized(&block(224, B256::repeat_byte(0x70), 0x71))
-        .expect("production open drains every due terminal record");
+        .expect("finalized reconciliation does not execute retained-input GC");
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Terminal {
+            job_id: current,
+            ..
+        } if current == job_id
+    ));
+    coordinator
+        .release_due(224)
+        .expect("GC worker transition")
+        .expect("due terminal is released by GC");
     assert!(matches!(
         ready_record(&coordinator).state,
         PinStateV1::Released {

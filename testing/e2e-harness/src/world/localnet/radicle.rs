@@ -1,7 +1,8 @@
 //! Operator-owned Radicle sidecars for release LocalNet scenarios.
 
 use std::fs::{self, OpenOptions};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -14,6 +15,7 @@ use super::Localnet;
 const VALIDATOR_SET_ALLOC_ADDRESS: &str = "000000000000000000000000000000000000ee00";
 const VALIDATOR_SET_MAX_VALIDATORS_SLOT: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000001";
+const PORTABLE_UNIX_SOCKET_PATH_LIMIT: usize = 104;
 
 #[derive(Clone, Debug)]
 pub struct RadicleRepositoryFixtureV1 {
@@ -28,9 +30,7 @@ pub struct RadicleRepositoryFixtureV1 {
 
 impl Localnet {
     pub(crate) fn radicle_control_socket(&self, index: usize) -> std::path::PathBuf {
-        self.cfg
-            .validator_dir(index)
-            .join("radicle/node/outbe-control.sock")
+        self.cfg.radicle_control_socket(index)
     }
 
     /// Start the operator-owned foreground sidecar before its validator node.
@@ -64,9 +64,16 @@ impl Localnet {
         let status = format!("127.0.0.1:{}", self.cfg.radicle_status_port(index));
         let advertise = listen.clone();
         let max_validators = materialized_max_validators(&self.cfg.dir.join("genesis.json"))?;
+        let control_socket = self.radicle_control_socket(index);
+        prepare_private_socket_parent(
+            &self.cfg.radicle_runtime_root,
+            &control_socket,
+            &validator_dir,
+        )?;
         let mut command = Command::new(&script);
         command
             .env("OUTBE_RADICLE_BINARY", &self.cfg.bin_radicle)
+            .env("OUTBE_RADICLE_CONTROL_SOCKET", &control_socket)
             .args(args![
                 home.display(),
                 listen,
@@ -133,7 +140,8 @@ impl Localnet {
 
     pub fn validator_radicle_addresses(&self, index: usize) -> Result<Vec<String>> {
         let home = self.cfg.validator_dir(index).join("radicle");
-        let output = self.rad(&home, None, &["node", "config", "--addresses"])?;
+        let socket = self.radicle_control_socket(index);
+        let output = self.rad(&home, &socket, None, &["node", "config", "--addresses"])?;
         let addresses = output
             .lines()
             .map(str::trim)
@@ -189,6 +197,7 @@ impl Localnet {
         self.git(&worktree, &["commit", "-m", "Initial source"])?;
         self.rad(
             &home,
+            &self.cfg.user_radicle_control_socket(),
             Some(&worktree),
             &[
                 "init",
@@ -203,7 +212,12 @@ impl Localnet {
         )?;
         let mut initializer = self.spawn_user_radicle(&home)?;
         initializer.stop();
-        self.rad(&home, Some(&worktree), &["cob", "migrate"])?;
+        self.rad(
+            &home,
+            &self.cfg.user_radicle_control_socket(),
+            Some(&worktree),
+            &["cob", "migrate"],
+        )?;
 
         let remote = self.git(&worktree, &["config", "--get", "remote.rad.url"])?;
         let repo_id = remote
@@ -216,6 +230,7 @@ impl Localnet {
         let repo_id = format!("rad:{repo_id}");
         let issue = self.rad(
             &home,
+            &self.cfg.user_radicle_control_socket(),
             Some(&worktree),
             &[
                 "issue",
@@ -238,6 +253,7 @@ impl Localnet {
         self.git(&worktree, &["commit", "-m", "Add replication evidence"])?;
         let patch = self.git_env(
             &home,
+            &self.cfg.user_radicle_control_socket(),
             &worktree,
             &[
                 "push",
@@ -274,6 +290,7 @@ impl Localnet {
 
         self.rad(
             &fixture.home,
+            &self.cfg.user_radicle_control_socket(),
             Some(&fixture.worktree),
             &["seed", &fixture.repo_id, "--scope", "all", "--no-fetch"],
         )?;
@@ -281,6 +298,7 @@ impl Localnet {
             for address in self.validator_radicle_addresses(index)? {
                 self.rad(
                     &fixture.home,
+                    &self.cfg.user_radicle_control_socket(),
                     None,
                     &["node", "connect", &address, "--timeout", "5s"],
                 )?;
@@ -295,9 +313,12 @@ impl Localnet {
         let status = format!("127.0.0.1:{}", self.cfg.radicle_status_port(slot));
         let script = self.cfg.repo.join("scripts/run-radicle.sh");
         let max_validators = materialized_max_validators(&self.cfg.dir.join("genesis.json"))?;
+        let control_socket = self.cfg.user_radicle_control_socket();
+        prepare_private_socket_parent(&self.cfg.radicle_runtime_root, &control_socket, home)?;
         let mut command = Command::new(&script);
         command
             .env("OUTBE_RADICLE_BINARY", &self.cfg.bin_radicle)
+            .env("OUTBE_RADICLE_CONTROL_SOCKET", &control_socket)
             .args(args![
                 home.display(),
                 listen,
@@ -334,6 +355,7 @@ impl Localnet {
         )?;
         self.git_env(
             &fixture.home,
+            &self.cfg.user_radicle_control_socket(),
             &fixture.worktree,
             &["push", "rad", "HEAD:refs/heads/master"],
         )?;
@@ -351,8 +373,10 @@ impl Localnet {
         fixture: &RadicleRepositoryFixtureV1,
     ) -> Result<bool> {
         let home = self.cfg.validator_dir(validator).join("radicle");
+        let socket = self.radicle_control_socket(validator);
         let issue = self.rad(
             &home,
+            &socket,
             None,
             &[
                 "issue",
@@ -364,6 +388,7 @@ impl Localnet {
         );
         let patch = self.rad(
             &home,
+            &socket,
             None,
             &[
                 "patch",
@@ -379,7 +404,7 @@ impl Localnet {
             command
                 .current_dir(&self.cfg.dir)
                 .env("RAD_HOME", &home)
-                .env("RAD_SOCKET", home.join("node/outbe-control.sock"))
+                .env("RAD_SOCKET", &socket)
                 .env("PATH", self.radicle_path())
                 .args(["ls-remote", &remote, "refs/heads/master"]);
             output(command, "git")
@@ -390,7 +415,12 @@ impl Localnet {
 
     pub fn radicle_node_status(&self, index: usize) -> Result<String> {
         let home = self.cfg.validator_dir(index).join("radicle");
-        self.rad(&home, None, &["node", "status"])
+        self.rad(
+            &home,
+            &self.radicle_control_socket(index),
+            None,
+            &["node", "status"],
+        )
     }
 
     /// Exact connected native Heartwood peers from the UDS-backed status table.
@@ -412,18 +442,24 @@ impl Localnet {
     /// Native persistent policy proof that the manager applied Seed Scope::All.
     pub fn radicle_seed_scope_all(&self, index: usize, repo_id: &str) -> Result<bool> {
         let home = self.cfg.validator_dir(index).join("radicle");
-        let policies = self.rad(&home, None, &["seed"])?;
+        let policies = self.rad(&home, &self.radicle_control_socket(index), None, &["seed"])?;
         Ok(policies.lines().any(|line| {
             let line = strip_ansi(line);
             line.contains(repo_id) && line.contains("allow") && line.contains("all")
         }))
     }
 
-    fn rad(&self, home: &Path, cwd: Option<&Path>, args: &[&str]) -> Result<String> {
+    fn rad(
+        &self,
+        home: &Path,
+        control_socket: &Path,
+        cwd: Option<&Path>,
+        args: &[&str],
+    ) -> Result<String> {
         let mut command = Command::new(&self.cfg.bin_rad);
         command
             .env("RAD_HOME", home)
-            .env("RAD_SOCKET", home.join("node/outbe-control.sock"))
+            .env("RAD_SOCKET", control_socket)
             .env("PATH", self.radicle_path())
             .args(args);
         if let Some(cwd) = cwd {
@@ -438,12 +474,18 @@ impl Localnet {
         output(command, "git")
     }
 
-    fn git_env(&self, home: &Path, cwd: &Path, args: &[&str]) -> Result<String> {
+    fn git_env(
+        &self,
+        home: &Path,
+        control_socket: &Path,
+        cwd: &Path,
+        args: &[&str],
+    ) -> Result<String> {
         let mut command = Command::new("git");
         command
             .current_dir(cwd)
             .env("RAD_HOME", home)
-            .env("RAD_SOCKET", home.join("node/outbe-control.sock"))
+            .env("RAD_SOCKET", control_socket)
             .env("PATH", self.radicle_path())
             .args(args);
         output(command, "git")
@@ -459,6 +501,90 @@ impl Localnet {
         paths.extend(std::env::split_paths(&self.cfg.path));
         std::env::join_paths(paths).unwrap_or_else(|_| self.cfg.path.clone().into())
     }
+
+    pub(crate) fn cleanup_radicle_runtime(&self) -> Result<()> {
+        let target = if self.cfg.scenario == 0 {
+            self.cfg.radicle_runtime_root.clone()
+        } else {
+            self.cfg.radicle_scenario_runtime_dir()
+        };
+        if !target.starts_with(&self.cfg.radicle_runtime_root) {
+            bail!("refusing to clean Radicle runtime path outside its run root");
+        }
+        let metadata = match fs::symlink_metadata(&target) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).wrap_err("inspect Radicle runtime directory"),
+        };
+        let expected_uid = fs::symlink_metadata(&self.cfg.dir)
+            .wrap_err_with(|| format!("inspect localnet directory {}", self.cfg.dir.display()))?
+            .uid();
+        validate_private_owned_dir(&target, &metadata, expected_uid)?;
+        fs::remove_dir_all(&target)
+            .wrap_err_with(|| format!("remove Radicle runtime directory {}", target.display()))
+    }
+}
+
+fn prepare_private_socket_parent(
+    runtime_root: &Path,
+    socket: &Path,
+    owner_anchor: &Path,
+) -> Result<()> {
+    if socket.as_os_str().as_bytes().len() >= PORTABLE_UNIX_SOCKET_PATH_LIMIT {
+        bail!(
+            "Radicle control socket path must be shorter than {PORTABLE_UNIX_SOCKET_PATH_LIMIT} bytes: {}",
+            socket.display()
+        );
+    }
+    let parent = socket
+        .parent()
+        .ok_or_else(|| eyre!("Radicle control socket has no parent"))?;
+    if !parent.starts_with(runtime_root) {
+        bail!("Radicle control socket escaped its run-scoped runtime root");
+    }
+    let expected_uid = fs::symlink_metadata(owner_anchor)
+        .wrap_err_with(|| format!("inspect Radicle owner anchor {}", owner_anchor.display()))?
+        .uid();
+    ensure_private_owned_dir(runtime_root, expected_uid)?;
+    ensure_private_owned_dir(parent, expected_uid)
+}
+
+fn ensure_private_owned_dir(path: &Path, expected_uid: u32) -> Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error)
+                .wrap_err_with(|| format!("create Radicle runtime directory {}", path.display()));
+        }
+    }
+    let metadata = fs::symlink_metadata(path)
+        .wrap_err_with(|| format!("inspect Radicle runtime directory {}", path.display()))?;
+    validate_private_owned_dir(path, &metadata, expected_uid)
+}
+
+fn validate_private_owned_dir(
+    path: &Path,
+    metadata: &fs::Metadata,
+    expected_uid: u32,
+) -> Result<()> {
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        bail!(
+            "Radicle runtime path must be a non-symlink directory: {}",
+            path.display()
+        );
+    }
+    let mode = metadata.mode() & 0o777;
+    if metadata.uid() != expected_uid || mode != 0o700 {
+        bail!(
+            "Radicle runtime directory {} must be owned by uid {expected_uid} with mode 700 (found uid {}, mode {mode:o})",
+            path.display(),
+            metadata.uid()
+        );
+    }
+    Ok(())
 }
 
 fn output(mut command: Command, label: &str) -> Result<String> {
@@ -598,8 +724,8 @@ fn materialized_max_validators(genesis_path: &Path) -> Result<usize> {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::{symlink, PermissionsExt as _},
-        os::unix::net::UnixStream,
+        io::Read as _,
+        os::unix::fs::{symlink, MetadataExt as _, PermissionsExt as _},
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
         thread::sleep,
@@ -607,7 +733,8 @@ mod tests {
     };
 
     use super::{
-        decode_repo_id, materialized_max_validators, parse_connected_sessions, write_outbe_profile,
+        decode_repo_id, materialized_max_validators, parse_connected_sessions,
+        prepare_private_socket_parent, write_outbe_profile,
     };
 
     struct KillOnDrop(Child);
@@ -686,12 +813,41 @@ mod tests {
     }
 
     #[test]
+    fn short_socket_runtime_is_private_and_rejects_symlink_parents() {
+        let fixture = tempfile::tempdir().expect("create runtime fixture");
+        let runtime = fixture.path().join("runtime");
+        let socket = runtime.join("scenario-1/v0.sock");
+        prepare_private_socket_parent(&runtime, &socket, fixture.path())
+            .expect("prepare private runtime");
+        let expected_uid = fs::symlink_metadata(fixture.path())
+            .expect("inspect fixture owner")
+            .uid();
+
+        for directory in [&runtime, socket.parent().unwrap()] {
+            let metadata = fs::symlink_metadata(directory).expect("inspect private runtime");
+            assert!(metadata.is_dir());
+            assert!(!metadata.file_type().is_symlink());
+            assert_eq!(metadata.uid(), expected_uid);
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        }
+
+        let external = fixture.path().join("external");
+        fs::create_dir(&external).expect("create external directory");
+        let linked_runtime = fixture.path().join("linked-runtime");
+        symlink(&external, &linked_runtime).expect("link runtime directory");
+        let linked_socket = linked_runtime.join("scenario-1/v0.sock");
+        assert!(
+            prepare_private_socket_parent(&linked_runtime, &linked_socket, fixture.path()).is_err()
+        );
+    }
+
+    #[test]
     fn launcher_rejects_second_home_owner() {
         let fixture = launcher_fixture();
         let mut first = KillOnDrop(
             launcher_command(&fixture.home, &fixture.binary)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
                 .expect("start first launcher"),
         );
@@ -761,6 +917,8 @@ mod tests {
                 "listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n",
                 "listener.bind(path)\n",
                 "listener.listen()\n",
+                "with open(path + '.ready', 'x', encoding='utf-8') as marker:\n",
+                "    marker.write('ready\\n')\n",
                 "while True:\n",
                 "    connection, _ = listener.accept()\n",
                 "    connection.close()\n",
@@ -775,13 +933,19 @@ mod tests {
     fn launcher_command(home: &Path, binary: &Path) -> Command {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/run-radicle.sh");
         let mut command = Command::new(script);
-        command.env("OUTBE_RADICLE_BINARY", binary).args([
-            home.as_os_str(),
-            "127.0.0.1:18776".as_ref(),
-            "127.0.0.1:18777".as_ref(),
-            "4".as_ref(),
-            "127.0.0.1:18776".as_ref(),
-        ]);
+        command
+            .env("OUTBE_RADICLE_BINARY", binary)
+            .env(
+                "OUTBE_RADICLE_CONTROL_SOCKET",
+                home.join("node/outbe-control.sock"),
+            )
+            .args([
+                home.as_os_str(),
+                "127.0.0.1:18776".as_ref(),
+                "127.0.0.1:18777".as_ref(),
+                "4".as_ref(),
+                "127.0.0.1:18776".as_ref(),
+            ]);
         command
     }
 
@@ -794,16 +958,24 @@ mod tests {
     /// reads that file.
     fn wait_for_launcher(child: &mut Child, home: &Path) {
         let control_socket = home.join("node/outbe-control.sock");
+        let readiness_marker = control_socket.with_extension("sock.ready");
         for _ in 0..100 {
-            assert_eq!(child.try_wait().expect("poll launcher"), None);
-            if UnixStream::connect(&control_socket).is_ok() {
+            if let Some(status) = child.try_wait().expect("poll launcher") {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    pipe.read_to_string(&mut stderr)
+                        .expect("read failed launcher stderr");
+                }
+                panic!("first launcher exited early with {status}: {stderr}");
+            }
+            if readiness_marker.is_file() {
                 return;
             }
             sleep(Duration::from_millis(10));
         }
         panic!(
-            "first launcher did not bind its control socket at {}",
-            control_socket.display()
+            "first launcher did not publish readiness for its control socket at {}",
+            readiness_marker.display()
         );
     }
 }

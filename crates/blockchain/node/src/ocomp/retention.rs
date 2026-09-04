@@ -4,14 +4,16 @@
 //! source re-opens the exact execution-valid block state and authenticates the
 //! typed Metadosis record before this coordinator persists anything.
 
-#[cfg(test)]
-use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak,
+    },
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::{BlockHeader as _, TxReceipt as _};
@@ -49,7 +51,7 @@ use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
 
 use super::finality::RethFinalizedIntentProofBuilder;
-use crate::finalized_frame::FinalizedFrame;
+use crate::{finalized_frame::FinalizedFrame, projection::ProjectionRetentionFence};
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPIN1";
 const JOURNAL_VERSION: u16 = 5;
@@ -72,6 +74,11 @@ const JOURNAL_MAX_BYTES: usize =
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
 const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
+const RETAINED_GC_PROGRESS_POLL: Duration = Duration::from_millis(25);
+const RETAINED_GC_IDLE_POLL: Duration = Duration::from_secs(1);
+const RETAINED_GC_RETRY_BACKOFF: Duration = Duration::from_secs(5);
+const JOURNAL_RECOVERY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+const JOURNAL_RECOVERY_MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 type PendingCandidateReceipts = Option<(B256, Vec<OutbeReceipt>)>;
 type PendingCandidateReceiptReader =
@@ -136,6 +143,14 @@ pub struct ExportAuthorityV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReleasedJobAuthorityV1 {
+    pub candidate: CandidatePinV1,
+    pub job_id: B256,
+    pub source_generation: u64,
+    pub export: Option<ExportAuthorityV1>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PinStateV1 {
     Tentative {
         candidate: CandidatePinV1,
@@ -161,13 +176,30 @@ pub enum PinStateV1 {
         finality_recorded_height: u64,
         open_height: u64,
         deadline_height: u64,
-        export: ExportAuthorityV1,
+        source_generation: u64,
+        export: Option<ExportAuthorityV1>,
         terminal_height: u64,
         release_height: u64,
+    },
+    GcPending {
+        candidate: CandidatePinV1,
+        job_id: B256,
+        finality_recorded_height: u64,
+        open_height: u64,
+        deadline_height: u64,
+        source_generation: u64,
+        export: Option<ExportAuthorityV1>,
+        terminal_height: u64,
+        release_height: u64,
+    },
+    OrphanGcPending {
+        candidate: CandidatePinV1,
+        observed_height: u64,
     },
     Released {
         candidate: CandidatePinV1,
         job_id: Option<B256>,
+        source_generation: Option<u64>,
         reason: PinReleaseReason,
         observed_height: u64,
         export: Option<ExportAuthorityV1>,
@@ -197,7 +229,14 @@ pub struct RetentionJournalSnapshotV1 {
 pub enum RetentionStatus {
     Empty,
     Ready(PinRecordV1),
-    Quarantined { reason: String },
+    Unavailable {
+        operation: &'static str,
+        path: PathBuf,
+        reason: String,
+    },
+    Quarantined {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +249,12 @@ pub struct DurablePinAck {
 pub enum RetentionError {
     #[error("OCOMP retention is quarantined: {0}")]
     Quarantined(String),
+    #[error("OCOMP retention journal is unavailable after {operation} at {path}: {reason}")]
+    JournalUnavailable {
+        operation: &'static str,
+        path: PathBuf,
+        reason: String,
+    },
     #[error("OCOMP pin journal mutex is poisoned")]
     Poisoned,
     #[error("pin journal {operation} failed at {path}: {source}")]
@@ -243,6 +288,8 @@ pub enum RetentionError {
     RetainedTributeStorageUnavailable,
     #[error("retained Tribute garbage collection failed: {0}")]
     RetainedTributeGc(String),
+    #[error("failed to spawn retained Tribute GC worker: {0}")]
+    RetainedTributeGcWorkerSpawn(#[source] std::io::Error),
     #[error("OCOMP retention coordinator is not installed")]
     RetentionCoordinatorNotInstalled,
     #[error("OCOMP retention coordinator is already installed")]
@@ -996,11 +1043,29 @@ impl JournalStore {
         fs::create_dir_all(&self.root)
             .map_err(|source| self.io("create directory", &self.root, source))?;
         self.recover_temporary()?;
-        self.read_registry_at(&self.journal)
+        let registry = self.read_registry_at(&self.journal)?;
+        if registry.is_some() {
+            let journal = File::open(&self.journal)
+                .map_err(|source| self.io("open authoritative journal", &self.journal, source))?;
+            self.durability
+                .sync_file(&journal)
+                .map_err(|source| self.io("fsync authoritative journal", &self.journal, source))?;
+            File::open(&self.root)
+                .and_then(|directory| self.durability.sync_directory(&directory))
+                .map_err(|source| self.io("fsync journal directory", &self.root, source))?;
+        }
+        Ok(registry)
+    }
+
+    fn recover_and_load(&self) -> Result<Option<JobRegistryV1>, RetentionError> {
+        self.initialize()
     }
 
     fn read_registry_at(&self, path: &Path) -> Result<Option<JobRegistryV1>, RetentionError> {
-        if !path.exists() {
+        if !path
+            .try_exists()
+            .map_err(|source| self.io("check existence", path, source))?
+        {
             return Ok(None);
         }
         let metadata =
@@ -1050,6 +1115,11 @@ impl JournalStore {
                 "temporary write is not the exact next journal generation",
             ));
         }
+        let temporary = File::open(&self.temporary)
+            .map_err(|source| self.io("open temporary for recovery", &self.temporary, source))?;
+        self.durability
+            .sync_file(&temporary)
+            .map_err(|source| self.io("fsync temporary for recovery", &self.temporary, source))?;
         fs::rename(&self.temporary, &self.journal)
             .map_err(|source| self.io("recover temporary", &self.temporary, source))?;
         File::open(&self.root)
@@ -1121,7 +1191,7 @@ fn journal_successor_is_exact(current: &JobRegistryV1, pending: &JobRegistryV1) 
         .all(|key| current.records.contains_key(key) || *key == pending.last_updated)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct JobRegistryV1 {
     generation: u64,
     last_updated: B256,
@@ -1133,12 +1203,158 @@ struct CoordinatorInner {
     registry: Option<JobRegistryV1>,
 }
 
+fn retention_status_error(status: &RetentionStatus) -> Option<RetentionError> {
+    match status {
+        RetentionStatus::Unavailable {
+            operation,
+            path,
+            reason,
+        } => Some(RetentionError::JournalUnavailable {
+            operation,
+            path: path.clone(),
+            reason: reason.clone(),
+        }),
+        RetentionStatus::Quarantined { reason } => {
+            Some(RetentionError::Quarantined(reason.clone()))
+        }
+        RetentionStatus::Empty | RetentionStatus::Ready(_) => None,
+    }
+}
+
+fn status_for_journal_error(error: &RetentionError) -> RetentionStatus {
+    match error {
+        RetentionError::Io {
+            operation,
+            path,
+            source,
+        } => RetentionStatus::Unavailable {
+            operation,
+            path: path.clone(),
+            reason: source.to_string(),
+        },
+        _ => RetentionStatus::Quarantined {
+            reason: error.to_string(),
+        },
+    }
+}
+
+fn status_for_loaded_registry(
+    registry: &Option<JobRegistryV1>,
+) -> Result<RetentionStatus, RetentionError> {
+    match registry {
+        None => Ok(RetentionStatus::Empty),
+        Some(registry) => registry
+            .records
+            .get(&registry.last_updated)
+            .copied()
+            .map(RetentionStatus::Ready)
+            .ok_or(RetentionError::MalformedJournal(
+                "registry last-updated key is missing",
+            )),
+    }
+}
+
+fn retention_status_kind(status: &RetentionStatus) -> &'static str {
+    match status {
+        RetentionStatus::Empty | RetentionStatus::Ready(_) => "available",
+        RetentionStatus::Unavailable { .. } => "unavailable",
+        RetentionStatus::Quarantined { .. } => "quarantined",
+    }
+}
+
+fn publish_retention_status(previous: Option<&RetentionStatus>, status: &RetentionStatus) {
+    let kind = retention_status_kind(status);
+    metrics::gauge!("outbe_ocomp_retention_journal_available").set(if kind == "available" {
+        1.0
+    } else {
+        0.0
+    });
+    metrics::gauge!("outbe_ocomp_retention_journal_unavailable").set(if kind == "unavailable" {
+        1.0
+    } else {
+        0.0
+    });
+    metrics::gauge!("outbe_ocomp_retention_journal_quarantined").set(if kind == "quarantined" {
+        1.0
+    } else {
+        0.0
+    });
+
+    if previous.map(retention_status_kind) == Some(kind) {
+        return;
+    }
+    metrics::counter!(
+        "outbe_ocomp_retention_journal_state_transitions_total",
+        "to" => kind
+    )
+    .increment(1);
+    match status {
+        RetentionStatus::Unavailable {
+            operation,
+            path,
+            reason,
+        } => tracing::error!(
+            operation,
+            path = %path.display(),
+            %reason,
+            "OCOMP retention journal became unavailable; automatic recovery is active"
+        ),
+        RetentionStatus::Quarantined { reason } => tracing::error!(
+            %reason,
+            "OCOMP retention journal entered integrity quarantine; operator recovery is required"
+        ),
+        RetentionStatus::Empty | RetentionStatus::Ready(_) => {
+            tracing::info!("OCOMP retention journal is available")
+        }
+    }
+}
+
+fn transition_retention_status(inner: &mut CoordinatorInner, status: RetentionStatus) {
+    publish_retention_status(Some(&inner.status), &status);
+    inner.status = status;
+}
+
+struct RetainedGcCycleReport {
+    pending: usize,
+    completed: u64,
+    pages: u64,
+    failures: Vec<(B256, RetentionError)>,
+}
+
 /// Node-owned independently keyed multi-job OCOMP pin coordinator.
 pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
     source: Arc<dyn FinalizedInputProofSource>,
     retained_tributes: Option<Arc<RetainedTributeWriter>>,
+    projection_fence: Option<Arc<ProjectionRetentionFence>>,
+    closure_checkpoint: AtomicU64,
+}
+
+#[derive(Default)]
+struct RetainedGcSignal {
+    finalized_height: AtomicU64,
+    closure_checkpoint: AtomicU64,
+    epoch: Mutex<u64>,
+    changed: Condvar,
+}
+
+impl RetainedGcSignal {
+    fn publish_finalized(&self, height: u64) {
+        atomic_max(&self.finalized_height, height);
+        self.wake();
+    }
+
+    fn publish_closure(&self, height: u64) {
+        atomic_max(&self.closure_checkpoint, height);
+        self.wake();
+    }
+
+    fn wake(&self) {
+        let mut epoch = self.epoch.lock().unwrap_or_else(|error| error.into_inner());
+        *epoch = epoch.wrapping_add(1);
+        self.changed.notify_one();
+    }
 }
 
 /// Process-local retention selector that can be shared with projection before
@@ -1146,16 +1362,23 @@ pub struct OcompRetentionCoordinator {
 ///
 /// Installation is one-way: every clone of the surrounding `Arc` observes the
 /// exact same coordinator, and an attempted replacement fails closed.
-#[derive(Default)]
 pub struct SharedOcompRetentionSelector {
     coordinator: OnceLock<Arc<OcompRetentionCoordinator>>,
+    gc_signal: Arc<RetainedGcSignal>,
+}
+
+impl Default for SharedOcompRetentionSelector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SharedOcompRetentionSelector {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             coordinator: OnceLock::new(),
+            gc_signal: Arc::new(RetainedGcSignal::default()),
         }
     }
 
@@ -1164,8 +1387,11 @@ impl SharedOcompRetentionSelector {
         coordinator: Arc<OcompRetentionCoordinator>,
     ) -> Result<(), RetentionError> {
         self.coordinator
-            .set(coordinator)
-            .map_err(|_| RetentionError::RetentionCoordinatorAlreadyInstalled)
+            .set(Arc::clone(&coordinator))
+            .map_err(|_| RetentionError::RetentionCoordinatorAlreadyInstalled)?;
+        spawn_retained_gc_worker(Arc::downgrade(&coordinator), Arc::clone(&self.gc_signal))?;
+        self.gc_signal.wake();
+        Ok(())
     }
 
     /// Returns the exact finalized retention generation used by snapshot handoff.
@@ -1194,6 +1420,20 @@ impl SharedOcompRetentionSelector {
             .discovery_job_records(job_id)
     }
 
+    /// Binds a tentative request pin to the exact finalized job stored in
+    /// canonical Metadosis state. No finality or response-window height is
+    /// inferred locally.
+    pub fn bind_canonical_finalized_job(
+        &self,
+        candidate_block_hash: B256,
+        record: &OcompJobRecordV1,
+    ) -> Result<DurablePinAck, RetentionError> {
+        self.coordinator
+            .get()
+            .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
+            .bind_canonical_finalized_job(candidate_block_hash, record)
+    }
+
     /// Durably binds an exporter ACK to the exact finalized retention generation.
     pub fn confirm_export_ack(
         &self,
@@ -1219,6 +1459,18 @@ impl SharedOcompRetentionSelector {
             .released_export_authority(job_id)
     }
 
+    /// Returns the complete durable retirement authority, including the
+    /// source generation for ACK-less canonical expiry.
+    pub fn released_job_authority(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<ReleasedJobAuthorityV1>, RetentionError> {
+        self.coordinator
+            .get()
+            .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
+            .released_job_authority(job_id)
+    }
+
     /// Reconcile one frame already loaded by the single finalized reader.
     pub fn reconcile_finalized_frame(
         &self,
@@ -1228,7 +1480,20 @@ impl SharedOcompRetentionSelector {
         self.coordinator
             .get()
             .ok_or(RetentionError::RetentionCoordinatorNotInstalled)?
-            .reconcile_finalized_frame(frame, observation)
+            .reconcile_finalized_frame(frame, observation)?;
+        self.gc_signal.publish_finalized(frame.identity().number);
+        Ok(())
+    }
+
+    /// Publishes finalized progress without performing work on the ExEx task.
+    pub fn notify_finalized_height(&self, height: u64) {
+        self.gc_signal.publish_finalized(height);
+    }
+
+    /// Publishes the durable contiguous closure checkpoint used to retire
+    /// journal tombstones. This is an atomic update plus a worker wakeup.
+    pub fn notify_closure_checkpoint(&self, height: u64) {
+        self.gc_signal.publish_closure(height);
     }
 }
 
@@ -1457,8 +1722,8 @@ impl OcompRetentionExecutionHandle {
 }
 
 impl OcompRetentionCoordinator {
-    /// Open a managed journal root. Corrupt, ambiguous or unavailable storage
-    /// quarantines OCOMP but does not fail node/consensus startup.
+    /// Open a managed journal root. Transient storage I/O enters recoverable
+    /// fail-closed unavailability; corrupt or ambiguous authority is quarantined.
     pub fn open(root: impl Into<PathBuf>, source: Arc<dyn FinalizedInputProofSource>) -> Self {
         Self::open_with_durability(root, source, Arc::new(OsJournalDurability))
     }
@@ -1468,11 +1733,26 @@ impl OcompRetentionCoordinator {
         source: Arc<dyn FinalizedInputProofSource>,
         retained_tributes: Arc<RetainedTributeWriter>,
     ) -> Self {
+        Self::open_with_retained_tributes_and_fence(
+            root,
+            source,
+            retained_tributes,
+            Arc::new(ProjectionRetentionFence::default()),
+        )
+    }
+
+    pub fn open_with_retained_tributes_and_fence(
+        root: impl Into<PathBuf>,
+        source: Arc<dyn FinalizedInputProofSource>,
+        retained_tributes: Arc<RetainedTributeWriter>,
+        projection_fence: Arc<ProjectionRetentionFence>,
+    ) -> Self {
         Self::open_inner(
             root.into(),
             source,
             Arc::new(OsJournalDurability),
             Some(retained_tributes),
+            Some(projection_fence),
         )
     }
 
@@ -1481,7 +1761,7 @@ impl OcompRetentionCoordinator {
         source: Arc<dyn FinalizedInputProofSource>,
         durability: Arc<dyn JournalDurability>,
     ) -> Self {
-        Self::open_inner(root.into(), source, durability, None)
+        Self::open_inner(root.into(), source, durability, None, None)
     }
 
     fn open_inner(
@@ -1489,33 +1769,30 @@ impl OcompRetentionCoordinator {
         source: Arc<dyn FinalizedInputProofSource>,
         durability: Arc<dyn JournalDurability>,
         retained_tributes: Option<Arc<RetainedTributeWriter>>,
+        projection_fence: Option<Arc<ProjectionRetentionFence>>,
     ) -> Self {
         let store = JournalStore::new(root, durability);
         let (status, registry) = match store.initialize() {
-            Ok(Some(registry)) => {
-                let status = registry
-                    .records
-                    .get(&registry.last_updated)
-                    .copied()
-                    .map(RetentionStatus::Ready)
-                    .unwrap_or_else(|| RetentionStatus::Quarantined {
-                        reason: "OCOMP registry last-updated key is missing".to_owned(),
-                    });
-                (status, Some(registry))
+            Ok(registry) => match status_for_loaded_registry(&registry) {
+                Ok(status) => (status, registry),
+                Err(error) => {
+                    record_journal_failure(&error);
+                    (status_for_journal_error(&error), registry)
+                }
+            },
+            Err(error) => {
+                record_journal_failure(&error);
+                (status_for_journal_error(&error), None)
             }
-            Ok(None) => (RetentionStatus::Empty, None),
-            Err(error) => (
-                RetentionStatus::Quarantined {
-                    reason: error.to_string(),
-                },
-                None,
-            ),
         };
+        publish_retention_status(None, &status);
         Self {
             store,
             inner: Mutex::new(CoordinatorInner { status, registry }),
             source,
             retained_tributes,
+            projection_fence,
+            closure_checkpoint: AtomicU64::new(0),
         }
     }
 
@@ -1527,11 +1804,63 @@ impl OcompRetentionCoordinator {
             })
     }
 
+    fn recover_journal(&self) -> Result<bool, RetentionError> {
+        let previous_registry = {
+            let inner = self.lock()?;
+            if !matches!(inner.status, RetentionStatus::Unavailable { .. }) {
+                return Ok(false);
+            }
+            inner.registry.clone()
+        };
+
+        let recovered = self.store.recover_and_load().and_then(|registry| {
+            let status = status_for_loaded_registry(&registry)?;
+            Ok((registry, status))
+        });
+        let mut inner = self.lock()?;
+        if !matches!(inner.status, RetentionStatus::Unavailable { .. }) {
+            return Ok(false);
+        }
+        match recovered {
+            Ok((registry, status)) => {
+                if let (Some(previous), Some(current)) =
+                    (previous_registry.as_ref(), registry.as_ref())
+                {
+                    if previous != current && !journal_successor_is_exact(previous, current) {
+                        let error = RetentionError::AmbiguousJournal(
+                            "recovered authority is neither the current journal nor its exact successor",
+                        );
+                        transition_retention_status(&mut inner, status_for_journal_error(&error));
+                        return Err(error);
+                    }
+                } else if previous_registry.is_some() && registry.is_none() {
+                    let error = RetentionError::AmbiguousJournal(
+                        "authoritative journal disappeared during in-process recovery",
+                    );
+                    transition_retention_status(&mut inner, status_for_journal_error(&error));
+                    return Err(error);
+                }
+                inner.registry = registry;
+                transition_retention_status(&mut inner, status);
+                Ok(true)
+            }
+            Err(error) => {
+                transition_retention_status(&mut inner, status_for_journal_error(&error));
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_closure_checkpoint_for_test(&self, height: u64) {
+        atomic_max(&self.closure_checkpoint, height);
+    }
+
     /// Returns every independently addressable finalized/exported job.
     pub fn finalized_live_jobs(&self) -> Result<Vec<FinalizedJobPinV1>, RetentionError> {
         let inner = self.lock()?;
-        if let RetentionStatus::Quarantined { ref reason } = inner.status {
-            return Err(RetentionError::Quarantined(reason.clone()));
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
         }
         let mut jobs = Vec::new();
         for record in inner
@@ -1564,6 +1893,8 @@ impl OcompRetentionCoordinator {
                 }),
                 PinStateV1::Tentative { .. }
                 | PinStateV1::Terminal { .. }
+                | PinStateV1::GcPending { .. }
+                | PinStateV1::OrphanGcPending { .. }
                 | PinStateV1::Released { .. } => {}
             }
         }
@@ -1646,7 +1977,7 @@ impl OcompRetentionCoordinator {
                 finality_recorded_height,
                 open_height,
                 deadline_height,
-                export,
+                source_generation,
                 ..
             } => (
                 FinalizedJobPinV1 {
@@ -1656,9 +1987,29 @@ impl OcompRetentionCoordinator {
                     open_height,
                     deadline_height,
                 },
-                [Some(export.source_generation), None],
+                [Some(source_generation), None],
             ),
-            PinStateV1::Tentative { .. } | PinStateV1::Released { .. } => {
+            PinStateV1::GcPending {
+                candidate,
+                job_id,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                source_generation,
+                ..
+            } => (
+                FinalizedJobPinV1 {
+                    candidate,
+                    job_id,
+                    finality_recorded_height,
+                    open_height,
+                    deadline_height,
+                },
+                [Some(source_generation), None],
+            ),
+            PinStateV1::Tentative { .. }
+            | PinStateV1::OrphanGcPending { .. }
+            | PinStateV1::Released { .. } => {
                 return Err(RetentionError::InvalidTransition(
                     "discovery requires a live or terminal finalized job",
                 ));
@@ -1692,7 +2043,33 @@ impl OcompRetentionCoordinator {
             | PinStateV1::Finalized { .. }
             | PinStateV1::Exported { .. }
             | PinStateV1::Terminal { .. }
+            | PinStateV1::GcPending { .. }
+            | PinStateV1::OrphanGcPending { .. }
             | PinStateV1::Released { .. } => None,
+        })
+    }
+
+    pub fn released_job_authority(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<ReleasedJobAuthorityV1>, RetentionError> {
+        let inner = self.lock()?;
+        let (_, record) = record_for_job(&inner, job_id)?;
+        Ok(match record.state {
+            PinStateV1::Released {
+                candidate,
+                job_id: Some(existing),
+                source_generation: Some(source_generation),
+                reason: PinReleaseReason::RetentionSatisfied,
+                export,
+                ..
+            } if existing == job_id => Some(ReleasedJobAuthorityV1 {
+                candidate,
+                job_id,
+                source_generation,
+                export,
+            }),
+            _ => None,
         })
     }
 
@@ -1704,8 +2081,8 @@ impl OcompRetentionCoordinator {
     #[cfg(test)]
     pub(crate) fn exported_job_record(&self, job_id: B256) -> Result<PinRecordV1, RetentionError> {
         let inner = self.lock()?;
-        if let RetentionStatus::Quarantined { ref reason } = inner.status {
-            return Err(RetentionError::Quarantined(reason.clone()));
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
         }
         let (_, record) = record_for_job(&inner, job_id)?;
         match record.state {
@@ -1730,8 +2107,8 @@ impl OcompRetentionCoordinator {
         &self,
         block: &ConsensusBlock,
     ) -> Result<(), OcompRetentionHookError> {
-        if let RetentionStatus::Quarantined { reason } = self.status() {
-            return Err(OcompRetentionHookError::new(reason));
+        if let Some(error) = retention_status_error(&self.status()) {
+            return Err(hook_error(error));
         }
         if let Some(candidate) = self.source.candidate_for_block(block).map_err(hook_error)? {
             self.record_tentative(candidate).map_err(hook_error)?;
@@ -1797,11 +2174,6 @@ impl OcompRetentionCoordinator {
                     .map_err(hook_error)?;
             }
         }
-        while self
-            .release_due(block.number())
-            .map_err(hook_error)?
-            .is_some()
-        {}
         Ok(())
     }
 
@@ -1813,8 +2185,8 @@ impl OcompRetentionCoordinator {
         frame: &FinalizedFrame,
         observation: Option<FinalizedRequestObservationV1>,
     ) -> Result<(), RetentionError> {
-        if let RetentionStatus::Quarantined { reason } = self.status() {
-            return Err(RetentionError::Quarantined(reason));
+        if let Some(error) = retention_status_error(&self.status()) {
+            return Err(error);
         }
         let height = frame.identity().number;
         if let Some(observation) = observation {
@@ -1822,31 +2194,6 @@ impl OcompRetentionCoordinator {
                 .source
                 .candidate_for_finalized_observation(frame, observation)?;
             self.record_tentative(candidate)?;
-        }
-        let candidates = {
-            let inner = self.lock()?;
-            inner
-                .registry
-                .as_ref()
-                .into_iter()
-                .flat_map(|registry| registry.records.values())
-                .filter_map(|record| match record.state {
-                    PinStateV1::Tentative { candidate } if candidate.block_number <= height => {
-                        Some(candidate)
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        for candidate in candidates {
-            match self.source.resolve_finality(candidate)? {
-                CandidateFinalityV1::Finalized(finalized) => {
-                    self.finalize_exact(finalized)?;
-                }
-                CandidateFinalityV1::Orphaned => {
-                    self.release_orphan(candidate, height)?;
-                }
-            }
         }
         let live = {
             let inner = self.lock()?;
@@ -1874,7 +2221,6 @@ impl OcompRetentionCoordinator {
                 self.observe_terminal(job_id, generation, terminal_height.max(height))?;
             }
         }
-        while self.release_due(height)?.is_some() {}
         Ok(())
     }
 
@@ -1883,8 +2229,8 @@ impl OcompRetentionCoordinator {
         candidate: CandidatePinV1,
     ) -> Result<DurablePinAck, RetentionError> {
         let mut inner = self.lock()?;
-        if let RetentionStatus::Quarantined { reason } = &inner.status {
-            return Err(RetentionError::Quarantined(reason.clone()));
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
         }
         let key = candidate.block_hash;
         if let Some(record) = inner
@@ -1906,6 +2252,18 @@ impl OcompRetentionCoordinator {
             };
         }
         if inner.registry.as_ref().is_some_and(|registry| {
+            registry.records.values().any(|record| {
+                matches!(
+                    record.state,
+                    PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. }
+                ) && record_candidate(*record).input_lease_id == candidate.input_lease_id
+            })
+        }) {
+            return Err(RetentionError::InvalidTransition(
+                "input lease garbage collection is already in progress",
+            ));
+        }
+        if inner.registry.as_ref().is_some_and(|registry| {
             registry
                 .records
                 .values()
@@ -1924,6 +2282,68 @@ impl OcompRetentionCoordinator {
                 state: PinStateV1::Tentative { candidate },
             },
         )
+    }
+
+    /// Finalizes one retained request exclusively from its canonical typed
+    /// Metadosis record. The request event remains a locator; the chain record
+    /// is the authority for JobId and every response-window height.
+    pub fn bind_canonical_finalized_job(
+        &self,
+        candidate_block_hash: B256,
+        record: &OcompJobRecordV1,
+    ) -> Result<DurablePinAck, RetentionError> {
+        let candidate = {
+            let inner = self.lock()?;
+            if let Some(error) = retention_status_error(&inner.status) {
+                return Err(error);
+            }
+            inner
+                .registry
+                .as_ref()
+                .and_then(|registry| registry.records.get(&candidate_block_hash))
+                .copied()
+                .map(record_candidate)
+                .ok_or(RetentionError::InvalidTransition(
+                    "canonical finalized job has no retained request candidate",
+                ))?
+        };
+        let limits = poc_schema_limits();
+        record.validate_semantics(&limits).map_err(|error| {
+            RetentionError::Source(format!("validate canonical finalized OCOMP job: {error}"))
+        })?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or(RetentionError::InvalidTransition(
+                "canonical OCOMP job is not finalized",
+            ))?;
+        let intent_id = record.intent.intent_id(&limits).map_err(|error| {
+            RetentionError::Source(format!("derive canonical OCOMP IntentId: {error}"))
+        })?;
+        let input_lease_id = record.intent.input_lease_id().map_err(|error| {
+            RetentionError::Source(format!("derive canonical OCOMP input lease: {error}"))
+        })?;
+        if candidate.block_hash != candidate_block_hash
+            || record.intent_height != candidate.block_number
+            || intent_id != candidate.intent_id
+            || record.intent.wwd != candidate.wwd
+            || record.intent.ce_sealed_root != candidate.ce_sealed_root
+            || record.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
+            || input_lease_id != candidate.input_lease_id
+            || finalized.finalized_request_block_hash != candidate.block_hash
+            || finalized.finalized_request_state_root != candidate.state_root
+        {
+            return Err(RetentionError::InvalidTransition(
+                "canonical finalized job does not match retained request candidate",
+            ));
+        }
+        self.finalize_exact(FinalizedJobPinV1 {
+            candidate,
+            job_id: finalized.job_id,
+            finality_recorded_height: finalized.finality_recorded_height,
+            open_height: finalized.open_height,
+            deadline_height: finalized.deadline_height,
+        })
     }
 
     pub fn record_exported(
@@ -2011,7 +2431,12 @@ impl OcompRetentionCoordinator {
                 job_id: existing,
                 export,
                 ..
-            } if existing == job_id => Some(export),
+            } if existing == job_id => export,
+            PinStateV1::GcPending {
+                job_id: existing,
+                export,
+                ..
+            } if existing == job_id => export,
             PinStateV1::Released {
                 job_id: Some(existing),
                 reason: PinReleaseReason::RetentionSatisfied,
@@ -2123,46 +2548,71 @@ impl OcompRetentionCoordinator {
         let mut inner = self.lock()?;
         let (key, record) = record_for_job(&inner, job_id)?;
         ensure_generation(record, expected_generation)?;
-        let (candidate, finality_recorded_height, open_height, deadline_height, export) =
-            match record.state {
-                // An exporter outage must not make retained input eligible for GC.
-                // The canonical terminal fact is observed again on every later
-                // finalized frame; defer the transition until the durable export
-                // ACK has advanced this exact generation to `Exported`.
-                PinStateV1::Finalized {
-                    job_id: existing, ..
-                } if existing == job_id => return Ok(ack_for(record)),
-                PinStateV1::Exported {
-                    candidate,
-                    job_id: existing,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                    export,
-                } if existing == job_id => (
-                    candidate,
-                    finality_recorded_height,
-                    open_height,
-                    deadline_height,
-                    export,
-                ),
-                PinStateV1::Terminal {
-                    job_id: existing,
-                    terminal_height: existing_terminal,
-                    release_height: existing_release,
-                    ..
-                } if existing == job_id
-                    && existing_terminal == terminal_height
-                    && existing_release == release_height =>
-                {
-                    return Ok(ack_for(record));
-                }
-                _ => {
-                    return Err(RetentionError::InvalidTransition(
-                        "terminal transition requires the exact live job",
-                    ));
-                }
-            };
+        let (
+            candidate,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            source_generation,
+            export,
+        ) = match record.state {
+            PinStateV1::Finalized {
+                candidate,
+                job_id: existing,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+            } if existing == job_id => (
+                candidate,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                record.generation,
+                None,
+            ),
+            PinStateV1::Exported {
+                candidate,
+                job_id: existing,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                export,
+            } if existing == job_id => (
+                candidate,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                export.source_generation,
+                Some(export),
+            ),
+            PinStateV1::Terminal {
+                job_id: existing,
+                terminal_height: existing_terminal,
+                release_height: existing_release,
+                ..
+            } if existing == job_id
+                && existing_terminal == terminal_height
+                && existing_release == release_height =>
+            {
+                return Ok(ack_for(record));
+            }
+            PinStateV1::GcPending {
+                job_id: existing,
+                terminal_height: existing_terminal,
+                release_height: existing_release,
+                ..
+            } if existing == job_id
+                && existing_terminal == terminal_height
+                && existing_release == release_height =>
+            {
+                return Ok(ack_for(record));
+            }
+            _ => {
+                return Err(RetentionError::InvalidTransition(
+                    "terminal transition requires the exact live job",
+                ));
+            }
+        };
         self.persist_next(
             &mut inner,
             key,
@@ -2173,6 +2623,7 @@ impl OcompRetentionCoordinator {
                 finality_recorded_height,
                 open_height,
                 deadline_height,
+                source_generation,
                 export,
                 terminal_height,
                 release_height,
@@ -2184,60 +2635,213 @@ impl OcompRetentionCoordinator {
         &self,
         finalized_height: u64,
     ) -> Result<Option<DurablePinAck>, RetentionError> {
-        let mut inner = self.lock()?;
-        if let RetentionStatus::Quarantined { reason } = &inner.status {
-            return Err(RetentionError::Quarantined(reason.clone()));
+        for key in self.gc_candidate_keys(finalized_height)? {
+            if let Some(ack) = self.release_due_key(key, finalized_height)? {
+                return Ok(Some(ack));
+            }
         }
-        let Some((key, record)) = inner.registry.as_ref().and_then(|registry| {
-            registry.records.iter().find_map(|(key, record)| {
-                matches!(
-                    record.state,
-                    PinStateV1::Terminal { release_height, .. }
-                        if release_height <= finalized_height
-                )
-                .then_some((*key, *record))
+        Ok(None)
+    }
+
+    fn gc_candidate_keys(&self, finalized_height: u64) -> Result<Vec<B256>, RetentionError> {
+        let inner = self.lock()?;
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
+        }
+        Ok(inner
+            .registry
+            .as_ref()
+            .into_iter()
+            .flat_map(|registry| registry.records.iter())
+            .filter_map(|(key, record)| match record.state {
+                PinStateV1::Terminal { release_height, .. }
+                    if release_height <= finalized_height =>
+                {
+                    Some(*key)
+                }
+                PinStateV1::GcPending { .. } => Some(*key),
+                PinStateV1::OrphanGcPending { .. } => Some(*key),
+                _ => None,
             })
-        }) else {
+            .collect())
+    }
+
+    fn run_gc_cycle(&self, finalized_height: u64) -> Result<RetainedGcCycleReport, RetentionError> {
+        let keys = self.gc_candidate_keys(finalized_height)?;
+        let mut report = RetainedGcCycleReport {
+            pending: keys.len(),
+            completed: 0,
+            pages: 0,
+            failures: Vec::new(),
+        };
+        for key in keys {
+            match self.release_due_key(key, finalized_height) {
+                Ok(Some(_)) => report.completed = report.completed.saturating_add(1),
+                Ok(None) => report.pages = report.pages.saturating_add(1),
+                Err(error) => report.failures.push((key, error)),
+            }
+        }
+        Ok(report)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_gc_cycle_for_test(
+        &self,
+        finalized_height: u64,
+    ) -> Result<(u64, u64, usize), RetentionError> {
+        let report = self.run_gc_cycle(finalized_height)?;
+        Ok((report.completed, report.pages, report.failures.len()))
+    }
+
+    fn release_due_key(
+        &self,
+        key: B256,
+        finalized_height: u64,
+    ) -> Result<Option<DurablePinAck>, RetentionError> {
+        let projection_fence = self.projection_fence.clone();
+        let _projection_guard = projection_fence
+            .as_ref()
+            .map(|fence| {
+                fence
+                    .gc_claim_guard()
+                    .map_err(RetentionError::InvalidTransition)
+            })
+            .transpose()?;
+        let mut inner = self.lock()?;
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
+        }
+        let Some(record) = inner
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.records.get(&key))
+            .copied()
+        else {
             return Ok(None);
         };
-        let (candidate, job_id, release_height, export) = match record.state {
+        let gc_record = match record.state {
             PinStateV1::Terminal {
                 candidate,
                 job_id,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                source_generation,
+                export,
+                terminal_height,
                 release_height,
+            } if release_height <= finalized_height => {
+                if lease_has_other_references(&inner, key, candidate.input_lease_id)
+                    || self.retained_tributes.is_none()
+                {
+                    return self
+                        .persist_next(
+                            &mut inner,
+                            key,
+                            record,
+                            PinStateV1::Released {
+                                candidate,
+                                job_id: Some(job_id),
+                                source_generation: Some(source_generation),
+                                reason: PinReleaseReason::RetentionSatisfied,
+                                observed_height: finalized_height,
+                                export,
+                            },
+                        )
+                        .map(Some);
+                }
+                let ack = self.persist_next(
+                    &mut inner,
+                    key,
+                    record,
+                    PinStateV1::GcPending {
+                        candidate,
+                        job_id,
+                        finality_recorded_height,
+                        open_height,
+                        deadline_height,
+                        source_generation,
+                        export,
+                        terminal_height,
+                        release_height,
+                    },
+                )?;
+                inner
+                    .registry
+                    .as_ref()
+                    .and_then(|registry| registry.records.get(&key))
+                    .copied()
+                    .filter(|current| current.generation == ack.generation)
+                    .ok_or(RetentionError::InvalidTransition(
+                        "GC claim disappeared after durable publication",
+                    ))?
+            }
+            PinStateV1::GcPending { .. } | PinStateV1::OrphanGcPending { .. } => record,
+            _ => return Ok(None),
+        };
+        drop(inner);
+        drop(_projection_guard);
+
+        let (candidate, completed_state) = match gc_record.state {
+            PinStateV1::GcPending {
+                candidate,
+                job_id,
+                source_generation,
                 export,
                 ..
-            } => (candidate, job_id, release_height, export),
-            _ => unreachable!("release candidate is selected from terminal records"),
+            } => (
+                candidate,
+                PinStateV1::Released {
+                    candidate,
+                    job_id: Some(job_id),
+                    source_generation: Some(source_generation),
+                    reason: PinReleaseReason::RetentionSatisfied,
+                    observed_height: finalized_height,
+                    export,
+                },
+            ),
+            PinStateV1::OrphanGcPending {
+                candidate,
+                observed_height,
+            } => (
+                candidate,
+                PinStateV1::Released {
+                    candidate,
+                    job_id: None,
+                    source_generation: None,
+                    reason: PinReleaseReason::Orphaned,
+                    observed_height,
+                    export: None,
+                },
+            ),
+            _ => unreachable!("retained GC work is durably claimed before MongoDB I/O"),
         };
-        if finalized_height < release_height {
-            return Ok(None);
-        }
-        let complete = if lease_has_other_references(&inner, key, candidate.input_lease_id) {
-            true
-        } else if let Some(retained_tributes) = self.retained_tributes.as_ref() {
-            retained_tributes
-                .release_input_lease_page(candidate.input_lease_id)
-                .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?
-        } else {
-            true
-        };
+        let complete = self
+            .retained_tributes
+            .as_ref()
+            .expect("GcPending is unreachable without retained Tribute storage")
+            .release_input_lease_page(candidate.input_lease_id)
+            .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?;
         if !complete {
             return Ok(None);
         }
-        self.persist_next(
-            &mut inner,
-            key,
-            record,
-            PinStateV1::Released {
-                candidate,
-                job_id: Some(job_id),
-                reason: PinReleaseReason::RetentionSatisfied,
-                observed_height: finalized_height,
-                export: Some(export),
-            },
-        )
-        .map(Some)
+
+        let mut inner = self.lock()?;
+        let current = inner
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.records.get(&key))
+            .copied()
+            .ok_or(RetentionError::InvalidTransition(
+                "GC claim disappeared before completion",
+            ))?;
+        if current != gc_record {
+            return Err(RetentionError::InvalidTransition(
+                "GC claim changed before completion",
+            ));
+        }
+        self.persist_next(&mut inner, key, current, completed_state)
+            .map(Some)
     }
 
     pub fn is_signable(&self, job_id: B256) -> bool {
@@ -2339,6 +2943,15 @@ impl OcompRetentionCoordinator {
         candidate: CandidatePinV1,
         observed_height: u64,
     ) -> Result<DurablePinAck, RetentionError> {
+        let projection_fence = self.projection_fence.clone();
+        let _projection_guard = projection_fence
+            .as_ref()
+            .map(|fence| {
+                fence
+                    .gc_claim_guard()
+                    .map_err(RetentionError::InvalidTransition)
+            })
+            .transpose()?;
         let mut inner = self.lock()?;
         let key = candidate.block_hash;
         let record = record_for_candidate(&inner, candidate)?;
@@ -2365,28 +2978,24 @@ impl OcompRetentionCoordinator {
         candidate: CandidatePinV1,
         observed_height: u64,
     ) -> Result<DurablePinAck, RetentionError> {
-        if !lease_has_other_references(inner, key, candidate.input_lease_id) {
-            if let Some(retained_tributes) = &self.retained_tributes {
-                let complete = retained_tributes
-                    .release_input_lease_page(candidate.input_lease_id)
-                    .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?;
-                if !complete {
-                    return Ok(ack_for(record));
-                }
-            }
-        }
-        self.persist_next(
-            inner,
-            key,
-            record,
+        let state = if lease_has_other_references(inner, key, candidate.input_lease_id)
+            || self.retained_tributes.is_none()
+        {
             PinStateV1::Released {
                 candidate,
                 job_id: None,
+                source_generation: None,
                 reason: PinReleaseReason::Orphaned,
                 observed_height,
                 export: None,
-            },
-        )
+            }
+        } else {
+            PinStateV1::OrphanGcPending {
+                candidate,
+                observed_height,
+            }
+        };
+        self.persist_next(inner, key, record, state)
     }
 
     fn persist_next(
@@ -2416,6 +3025,9 @@ impl OcompRetentionCoordinator {
         key: B256,
         record: PinRecordV1,
     ) -> Result<DurablePinAck, RetentionError> {
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error);
+        }
         let mut registry = inner.registry.clone().unwrap_or_else(|| JobRegistryV1 {
             generation: record.generation,
             last_updated: key,
@@ -2424,9 +3036,16 @@ impl OcompRetentionCoordinator {
         if !registry.records.contains_key(&key)
             && registry.records.len() >= JOURNAL_RECORD_PRESSURE_WATERMARK
         {
-            registry
-                .records
-                .retain(|_, existing| !matches!(existing.state, PinStateV1::Released { .. }));
+            let closure_checkpoint = self.closure_checkpoint.load(Ordering::Acquire);
+            registry.records.retain(|_, existing| {
+                !matches!(existing.state, PinStateV1::Released { .. })
+                    || record_candidate(*existing).block_number > closure_checkpoint
+            });
+        }
+        if !registry.records.contains_key(&key)
+            && registry.records.len() >= JOURNAL_RECORD_COUNT_MAX
+        {
+            return Err(RetentionError::RegistryCapacity);
         }
         registry.generation = record.generation;
         registry.last_updated = key;
@@ -2434,13 +3053,12 @@ impl OcompRetentionCoordinator {
         match self.store.persist(&registry, record) {
             Ok(ack) => {
                 inner.registry = Some(registry);
-                inner.status = RetentionStatus::Ready(record);
+                transition_retention_status(inner, RetentionStatus::Ready(record));
                 Ok(ack)
             }
             Err(error) => {
-                inner.status = RetentionStatus::Quarantined {
-                    reason: error.to_string(),
-                };
+                record_journal_failure(&error);
+                transition_retention_status(inner, status_for_journal_error(&error));
                 Err(error)
             }
         }
@@ -2449,6 +3067,212 @@ impl OcompRetentionCoordinator {
     fn lock(&self) -> Result<MutexGuard<'_, CoordinatorInner>, RetentionError> {
         self.inner.lock().map_err(|_| RetentionError::Poisoned)
     }
+}
+
+fn atomic_max(target: &AtomicU64, value: u64) {
+    let mut current = target.load(Ordering::Acquire);
+    while value > current {
+        match target.compare_exchange_weak(current, value, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+pub(crate) fn journal_recovery_backoff(consecutive_failures: u32) -> Duration {
+    let seconds = match consecutive_failures {
+        0..=5 => 1_u64 << consecutive_failures,
+        _ => JOURNAL_RECOVERY_MAX_BACKOFF.as_secs(),
+    };
+    Duration::from_secs(seconds).max(JOURNAL_RECOVERY_INITIAL_BACKOFF)
+}
+
+fn record_journal_failure(error: &RetentionError) {
+    let (class, operation) = match error {
+        RetentionError::Io { operation, .. } => ("io", *operation),
+        RetentionError::AmbiguousJournal(_)
+        | RetentionError::MalformedJournal(_)
+        | RetentionError::UnsupportedJournalVersion { .. } => ("integrity", "validate"),
+        _ => ("internal", "recover"),
+    };
+    metrics::counter!(
+        "outbe_ocomp_retention_journal_failures_total",
+        "class" => class,
+        "operation" => operation
+    )
+    .increment(1);
+}
+
+fn spawn_retained_gc_worker(
+    coordinator: Weak<OcompRetentionCoordinator>,
+    signal: Arc<RetainedGcSignal>,
+) -> Result<(), RetentionError> {
+    std::thread::Builder::new()
+        .name("ocomp-retained-gc".to_owned())
+        .spawn(move || run_retained_gc_worker(coordinator, signal))
+        .map(|_| ())
+        .map_err(RetentionError::RetainedTributeGcWorkerSpawn)
+}
+
+fn run_retained_gc_worker(
+    coordinator: Weak<OcompRetentionCoordinator>,
+    signal: Arc<RetainedGcSignal>,
+) {
+    let mut observed_epoch = 0_u64;
+    let mut journal_recovery_failures = 0_u32;
+    let mut next_journal_recovery: Option<Instant> = None;
+    loop {
+        let Some(coordinator) = coordinator.upgrade() else {
+            return;
+        };
+        let finalized_height = signal.finalized_height.load(Ordering::Acquire);
+        let closure_checkpoint = signal.closure_checkpoint.load(Ordering::Acquire);
+        atomic_max(&coordinator.closure_checkpoint, closure_checkpoint);
+
+        match coordinator.status() {
+            RetentionStatus::Unavailable { .. } => {
+                if let Some(next_attempt) = next_journal_recovery {
+                    let now = Instant::now();
+                    if now < next_attempt {
+                        let remaining = next_attempt.saturating_duration_since(now);
+                        metrics::gauge!(
+                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
+                        )
+                        .set(remaining.as_secs_f64());
+                        drop(coordinator);
+                        wait_for_gc_signal(&signal, &mut observed_epoch, remaining);
+                        continue;
+                    }
+                }
+                match coordinator.recover_journal() {
+                    Ok(true) => {
+                        metrics::counter!(
+                            "outbe_ocomp_retention_journal_recovery_attempts_total",
+                            "result" => "success"
+                        )
+                        .increment(1);
+                        metrics::gauge!(
+                            "outbe_ocomp_retention_journal_recovery_consecutive_failures"
+                        )
+                        .set(0.0);
+                        metrics::gauge!(
+                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
+                        )
+                        .set(0.0);
+                        journal_recovery_failures = 0;
+                        next_journal_recovery = None;
+                    }
+                    Ok(false) => {
+                        journal_recovery_failures = 0;
+                        next_journal_recovery = None;
+                    }
+                    Err(error) => {
+                        record_journal_failure(&error);
+                        let integrity_failure =
+                            matches!(coordinator.status(), RetentionStatus::Quarantined { .. });
+                        let result = if integrity_failure {
+                            "integrity_error"
+                        } else {
+                            "io_error"
+                        };
+                        metrics::counter!(
+                            "outbe_ocomp_retention_journal_recovery_attempts_total",
+                            "result" => result
+                        )
+                        .increment(1);
+                        if integrity_failure {
+                            journal_recovery_failures = 0;
+                            next_journal_recovery = None;
+                            drop(coordinator);
+                            wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_IDLE_POLL);
+                            continue;
+                        }
+                        journal_recovery_failures = journal_recovery_failures.saturating_add(1);
+                        metrics::gauge!(
+                            "outbe_ocomp_retention_journal_recovery_consecutive_failures"
+                        )
+                        .set(journal_recovery_failures as f64);
+                        let delay =
+                            journal_recovery_backoff(journal_recovery_failures.saturating_sub(1));
+                        metrics::gauge!(
+                            "outbe_ocomp_retention_journal_recovery_next_delay_seconds"
+                        )
+                        .set(delay.as_secs_f64());
+                        next_journal_recovery = Some(Instant::now() + delay);
+                        tracing::warn!(
+                            %error,
+                            retry_delay_seconds = delay.as_secs(),
+                            journal_recovery_failures,
+                            "OCOMP retention journal recovery failed; retrying with backoff"
+                        );
+                        drop(coordinator);
+                        wait_for_gc_signal(&signal, &mut observed_epoch, delay);
+                        continue;
+                    }
+                }
+            }
+            RetentionStatus::Quarantined { .. } => {
+                journal_recovery_failures = 0;
+                next_journal_recovery = None;
+                drop(coordinator);
+                wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_IDLE_POLL);
+                continue;
+            }
+            RetentionStatus::Empty | RetentionStatus::Ready(_) => {
+                journal_recovery_failures = 0;
+                next_journal_recovery = None;
+            }
+        }
+
+        let report = match coordinator.run_gc_cycle(finalized_height) {
+            Ok(report) => report,
+            Err(error) => {
+                metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
+                tracing::warn!(%error, "OCOMP retained-input GC journal scan failed; retrying independently of ExEx");
+                wait_for_gc_signal(&signal, &mut observed_epoch, RETAINED_GC_RETRY_BACKOFF);
+                continue;
+            }
+        };
+        metrics::gauge!("outbe_ocomp_retained_gc_pending_jobs").set(report.pending as f64);
+        metrics::counter!("outbe_ocomp_retained_gc_page_attempts_total")
+            .increment(report.completed + report.pages + report.failures.len() as u64);
+        metrics::counter!("outbe_ocomp_retained_gc_completed_total").increment(report.completed);
+        metrics::counter!("outbe_ocomp_retained_gc_pages_total").increment(report.pages);
+        for (key, error) in &report.failures {
+            metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
+            tracing::warn!(
+                candidate_block_hash = %key,
+                %error,
+                "OCOMP retained-input GC failed for one lease; other leases continue"
+            );
+        }
+        drop(coordinator);
+        let made_progress = report.completed != 0 || report.pages != 0;
+        let delay = if made_progress && report.pending != 0 {
+            RETAINED_GC_PROGRESS_POLL
+        } else if !report.failures.is_empty() {
+            RETAINED_GC_RETRY_BACKOFF
+        } else {
+            RETAINED_GC_IDLE_POLL
+        };
+        wait_for_gc_signal(&signal, &mut observed_epoch, delay);
+    }
+}
+
+fn wait_for_gc_signal(signal: &RetainedGcSignal, observed_epoch: &mut u64, delay: Duration) {
+    let epoch = signal
+        .epoch
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if *epoch != *observed_epoch {
+        *observed_epoch = *epoch;
+        return;
+    }
+    let (epoch, _) = signal
+        .changed
+        .wait_timeout(epoch, delay)
+        .unwrap_or_else(|error| error.into_inner());
+    *observed_epoch = *epoch;
 }
 
 impl TributeRetentionSelector for OcompRetentionCoordinator {
@@ -2460,8 +3284,8 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
             return Err(RetentionError::RetainedTributeStorageUnavailable.to_string());
         }
         let inner = self.lock().map_err(|error| error.to_string())?;
-        if let RetentionStatus::Quarantined { reason } = &inner.status {
-            return Err(RetentionError::Quarantined(reason.clone()).to_string());
+        if let Some(error) = retention_status_error(&inner.status) {
+            return Err(error.to_string());
         }
         let mut selected = BTreeSet::new();
         for record in inner
@@ -2481,6 +3305,7 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
                 {
                     selected.insert(candidate.input_lease_id);
                 }
+                PinStateV1::GcPending { .. } => {}
                 _ => {}
             }
         }
@@ -2552,6 +3377,9 @@ fn record_for_candidate(
     inner: &CoordinatorInner,
     candidate: CandidatePinV1,
 ) -> Result<PinRecordV1, RetentionError> {
+    if let Some(error) = retention_status_error(&inner.status) {
+        return Err(error);
+    }
     inner
         .registry
         .as_ref()
@@ -2567,6 +3395,9 @@ fn record_for_job(
     inner: &CoordinatorInner,
     job_id: B256,
 ) -> Result<(B256, PinRecordV1), RetentionError> {
+    if let Some(error) = retention_status_error(&inner.status) {
+        return Err(error);
+    }
     inner
         .registry
         .as_ref()
@@ -2580,6 +3411,8 @@ fn record_for_job(
                 } | PinStateV1::Exported {
                     job_id: current, ..
                 } | PinStateV1::Terminal {
+                    job_id: current, ..
+                } | PinStateV1::GcPending {
                     job_id: current, ..
                 } | PinStateV1::Released {
                     job_id: Some(current),
@@ -2613,6 +3446,8 @@ const fn record_candidate(record: PinRecordV1) -> CandidatePinV1 {
         | PinStateV1::Finalized { candidate, .. }
         | PinStateV1::Exported { candidate, .. }
         | PinStateV1::Terminal { candidate, .. }
+        | PinStateV1::GcPending { candidate, .. }
+        | PinStateV1::OrphanGcPending { candidate, .. }
         | PinStateV1::Released { candidate, .. } => candidate,
     }
 }
@@ -2935,6 +3770,7 @@ fn encode_record(record: PinRecordV1) -> Vec<u8> {
             finality_recorded_height,
             open_height,
             deadline_height,
+            source_generation,
             export,
             terminal_height,
             release_height,
@@ -2948,13 +3784,60 @@ fn encode_record(record: PinRecordV1) -> Vec<u8> {
                 open_height,
                 deadline_height,
             );
-            encode_export_authority(&mut encoded, export);
+            encoded.extend_from_slice(&source_generation.to_be_bytes());
+            match export {
+                Some(export) => {
+                    encoded.push(1);
+                    encode_export_authority(&mut encoded, export);
+                }
+                None => encoded.push(0),
+            }
             encoded.extend_from_slice(&terminal_height.to_be_bytes());
             encoded.extend_from_slice(&release_height.to_be_bytes());
+        }
+        PinStateV1::GcPending {
+            candidate,
+            job_id,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+            source_generation,
+            export,
+            terminal_height,
+            release_height,
+        } => {
+            encoded.push(6);
+            encode_candidate(&mut encoded, candidate);
+            encoded.extend_from_slice(job_id.as_slice());
+            encode_finalized_window(
+                &mut encoded,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+            );
+            encoded.extend_from_slice(&source_generation.to_be_bytes());
+            match export {
+                Some(export) => {
+                    encoded.push(1);
+                    encode_export_authority(&mut encoded, export);
+                }
+                None => encoded.push(0),
+            }
+            encoded.extend_from_slice(&terminal_height.to_be_bytes());
+            encoded.extend_from_slice(&release_height.to_be_bytes());
+        }
+        PinStateV1::OrphanGcPending {
+            candidate,
+            observed_height,
+        } => {
+            encoded.push(7);
+            encode_candidate(&mut encoded, candidate);
+            encoded.extend_from_slice(&observed_height.to_be_bytes());
         }
         PinStateV1::Released {
             candidate,
             job_id,
+            source_generation,
             reason,
             observed_height,
             export,
@@ -2965,6 +3848,13 @@ fn encode_record(record: PinRecordV1) -> Vec<u8> {
                 Some(job_id) => {
                     encoded.push(1);
                     encoded.extend_from_slice(job_id.as_slice());
+                }
+                None => encoded.push(0),
+            }
+            match source_generation {
+                Some(source_generation) => {
+                    encoded.push(1);
+                    encoded.extend_from_slice(&source_generation.to_be_bytes());
                 }
                 None => encoded.push(0),
             }
@@ -3088,7 +3978,26 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
             let job_id = B256::new(reader.take::<32>()?);
             let (finality_recorded_height, open_height, deadline_height) =
                 decode_finalized_window(&mut reader)?;
-            let export = decode_export_authority(&mut reader)?;
+            let source_generation = u64::from_be_bytes(reader.take::<8>()?);
+            if source_generation == 0 {
+                return Err(RetentionError::MalformedJournal(
+                    "zero terminal source generation",
+                ));
+            }
+            let export = match reader.take::<1>()?[0] {
+                0 => None,
+                1 => Some(decode_export_authority(&mut reader)?),
+                _ => {
+                    return Err(RetentionError::MalformedJournal(
+                        "invalid terminal export-authority flag",
+                    ));
+                }
+            };
+            if export.is_some_and(|authority| authority.source_generation != source_generation) {
+                return Err(RetentionError::MalformedJournal(
+                    "terminal export authority has a conflicting source generation",
+                ));
+            }
             let terminal_height = u64::from_be_bytes(reader.take::<8>()?);
             let release_height = u64::from_be_bytes(reader.take::<8>()?);
             if terminal_height.checked_add(RETAINED_EVIDENCE_WINDOW_BLOCKS) != Some(release_height)
@@ -3103,6 +4012,7 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 finality_recorded_height,
                 open_height,
                 deadline_height,
+                source_generation,
                 export,
                 terminal_height,
                 release_height,
@@ -3113,6 +4023,23 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 0 => None,
                 1 => Some(B256::new(reader.take::<32>()?)),
                 _ => return Err(RetentionError::MalformedJournal("invalid job-id flag")),
+            };
+            let source_generation = match reader.take::<1>()?[0] {
+                0 => None,
+                1 => {
+                    let generation = u64::from_be_bytes(reader.take::<8>()?);
+                    if generation == 0 {
+                        return Err(RetentionError::MalformedJournal(
+                            "zero released source generation",
+                        ));
+                    }
+                    Some(generation)
+                }
+                _ => {
+                    return Err(RetentionError::MalformedJournal(
+                        "invalid released source-generation flag",
+                    ));
+                }
             };
             let export = match reader.take::<1>()?[0] {
                 0 => None,
@@ -3128,14 +4055,80 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
                 2 => PinReleaseReason::RetentionSatisfied,
                 _ => return Err(RetentionError::MalformedJournal("invalid release reason")),
             };
+            let valid_authority = match reason {
+                PinReleaseReason::Orphaned => {
+                    job_id.is_none() && source_generation.is_none() && export.is_none()
+                }
+                PinReleaseReason::RetentionSatisfied => {
+                    job_id.is_some()
+                        && source_generation.is_some()
+                        && export.is_none_or(|authority| {
+                            Some(authority.source_generation) == source_generation
+                        })
+                }
+            };
+            if !valid_authority {
+                return Err(RetentionError::MalformedJournal(
+                    "released record carries inconsistent authority",
+                ));
+            }
             PinStateV1::Released {
                 candidate,
                 job_id,
+                source_generation,
                 reason,
                 observed_height: u64::from_be_bytes(reader.take::<8>()?),
                 export,
             }
         }
+        6 => {
+            let job_id = B256::new(reader.take::<32>()?);
+            let (finality_recorded_height, open_height, deadline_height) =
+                decode_finalized_window(&mut reader)?;
+            let source_generation = u64::from_be_bytes(reader.take::<8>()?);
+            if source_generation == 0 {
+                return Err(RetentionError::MalformedJournal(
+                    "zero GC source generation",
+                ));
+            }
+            let export = match reader.take::<1>()?[0] {
+                0 => None,
+                1 => Some(decode_export_authority(&mut reader)?),
+                _ => {
+                    return Err(RetentionError::MalformedJournal(
+                        "invalid GC export-authority flag",
+                    ));
+                }
+            };
+            if export.is_some_and(|authority| authority.source_generation != source_generation) {
+                return Err(RetentionError::MalformedJournal(
+                    "GC export authority has a conflicting source generation",
+                ));
+            }
+            let terminal_height = u64::from_be_bytes(reader.take::<8>()?);
+            let release_height = u64::from_be_bytes(reader.take::<8>()?);
+            if terminal_height.checked_add(RETAINED_EVIDENCE_WINDOW_BLOCKS) != Some(release_height)
+            {
+                return Err(RetentionError::MalformedJournal(
+                    "GC release height is not terminal finality plus evidence window",
+                ));
+            }
+            PinStateV1::GcPending {
+                candidate,
+                job_id,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                source_generation,
+                export,
+                terminal_height,
+                release_height,
+            }
+        }
+        7 => PinStateV1::OrphanGcPending {
+            candidate,
+            observed_height: u64::from_be_bytes(reader.take::<8>()?),
+        },
         _ => return Err(RetentionError::MalformedJournal("unknown state tag")),
     };
     reader.finish()?;

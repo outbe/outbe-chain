@@ -110,6 +110,89 @@ fn monotonic_progress_decision(
     }
 }
 
+fn wait_for_common_finalized_checkpoint(
+    world: &mut World,
+    target: u64,
+    fault_label: &str,
+) -> crate::world::rpc::FinalizedCheckpoint {
+    let ports = world.validators.committee_ports();
+    let mut previous_common_height = 0_u64;
+    let mut progress_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+    loop {
+        let observations = ports
+            .iter()
+            .map(|&port| (port, world.rpc.finalized_result(port)))
+            .collect::<Vec<_>>();
+        let common_height = observations
+            .iter()
+            .map(|(_, height)| height.as_ref().ok().copied())
+            .collect::<Option<Vec<_>>>()
+            .and_then(|heights| heights.into_iter().min());
+        let now = Instant::now();
+        if let Some(current) = common_height {
+            match monotonic_progress_decision(
+                current,
+                target,
+                previous_common_height,
+                now,
+                progress_deadline,
+            ) {
+                ProgressWaitDecision::Reached => {
+                    world
+                        .rpc
+                        .wait_finalized_checkpoint(&ports, target, 1)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{fault_label} nodes reached h{target} but disagree on the common finalized checkpoint: {error:#}"
+                            )
+                        });
+                    let expected =
+                        world
+                            .rpc
+                            .checkpoint_at(ports[0], target)
+                            .unwrap_or_else(|error| {
+                                panic!("read {fault_label} checkpoint h{target}: {error:#}")
+                            });
+                    for &port in &ports[1..] {
+                        let observed = world.rpc.checkpoint_at(port, target).unwrap_or_else(
+                            |error| {
+                                panic!(
+                                    "read {fault_label} checkpoint h{target} on port {port}: {error:#}"
+                                )
+                            },
+                        );
+                        assert_eq!(
+                            observed, expected,
+                            "{fault_label} nodes disagree at exact finalized h{target}"
+                        );
+                    }
+                    return expected;
+                }
+                ProgressWaitDecision::Progressed => {
+                    previous_common_height = current;
+                    progress_deadline =
+                        now + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+                }
+                ProgressWaitDecision::Waiting => {}
+                ProgressWaitDecision::Stalled => {
+                    panic!("{fault_label} finality stalled below h{target}: {observations:?}");
+                }
+            }
+        } else if now >= progress_deadline {
+            panic!(
+                "{fault_label} finality became unobservable for {}s below h{target}: {observations:?}",
+                OCOMP_PROGRESS_STALL_TIMEOUT_SECS
+            );
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .unwrap_or_else(|error| panic!("{fault_label} OCOMP role exited: {error:#}"));
+        sleep(Duration::from_millis(250));
+    }
+}
+
 fn bounded_completion_decision(
     all_complete: bool,
     now: Instant,
@@ -544,13 +627,19 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
     world.state.joiner_addr = Some(address.clone());
     world.rpc.stake(&key, 1_000).expect("stake joiner");
     assert_eq!(world.rpc.validator_status(primary, &address), Some(1));
-    assert!(!world.rpc.is_participant(primary, &address));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &address)
+        .expect("observe consensus participation"));
     world
         .rpc
         .confirm_ready(&key)
         .expect("confirm OCOMP registration and readiness");
     assert!(
-        world.rpc.wait_participant(primary, &address, 70),
+        world
+            .rpc
+            .wait_participant(primary, &address, 70)
+            .expect("wait for observable consensus participation"),
         "certified DKG boundary did not activate the joiner"
     );
     assert_eq!(world.rpc.validator_status(primary, &address), Some(2));
@@ -796,7 +885,10 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                                 .all(|observed| observed.as_ref() == Some(&job_b_votes)),
                             "validators expose different job B accountability"
                         );
-                        let finalized_height = world.rpc.finalized(primary).unwrap_or_default();
+                        let finalized_height = world
+                            .rpc
+                            .finalized_result(primary)
+                            .expect("observe finalized height for job B accountability");
                         if let Some(joiner_vote) = finalized_vote_for_delegate_on_job(
                             world,
                             request.request_height,
@@ -3356,7 +3448,10 @@ fn validator_two_prepares_held_vote(world: &mut World) {
     let primary = world.validators.primary_port();
     let timeout = Instant::now() + Duration::from_secs(180);
     let vote_bytes = loop {
-        let finalized_height = world.rpc.finalized(primary).unwrap_or_default();
+        let finalized_height = world
+            .rpc
+            .finalized_result(primary)
+            .expect("observe finalized height while waiting for public result vote");
         let public_votes = world
             .rpc
             .finalized_ocomp_result_vote_transactions_on(
@@ -3393,7 +3488,11 @@ fn validator_two_prepares_held_vote(world: &mut World) {
         .expect("read public gas price")
         .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
     assert!(
-        world.rpc.head(primary).unwrap_or_default() < request.deadline_height,
+        world
+            .rpc
+            .head(primary)
+            .expect("primary head before preparing held vote")
+            < request.deadline_height,
         "held vote was not prepared before the exclusive deadline"
     );
     let prepared = world
@@ -3423,7 +3522,12 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
         .checked_sub(1)
         .expect("deadline follows genesis");
     let timeout = Instant::now() + Duration::from_secs(180);
-    while world.rpc.head(primary).unwrap_or_default() < target_parent {
+    while world
+        .rpc
+        .head(primary)
+        .expect("primary head while approaching exclusive vote deadline")
+        < target_parent
+    {
         assert!(
             Instant::now() < timeout,
             "chain did not approach the exclusive vote deadline"
@@ -4381,8 +4485,7 @@ fn completed_job_and_generation_are_unchanged(world: &mut World) {
 
 #[when("validators 2 and 3 OCOMP workers are stopped before the job")]
 fn stop_two_workers_before_job(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+    capture_ocomp_finality_before_fault(world, "stopping OCOMP workers");
     for validator_index in [2, 3] {
         world
             .ocomp
@@ -4394,6 +4497,90 @@ fn stop_two_workers_before_job(world: &mut World) {
                 panic!("stop validator-{validator_index} Worker before the job: {error}")
             });
     }
+}
+
+fn capture_ocomp_finality_before_fault(world: &mut World, action: &str) {
+    world.state.ocomp_finality_before_fault = Some(
+        world
+            .rpc
+            .finalized_result(world.validators.primary_port())
+            .unwrap_or_else(|error| panic!("capture finalized height before {action}: {error:#}")),
+    );
+}
+
+#[when("all four OCOMP snapshot exporters are stopped before the job")]
+fn stop_all_exporters_before_job(world: &mut World) {
+    capture_ocomp_finality_before_fault(world, "stopping all OCOMP snapshot exporters");
+    for validator_index in 0..4 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
+            .unwrap_or_else(|error| {
+                panic!(
+                    "stop validator-{validator_index} SnapshotExporter before the job: {error:#}"
+                )
+            });
+    }
+}
+
+#[when("all four OCOMP workers are stopped before the job")]
+fn stop_all_workers_before_job(world: &mut World) {
+    capture_ocomp_finality_before_fault(world, "stopping all OCOMP workers");
+    for validator_index in 0..4 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 0,
+            })
+            .unwrap_or_else(|error| {
+                panic!("stop validator-{validator_index} Worker before the job: {error:#}")
+            });
+    }
+}
+
+#[then("every validator commits the exact snapshot export while all workers remain stopped")]
+fn all_exporters_commit_while_workers_stopped(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("finalized zero-vote JobIntent");
+    let primary = world.validators.primary_port();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let job_id = loop {
+        let records = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_job_record_on(port, request.intent_id)
+            })
+            .collect::<Vec<_>>();
+        if records.iter().all(Option::is_some) {
+            let first = records[0].as_ref().expect("checked above");
+            assert!(
+                records
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(first)),
+                "validators expose different zero-vote job records: {records:?}"
+            );
+            if let Some(finalized) = first.finalized.as_ref() {
+                break finalized.job_id;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "zero-vote job did not reach its finalized OCOMP identity on port {primary}"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    world
+        .ocomp
+        .wait_for_committed_exports(job_id, Duration::from_secs(120))
+        .unwrap_or_else(|error| panic!("prove all four exact snapshot exports: {error:#}"));
 }
 
 #[when("validator 3 OCOMP worker is stopped before the job")]
@@ -4507,7 +4694,12 @@ fn three_validators_finalize_before_late_compute(world: &mut World) {
             );
             world.state.ocomp_activation = Some(activation);
             world.state.ocomp_vote_accountability = Some(accountability);
-            world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+            world.state.ocomp_finality_before_fault = Some(
+                world
+                    .rpc
+                    .finalized_result(primary)
+                    .expect("capture finalized height before releasing held OCOMP result"),
+            );
             return;
         }
         assert!(
@@ -4547,7 +4739,10 @@ fn late_local_result_is_not_fatal(world: &mut World) {
             .localnet
             .ensure_committee_alive()
             .expect("late local OCOMP result must not shut down validator-3");
-        let finalized = world.rpc.finalized(primary).unwrap_or_default();
+        let finalized = world
+            .rpc
+            .finalized_result(primary)
+            .expect("observe finality while releasing held OCOMP result");
         if result_path.is_file() && finalized >= finalized_before.saturating_add(3) {
             break;
         }
@@ -4561,13 +4756,15 @@ fn late_local_result_is_not_fatal(world: &mut World) {
     assert!(
         !world
             .localnet
-            .log_has(3, "unexpected embedded OCOMP local-result action"),
+            .log_has(3, "unexpected embedded OCOMP local-result action")
+            .expect("read required owned process log"),
         "validator-3 treated the protocol-owned late result as fatal"
     );
     assert!(
         !world
             .localnet
-            .log_has(3, "embedded OCOMP requested local node shutdown"),
+            .log_has(3, "embedded OCOMP requested local node shutdown")
+            .expect("read required owned process log"),
         "validator-3 requested shutdown after its late local result"
     );
 }
@@ -4592,7 +4789,10 @@ fn keyless_full_node_holds_at_deadline(world: &mut World) {
     let committee_target = request.deadline_height.saturating_add(2);
     let primary = world.validators.primary_port();
     let full_node = world.validators.http_port(world.validators.joiner_index());
-    let mut previous_committee = world.rpc.finalized(primary).unwrap_or_default();
+    let mut previous_committee = world
+        .rpc
+        .finalized_result(primary)
+        .expect("observe committee finality before FullNode deadline barrier");
     let mut progress_deadline =
         Instant::now() + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
 
@@ -4601,7 +4801,10 @@ fn keyless_full_node_holds_at_deadline(world: &mut World) {
             .localnet
             .ensure_committee_alive()
             .expect("validators remain alive while the FullNode waits");
-        let committee_finalized = world.rpc.finalized(primary).unwrap_or_default();
+        let committee_finalized = world
+            .rpc
+            .finalized_result(primary)
+            .expect("observe committee finality at FullNode deadline barrier");
         let full_node_finalized = world.rpc.finalized(full_node);
         if committee_finalized >= committee_target {
             assert_eq!(
@@ -4851,7 +5054,12 @@ fn only_keyless_full_node_shuts_down_on_mismatch(world: &mut World) {
                 .into_owned()
         })
         .collect();
-    world.state.ocomp_finality_before_fault = world.rpc.finalized(world.validators.primary_port());
+    world.state.ocomp_finality_before_fault = Some(
+        world
+            .rpc
+            .finalized_result(world.validators.primary_port())
+            .expect("capture finalized height before FullNode mismatch restart"),
+    );
 }
 
 #[when("the mismatched keyless FullNode restarts with preserved data")]
@@ -4879,7 +5087,8 @@ fn sticky_mismatch_remains_isolated(world: &mut World) {
     }
     assert!(world
         .localnet
-        .log_has(index, "embedded OCOMP persisted fatal evidence"));
+        .log_has(index, "embedded OCOMP persisted fatal evidence")
+        .expect("read required owned process log"));
     let before = world
         .state
         .ocomp_finality_before_fault
@@ -5002,12 +5211,16 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
             .is_some_and(|timestamp| timestamp < job_b_processing_time),
         "job B must not reach its processing time during the job A assertion"
     );
+    let before = world
+        .state
+        .ocomp_finality_before_fault
+        .expect("finality captured before stopping OCOMP workers");
+    let after = world
+        .rpc
+        .finalized_result(world.validators.primary_port())
+        .expect("observe finality with two OCOMP workers stopped");
     assert!(
-        world
-            .state
-            .ocomp_finality_before_fault
-            .zip(world.rpc.finalized(world.validators.primary_port()))
-            .is_some_and(|(before, after)| after > before),
+        after > before,
         "consensus finality did not advance with two OCOMP Workers stopped"
     );
     world.state.ocomp_dynamic_job_requests = vec![request];
@@ -5217,52 +5430,53 @@ fn restart_three_workers_for_quorum(world: &mut World) {
 
 #[then("the no-quorum job expires at its exclusive deadline without creating Nod")]
 fn no_quorum_job_expires_without_nod(world: &mut World) {
+    assert_job_expires_without_nod(world, &[0, 1], 0b0011, 0b1100, "two-vote");
+}
+
+#[then("the zero-vote job expires at its exclusive deadline and finality continues")]
+fn zero_vote_job_expires_without_halt(world: &mut World) {
+    assert_job_expires_without_nod(world, &[], 0, 0b1111, "zero-vote");
+}
+
+fn assert_job_expires_without_nod(
+    world: &mut World,
+    expected_voters: &[u16],
+    timely_bitmap: u8,
+    missing_bitmap: u8,
+    fault_label: &str,
+) {
     let request = world
         .state
         .ocomp_job_request
         .clone()
         .expect("finalized no-quorum JobIntent");
     let primary = world.validators.primary_port();
-    let timeout = Instant::now() + Duration::from_secs(240);
-    let records = loop {
-        let finalized = world.rpc.finalized(primary).unwrap_or_default();
-        let records = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .finalized_ocomp_job_record_on(port, request.intent_id)
-            })
-            .collect::<Vec<_>>();
-        if finalized >= request.deadline_height
-            && records.iter().all(|record| {
-                record
-                    .as_ref()
-                    .is_some_and(|record| record.status == OcompJobStatus::Expired)
-            })
-        {
-            break records;
-        }
-        world
-            .ocomp
-            .ensure_validator_roles_alive()
-            .expect("remaining OCOMP roles stay alive during no-quorum expiry");
-        assert!(
-            Instant::now() < timeout,
-            "no-quorum JobIntent did not expire at deadline {}: finalized={finalized}, \
-             records={records:?}",
-            request.deadline_height
-        );
-        sleep(Duration::from_millis(250));
-    };
-    let record = records[0].clone().expect("all expired records are present");
+    wait_for_common_finalized_checkpoint(world, request.deadline_height, fault_label);
+    let records = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            world
+                .rpc
+                .ocomp_job_record_at_on(port, request.intent_id, request.deadline_height)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "read {fault_label} OCOMP record at exact deadline h{} on port {port}: {error:#}",
+                        request.deadline_height
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let record = records[0].clone();
     assert!(
-        records
-            .iter()
-            .all(|observed| observed.as_ref() == Some(&record)),
+        records.iter().all(|observed| observed == &record),
         "validators expose different expired JobIntent state"
+    );
+    assert_eq!(
+        record.status,
+        OcompJobStatus::Expired,
+        "{fault_label} OCOMP job was not expired at its exact deadline"
     );
     let terminal = record.terminal.expect("expired terminal record");
     assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
@@ -5273,13 +5487,13 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
 
     let accountability = world
         .rpc
-        .finalized_ocomp_vote_accountability_on(primary, finalized.job_id)
+        .ocomp_vote_accountability_at_on(primary, finalized.job_id, request.deadline_height)
         .expect("closed no-quorum accountability");
-    assert_eq!(accountability.slot_validator_indexes, vec![0, 1]);
+    assert_eq!(accountability.slot_validator_indexes, expected_voters);
     assert_eq!(accountability.quorum_result_digest, None);
     assert_eq!(accountability.closed_height, Some(request.deadline_height));
-    assert_eq!(accountability.timely_bitmap, Some(vec![0b0011]));
-    assert_eq!(accountability.missing_bitmap, Some(vec![0b1100]));
+    assert_eq!(accountability.timely_bitmap, Some(vec![timely_bitmap]));
+    assert_eq!(accountability.missing_bitmap, Some(vec![missing_bitmap]));
     assert_eq!(accountability.equivocation_bitmap, Some(vec![0]));
 
     for port in world.validators.committee_ports() {
@@ -5295,15 +5509,38 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
         assert!(
             world
                 .rpc
-                .finalized_ocomp_activation_on(port, request.request_height, request.intent_id)
-                .is_none(),
+                .finalized_ocomp_activation_absent_on(
+                    port,
+                    request.request_height,
+                    request.intent_id,
+                )
+                .expect("prove absence of finalized Lysis activation"),
             "expired no-quorum job emitted a Lysis apply event on port {port}"
         );
     }
+    let terminal_checkpoint = request.deadline_height.saturating_add(2);
+    wait_for_common_finalized_checkpoint(world, terminal_checkpoint, fault_label);
+    for port in world.validators.committee_ports() {
+        let record = world
+            .rpc
+            .ocomp_job_record_at_on(port, request.intent_id, terminal_checkpoint)
+            .expect("expired record after terminal finalized checkpoint");
+        assert_eq!(record.status, OcompJobStatus::Expired);
+        assert_eq!(
+            record
+                .terminal
+                .as_ref()
+                .map(|terminal| terminal.terminal_height),
+            Some(request.deadline_height)
+        );
+    }
     assert!(
-        world.rpc.finalized(primary).unwrap_or_default()
-            > world.state.ocomp_finality_before_fault.unwrap_or_default(),
-        "consensus finality did not advance while two OCOMP Workers were stopped"
+        terminal_checkpoint
+            > world
+                .state
+                .ocomp_finality_before_fault
+                .expect("finality captured before no-quorum OCOMP fault"),
+        "terminal checkpoint must advance beyond pre-fault finality"
     );
     world.state.ocomp_vote_accountability = Some(accountability);
     world.state.ocomp_expired_without_nod = Some(true);
@@ -5311,11 +5548,6 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
 
 #[when("the stopped OCOMP workers restart for the automatic retry")]
 fn stopped_workers_restart_for_automatic_retry(world: &mut World) {
-    let original = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("expired public JobIntent");
     for validator_index in [2, 3] {
         world
             .ocomp
@@ -5328,6 +5560,50 @@ fn stopped_workers_restart_for_automatic_retry(world: &mut World) {
         .ocomp
         .ensure_validator_roles_alive()
         .expect("all OCOMP roles are live before the automatic retry");
+
+    wait_for_automatic_retry(world);
+}
+
+#[when("all stopped OCOMP snapshot exporters restart for the automatic retry")]
+fn all_exporters_restart_for_automatic_retry(world: &mut World) {
+    for validator_index in 0..4 {
+        world
+            .ocomp
+            .restart_snapshot_exporter(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} SnapshotExporter: {error:#}")
+            });
+    }
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("all OCOMP roles are live before the automatic retry");
+    wait_for_automatic_retry(world);
+}
+
+#[when("all stopped OCOMP workers restart for the automatic retry")]
+fn all_workers_restart_for_automatic_retry(world: &mut World) {
+    for validator_index in 0..4 {
+        world
+            .ocomp
+            .restart_worker(validator_index, 0)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} Worker: {error:#}")
+            });
+    }
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("all OCOMP roles are live before the automatic retry");
+    wait_for_automatic_retry(world);
+}
+
+fn wait_for_automatic_retry(world: &mut World) {
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("expired public JobIntent");
 
     let from_height = original.request_height.saturating_add(1);
     let timeout = Instant::now() + Duration::from_secs(240);
@@ -5698,7 +5974,12 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
 #[when("validator 0 OCOMP worker is stopped through the typed fault control")]
 fn stop_validator_zero_worker(world: &mut World) {
     let primary = world.validators.primary_port();
-    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+    world.state.ocomp_finality_before_fault = Some(
+        world
+            .rpc
+            .finalized_result(primary)
+            .expect("capture finalized height before typed OCOMP worker fault"),
+    );
     world
         .ocomp
         .apply_process_fault(OcompProcessFault::StopWorker {

@@ -524,7 +524,7 @@ fn full_node_joins_with_committee_deadline(world: &mut World) {
     let checkpoint = world
         .rpc
         .finalized(world.validators.primary_port())
-        .unwrap_or(1);
+        .expect("primary finalized checkpoint before FullNode lease testing");
     wait_for_live_full_node_checkpoint(world, full_node, checkpoint, Duration::from_secs(120))
         .unwrap_or_else(|error| panic!("FullNode did not sync before lease testing: {error}"));
     let status = world

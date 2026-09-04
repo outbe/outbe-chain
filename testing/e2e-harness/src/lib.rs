@@ -17,6 +17,7 @@
 //! the [`env::Environment`] (validators / TEE mode / sudo), and Gherkin tags
 //! define each scenario's requirements.
 
+pub mod artifacts;
 pub mod env;
 pub mod features;
 pub mod localnet_driver;
@@ -38,15 +39,140 @@ mod internal;
 mod validator_evidence;
 
 use cucumber::cli;
+use cucumber::tag::Ext as _;
 use cucumber::writer::Stats;
 use cucumber::World as _;
 use futures::FutureExt as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use crate::artifacts::ArtifactLedger;
 use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
 use crate::world::localnet::Localnet;
 use crate::world::mongodb::MongoDb;
 use crate::world::World;
+
+#[derive(Default)]
+struct RunCounters {
+    selected: AtomicUsize,
+    started: AtomicUsize,
+    finished: AtomicUsize,
+    evidence: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct WatchdogHandle {
+    shared: Arc<(Mutex<WatchdogState>, Condvar)>,
+}
+
+struct WatchdogState {
+    active: Option<(String, Instant)>,
+    stop: bool,
+}
+
+struct ScenarioWatchdog {
+    handle: WatchdogHandle,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ScenarioWatchdog {
+    fn start(env: Environment) -> Self {
+        let timeout = Duration::from_secs(env.scenario_timeout_secs);
+        let shared = Arc::new((
+            Mutex::new(WatchdogState {
+                active: None,
+                stop: false,
+            }),
+            Condvar::new(),
+        ));
+        let handle = WatchdogHandle {
+            shared: Arc::clone(&shared),
+        };
+        let thread = thread::Builder::new()
+            .name("outbe-e2e-watchdog".to_owned())
+            .spawn(move || watchdog_loop(shared, env, timeout))
+            .expect("spawn E2E scenario watchdog");
+        Self {
+            handle,
+            thread: Some(thread),
+        }
+    }
+
+    fn handle(&self) -> WatchdogHandle {
+        self.handle.clone()
+    }
+
+    fn stop(mut self) {
+        self.handle.stop();
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("join E2E scenario watchdog");
+        }
+    }
+}
+
+impl WatchdogHandle {
+    fn arm(&self, scenario: String, timeout: Duration) {
+        let (state, wake) = &*self.shared;
+        let mut state = state.lock().expect("lock E2E watchdog");
+        state.active = Some((scenario, Instant::now() + timeout));
+        wake.notify_all();
+    }
+
+    fn disarm(&self) {
+        let (state, wake) = &*self.shared;
+        let mut state = state.lock().expect("lock E2E watchdog");
+        state.active = None;
+        wake.notify_all();
+    }
+
+    fn stop(&self) {
+        let (state, wake) = &*self.shared;
+        let mut state = state.lock().expect("lock E2E watchdog");
+        state.stop = true;
+        state.active = None;
+        wake.notify_all();
+    }
+}
+
+fn watchdog_loop(
+    shared: Arc<(Mutex<WatchdogState>, Condvar)>,
+    env: Environment,
+    timeout: Duration,
+) {
+    let (state, wake) = &*shared;
+    loop {
+        let mut state = state.lock().expect("lock E2E watchdog");
+        while state.active.is_none() && !state.stop {
+            state = wake.wait(state).expect("wait for E2E scenario");
+        }
+        if state.stop {
+            return;
+        }
+        let (scenario, deadline) = state.active.clone().expect("active watchdog scenario");
+        let now = Instant::now();
+        if now < deadline {
+            let (next, _) = wake
+                .wait_timeout(state, deadline.saturating_duration_since(now))
+                .expect("wait for E2E scenario deadline");
+            drop(next);
+            continue;
+        }
+        state.active = None;
+        drop(state);
+
+        eprintln!(
+            "outbe-e2e: scenario {scenario:?} exceeded {}s; retaining diagnostics and tearing down",
+            timeout.as_secs()
+        );
+        if let Err(error) = evidence::write_run_timeout(&env, &scenario, timeout) {
+            eprintln!("outbe-e2e: could not write timeout evidence: {error:#}");
+        }
+        shutdown_and_exit_with_code(&env, 1);
+    }
+}
 
 /// Tear the localnet down and exit when the process is interrupted
 /// (Ctrl-C / SIGINT or SIGTERM).
@@ -85,12 +211,18 @@ async fn teardown_on_signal(env: Environment) {
 /// returns.
 fn shutdown_and_exit(env: &Environment) -> ! {
     eprintln!("\noutbe-e2e: interrupted - tearing down the localnet...");
+    shutdown_and_exit_with_code(env, 130)
+}
+
+fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
     // Best-effort: the shutdown is itself best-effort (ignores already-stopped
     // nodes / missing containers), so a partially-started run is safe to tear
     // down too.
-    Localnet::new(Config::resolve(env)).teardown();
+    if let Err(error) = Localnet::new(Config::resolve(env)).teardown() {
+        eprintln!("outbe-e2e: Radicle runtime cleanup failed during shutdown: {error:#}");
+    }
     MongoDb::teardown_managed_for_run(env);
-    std::process::exit(130);
+    std::process::exit(code);
 }
 
 /// Parse the CLI, install the environment, and run the cucumber suite over
@@ -103,8 +235,13 @@ fn shutdown_and_exit(env: &Environment) -> ! {
 /// resource). Exits non-zero on any failure.
 pub async fn run() {
     // Parse cucumber's built-in flags (--tags/--name/--input) plus our EnvCli.
-    let opts = cli::Opts::<_, _, _, EnvCli>::parsed();
+    let mut opts = cli::Opts::<_, _, _, EnvCli>::parsed();
     let mut environment = Environment::from_cli(&opts.custom);
+    // Cucumber 0.21 treats its built-in name/tag filters as alternatives to
+    // `filter_run`'s predicate. Move them into our one composed predicate so
+    // CLI selection can never bypass environment/@todo policy or accounting.
+    let re_filter = opts.re_filter.take();
+    let tags_filter = opts.tags_filter.take();
 
     // Give each run its own data subdir under the base `--data-dir`, and each
     // scenario a `scenario-<n>` subdir under that (see `Config::for_scenario`).
@@ -133,6 +270,11 @@ pub async fn run() {
         environment.evidence_dir.as_ref().unwrap().display()
     );
 
+    if let Err(error) = evidence::write_run_started(&environment) {
+        eprintln!("outbe-e2e: failed to publish run-started evidence: {error:#}");
+        std::process::exit(1);
+    }
+
     env::set_environment(environment.clone());
 
     // Tear the localnet down on Ctrl-C / SIGTERM so an interrupted run never
@@ -144,7 +286,17 @@ pub async fn run() {
     let env_hook = environment.clone();
     let env_filter = environment.clone();
     let env_evidence = environment.clone();
+    let artifacts = Arc::new(Mutex::new(ArtifactLedger::new(&environment)));
     let env_cleanup = environment;
+    let counters = Arc::new(RunCounters::default());
+    let hook_counters = Arc::clone(&counters);
+    let after_counters = Arc::clone(&counters);
+    let filter_counters = Arc::clone(&counters);
+    let hook_artifacts = Arc::clone(&artifacts);
+    let watchdog = ScenarioWatchdog::start(env_hook.clone());
+    let before_watchdog = watchdog.handle();
+    let after_watchdog = watchdog.handle();
+    let scenario_timeout = Duration::from_secs(env_hook.scenario_timeout_secs);
 
     let writer = World::cucumber()
         .max_concurrent_scenarios(1)
@@ -153,6 +305,11 @@ pub async fn run() {
         // before execution and therefore never reach this writer policy.
         .fail_on_skipped()
         .before(move |feature, _rule, scenario, _world| {
+            hook_counters.started.fetch_add(1, Ordering::Relaxed);
+            before_watchdog.arm(
+                format!("{} :: {}", feature.name, scenario.name),
+                scenario_timeout,
+            );
             // Only reachable for unmet scenarios in `--all` mode (the filter
             // excludes them otherwise); panic so they count as failures.
             let reason = if env_hook.all {
@@ -160,6 +317,13 @@ pub async fn run() {
             } else {
                 None
             };
+            if reason.is_none() {
+                hook_artifacts
+                    .lock()
+                    .expect("lock E2E artifact ledger")
+                    .preflight_scenario(&env_hook, feature, scenario)
+                    .unwrap_or_else(|error| panic!("E2E artifact preflight failed: {error:#}"));
+            }
             async move {
                 if let Some(reason) = reason {
                     panic!("environment cannot satisfy this scenario: {reason}");
@@ -176,7 +340,10 @@ pub async fn run() {
             if let Some(world) = world {
                 let price_oracle = world.price_oracle.evidence_snapshot();
                 world.price_oracle.teardown();
-                world.localnet.teardown();
+                world
+                    .localnet
+                    .teardown()
+                    .unwrap_or_else(|error| panic!("E2E localnet teardown failed: {error:#}"));
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -197,14 +364,14 @@ pub async fn run() {
                 let ocomp = match world.ocomp.evidence_snapshot() {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
-                        world.localnet.teardown();
+                        let _ = world.localnet.teardown();
                         panic!("OCOMP topology evidence could not be captured: {error:#}");
                     }
                 };
                 let mut ocomp_public = world.state.ocomp_public_scenario_evidence();
                 if let Some(meter) = world.capacity_meter.take() {
                     if !scenario.tags.iter().any(|tag| tag == "ocomp-capacity") {
-                        world.localnet.teardown();
+                        let _ = world.localnet.teardown();
                         panic!(
                             "dedicated OCOMP capacity meter was used for a non-capacity scenario"
                         );
@@ -216,9 +383,12 @@ pub async fn run() {
                         .collect::<Vec<_>>();
                     ocomp_public.capacity_resources =
                         Some(meter.finish(&cas_roots).unwrap_or_else(|error| {
-                            world.localnet.teardown();
+                            let _ = world.localnet.teardown();
                             panic!("OCOMP capacity resource evidence failed: {error:#}");
                         }));
+                }
+                if let Err(error) = audit.ensure_clean() {
+                    panic!("E2E log-safety audit failed: {error:#}");
                 }
                 if let Err(error) = evidence::write_scenario(evidence::ScenarioEvidence {
                     env: &env_evidence,
@@ -237,10 +407,10 @@ pub async fn run() {
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }
-                if let Err(error) = audit.ensure_clean() {
-                    panic!("E2E log-safety audit failed: {error:#}");
-                }
+                after_counters.evidence.fetch_add(1, Ordering::Relaxed);
             }
+            after_counters.finished.fetch_add(1, Ordering::Relaxed);
+            after_watchdog.disarm();
             async move {}.boxed_local()
         })
         .with_cli(opts)
@@ -251,22 +421,101 @@ pub async fn run() {
         // failure and never returns, leaving nowhere to hang the cleanup below.
         .filter_run(
             concat!(env!("CARGO_MANIFEST_DIR"), "/features"),
-            move |feature, _rule, scenario| match decide(feature, scenario, &env_filter) {
-                Decision::Run => true,
-                Decision::Skip(reason) => {
-                    println!("SKIPPED: {} - {reason}", scenario.name);
-                    false
+            move |feature, rule, scenario| {
+                let cli_selected = re_filter.as_ref().map_or_else(
+                    || {
+                        tags_filter.as_ref().is_none_or(|tags| {
+                            tags.eval(
+                                feature
+                                    .tags
+                                    .iter()
+                                    .chain(rule.iter().flat_map(|rule| &rule.tags))
+                                    .chain(scenario.tags.iter()),
+                            )
+                        })
+                    },
+                    |name| name.is_match(&scenario.name),
+                );
+                if !cli_selected {
+                    return false;
+                }
+
+                match decide(feature, scenario, &env_filter) {
+                    Decision::Run => {
+                        filter_counters.selected.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Decision::Skip(reason) => {
+                        println!("SKIPPED: {} - {reason}", scenario.name);
+                        false
+                    }
                 }
             },
         )
         .await;
 
+    watchdog.stop();
+
+    let runtime_cleanup_error = Localnet::new(Config::resolve(&env_cleanup))
+        .cleanup_radicle_runtime()
+        .err()
+        .map(|error| format!("{error:#}"));
+
+    let scenario_stats = *writer.scenarios_stats();
+    let evidence_records = evidence::scenario_record_count(&env_cleanup);
+    let evidence_error = evidence_records
+        .as_ref()
+        .err()
+        .map(|error| format!("{error:#}"));
+    let summary = evidence::RunSummary {
+        selected: counters.selected.load(Ordering::Relaxed),
+        started: counters.started.load(Ordering::Relaxed),
+        finished: counters.finished.load(Ordering::Relaxed),
+        framework_finished: scenario_stats.total(),
+        passed: scenario_stats.passed,
+        skipped: scenario_stats.skipped,
+        failed: scenario_stats.failed,
+        evidence_records: evidence_records.unwrap_or_default(),
+        parsing_errors: writer.parsing_errors(),
+        hook_errors: writer.hook_errors(),
+    };
+    let artifact_snapshot = artifacts
+        .lock()
+        .expect("lock final E2E artifact ledger")
+        .snapshot(&env_cleanup);
+    let artifact_error = artifact_snapshot
+        .as_ref()
+        .err()
+        .map(|error| format!("{error:#}"));
+    let manifest_result = artifact_snapshot
+        .and_then(|artifacts| evidence::write_run_manifest(&env_cleanup, summary, &artifacts));
+    let complete = summary.is_complete_pass();
+
     // `execution_has_failed` covers failed steps, parsing errors, and hook errors
     // - so `--all`, which fails unmet scenarios by panicking in the `before` hook,
     // keeps its data dir too.
     let dir = env_cleanup.data_dir.display().to_string();
-    if writer.execution_has_failed() {
+    if writer.execution_has_failed()
+        || !complete
+        || evidence_error.is_some()
+        || artifact_error.is_some()
+        || runtime_cleanup_error.is_some()
+        || manifest_result.is_err()
+    {
         eprintln!("outbe-e2e: {}", failure_summary(&writer));
+        eprintln!("outbe-e2e: incomplete run summary: {summary:?}");
+        if let Some(error) = evidence_error {
+            eprintln!("outbe-e2e: evidence inventory failed: {error}");
+        }
+        if let Some(error) = artifact_error {
+            eprintln!("outbe-e2e: artifact inventory failed: {error}");
+        }
+        if let Some(error) = runtime_cleanup_error {
+            eprintln!("outbe-e2e: Radicle runtime cleanup failed: {error}");
+        }
+        if let Err(error) = manifest_result {
+            eprintln!("outbe-e2e: final run manifest failed: {error:#}");
+        }
         eprintln!("outbe-e2e: data dir kept at {dir}");
         std::process::exit(1);
     }

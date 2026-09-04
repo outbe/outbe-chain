@@ -38,7 +38,6 @@ use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
     discovery_control::DiscoveryOfferRefV1,
     discovery_spool::{ContiguousCheckpointStoreV1, DiscoverySpoolV1, RetirementReportV1},
-    discovery_transport::DiscoveryOfferClientV1,
     embedded::{
         EmbeddedJobActionV1, EmbeddedJobEventV1, EmbeddedJobGenerationV1, EmbeddedJobStateV1,
         EmbeddedOcompJobsV1, EmbeddedOcompModeV1, EmbeddedTerminalReasonV1,
@@ -93,7 +92,6 @@ pub struct OcompExExBundleConfigV1 {
 pub struct OcompExExConfigV1 {
     pub domain_root: PathBuf,
     pub discovery_spool_root: PathBuf,
-    pub discovery_control_address: std::net::SocketAddr,
     pub bundles: Vec<OcompExExBundleConfigV1>,
     pub policy: EmbeddedNodePolicyV1,
     pub validator_rpc_url: Option<String>,
@@ -106,6 +104,37 @@ pub struct OcompExExConfigV1 {
 #[derive(Clone, Debug)]
 pub struct OcompExExExitV1 {
     pub failure: ProjectionFailure,
+}
+
+#[derive(Debug)]
+enum RetentionReconciliationDispositionV1 {
+    ProcessFrame,
+    RetryFrame(outbe_node::ocomp::retention::RetentionError),
+}
+
+fn classify_retention_reconciliation(
+    result: Result<(), outbe_node::ocomp::retention::RetentionError>,
+    retention_required: bool,
+) -> RetentionReconciliationDispositionV1 {
+    match result {
+        Ok(()) => RetentionReconciliationDispositionV1::ProcessFrame,
+        Err(outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled)
+            if !retention_required =>
+        {
+            RetentionReconciliationDispositionV1::ProcessFrame
+        }
+        Err(error) => RetentionReconciliationDispositionV1::RetryFrame(error),
+    }
+}
+
+fn retention_runtime_error_requires_frame_retry(error: &eyre::Report) -> bool {
+    matches!(
+        error.downcast_ref::<outbe_node::ocomp::retention::RetentionError>(),
+        Some(
+            outbe_node::ocomp::retention::RetentionError::JournalUnavailable { .. }
+                | outbe_node::ocomp::retention::RetentionError::Quarantined(_)
+        )
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -291,12 +320,6 @@ fn publish_finalized_reader_metrics(finalized_head: u64, scanned: u64, closed: u
     gauge!("outbe_ocomp_finalized_reader_lag_blocks").set(reader_lag as f64);
     gauge!("outbe_ocomp_closure_checkpoint_number").set(closed as f64);
     gauge!("outbe_ocomp_closure_lag_blocks").set(closure_lag as f64);
-}
-
-fn pending_offer_notifications(
-    pending: &BTreeMap<B256, DiscoveryOfferRefV1>,
-) -> Vec<DiscoveryOfferRefV1> {
-    pending.values().cloned().collect()
 }
 
 fn record_discovery_retirement_report(report: RetirementReportV1) {
@@ -684,14 +707,14 @@ where
                             .record(batch.frames().len() as f64);
                         'frames: for frame in batch.frames() {
                             let request_observation = observe_finalized_request(frame)?;
-                            match runtime
-                                .retention_selector
-                                .reconcile_finalized_frame(frame, request_observation)
-                            {
-                                Ok(()) => {}
-                                Err(outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled)
-                                    if !config.retention_required => {}
-                                Err(error) => {
+                            match classify_retention_reconciliation(
+                                runtime
+                                    .retention_selector
+                                    .reconcile_finalized_frame(frame, request_observation),
+                                config.retention_required,
+                            ) {
+                                RetentionReconciliationDispositionV1::ProcessFrame => {}
+                                RetentionReconciliationDispositionV1::RetryFrame(error) => {
                                     warn!(
                                         %error,
                                         block_number = frame.identity().number,
@@ -789,15 +812,26 @@ where
                                 runtime.latch_external_failure(failure);
                                 wait_for_node_teardown().await;
                             }
-                            runtime.record_scanned_frame(frame)?;
-                            counter!("outbe_ocomp_finalized_reader_blocks_total").increment(1);
-                            runtime.refresh_jobs(
+                            if let Err(error) = runtime.refresh_jobs(
                                 frame.identity().number,
                                 frame.identity().hash,
                                 frame,
                                 true,
-                            )?;
+                            ) {
+                                if retention_runtime_error_requires_frame_retry(&error) {
+                                    warn!(
+                                        %error,
+                                        block_number = frame.identity().number,
+                                        block_hash = %frame.identity().hash,
+                                        "unified OCOMP retention became unavailable while processing the finalized frame; retrying the same frame"
+                                    );
+                                    break 'frames;
+                                }
+                                return Err(error);
+                            }
                             runtime.reconcile_materialization(frame)?;
+                            runtime.record_scanned_frame(frame)?;
+                            counter!("outbe_ocomp_finalized_reader_blocks_total").increment(1);
                             runtime.drive_payout(frame.block().header().timestamp());
                         }
                     }
@@ -808,27 +842,13 @@ where
                             block_number: target.number,
                             block_hash: target.hash,
                         })?;
+                    runtime
+                        .retention_selector
+                        .notify_finalized_height(target.number);
                 }
 
                 gauge!("outbe_ocomp_discovery_pending_offers")
                     .set(runtime.pending_offers.len() as f64);
-                for offer in pending_offer_notifications(&runtime.pending_offers) {
-                    counter!("outbe_ocomp_discovery_control_attempts_total").increment(1);
-                    match DiscoveryOfferClientV1::connect(config.discovery_control_address).await {
-                        Ok(mut client) => {
-                            if let Err(error) = client.send_offer(&offer).await {
-                                counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "send")
-                                    .increment(1);
-                                warn!(%error, observation_id = %offer.observation_id, "failed to notify snapshot exporter; durable offer remains pending");
-                            }
-                        }
-                        Err(error) => {
-                            counter!("outbe_ocomp_discovery_control_errors_total", "stage" => "connect")
-                                .increment(1);
-                            warn!(%error, observation_id = %offer.observation_id, "snapshot exporter control endpoint unavailable; durable offer remains pending");
-                        }
-                    }
-                }
 
                 if let Some(checkpoint) = runtime.flush_closure_checkpoint()? {
                     if ctx.events.send(ExExEvent::FinishedHeight(
@@ -1015,14 +1035,23 @@ where
                                 job_id,
                                 &limits,
                             )?;
-                            // Released retention is reachable only after an
-                            // exact durable export ACK. The request is therefore
-                            // closed for replay even though its live pin was GC'd.
+                            // Released retention carries either the exact
+                            // durable export ACK or an ACK-less canonical
+                            // Expired retirement authority.
                             self.materialized_requests.insert(locator.intent_id);
                             continue;
                         }
                         Err(outbe_node::ocomp::retention::RetentionError::InvalidTransition(_)) => {
-                            continue;
+                            self.retention_selector
+                                .bind_canonical_finalized_job(locator.block_hash, &record)
+                                .wrap_err(
+                                    "bind OCOMP retention to canonical finalized typed state",
+                                )?;
+                            self.retention_selector
+                                .discovery_job_records(job_id)
+                                .wrap_err(
+                                    "load exact OCOMP retention generation after canonical binding",
+                                )?
                         }
                         Err(error) => {
                             return Err(error).wrap_err("load exact OCOMP retention generation");
@@ -1045,6 +1074,7 @@ where
                         || retained.candidate.protocol_bundle_hash
                             != record.intent.protocol_bundle_hash
                         || retained.candidate.input_lease_id != input_lease_id
+                        || retained.finality_recorded_height != finalized.finality_recorded_height
                         || retained.open_height != finalized.open_height
                         || retained.deadline_height != finalized.deadline_height
                     {
@@ -1108,7 +1138,18 @@ where
                     },
                 );
             }
-            let export_acknowledged = self.reconcile_export_ack(job_id)?;
+            let canonical_expired = matches!(
+                disposition,
+                CanonicalJobDispositionV1::Closed {
+                    reason: EmbeddedTerminalReasonV1::Expired,
+                    ..
+                }
+            );
+            let export_acknowledged = if canonical_expired {
+                false
+            } else {
+                self.reconcile_export_ack(job_id)?
+            };
             if export_acknowledged {
                 self.materialized_requests.insert(locator.intent_id);
             }
@@ -1247,12 +1288,32 @@ where
         job_id: B256,
         limits: &outbe_ocomp_protocol::SchemaLimits,
     ) -> eyre::Result<()> {
-        let export = self
+        let released = self
             .retention_selector
-            .released_export_authority(job_id)?
-            .ok_or_else(|| eyre::eyre!("closed OCOMP job has no released export authority"))?;
+            .released_job_authority(job_id)?
+            .ok_or_else(|| eyre::eyre!("closed OCOMP job has no released retention authority"))?;
+        let input_lease_id = record
+            .intent
+            .input_lease_id()
+            .wrap_err("derive released OCOMP input lease")?;
+        if released.job_id != job_id
+            || released.candidate.block_number != locator.block_number
+            || released.candidate.block_hash != locator.block_hash
+            || released.candidate.state_root != locator.state_root
+            || released.candidate.intent_id != locator.intent_id
+            || released.candidate.wwd != locator.wwd
+            || released.candidate.ce_sealed_root != record.intent.ce_sealed_root
+            || released.candidate.protocol_bundle_hash != record.intent.protocol_bundle_hash
+            || released.candidate.input_lease_id != input_lease_id
+        {
+            bail!("released OCOMP retention authority conflicts with canonical typed state");
+        }
         let candidate =
-            discovery_record(locator, record, job_id, export.source_generation, limits)?;
+            discovery_record(locator, record, job_id, released.source_generation, limits)?;
+        let Some(export) = released_export_authority_for_status(record.status, released.export)?
+        else {
+            return Ok(());
+        };
         let bundle_hash = candidate.spec.summary.protocol_bundle_hash;
         let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
             eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
@@ -1309,7 +1370,9 @@ where
         if target.block_number <= current.block_number {
             self.prepare_closed_discovery_retirements(current.block_number)?;
             self.complete_discovery_retirements(current.block_number)?;
-            self.prune_closed_requests_through(current.block_number);
+            self.prune_closed_requests_through(current.block_number)?;
+            self.retention_selector
+                .notify_closure_checkpoint(current.block_number);
             return Ok(None);
         }
         self.prepare_closed_discovery_retirements(target.block_number)?;
@@ -1317,7 +1380,9 @@ where
         self.closure_checkpoint
             .compare_and_advance_to(current, target)?;
         self.complete_discovery_retirements(target.block_number)?;
-        self.prune_closed_requests_through(target.block_number);
+        self.prune_closed_requests_through(target.block_number)?;
+        self.retention_selector
+            .notify_closure_checkpoint(target.block_number);
         Ok(Some(target))
     }
 
@@ -1361,7 +1426,7 @@ where
         Ok(())
     }
 
-    fn prune_closed_requests_through(&mut self, closed_height: u64) {
+    fn prune_closed_requests_through(&mut self, closed_height: u64) -> eyre::Result<()> {
         let closed_intents = self
             .requests
             .iter()
@@ -1371,6 +1436,11 @@ where
             })
             .collect::<Vec<_>>();
         for intent_id in closed_intents {
+            if let Some(job_id) = self.intent_jobs.get(&intent_id).copied() {
+                self.state
+                    .prune_terminal_job(job_id)
+                    .wrap_err("prune exact terminal OCOMP projection")?;
+            }
             self.requests.remove(&intent_id);
             self.materialized_requests.remove(&intent_id);
             if let Some(job_id) = self.intent_jobs.remove(&intent_id) {
@@ -1379,23 +1449,16 @@ where
                 self.pending_offers.remove(&job_id);
             }
         }
-        self.state.prune_terminal();
+        Ok(())
     }
 
     fn request_is_closed(&self, intent_id: B256) -> bool {
-        if !self.materialized_requests.contains(&intent_id) {
-            return false;
-        }
-        self.intent_jobs.get(&intent_id).is_none_or(|job_id| {
-            !matches!(
-                self.state.state(*job_id),
-                Some(
-                    EmbeddedJobStateV1::Computing
-                        | EmbeddedJobStateV1::WaitAtDeadline
-                        | EmbeddedJobStateV1::LocalReady
-                )
-            )
-        })
+        let job_id = self.intent_jobs.get(&intent_id).copied();
+        request_projection_is_closed(
+            self.materialized_requests.contains(&intent_id),
+            job_id.and_then(|job_id| self.state.state(job_id)),
+            job_id.and_then(|job_id| self.state.terminal_reason(job_id)),
+        )
     }
 
     fn publish_closure_progress(&self, target: ProjectionCheckpoint) -> eyre::Result<()> {
@@ -1524,11 +1587,16 @@ where
         job_id: B256,
         reason: EmbeddedTerminalReasonV1,
     ) -> eyre::Result<()> {
+        let first_observation = self.state.terminal_reason(job_id).is_none();
         self.state
             .reduce(job_id, EmbeddedJobEventV1::CanonicalClosed { reason })
             .wrap_err("record finalized OCOMP terminal state")?;
         if let Some(job) = self.jobs.get(&job_id) {
             job.cancelled.store(true, Ordering::Release);
+        }
+        if first_observation && reason == EmbeddedTerminalReasonV1::Expired {
+            counter!("outbe_ocomp_canonical_jobs_cancelled_total", "reason" => "expired")
+                .increment(1);
         }
         info!(%job_id, ?reason, "embedded OCOMP job reached canonical terminal state");
         Ok(())
@@ -1583,22 +1651,15 @@ where
         let Some(projection) = self.async_outcome_projection(job_id)? else {
             return Ok(());
         };
-        let committed = match self.domain.commit_local_result(&completed) {
-            Ok(committed) => committed,
-            Err(error) if projection == AsyncOutcomeProjectionV1::CheckpointPruned => {
-                warn!(%job_id, %error, "failed to persist checkpoint-pruned OCOMP local result");
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if projection == AsyncOutcomeProjectionV1::CheckpointPruned {
-            info!(
-                %job_id,
-                result_digest = %committed.result_digest,
-                "persisted checkpoint-pruned OCOMP local result without reopening protocol state"
-            );
+        if let Some(reason) =
+            ignored_compute_result_reason(projection, self.state.terminal_reason(job_id))
+        {
+            counter!("outbe_ocomp_late_compute_results_ignored_total", "reason" => reason)
+                .increment(1);
+            info!(%job_id, reason, "ignored late OCOMP result before local persistence");
             return Ok(());
         }
+        let committed = self.domain.commit_local_result(&completed)?;
         self.accept_local_result(
             job_id,
             generation,
@@ -2427,6 +2488,48 @@ fn should_wake_nod_materializer(
                 .saturating_add(retry_interval_blocks)
 }
 
+fn request_projection_is_closed(
+    export_acknowledged: bool,
+    state: Option<EmbeddedJobStateV1>,
+    terminal_reason: Option<EmbeddedTerminalReasonV1>,
+) -> bool {
+    if terminal_reason == Some(EmbeddedTerminalReasonV1::Expired) {
+        return true;
+    }
+    export_acknowledged
+        && !matches!(
+            state,
+            Some(
+                EmbeddedJobStateV1::Computing
+                    | EmbeddedJobStateV1::WaitAtDeadline
+                    | EmbeddedJobStateV1::LocalReady
+            )
+        )
+}
+
+fn released_export_authority_for_status(
+    status: OcompJobStatus,
+    export: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
+) -> eyre::Result<Option<outbe_node::ocomp::retention::ExportAuthorityV1>> {
+    if export.is_none() && status != OcompJobStatus::Expired {
+        bail!("closed non-expired OCOMP job has no released export authority");
+    }
+    Ok(export)
+}
+
+fn ignored_compute_result_reason(
+    projection: AsyncOutcomeProjectionV1,
+    terminal_reason: Option<EmbeddedTerminalReasonV1>,
+) -> Option<&'static str> {
+    if projection == AsyncOutcomeProjectionV1::CheckpointPruned {
+        Some("checkpoint_pruned")
+    } else if terminal_reason == Some(EmbeddedTerminalReasonV1::Expired) {
+        Some("expired")
+    } else {
+        None
+    }
+}
+
 struct OcompExExStateReaderV1<'a> {
     state: &'a dyn StateProvider,
 }
@@ -2447,6 +2550,65 @@ impl StorageReader for OcompExExStateReaderV1<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retention_unavailability_and_quarantine_retry_without_a_fatal_node_exit() {
+        let unavailable = classify_retention_reconciliation(
+            Err(
+                outbe_node::ocomp::retention::RetentionError::JournalUnavailable {
+                    operation: "fsync temporary",
+                    path: std::path::PathBuf::from("pin.v1.tmp"),
+                    reason: "injected journal durability failure".to_owned(),
+                },
+            ),
+            true,
+        );
+        assert!(matches!(
+            unavailable,
+            RetentionReconciliationDispositionV1::RetryFrame(
+                outbe_node::ocomp::retention::RetentionError::JournalUnavailable { .. }
+            )
+        ));
+
+        let quarantined = classify_retention_reconciliation(
+            Err(outbe_node::ocomp::retention::RetentionError::Quarantined(
+                "injected journal ambiguity".to_owned(),
+            )),
+            true,
+        );
+        assert!(matches!(
+            quarantined,
+            RetentionReconciliationDispositionV1::RetryFrame(
+                outbe_node::ocomp::retention::RetentionError::Quarantined(_)
+            )
+        ));
+
+        let wrapped_unavailable = Err::<(), _>(
+            outbe_node::ocomp::retention::RetentionError::JournalUnavailable {
+                operation: "fsync authoritative journal",
+                path: std::path::PathBuf::from("pin.v1"),
+                reason: "injected journal durability failure".to_owned(),
+            },
+        )
+        .wrap_err("bind OCOMP retention to canonical finalized typed state")
+        .expect_err("wrapped journal outage");
+        assert!(retention_runtime_error_requires_frame_retry(
+            &wrapped_unavailable
+        ));
+
+        let wrapped_quarantine =
+            Err::<(), _>(outbe_node::ocomp::retention::RetentionError::Quarantined(
+                "injected journal ambiguity".to_owned(),
+            ))
+            .wrap_err("commit exact exporter ACK to OCOMP retention")
+            .expect_err("wrapped journal quarantine");
+        assert!(retention_runtime_error_requires_frame_retry(
+            &wrapped_quarantine
+        ));
+        assert!(!retention_runtime_error_requires_frame_retry(&eyre::eyre!(
+            "unrelated finalized-frame failure"
+        )));
+    }
 
     #[test]
     fn cleared_or_replaced_outage_generation_cannot_trigger_an_old_deadline() {
@@ -2537,6 +2699,65 @@ mod tests {
         ] {
             assert!(classify_async_outcome_projection(runtime, reducer).is_err());
         }
+    }
+
+    #[test]
+    fn canonical_expiry_closes_without_export_ack_but_live_jobs_do_not() {
+        assert!(request_projection_is_closed(
+            false,
+            Some(EmbeddedJobStateV1::Closed),
+            Some(EmbeddedTerminalReasonV1::Expired),
+        ));
+        for state in [
+            EmbeddedJobStateV1::Computing,
+            EmbeddedJobStateV1::WaitAtDeadline,
+            EmbeddedJobStateV1::LocalReady,
+        ] {
+            assert!(!request_projection_is_closed(false, Some(state), None));
+            assert!(!request_projection_is_closed(true, Some(state), None));
+        }
+        assert!(request_projection_is_closed(
+            true,
+            Some(EmbeddedJobStateV1::Closed),
+            Some(EmbeddedTerminalReasonV1::Canceled),
+        ));
+    }
+
+    #[test]
+    fn only_canonical_expiry_accepts_released_retention_without_export_authority() {
+        assert_eq!(
+            released_export_authority_for_status(OcompJobStatus::Expired, None).unwrap(),
+            None
+        );
+        for status in [
+            OcompJobStatus::Completed,
+            OcompJobStatus::Conflicted,
+            OcompJobStatus::Canceled,
+        ] {
+            assert!(released_export_authority_for_status(status, None).is_err());
+        }
+    }
+
+    #[test]
+    fn expired_or_pruned_compute_is_rejected_before_persistence() {
+        assert_eq!(
+            ignored_compute_result_reason(
+                AsyncOutcomeProjectionV1::Active,
+                Some(EmbeddedTerminalReasonV1::Expired),
+            ),
+            Some("expired")
+        );
+        assert_eq!(
+            ignored_compute_result_reason(AsyncOutcomeProjectionV1::CheckpointPruned, None),
+            Some("checkpoint_pruned")
+        );
+        assert_eq!(
+            ignored_compute_result_reason(
+                AsyncOutcomeProjectionV1::Active,
+                Some(EmbeddedTerminalReasonV1::Completed),
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2853,24 +3074,6 @@ mod tests {
     fn finalized_reader_lag_tracks_scan_and_open_job_closure_independently() {
         assert_eq!(finalized_reader_lags(1_000, 900, 700), (100, 300));
         assert_eq!(finalized_reader_lags(900, 1_000, 1_000), (0, 0));
-    }
-
-    #[test]
-    fn pending_control_offers_are_replayed_until_the_ack_removes_them() {
-        let offer = DiscoveryOfferRefV1 {
-            version: 1,
-            chain_id: 7,
-            genesis_hash: B256::repeat_byte(0x11),
-            observation_id: B256::repeat_byte(0x22),
-            generation: 3,
-            discovery_record_digest: B256::repeat_byte(0x33),
-        };
-        let mut pending = BTreeMap::from([(B256::repeat_byte(0x44), offer.clone())]);
-
-        assert_eq!(pending_offer_notifications(&pending), vec![offer.clone()]);
-        assert_eq!(pending_offer_notifications(&pending), vec![offer]);
-        pending.clear();
-        assert!(pending_offer_notifications(&pending).is_empty());
     }
 
     #[test]

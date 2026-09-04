@@ -308,19 +308,17 @@ impl EmbeddedOcompJobsV1 {
             .count()
     }
 
-    /// Drop only terminal process-local projections after their covering
-    /// checkpoint is durable. Live jobs are never removed by this operation.
-    pub fn prune_terminal(&mut self) -> usize {
-        let before = self.jobs.len();
-        self.jobs.retain(|_, job| {
-            matches!(
-                job.state,
-                EmbeddedJobStateV1::Computing
-                    | EmbeddedJobStateV1::WaitAtDeadline
-                    | EmbeddedJobStateV1::LocalReady
-            )
-        });
-        before - self.jobs.len()
+    /// Drop one terminal process-local projection after the request closure
+    /// checkpoint covering that exact job is durable.
+    pub fn prune_terminal_job(&mut self, job_id: B256) -> Result<bool, EmbeddedOcompStateErrorV1> {
+        let Some(job) = self.jobs.get(&job_id) else {
+            return Ok(false);
+        };
+        if job.terminal_reason.is_none() {
+            return Err(EmbeddedOcompStateErrorV1::JobNotTerminal { job_id });
+        }
+        self.jobs.remove(&job_id);
+        Ok(true)
     }
 
     /// Highest finalized height a FullNode may expose to its execution gate.
@@ -467,4 +465,6 @@ pub enum EmbeddedOcompStateErrorV1 {
     ConflictingCanonicalTerminal { job_id: B256 },
     #[error("embedded OCOMP job {job_id} is unknown")]
     UnknownJob { job_id: B256 },
+    #[error("embedded OCOMP job {job_id} is not terminal")]
+    JobNotTerminal { job_id: B256 },
 }

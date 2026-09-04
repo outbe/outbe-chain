@@ -178,6 +178,35 @@ Feature: Off-chain computation and Metadosis
     When the stopped OCOMP workers restart for the automatic retry
     Then the retry preserves the frozen receipt and completes on every validator
 
+  @ocomp-zero-vote-exporter-outage
+  # OCOMP-TEST-ID: OCM-PUB-006
+  Scenario: Complete snapshot-exporter outage cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public measurement localnet
+    When all four OCOMP snapshot exporters are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then the zero-vote job expires at its exclusive deadline and finality continues
+    When all stopped OCOMP snapshot exporters restart for the automatic retry
+    Then the retry preserves the frozen receipt and completes on every validator
+
+  @ocomp-zero-vote-worker-outage
+  # OCOMP-TEST-ID: OCM-PUB-007
+  Scenario: Complete worker outage preserves exports and cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public measurement localnet
+    When all four OCOMP workers are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then every validator commits the exact snapshot export while all workers remain stopped
+    And the zero-vote job expires at its exclusive deadline and finality continues
+    When all stopped OCOMP workers restart for the automatic retry
+    Then the retry preserves the frozen receipt and completes on every validator
+
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery

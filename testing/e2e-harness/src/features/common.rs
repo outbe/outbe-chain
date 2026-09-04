@@ -134,7 +134,12 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
 
     let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();
     assert!(
-        world.rpc.wait_bootstrapped(bootstrap_wait_attempts),
+        world
+            .rpc
+            .wait_bootstrapped(bootstrap_wait_attempts, || {
+                world.localnet.ensure_committee_alive()
+            })
+            .expect("observe mandatory TeeRegistry bootstrap state"),
         "mandatory TEE chain did not bootstrap"
     );
 }
@@ -144,7 +149,10 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
 #[given("the committee has reached a usable height")]
 fn usable_height(world: &mut World) {
     let port = world.validators.primary_port();
-    let h = world.rpc.wait_block(port, 5, 60).unwrap_or(0);
+    let h = world
+        .rpc
+        .wait_block(port, 5, 60)
+        .expect("committee RPC must reach usable height");
     assert!(h >= 5, "committee did not reach height 5 (got {h})");
 }
 
@@ -157,14 +165,23 @@ fn state_root_parity(world: &mut World) {
     let pn = world
         .rpc
         .finalized(primary)
-        .or_else(|| world.rpc.head(primary))
-        .expect("no usable height for parity");
-    let sr0 = world
+        .expect("primary finalized height for parity");
+    let expected = world
         .rpc
-        .state_root(primary, pn)
-        .expect("primary state root");
+        .checkpoint_at(primary, pn)
+        .expect("primary finalized checkpoint for parity");
     for port in world.validators.peer_ports() {
-        let sr = world.rpc.state_root(port, pn).unwrap_or_default();
-        assert_eq!(sr, sr0, "state_root mismatch at h{pn} on port {port}");
+        assert!(
+            world.rpc.wait_finalized_at_least(port, pn, 30),
+            "RPC {port} did not finalize parity height {pn}"
+        );
+        let observed = world
+            .rpc
+            .checkpoint_at(port, pn)
+            .unwrap_or_else(|error| panic!("read RPC {port} checkpoint h{pn}: {error:#}"));
+        assert_eq!(
+            observed, expected,
+            "finalized checkpoint mismatch at h{pn} on port {port}"
+        );
     }
 }
