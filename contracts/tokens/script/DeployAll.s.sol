@@ -3,12 +3,12 @@ pragma solidity ^0.8.30;
 
 import {console2} from "forge-std/console2.sol";
 
-import {DeployCreateXDeterministic} from "./0_DeployCreateX.s.sol";
 import {DeployRoutes} from "./1_DeployRoutes.s.sol";
 import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 
 /// @dev Full token-route deploy on one chain, in one command:
-///   1. CreateX factory (reused when `CREATEX_ADDRESS` is set, or when one already sits at the deterministic address)
+/// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared,
+/// and passed in as `CREATE3_FACTORY_ADDRESS`.
 ///   2. Every route in `script/routes/Routes.sol`
 ///   3. Remote wiring for each `REMOTE_CHAIN_IDS`
 ///
@@ -20,10 +20,10 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 /// produces the same addresses, and step 3 is safe before the other chains exist.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
-/// Optional env: `CREATEX_ADDRESS`, `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,
+/// Optional env: `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,
 ///   `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
-contract DeployAll is DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes {
-    function run() public override(DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes) {
+contract DeployAll is DeployRoutes, ConfigureRemotes {
+    function run() public override(DeployRoutes, ConfigureRemotes) {
         string memory salt = vm.envString("CONTRACT_SALT");
 
         console2.log("Salt:", salt);
@@ -31,19 +31,18 @@ contract DeployAll is DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes
 
         vm.startBroadcast(_pk());
 
-        console2.log("[1/3] CreateX...");
-        address createX = vm.envOr("CREATEX_ADDRESS", address(0));
-        if (createX == address(0)) createX = deployCreateX(salt);
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
+        console2.log("Create3Factory:", factory);
 
-        console2.log("[2/3] Routes...");
-        deployRoutes(createX, salt);
+        console2.log("[1/2] Routes...");
+        deployRoutes(factory, salt);
 
-        console2.log("[3/3] Configure remotes...");
-        configureRemotes(createX, salt);
+        console2.log("[2/2] Configure remotes...");
+        configureRemotes(factory, salt);
 
         vm.stopBroadcast();
 
         console2.log("=== DeployAll complete (identical on every chain) ===");
-        console2.log("CREATEX_ADDRESS=", createX);
+        console2.log("CREATE3_FACTORY_ADDRESS=", factory);
     }
 }

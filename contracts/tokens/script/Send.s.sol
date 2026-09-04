@@ -13,7 +13,7 @@ import {Routes} from "./routes/Routes.sol";
 ///      is read off the bridge, so no address can drift out of sync with the deployment. Whether an approval is
 ///      needed follows from the bridge's own mode: lock/unlock pulls the token, burn/mint does not.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
 ///   `DEST_CHAIN_ID`, `RECIPIENT`, `SEND_AMOUNT_LD` (in the token's own decimals).
 contract Send is Routes {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
@@ -21,7 +21,7 @@ contract Send is Routes {
 
     function run() external returns (bytes32 sendId, uint256 nativeFee) {
         address signer = _deployer();
-        address createX = vm.envAddress("CREATEX_ADDRESS");
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         string memory salt = vm.envString("CONTRACT_SALT");
 
         uint32 destinationDomain = _toDomain(vm.envUint("DEST_CHAIN_ID"));
@@ -29,7 +29,7 @@ contract Send is Routes {
         uint256 amount = vm.envUint("SEND_AMOUNT_LD");
 
         ERC7786TokenBridge bridge =
-            ERC7786TokenBridge(_bridgeAddress(createX, salt, routeByLabel(vm.envString("ROUTE")).spec));
+            ERC7786TokenBridge(_bridgeAddress(factory, salt, routeByLabel(vm.envString("ROUTE")).spec));
         _requireCode(address(bridge));
         IERC20 token = bridge.token();
 

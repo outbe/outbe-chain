@@ -3,33 +3,29 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {CreateX} from "../../script/0_DeployCreateX.s.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {RouteSpec} from "../../script/routes/BaseRoute.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
 
 contract AddressHarness is DeployAll {
-    function exposedSaltHash(string memory label, string memory salt, address deployer)
-        external
-        pure
-        returns (bytes32)
-    {
-        return _saltHash(label, salt, deployer);
+    function exposedSalt(string memory label, string memory salt) external pure returns (bytes32) {
+        return _salt(label, salt);
     }
 
-    function exposedTokenAddress(address createX, string memory salt, RouteSpec memory spec)
+    function exposedTokenAddress(address factory, string memory salt, RouteSpec memory spec)
         external
         view
         returns (address)
     {
-        return _tokenAddress(createX, salt, spec);
+        return _tokenAddress(factory, salt, spec);
     }
 
-    function exposedBridgeAddress(address createX, string memory salt, RouteSpec memory spec)
+    function exposedBridgeAddress(address factory, string memory salt, RouteSpec memory spec)
         external
         view
         returns (address)
     {
-        return _bridgeAddress(createX, salt, spec);
+        return _bridgeAddress(factory, salt, spec);
     }
 
     function _deployer() internal view override returns (address) {
@@ -41,10 +37,9 @@ contract AddressHarness is DeployAll {
 ///      salt labels or to the hashing formula silently relocates deployed contracts.
 contract RouteAddressesTest is Test {
     string internal constant SALT = "TEST_V1";
-    address internal constant PINNED_DEPLOYER = address(0xA11C);
 
     AddressHarness internal deploy;
-    CreateX internal createX;
+    Create3Factory internal factory;
 
     function setUp() public {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
@@ -52,40 +47,36 @@ contract RouteAddressesTest is Test {
         vm.setEnv("DEPLOYER_PK", "0xA11CE");
 
         deploy = new AddressHarness();
-        createX = new CreateX();
+        factory = new Create3Factory();
     }
 
     /// @dev A literal snapshot, unlike the per-route checks below: those restate the derivation, so a change made in
     ///      both the code and the expectation would slip through.
-    function test_SaltHashes_MatchTheDeployedSnapshot() public view {
+    function test_Salts_MatchTheDeployedSnapshot() public view {
         assertEq(
-            deploy.exposedSaltHash("USDT", SALT, PINNED_DEPLOYER),
-            0x1173d2a590a52ef37d924756bb4c85abc3cf66fb5c380f5e6721613d0fdabf45,
-            "USDT"
+            deploy.exposedSalt("USDT", SALT), 0xf9451e8e547d5972cbb9c2b04172363a165d6eb926fa1cd2fcbb0d059ee466f3, "USDT"
         );
         assertEq(
-            deploy.exposedSaltHash("USDTBridge", SALT, PINNED_DEPLOYER),
-            0xb143a9690498f901089dfd28c7b240d1a6d4315fb815760c693d990b86de19ed,
+            deploy.exposedSalt("USDTBridge", SALT),
+            0x551ee32ce13d180dc8eae4bf798fe8662f6c6805b5091f5f6050e86892ffaeb2,
             "USDTBridge"
         );
         assertEq(
-            deploy.exposedSaltHash("USDC", SALT, PINNED_DEPLOYER),
-            0x5f5f6c1a85f7fda8ba03eb540bbc9e8ad571c3b9f0e2b5ff7c1a67a58f768230,
-            "USDC"
+            deploy.exposedSalt("USDC", SALT), 0x6d74bfda57be563c23b7c04ad6219c867d65d39d546dd38a7f06254bbb27cfe8, "USDC"
         );
         assertEq(
-            deploy.exposedSaltHash("USDCBridge", SALT, PINNED_DEPLOYER),
-            0xf1aa1dd831891dcb9c628fc9086a9950422190b29e87680da835275446a905e6,
+            deploy.exposedSalt("USDCBridge", SALT),
+            0xeda038eb609e477939ea07937cd2f3dcb2fb66ca5153595277d27e2e04bc5c0d,
             "USDCBridge"
         );
         assertEq(
-            deploy.exposedSaltHash("WCOEN", SALT, PINNED_DEPLOYER),
-            0xf1035dc456582653c95fa609764458b1683c104cd5a772aa077ca201a2134733,
+            deploy.exposedSalt("WCOEN", SALT),
+            0x6da3253d017767bcd0c52763055bea5410fa9932545aa6c8098a56e45b10ee77,
             "WCOEN"
         );
         assertEq(
-            deploy.exposedSaltHash("WCOENBridge", SALT, PINNED_DEPLOYER),
-            0xc8e1e21df01142d4883d8a7cce661a360c4c324096fba5ede37cd8522eb96727,
+            deploy.exposedSalt("WCOENBridge", SALT),
+            0x74b1f310bb4383041156513e6540f03bfb47af6339c02464f5a4cb912b4f1bdc,
             "WCOENBridge"
         );
     }
@@ -108,16 +99,14 @@ contract RouteAddressesTest is Test {
         assertEq(spec.tokenLabel, label, "token label");
 
         assertEq(
-            deploy.exposedTokenAddress(address(createX), SALT, spec),
-            createX.computeCreate3Address(keccak256(abi.encodePacked(label, SALT, address(deploy)))),
+            deploy.exposedTokenAddress(address(factory), SALT, spec),
+            factory.predict(address(deploy), keccak256(abi.encodePacked(label, SALT))),
             "token address"
         );
 
         assertEq(
-            deploy.exposedBridgeAddress(address(createX), SALT, spec),
-            createX.computeCreate3Address(
-                keccak256(abi.encodePacked(string.concat(label, "Bridge"), SALT, address(deploy)))
-            ),
+            deploy.exposedBridgeAddress(address(factory), SALT, spec),
+            factory.predict(address(deploy), keccak256(abi.encodePacked(string.concat(label, "Bridge"), SALT))),
             "bridge address"
         );
     }

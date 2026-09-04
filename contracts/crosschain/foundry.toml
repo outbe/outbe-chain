@@ -20,7 +20,11 @@ remappings = [
     "@layerzerolabs/lz-evm-oapp-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/oapp/",
     "@layerzerolabs/lz-evm-messagelib-v2/=dependencies/LayerZero-v2-3.0.0/packages/layerzero-v2/evm/messagelib/",
     "solidity-bytes-utils/=dependencies/solidity-bytes-utils-0.8.4/",
+    # Protocol-wide Solidity shared across the contracts/* projects (Create3Factory, ...).
+    "@shared/=../shared/src/",
 ]
+# @shared files import their own vendored deps by relative path, which land outside this project.
+allow_paths = ["../shared/src"]
 
 gas_reports = ["*"]
 fs_permissions = [{ access = "read-write", path = "./" }]

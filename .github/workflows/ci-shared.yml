@@ -1,4 +1,4 @@
-name: CI crosschain
+name: CI shared
 
 on:
   push:
@@ -6,14 +6,12 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
-      - "contracts/crosschain/**"
       - "contracts/shared/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
-      - "contracts/crosschain/**"
       - "contracts/shared/**"
 
 permissions:
@@ -23,4 +21,4 @@ jobs:
   ci:
     uses: ./.github/workflows/_contract-ci.yml
     with:
-      project: crosschain
+      project: shared

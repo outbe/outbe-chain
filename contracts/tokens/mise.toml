@@ -51,14 +51,6 @@ forge soldeer clean
 rm -rf ./out ./build ./cache
 '''
 
-[tasks.deploy-createx]
-description = "Deploy the CreateX CREATE3 factory (idempotent)"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-: "${NETWORK:?set NETWORK to an rpc_endpoints alias, e.g. sepolia}"
-forge script script/0_DeployCreateX.s.sol:DeployCreateXDeterministic --rpc-url "$NETWORK" --broadcast --slow -vvv
-'''
-
 [tasks.deploy-routes]
 description = "Deploy both token routes on one chain via CREATE3"
 run = '''
@@ -76,7 +68,7 @@ forge script script/2_ConfigureRemotes.s.sol:ConfigureRemotes --rpc-url "$NETWOR
 '''
 
 [tasks.deploy-all]
-description = "Deploy CreateX + both routes + remote wiring on one chain"
+description = "Deploy both routes + remote wiring on one chain"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 : "${NETWORK:?set NETWORK to an rpc_endpoints alias, e.g. sepolia}"

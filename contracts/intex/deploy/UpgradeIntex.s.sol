@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {console} from "forge-std/console.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {Create3Factory} from "@contracts/factory/Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -23,14 +23,6 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 ///      (logic-only upgrade);
 ///      pass `reinitializer` calldata here if a storage migration is ever needed.
 abstract contract UpgradeBase is BaseScript {
-    /// @dev The CREATE3 factory at its deterministic address; reverts if not yet deployed.
-    function resolveFactory() internal returns (Create3Factory) {
-        address f =
-            vm.computeCreate2Address(FACTORY_SALT, keccak256(type(Create3Factory).creationCode), CREATE2_FACTORY);
-        require(f.code.length != 0, "Create3Factory not deployed - run the deploy first");
-        return Create3Factory(f);
-    }
-
     /// @dev Upgrade the proxy at `prefix`'s deterministic address to `newImpl`.
     function upgradeProxy(Create3Factory factory, address deployer, string memory prefix, address newImpl) internal {
         address proxy = predictProxy(factory, deployer, prefix);
@@ -52,7 +44,7 @@ contract UpgradeTarget is UpgradeBase {
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
         uint32 originChainId = uint32(vm.envUint("ORIGIN_CHAIN_ID"));
 
-        Create3Factory factory = resolveFactory();
+        Create3Factory factory = create3Factory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
 
         vm.startBroadcast(pk);
@@ -75,7 +67,7 @@ contract UpgradeOrigin is UpgradeBase {
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
 
-        Create3Factory factory = resolveFactory();
+        Create3Factory factory = create3Factory();
 
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge)));

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {CREATE3} from "../vendor/solady/CREATE3.sol";
+import {CREATE3} from "./vendor/solady/CREATE3.sol";
 
 /**
  * @title Create3Factory

@@ -14,28 +14,28 @@ import {Route, Routes} from "./routes/Routes.sol";
 ///      across chains, so the remote address equals the local one - `REMOTE_CHAIN_IDS` lists chain ids only, and the
 ///      same list can be used unchanged on every chain (the local id is skipped).
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `OUTBE_CHAIN_ID`.
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `OUTBE_CHAIN_ID`.
 /// Optional env: `REMOTE_CHAIN_IDS` (csv; no-op when unset).
 contract ConfigureRemotes is Routes {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");
-        address createX = vm.envAddress("CREATEX_ADDRESS");
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
 
         vm.startBroadcast(_pk());
-        configureRemotes(createX, salt);
+        configureRemotes(factory, salt);
         vm.stopBroadcast();
     }
 
-    function configureRemotes(address createX, string memory salt) public {
+    function configureRemotes(address factory, string memory salt) public {
         uint256[] memory remotes = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
         Route[] memory list = routes();
         for (uint256 i = 0; i < list.length; i++) {
-            _wire(createX, salt, list[i].spec, remotes);
+            _wire(factory, salt, list[i].spec, remotes);
         }
     }
 
-    function _wire(address createX, string memory salt, RouteSpec memory spec, uint256[] memory remotes) internal {
-        address local = _bridgeAddress(createX, salt, spec);
+    function _wire(address factory, string memory salt, RouteSpec memory spec, uint256[] memory remotes) internal {
+        address local = _bridgeAddress(factory, salt, spec);
         _requireCode(local);
 
         address owner = Ownable(local).owner();
