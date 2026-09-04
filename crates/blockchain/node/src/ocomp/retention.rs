@@ -1764,6 +1764,22 @@ impl OcompRetentionCoordinator {
         Self::open_inner(root.into(), source, durability, None, None)
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_with_retained_tributes_and_durability(
+        root: impl Into<PathBuf>,
+        source: Arc<dyn FinalizedInputProofSource>,
+        retained_tributes: Arc<RetainedTributeWriter>,
+        durability: Arc<dyn JournalDurability>,
+    ) -> Self {
+        Self::open_inner(
+            root.into(),
+            source,
+            durability,
+            Some(retained_tributes),
+            Some(Arc::new(ProjectionRetentionFence::default())),
+        )
+    }
+
     fn open_inner(
         root: PathBuf,
         source: Arc<dyn FinalizedInputProofSource>,

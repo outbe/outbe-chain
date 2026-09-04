@@ -1727,6 +1727,11 @@ struct RecoverableDurabilityOutage {
     unavailable: AtomicBool,
 }
 
+struct FailNthDurability {
+    point: FailSync,
+    remaining_calls: AtomicUsize,
+}
+
 struct FailFirstAtomicWrite {
     inner: Arc<MemoryStorage>,
     failed: AtomicBool,
@@ -1792,6 +1797,31 @@ impl RecoverableDurabilityOutage {
     }
 }
 
+impl FailNthDurability {
+    fn disarmed(point: FailSync) -> Self {
+        Self {
+            point,
+            remaining_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn arm(&self, fail_on_call: usize) {
+        assert!(fail_on_call > 0, "fault injection call is one-based");
+        self.remaining_calls.store(fail_on_call, Ordering::SeqCst);
+    }
+
+    fn should_fail(&self, point: FailSync) -> bool {
+        if self.point != point {
+            return false;
+        }
+        self.remaining_calls
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            == Ok(1)
+    }
+}
+
 impl JournalDurability for FailOnceDurability {
     fn sync_file(&self, file: &File) -> io::Result<()> {
         if self.should_fail(FailSync::File) {
@@ -1824,6 +1854,59 @@ impl JournalDurability for RecoverableDurabilityOutage {
         }
         directory.sync_all()
     }
+}
+
+impl JournalDurability for FailNthDurability {
+    fn sync_file(&self, file: &File) -> io::Result<()> {
+        if self.should_fail(FailSync::File) {
+            return Err(io::Error::other("injected numbered file fsync failure"));
+        }
+        file.sync_all()
+    }
+
+    fn sync_directory(&self, directory: &File) -> io::Result<()> {
+        if self.should_fail(FailSync::Directory) {
+            return Err(io::Error::other(
+                "injected numbered directory fsync failure",
+            ));
+        }
+        directory.sync_all()
+    }
+}
+
+fn retain_fixture_tribute(
+    storage: &Arc<MemoryStorage>,
+    candidate: CandidatePinV1,
+    marker: u8,
+) -> (RetainedTributePin, RetainedTributeReader) {
+    let day = WorldwideDay::new(candidate.wwd);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, [marker; 32]);
+    TributeRepositoryWriter::new(storage.clone(), storage.clone())
+        .put(&TributeData {
+            tribute_id,
+            owner: Address::repeat_byte(marker.wrapping_add(1)),
+            worldwide_day: day,
+            issuance_amount_minor: U256::from(10),
+            issuance_currency: 840,
+            nominal_amount_minor: U256::from(11),
+            reference_currency: 978,
+            tribute_price_minor: U256::from(12),
+            exclude_from_intex_issuance: false,
+        })
+        .expect("fixture current Tribute");
+    let pin = RetainedTributePin {
+        input_lease_id: candidate.input_lease_id,
+        worldwide_day: day,
+    };
+    let retained_reader = RetainedTributeReader::new(storage.clone());
+    storage
+        .apply_atomic(
+            &retained_reader
+                .plan_retain_current(pin, tribute_id)
+                .expect("fixture retained copy"),
+        )
+        .expect("fixture retained transaction");
+    (pin, retained_reader)
 }
 
 #[test]
@@ -2298,6 +2381,165 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
             ..
         } if current == job_id
     ));
+}
+
+#[test]
+fn ocm_pin_001_terminal_to_gc_pending_fsync_failure_recovers_exact_transition() {
+    let request = block(100, B256::repeat_byte(0xa1), 6);
+    let candidate = candidate(&request, B256::repeat_byte(0xa2));
+    let job_id = B256::repeat_byte(0xa3);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("Terminal to GcPending recovery root");
+    let storage = Arc::new(MemoryStorage::default());
+    let (pin, retained_reader) = retain_fixture_tribute(&storage, candidate, 0xa4);
+    let durability = Arc::new(FailNthDurability::disarmed(FailSync::File));
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes_and_durability(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+        durability.clone(),
+    );
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    let finalized = ready_record(&coordinator);
+    coordinator
+        .observe_terminal(job_id, finalized.generation, 120)
+        .expect("canonical expiry becomes durable Terminal");
+
+    durability.arm(1);
+    assert!(matches!(
+        coordinator.release_due(184),
+        Err(RetentionError::Io {
+            operation: "fsync temporary",
+            ..
+        })
+    ));
+    assert!(matches!(
+        coordinator.status(),
+        RetentionStatus::Unavailable { .. }
+    ));
+    assert_eq!(
+        retained_reader
+            .list_by_day(pin, None, 10)
+            .expect("retained source before durable GC claim")
+            .records
+            .len(),
+        1,
+        "Mongo GC must not run before GcPending is durably published"
+    );
+    drop(coordinator);
+
+    let restarted = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source,
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+    );
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::GcPending {
+            job_id: current,
+            source_generation,
+            export: None,
+            ..
+        } if current == job_id && source_generation == finalized.generation
+    ));
+    restarted
+        .release_due(184)
+        .expect("recovered GcPending transition retries GC")
+        .expect("recovered GcPending transition releases the job");
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Released {
+            job_id: Some(current),
+            source_generation: Some(source_generation),
+            export: None,
+            ..
+        } if current == job_id && source_generation == finalized.generation
+    ));
+    assert!(retained_reader
+        .list_by_day(pin, None, 10)
+        .expect("retained source after recovered GC")
+        .records
+        .is_empty());
+}
+
+#[test]
+fn ocm_pin_001_gc_pending_to_released_fsync_failure_recovers_exact_transition() {
+    let request = block(100, B256::repeat_byte(0xb1), 6);
+    let candidate = candidate(&request, B256::repeat_byte(0xb2));
+    let job_id = B256::repeat_byte(0xb3);
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("GcPending to Released recovery root");
+    let storage = Arc::new(MemoryStorage::default());
+    let (pin, retained_reader) = retain_fixture_tribute(&storage, candidate, 0xb4);
+    let durability = Arc::new(FailNthDurability::disarmed(FailSync::File));
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes_and_durability(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+        durability.clone(),
+    );
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    let finalized = ready_record(&coordinator);
+    coordinator
+        .observe_terminal(job_id, finalized.generation, 120)
+        .expect("canonical expiry becomes durable Terminal");
+
+    durability.arm(2);
+    assert!(matches!(
+        coordinator.release_due(184),
+        Err(RetentionError::Io {
+            operation: "fsync temporary",
+            ..
+        })
+    ));
+    assert!(matches!(
+        coordinator.status(),
+        RetentionStatus::Unavailable { .. }
+    ));
+    assert!(
+        retained_reader
+            .list_by_day(pin, None, 10)
+            .expect("retained source after completed Mongo GC")
+            .records
+            .is_empty(),
+        "the injected second fsync must be the GcPending to Released publication"
+    );
+    drop(coordinator);
+
+    let restarted = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source,
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage)),
+    );
+    assert!(matches!(
+        ready_record(&restarted).state,
+        PinStateV1::Released {
+            job_id: Some(current),
+            source_generation: Some(source_generation),
+            export: None,
+            reason: PinReleaseReason::RetentionSatisfied,
+            ..
+        } if current == job_id && source_generation == finalized.generation
+    ));
+    assert_eq!(
+        restarted
+            .release_due(184)
+            .expect("Released replay is inert"),
+        None
+    );
+    assert!(restarted
+        .confirm_export_ack(job_id, finalized.generation, 9, B256::repeat_byte(0xb6))
+        .is_err());
 }
 
 #[test]
