@@ -42,6 +42,8 @@ const CALL_THRESHOLD_DAYS: u32 = 2;
 /// after it. The gem is issued live, so this is the one thing a scenario cannot
 /// arrange from outside.
 const CALL_LOOKBACK_DAYS: u64 = 3;
+/// Issuance mints through a message, not inside the issuing call.
+const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 /// The qualify scan runs in begin-block; a handful of blocks is plenty.
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
@@ -112,7 +114,26 @@ fn issue_source_series(world: &mut World) {
     )
     .expect("issue the source series");
 
-    world.state.gem_source_series = Some(*series.first().expect("one series was issued"));
+    let series = *series.first().expect("one series was issued");
+
+    // Issuance reaches the collection as its own message, so the units appear a
+    // block or more after the call returns. Parking before they land reverts
+    // with NonexistentToken.
+    let nft = intex_nft(world);
+    let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
+    loop {
+        if venue_probes::series_balances(&url, nft, series, merchant) == Some((u64::from(UNITS), 0))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "series {series} never minted its units to the merchant"
+        );
+        sleep(Duration::from_secs(2));
+    }
+
+    world.state.gem_source_series = Some(series);
 }
 
 #[when("the merchant parks part of their units into a gem position")]
@@ -121,17 +142,18 @@ fn park_units(world: &mut World) {
     let merchant = crate::world::origin_venue::deployer_address();
     let series = source_series(world);
 
-    let parked = eth::send_call_outcome(
-        &url,
-        addresses::GEM_FACTORY_ADDR,
-        DEPLOYER_KEY,
-        &eth::IGemFactory::issueGemPositionCall {
-            sourceIntexId: series,
-            amount: U256::from(PARKED_UNITS),
-        },
-        None,
-    )
-    .expect("park units into a gem position");
+    let call = eth::IGemFactory::issueGemPositionCall {
+        sourceIntexId: series,
+        amount: U256::from(PARKED_UNITS),
+    };
+    // The precompile reports a decode failure rather than the collection's own
+    // revert, so simulate first: that keeps the real reason in the failure.
+    if let Err(error) = eth::simulate_call(&url, addresses::GEM_FACTORY_ADDR, merchant, &call) {
+        panic!("parking units reverts: {error}");
+    }
+    let parked =
+        eth::send_call_outcome(&url, addresses::GEM_FACTORY_ADDR, DEPLOYER_KEY, &call, None)
+            .expect("park units into a gem position");
     assert_mined_success(&parked, "park units into a gem position");
 
     // The position is a single-owner NFT, and this is the merchant's first.

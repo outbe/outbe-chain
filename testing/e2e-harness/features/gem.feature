@@ -1,13 +1,13 @@
-@ocomp @tee @gramine-direct @min-validators-4
+@tee @min-validators-4
 Feature: Gem from a parked Intex to Promis
   # The merchant half of the Gem lifecycle, which nothing else covers: the
   # protocol's own reward gems are born Qualified and settled, so `Issued`,
   # the promotion on price, the Call and the two returns to the unallocated
   # pool have never run outside unit tests.
   #
-  # One chain only. Gems never leave the committee, so this scenario needs
-  # neither a second venue nor a relay - the Intex it parks is issued straight
-  # to the merchant on the committee chain.
+  # One chain, and no OCOMP. Gems never leave the committee and the source
+  # Intex is issued straight to the merchant, so this scenario needs neither a
+  # second venue, nor a relay, nor a day settled out of Tributes.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
   # The call decision is day-granular, and a gem counts breach days from its own
@@ -17,7 +17,7 @@ Feature: Gem from a parked Intex to Promis
   # DEV parameter profile this scenario runs against.
   @gem-lifecycle
   Scenario: A merchant parks an Intex, and its gems end mined, forfeited and unissued
-    Given a fresh four-validator OCOMP public capacity localnet
+    Given a fresh localnet with a 20-block voting window
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When the settlement currency is registered on the committee chain

@@ -205,7 +205,7 @@ impl TargetChain {
                 ("ORIGIN_CHAIN_ID", origin_chain_id.to_string()),
                 ("TARGET_CHAIN_IDS", chain_id.clone()),
                 ("SALT_VERSION", SALT_VERSION.to_owned()),
-            ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
+                ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
                 // Without a proceeds route the escrow refuses to finalise a day,
                 // exactly as it would on the committee-side venue.
                 ("WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
