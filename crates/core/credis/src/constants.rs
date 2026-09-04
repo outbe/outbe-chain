@@ -16,9 +16,9 @@ pub const CALL_RATE_PCT: u16 = 64;
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 
 /// Breach threshold: a position is called once the official daily reference
-/// price sat at or above its call price on this many days of the
-/// [`CALL_LOOKBACK_DAYS`] window. Days below the call price and days with no
-/// published price both simply fail to count, so the window absorbs up to
+/// price sat strictly above its call price on this many days of the
+/// [`CALL_LOOKBACK_DAYS`] window. Days at or below the call price and days with
+/// no published price both simply fail to count, so the window absorbs up to
 /// `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of them. Mirrors gem's
 /// `CALL_WINDOW` / `CALL_THRESHOLD` pair.
 pub const CALL_BREACH_DAYS: u32 = 21;
