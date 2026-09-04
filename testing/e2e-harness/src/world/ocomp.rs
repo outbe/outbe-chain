@@ -2103,19 +2103,8 @@ impl OcompTopology {
             )
             .env("OCOMP_REGISTRY_GENERATION", "1");
         let validator_index = usize::from(validator_index);
-        command
-            .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-            .env(
-                "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
-                &self.cfg.projection_mongodb_uri,
-            )
-            .env(
-                "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
-                format!(
-                    "{}_ocomp",
-                    self.cfg.validator_projection_database(validator_index)
-                ),
-            );
+        command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
+        configure_snapshot_exporter_projection(&mut command, &self.cfg, validator_index);
         if self.cfg.debug {
             eprintln!(
                 "[ocomp] launch validator-{validator_index} {role_name}: {}",
@@ -2167,16 +2156,8 @@ impl OcompTopology {
                 "OCOMP_PROTOCOL_BUNDLE_HASHES",
                 installed_protocol_bundle_hashes(&domain_root, identity.protocol_bundle_hash)?,
             );
-        command
-            .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
-            .env(
-                "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
-                &self.cfg.projection_mongodb_uri,
-            )
-            .env(
-                "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
-                format!("{}_ocomp", self.cfg.validator_projection_database(index)),
-            );
+        command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
+        configure_snapshot_exporter_projection(&mut command, &self.cfg, index);
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
         ChildGuard::spawn(
             format!("full-node-{validator_index} OCOMP {role_name}"),
@@ -2875,6 +2856,23 @@ fn configure_snapshot_exporter_command(command: &mut Command, supervisor_address
         .arg("snapshot-exporter")
         .arg("--supervisor-address")
         .arg(supervisor_address.to_string());
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn configure_snapshot_exporter_projection(
+    command: &mut Command,
+    cfg: &Config,
+    validator_index: usize,
+) {
+    command
+        .env(
+            "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
+            &cfg.projection_mongodb_uri,
+        )
+        .env(
+            "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
+            cfg.validator_projection_database(validator_index),
+        );
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4123,6 +4121,36 @@ mod tests {
             environment.get(OCOMP_VALIDATOR_INDEX_ENV),
             Some(&Some("7".to_owned()))
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn snapshot_exporter_uses_the_exact_node_projection_identity() {
+        let topology = topology_with_validators(4);
+        let validator_index = 2;
+        let mut command = Command::new("outbe-ocomp");
+
+        configure_snapshot_exporter_projection(&mut command, &topology.cfg, validator_index);
+
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let expected_database = topology.cfg.validator_projection_database(validator_index);
+        assert_eq!(
+            environment.get("OUTBE_OCOMP_PROJECTION_MONGODB_URI"),
+            Some(&Some(topology.cfg.projection_mongodb_uri.clone()))
+        );
+        assert_eq!(
+            environment.get("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE"),
+            Some(&Some(expected_database.clone()))
+        );
+        assert!(!expected_database.ends_with("_ocomp"));
     }
 
     fn child_guard() -> ChildGuard {
