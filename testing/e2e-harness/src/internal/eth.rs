@@ -27,7 +27,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
-use eyre::{eyre, Result};
+use eyre::{ensure, eyre, Result};
 use tokio::runtime::Runtime;
 
 /// Explicit limit used by negative-path calls.
@@ -70,6 +70,7 @@ fn canonical_next_block_fee_cap(url: &str, priority_fee: u128) -> Result<u128> {
     next_block_fee_cap(base_fee, priority_fee)
 }
 
+#[cfg(feature = "ocomp-integration")]
 fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     let block = raw_json_result(
         url,
@@ -90,6 +91,7 @@ fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     Ok(next_block_base_fee(base_fee, gas_used, gas_limit))
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 {
     let target = gas_limit / 2;
     let next = if target == 0 || gas_used == target {
@@ -150,6 +152,7 @@ sol!("../../contracts/precompiles/src/IAgentReward.sol");
 /// `claimReward` pool selector for the WAA (wallet) pool.
 pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) const SRA_POOL: u8 = 1;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
@@ -229,7 +232,6 @@ where
 }
 
 /// `eth_call` a view function and decode its return while preserving the failure.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn read_call_result<C: SolCall>(
     url: &str,
     to: Address,
@@ -287,6 +289,36 @@ where
 }
 
 /// Execute a typed view against the exact canonical state at `height`.
+pub(crate) fn read_call_at_result<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> std::result::Result<C::Return, String>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let endpoint = url
+            .parse()
+            .map_err(|error| format!("invalid RPC URL: {error}"))?;
+        let provider = ProviderBuilder::new().connect_http(endpoint);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        let out = provider
+            .call(tx)
+            .block(BlockId::number(height))
+            .await
+            .map_err(|error| format!("eth_call at h{height} failed: {error}"))?;
+        C::abi_decode_returns(&out).map_err(|error| format!("ABI decode failed: {error}"))
+    })
+}
+
+/// Execute a typed view against the exact canonical state at `height`, or
+/// return `None` on transport, execution, or decoding failure.
 pub(crate) fn read_call_at<C: SolCall>(
     url: &str,
     to: Address,
@@ -296,20 +328,7 @@ pub(crate) fn read_call_at<C: SolCall>(
 where
     C::Return: Send + 'static,
 {
-    let url = url.to_string();
-    let data = call.abi_encode();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        let out = provider
-            .call(tx)
-            .block(BlockId::number(height))
-            .await
-            .ok()?;
-        C::abi_decode_returns(&out).ok()
-    })
+    read_call_at_result(url, to, call, height).ok()
 }
 
 /// Require a typed view call to fail specifically as an EVM revert at the
@@ -420,14 +439,26 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
 
 /// Canonical hash, state root and protocol header artifacts for one block.
 pub(crate) fn block_commitment(url: &str, height: u64) -> Option<(B256, B256, Bytes)> {
+    block_commitment_result(url, height).ok()
+}
+
+/// Canonical hash, state root and protocol header artifacts for one exact block,
+/// preserving transport and missing-block failures.
+pub(crate) fn block_commitment_result(url: &str, height: u64) -> Result<(B256, B256, Bytes)> {
     let url = url.to_string();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
         let block = provider
             .get_block_by_number(BlockNumberOrTag::Number(height))
             .await
-            .ok()??;
-        Some((
+            .map_err(|error| eyre!("read canonical block {height}: {error}"))?
+            .ok_or_else(|| eyre!("canonical block {height} is unavailable"))?;
+        ensure!(
+            block.header.number == height,
+            "canonical block query for {height} returned height {}",
+            block.header.number
+        );
+        Ok((
             block.header.hash,
             block.header.state_root,
             block.header.extra_data.clone(),
@@ -696,6 +727,12 @@ pub(crate) fn send_call<C: SolCall>(
             tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
                 .await
                 .map_err(|_| eyre!("timed out waiting for public call receipt"))??;
+        if !receipt.status() {
+            return Err(eyre!(
+                "public contract call reverted in transaction {:#x}",
+                receipt.transaction_hash
+            ));
+        }
         Ok(format!("{:#x}", receipt.transaction_hash))
     })
 }
@@ -846,6 +883,22 @@ pub(crate) fn send_prepared_calls_outcomes(
 
 /// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
+    let outcome = send_value_outcome(url, to, key, value)?;
+    eyre::ensure!(
+        outcome.success,
+        "plain transfer reverted: {}",
+        outcome.transaction_hash
+    );
+    Ok(outcome.transaction_hash)
+}
+
+/// Preserve the mined receipt so callers can prove success and exact finality.
+pub(crate) fn send_value_outcome(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+) -> Result<MinedCallOutcome> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
@@ -860,8 +913,13 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
+        let transaction_hash = format!("{:#x}", pending.tx_hash());
         let receipt = pending.get_receipt().await?;
-        Ok(format!("{:#x}", receipt.transaction_hash))
+        Ok(MinedCallOutcome {
+            transaction_hash,
+            success: receipt.status(),
+            receipt: serde_json::to_value(receipt)?,
+        })
     })
 }
 
@@ -878,6 +936,19 @@ pub(crate) fn send_value_at_nonce(
     nonce: u64,
 ) -> Result<String> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    send_value_with_gas_at_nonce(url, to, key, value, nonce, 21_000, max_fee)
+}
+
+/// Submit an explicitly gas-budgeted pool fixture without waiting for mining.
+pub(crate) fn send_value_with_gas_at_nonce(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+    nonce: u64,
+    gas_limit: u64,
+    max_fee: u128,
+) -> Result<String> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -889,13 +960,55 @@ pub(crate) fn send_value_at_nonce(
             .to(to)
             .value(value)
             .nonce(nonce)
-            .gas_limit(21_000)
+            .gas_limit(gas_limit)
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         // Deliberately no `get_receipt()`: this transaction is not expected to
         // be mined.
         let pending = provider.send_transaction(tx).await?;
         Ok(format!("{:#x}", *pending.tx_hash()))
+    })
+}
+
+/// Canonical-tip context; account reads use its exact hash, never a later tip.
+#[derive(Clone, Debug)]
+pub(crate) struct PoolAccountAtTip {
+    pub number: u64,
+    pub timestamp: u64,
+    pub gas_limit: u64,
+    pub base_fee: u64,
+    pub balance: U256,
+    pub nonce: u64,
+}
+
+pub(crate) fn pool_account_at_tip(url: &str, address: Address) -> Result<PoolAccountAtTip> {
+    let block: alloy_rpc_types::Block<alloy_rpc_types::Transaction> =
+        serde_json::from_value(raw_json_result(
+            url,
+            "eth_getBlockByNumber",
+            serde_json::json!(["latest", false]),
+        )?)?;
+    let selector = serde_json::json!({"blockHash": block.header.hash, "requireCanonical": true});
+    let balance = serde_json::from_value(raw_json_result(
+        url,
+        "eth_getBalance",
+        serde_json::json!([address, selector]),
+    )?)?;
+    let nonce: alloy_primitives::U64 = serde_json::from_value(raw_json_result(
+        url,
+        "eth_getTransactionCount",
+        serde_json::json!([address, selector]),
+    )?)?;
+    Ok(PoolAccountAtTip {
+        number: block.header.number,
+        timestamp: block.header.timestamp,
+        gas_limit: block.header.gas_limit,
+        base_fee: block
+            .header
+            .base_fee_per_gas
+            .ok_or_else(|| eyre!("canonical tip has no base fee"))?,
+        balance,
+        nonce: nonce.to(),
     })
 }
 
@@ -1016,6 +1129,7 @@ pub(crate) fn install_delegation_with_overrides(
 /// [`install_delegation_with_overrides`] only applies when the authority is
 /// also the transaction sender and its transaction nonce is incremented
 /// before the authorization tuple is processed.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn install_delegation_for_authority(
     url: &str,
     payer_key: &str,

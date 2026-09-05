@@ -5,7 +5,6 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_nod::{NodCertifiedGenerationProjection, NodContract};
 use outbe_ocomp_protocol::{
     intent::NodTargetPreconditionV1,
@@ -15,6 +14,7 @@ use outbe_ocomp_protocol::{
     result::{ExactCountsV1, ResultRootsV1},
     SchemaLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_FACTORY_ADDRESS,
     error::{PrecompileError, Result},

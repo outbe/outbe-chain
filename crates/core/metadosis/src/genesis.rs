@@ -5,7 +5,7 @@
 //! mutation permit, or arbitrary callback.
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{

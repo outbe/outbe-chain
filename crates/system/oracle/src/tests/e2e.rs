@@ -928,7 +928,7 @@ fn export_genesis_omits_a_zero_initial_rate() {
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        let worldwide_day = outbe_common::WorldwideDay::new(20260302);
+        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
         let start_time = worldwide_day.start_timestamp();
         let end_time = start_time + 50 * 60 * 60;
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
@@ -1007,7 +1007,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
 #[test]
 fn day_type_pair_vwap_reports_missing_data_without_reverting() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20260302u32);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260302u32);
         let start_time = wwd.start_timestamp();
         let end_time = start_time + 50 * 60 * 60;
 
@@ -1062,7 +1062,7 @@ fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
         let mut oracle = OracleContract::new(storage);
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        let worldwide_day = outbe_common::WorldwideDay::new(20260815);
+        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp();
         let end = start + 50 * 60 * 60;
 
@@ -1151,7 +1151,7 @@ fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
         let mut oracle = OracleContract::new(storage);
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        let worldwide_day = outbe_common::WorldwideDay::new(20260815);
+        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp();
         let end = start + 50 * 60 * 60;
         oracle
@@ -1730,7 +1730,7 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
 #[test]
 fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
     let eur: Address = AssetType::IsoCurrency(978).into();
-    let day = outbe_common::WorldwideDay::new(20260302u32);
+    let day = outbe_primitives::time::WorldwideDay::new(20260302u32);
     let start_time = day.start_timestamp();
 
     with_storage(|storage| {

@@ -18,7 +18,7 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
     ShuffleRunArtifactV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         unit_id: B256::repeat_byte(3),
         kind: ShuffleRunKindV1::Owner,
         run_span: CanonicalRunSpan {
@@ -46,7 +46,7 @@ fn result_chunk_bytes() -> Vec<u8> {
     ResultChunkV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         chunk_ordinal: 0,
         first_nod_ordinal: 0,
         ordered_nod_actions: Vec::new(),

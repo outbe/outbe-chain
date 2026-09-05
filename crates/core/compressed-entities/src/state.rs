@@ -344,7 +344,8 @@ impl<'storage> State<'storage> {
         let mut unique = BTreeSet::new();
         let mut retirements = Vec::with_capacity(days.len());
         for day in days {
-            let partition = PartitionRef::TributeWwd(outbe_common::WorldwideDay::new(day));
+            let partition =
+                PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(day));
             let (_, key) =
                 partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
             let storage_key = B256::from(*key.as_bytes());
@@ -593,7 +594,8 @@ impl<'storage> State<'storage> {
         let retirement_days = schema.retirement_touched.read_all()?;
         let mut unique_retirements = BTreeSet::new();
         for day in &retirement_days {
-            let partition = PartitionRef::TributeWwd(outbe_common::WorldwideDay::new(*day));
+            let partition =
+                PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(*day));
             let (_, key) =
                 partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
             let storage_key = B256::from(*key.as_bytes());

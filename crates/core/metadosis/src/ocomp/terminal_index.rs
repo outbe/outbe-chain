@@ -1,15 +1,14 @@
 //! Per-WorldwideDay terminal-evidence index.
 //!
-//! One WorldwideDay owns one append-only list of terminal IntentIds, bounded
-//! by the frozen profile's per-day `max_terminal_job_records`. Entries live in
+//! One WorldwideDay owns exactly one terminal IntentId. Entries live in
 //! the sparse `ocomp_terminal_intents` mapping under a domain-separated
 //! composite key; `ocomp_terminal_counts` is the sole authority for each
 //! day's length. Entries are immutable once written and are deleted together
 //! with the day on retirement.
 
 use alloy_primitives::{keccak256, B256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 
@@ -38,6 +37,7 @@ impl MetadosisContract<'_> {
     /// Reads the terminal IntentId at one position, `None` when the slot is
     /// vacant. Positions below the day's count must never be vacant; callers
     /// that iterate use [`Self::terminal_intents_for`], which enforces that.
+    #[cfg(test)]
     pub(crate) fn terminal_intent_at(&self, wwd: WorldwideDay, index: u16) -> Result<Option<B256>> {
         let entry = self
             .ocomp_terminal_intents
@@ -46,13 +46,14 @@ impl MetadosisContract<'_> {
     }
 
     /// Materializes the day's terminal IntentIds in canonical attempt order.
-    /// Fails closed when the stored count exceeds the per-day cap or any
-    /// position below the count is vacant.
-    pub(crate) fn terminal_intents_for(&self, wwd: WorldwideDay, cap: u16) -> Result<Vec<B256>> {
+    /// Fails closed when the stored count violates the single-attempt model or
+    /// the terminal position is vacant.
+    #[cfg(test)]
+    pub(crate) fn terminal_intents_for(&self, wwd: WorldwideDay) -> Result<Vec<B256>> {
         let count = self.terminal_intent_count(wwd)?;
-        if count > cap {
+        if count > 1 {
             return Err(storage_corruption_message(
-                "OCOMP terminal index exceeds the per-day profile cap",
+                "OCOMP terminal index violates the single-attempt model",
             ));
         }
         let mut intents = Vec::new();
@@ -71,14 +72,13 @@ impl MetadosisContract<'_> {
     }
 
     /// Appends one terminal IntentId to the day's list. Rejects a zero id, a
-    /// day already at its cap, and any overwrite of an occupied position; the
+    /// day that already has a terminal job, and any overwrite of its occupied position; the
     /// entry is written before the count so the count never references a
     /// vacant slot.
     pub(crate) fn push_terminal_intent(
         &mut self,
         wwd: WorldwideDay,
         intent_id: B256,
-        cap: u16,
     ) -> Result<()> {
         if intent_id.is_zero() {
             return Err(storage_corruption_message(
@@ -86,9 +86,9 @@ impl MetadosisContract<'_> {
             ));
         }
         let count = self.terminal_intent_count(wwd)?;
-        if count >= cap {
+        if count != 0 {
             return Err(storage_corruption_message(
-                "OCOMP terminal record cap exhausted",
+                "OCOMP WorldwideDay already has a terminal job",
             ));
         }
         let key = terminal_entry_key(wwd, count);

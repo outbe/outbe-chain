@@ -62,7 +62,7 @@ fn fixture() -> ReceiptFixture {
     let manifest = InputManifestV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id,
-        attempt: 2,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 91,
             finalized_block_hash: hash(3),

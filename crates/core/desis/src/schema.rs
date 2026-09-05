@@ -1,9 +1,9 @@
 //! Storage schema for the Desis module.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
+use outbe_primitives::time::WorldwideDay;
 
 /// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
 /// commit window, `Revealing` for the reveal window, `Clearing` while the

@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true

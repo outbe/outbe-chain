@@ -9,7 +9,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
     encode_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
@@ -29,6 +28,7 @@ use outbe_offchain_storage::{
     StoredValue,
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     canonical_body, precompile::ITribute, RetainedTributePin, RetainedTributeReader, TributeData,
     TributePageRequest, TributeRepositoryReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,

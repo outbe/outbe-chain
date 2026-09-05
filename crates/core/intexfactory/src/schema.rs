@@ -2,10 +2,10 @@
 //! unqualified-series bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::time::WorldwideDay;
 
 /// Issuance inputs captured on Outbe.
 #[derive(Debug, Clone, PartialEq, Eq)]

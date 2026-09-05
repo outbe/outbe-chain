@@ -138,6 +138,7 @@ fn successful_receipt_and_supply(world: &mut World) {
                     if world
                         .localnet
                         .enclave_log_has(index, "req=process_tribute_offer_batch")
+                        .expect("read required owned process log")
                     {
                         telemetry_visible = true;
                         break;

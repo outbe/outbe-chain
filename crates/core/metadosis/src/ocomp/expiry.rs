@@ -1,20 +1,19 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::state::OcompJobStatus;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::{
     aggregate::ValidatedWwdAggregate,
     errors::storage_corruption_message,
     precompile::IMetadosis,
-    reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
+    reducer::{reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition},
     schema::MetadosisContract,
 };
 
 use super::{
-    profile::OcompRequestProfileExt,
-    schema::{poc_schema_limits, OcompExpiryDisposition},
+    schema::poc_schema_limits,
     state::{DayPhase, JobFsmProjection},
     vote::{OcompPenaltyMetrics, ResponseWindowCloseV1},
 };
@@ -33,9 +32,8 @@ pub fn record_certified_parent_finality(
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(false);
     };
-    let limits = profile.fsm_limits();
     let mut matched = None;
-    for state in metadosis.live_ocomp_fsm_states(&schema_limits, limits)? {
+    for state in metadosis.live_ocomp_fsm_states(&schema_limits)? {
         let intent_id = state
             .projection()
             .live_intent_id
@@ -78,35 +76,34 @@ pub fn run_lifecycle_begin_with_scope(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
 ) -> Result<OcompPenaltyMetrics> {
-    if let Some(wwd) = missed_lifecycle_boundary(ctx)? {
-        crate::terminal::fail_worldwide_day(
-            ctx.storage.clone(),
-            ctx.block.block_number,
-            ctx.block.timestamp,
+    if let Some(before) = missed_lifecycle_boundary(ctx)? {
+        let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
+        let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
+            storage_corruption_message("overdue OCOMP expiry has no persisted outer WorldwideDay")
+        })?;
+        let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
+        expire_exact(
+            &mut MetadosisContract::new(ctx.storage.clone()),
+            ctx,
             scope,
-            wwd,
+            before,
+            &outer_transition,
         )?;
         return Ok(OcompPenaltyMetrics::default());
     }
-    run_lifecycle_begin_exact(ctx, Some(scope))
-}
-
-#[cfg(test)]
-pub(crate) fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<OcompPenaltyMetrics> {
-    run_lifecycle_begin_exact(ctx, None)
+    run_lifecycle_begin_exact(ctx, scope)
 }
 
 fn run_lifecycle_begin_exact(
     ctx: &BlockRuntimeContext<'_>,
-    scope: Option<&ExecutionScope>,
+    scope: &ExecutionScope,
 ) -> Result<OcompPenaltyMetrics> {
     let schema_limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
-    let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
+    let Some(_profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(OcompPenaltyMetrics::default());
     };
-    let limits = profile.fsm_limits();
-    metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits, limits)?;
+    metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     let response =
         metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)?;
@@ -115,7 +112,7 @@ fn run_lifecycle_begin_exact(
         ResponseWindowCloseV1::NotDue | ResponseWindowCloseV1::QuorumPreserved { .. } => Ok(()),
         ResponseWindowCloseV1::NoQuorum { intent_id } => {
             let state = metadosis
-                .live_ocomp_fsm_state_by_intent(intent_id, &schema_limits, limits)?
+                .live_ocomp_fsm_state_by_intent(intent_id, &schema_limits)?
                 .ok_or_else(|| {
                     storage_corruption_message("no-quorum OCOMP close has no live job")
                 })?;
@@ -135,29 +132,13 @@ fn run_lifecycle_begin_exact(
                     "no-quorum OCOMP close has no persisted outer WorldwideDay",
                 )
             })?;
-            let event = if before
-                .terminal_records
-                .checked_add(1)
-                .is_some_and(|count| count == limits.max_terminal_records)
-            {
-                OuterWwdEvent::OcompAttemptsExhausted
-            } else {
-                OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired)
-            };
-            let outer_transition = reduce_outer_wwd(Some(current), event)?;
-            expire_exact(
-                &mut metadosis,
-                ctx,
-                scope,
-                before,
-                limits,
-                &outer_transition,
-            )
+            let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
+            expire_exact(&mut metadosis, ctx, scope, before, &outer_transition)
         }
     }?;
 
     let mut due = None;
-    for state in metadosis.live_ocomp_fsm_states(&schema_limits, limits)? {
+    for state in metadosis.live_ocomp_fsm_states(&schema_limits)? {
         let before = state.projection();
         let intent_id = before
             .live_intent_id
@@ -191,35 +172,18 @@ fn run_lifecycle_begin_exact(
     let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
         storage_corruption_message("awaiting-finality expiry has no persisted outer WorldwideDay")
     })?;
-    let event = if before
-        .terminal_records
-        .checked_add(1)
-        .is_some_and(|count| count == limits.max_terminal_records)
-    {
-        OuterWwdEvent::OcompAttemptsExhausted
-    } else {
-        OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired)
-    };
-    let outer_transition = reduce_outer_wwd(Some(current), event)?;
-    expire_exact(
-        &mut metadosis,
-        ctx,
-        scope,
-        before,
-        limits,
-        &outer_transition,
-    )?;
+    let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
+    expire_exact(&mut metadosis, ctx, scope, before, &outer_transition)?;
     Ok(metrics)
 }
 
-fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<WorldwideDay>> {
+fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<JobFsmProjection>> {
     let schema_limits = poc_schema_limits();
     let metadosis = MetadosisContract::new(ctx.storage.clone());
-    let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
+    let Some(_profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(None);
     };
-    let limits = profile.fsm_limits();
-    for state in metadosis.live_ocomp_fsm_states(&schema_limits, limits)? {
+    for state in metadosis.live_ocomp_fsm_states(&schema_limits)? {
         let projection = state.projection();
         let intent_id = projection
             .live_intent_id
@@ -230,24 +194,17 @@ fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<Wor
         match record.status {
             OcompJobStatus::AwaitingFinality => {
                 if let Some(finalized) = record.finalized.as_ref() {
-                    if ctx.block.block_number > finalized.open_height {
-                        return Ok(Some(projection.worldwide_day));
+                    if ctx.block.block_number >= finalized.deadline_height {
+                        return Ok(Some(projection));
                     }
                 } else if projection
                     .deadline_height
                     .is_some_and(|deadline| ctx.block.block_number > deadline)
                 {
-                    return Ok(Some(projection.worldwide_day));
+                    return Ok(Some(projection));
                 }
             }
-            OcompJobStatus::VotingOpen => {
-                let finalized = record.finalized.as_ref().ok_or_else(|| {
-                    storage_corruption_message("OCOMP voting job is not finalized")
-                })?;
-                if ctx.block.block_number > finalized.deadline_height {
-                    return Ok(Some(projection.worldwide_day));
-                }
-            }
+            OcompJobStatus::VotingOpen => {}
             _ => {}
         }
     }
@@ -257,93 +214,56 @@ fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<Wor
 fn expire_exact(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    scope: Option<&ExecutionScope>,
+    scope: &ExecutionScope,
     before: JobFsmProjection,
-    limits: super::state::JobFsmLimits,
     outer_transition: &OuterWwdTransition,
 ) -> Result<()> {
     let intent_id = before
         .live_intent_id
         .ok_or_else(|| storage_corruption_message("pending OCOMP state has no live IntentId"))?;
-    let old_pending_nonce = before.pending_nonce;
-    let disposition = metadosis.expire_ocomp_job(
+    let retained_lysis_budget = metadosis.expire_ocomp_job(
         outer_transition,
         intent_id,
         ctx.block.block_number,
         ctx.block.timestamp,
         &poc_schema_limits(),
-        limits,
     )?;
-    let expected_next = old_pending_nonce
-        .checked_add(1)
-        .ok_or_else(|| storage_corruption_message("OCOMP pending nonce overflow after expiry"))?;
-    match disposition {
-        OcompExpiryDisposition::RetryScheduled { next_pending_nonce } => {
-            let after = metadosis
-                .ocomp_fsm_state(before.worldwide_day, &poc_schema_limits(), limits)?
-                .projection();
-            if next_pending_nonce != expected_next
-                || after.phase != DayPhase::Ready
-                || after.pending_nonce != expected_next
-                || after.next_check_height != ctx.block.block_number.checked_add(1)
-                || after.live_intent_id.is_some()
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP expiry retry post-state is inconsistent",
-                ));
-            }
-        }
-        OcompExpiryDisposition::TerminalNoRetry {
-            next_pending_nonce,
-            retained_lysis_budget,
-        } => {
-            let expected_budget = before.retained_lysis_budget.ok_or_else(|| {
-                storage_corruption_message("terminal OCOMP expiry has no retained budget")
-            })?;
-            if retained_lysis_budget != expected_budget {
-                return Err(storage_corruption_message(
-                    "terminal OCOMP expiry returned a different retained budget",
-                ));
-            }
-            let scope = scope.ok_or_else(|| {
-                storage_corruption_message(
-                    "terminal OCOMP expiry requires an active execution scope",
-                )
-            })?;
-            crate::terminal::fail_exhausted_ocomp_day(
-                ctx.storage.clone(),
-                ctx.block.block_number,
-                scope,
-                before.worldwide_day,
-                intent_id,
-                retained_lysis_budget,
-                outer_transition,
-            )?;
-            if next_pending_nonce != expected_next
-                || metadosis.get_wwd_status(before.worldwide_day)?
-                    != crate::aggregate::WwdStatus::Failed
-                || metadosis
-                    .read_metadosis_failure_receipt(before.worldwide_day, expected_budget)?
-                    .is_none()
-                || metadosis
-                    .live_ocomp_fsm_state_by_intent(intent_id, &poc_schema_limits(), limits)?
-                    .is_some()
-                || !metadosis
-                    .ocomp_fsm_states
-                    .get_bytes(&before.worldwide_day)
-                    .is_empty()?
-            {
-                return Err(storage_corruption_message(
-                    "OCOMP terminal no-retry post-state is inconsistent",
-                ));
-            }
-        }
+    let expected_budget = before.retained_lysis_budget.ok_or_else(|| {
+        storage_corruption_message("terminal OCOMP expiry has no retained budget")
+    })?;
+    if retained_lysis_budget != expected_budget {
+        return Err(storage_corruption_message(
+            "terminal OCOMP expiry returned a different retained budget",
+        ));
+    }
+    crate::terminal::fail_expired_ocomp_day(
+        ctx.storage.clone(),
+        ctx.block.block_number,
+        scope,
+        before.worldwide_day,
+        intent_id,
+        retained_lysis_budget,
+        outer_transition,
+    )?;
+    if metadosis.get_wwd_status(before.worldwide_day)? != crate::aggregate::WwdStatus::Failed
+        || metadosis
+            .read_metadosis_failure_receipt(before.worldwide_day, expected_budget)?
+            .is_none()
+        || metadosis
+            .live_ocomp_fsm_state_by_intent(intent_id, &poc_schema_limits())?
+            .is_some()
+        || !metadosis
+            .ocomp_fsm_states
+            .get_bytes(&before.worldwide_day)
+            .is_empty()?
+    {
+        return Err(storage_corruption_message(
+            "OCOMP expiry post-state is inconsistent",
+        ));
     }
     metadosis.emit(IMetadosis::OffchainJobExpired {
         intentId: intent_id,
         wwd: before.worldwide_day.value(),
-        oldPendingNonce: old_pending_nonce,
-        nextPendingNonce: expected_next,
         expiredAtHeight: ctx.block.block_number,
     })
 }

@@ -7,7 +7,6 @@ pub mod cas;
 pub mod control;
 pub mod discovery_control;
 pub mod discovery_spool;
-pub mod discovery_transport;
 pub mod embedded;
 pub mod embedded_runtime;
 pub mod export_binding;

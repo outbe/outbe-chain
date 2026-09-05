@@ -54,16 +54,14 @@ fn short_grace_setup(world: &mut World) {
 #[when("a staked joiner freezes a 4-to-5 reshare target")]
 fn freeze_target(world: &mut World) {
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    world.rpc.wait_block(joiner_port, 20, 40);
     let key = world.validators.joiner().evm_key().expect("joiner key");
     world.rpc.stake(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));
@@ -124,6 +122,7 @@ fn old_committee_reaches_expiry_without_partial_activation(world: &mut World) {
             world
                 .localnet
                 .log_has(index, "frozen DKG target missed VRF expiry")
+                .expect("read required owned process log")
         }) {
             break;
         }
@@ -150,7 +149,8 @@ fn surviving_validators_fail_closed(world: &mut World) {
         assert!(
             world
                 .localnet
-                .log_has(index, "frozen DKG target missed VRF expiry"),
+                .log_has(index, "frozen DKG target missed VRF expiry")
+                .expect("read required owned process log"),
             "validator-{index} lacks frozen-target expiry evidence (deadline {expiry})"
         );
         assert!(
@@ -171,10 +171,13 @@ fn old_committee_keeps_finalizing(world: &mut World) {
     let mut alive_grow = false;
     for _ in 0..30 {
         sleep(Duration::from_secs(10));
-        let h = world.rpc.head(primary).unwrap_or(0);
+        let Some(h) = world.rpc.head(primary) else {
+            continue;
+        };
         retry = world
             .localnet
-            .log_count(0, "DKG reshare failed, retrying frozen target");
+            .log_count(0, "DKG reshare failed, retrying frozen target")
+            .expect("read required owned process log");
         if h > kill_h + 12 {
             alive_grow = true;
         }
@@ -191,7 +194,10 @@ fn old_committee_keeps_finalizing(world: &mut World) {
         "old committee did not keep finalizing (3-of-4 quorum)"
     );
     assert_eq!(
-        world.localnet.log_count(0, "hard halt"),
+        world
+            .localnet
+            .log_count(0, "hard halt")
+            .expect("read required owned process log"),
         0,
         "unexpected hard-halt (no such model exists)"
     );
@@ -250,7 +256,10 @@ fn reshare_completes(world: &mut World) {
         .as_deref()
         .expect("expected offline participant reveal identity");
     assert!(
-        world.localnet.log_has(0, revealed),
+        world
+            .localnet
+            .log_has(0, revealed)
+            .expect("read required owned process log"),
         "reshare completed without recording the expected offline participant reveal"
     );
 }

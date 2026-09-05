@@ -8,14 +8,13 @@
 //! `2>/dev/null || echo dn`. Only governance (`vote`), tribute, `confirm-ready`,
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
+use std::collections::BTreeMap;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall as _};
-use eyre::{eyre, Result, WrapErr as _};
-#[cfg(feature = "ocomp-integration")]
-use outbe_common::WorldwideDay;
+use eyre::{ensure, eyre, Result, WrapErr as _};
 use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 #[cfg(feature = "ocomp-integration")]
 use outbe_nod::NodCertifiedGenerationProjection;
@@ -25,12 +24,14 @@ use outbe_nodfactory::certified_read::active_nod_set;
 use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1,
     profile::poc_schema_limits,
-    state::{ActiveGenerationV1, OcompJobRecordV1},
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     vote::OcompVoteAccountabilityV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocompregistry::precompile::IOcompRegistry;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
+#[cfg(feature = "ocomp-integration")]
+use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
@@ -172,6 +173,7 @@ pub struct MetadosisWorldwideDayTerminalReceiptV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicJobRequestV1 {
     pub intent_id: B256,
+    pub job_id: B256,
     pub worldwide_day: u32,
     pub pending_nonce: u64,
     pub attempt: u32,
@@ -182,6 +184,43 @@ pub struct OcompPublicJobRequestV1 {
     pub request_height: u64,
     pub request_block_hash: B256,
     pub transaction_hash: B256,
+}
+
+/// A request event can be finalized before the later canonical job binding.
+/// Absence is deliberately distinct from a present request that is not ready.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OcompRequestObservation {
+    Absent,
+    AwaitingFinality {
+        intent_id: B256,
+    },
+    TerminalWithoutBinding {
+        intent_id: B256,
+        status: OcompJobStatus,
+    },
+    Bound(OcompPublicJobRequestV1),
+}
+
+#[cfg(feature = "ocomp-integration")]
+impl OcompRequestObservation {
+    /// Negative assertions accept only a successfully observed absence.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// Positive bounded polls may wait for absence/pending, but cannot wait
+    /// forever for a request that has already terminated without a binding.
+    pub fn into_bound_request(self) -> Result<Option<OcompPublicJobRequestV1>> {
+        match self {
+            Self::Absent | Self::AwaitingFinality { .. } => Ok(None),
+            Self::Bound(request) => Ok(Some(request)),
+            Self::TerminalWithoutBinding { intent_id, status } => Err(eyre!(
+                "OCOMP request {intent_id:#x} terminated as {status:?} before job binding"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -358,6 +397,14 @@ pub struct TxOutcome {
     pub receipt: serde_json::Value,
 }
 
+/// One exact canonical block observed only after every requested node finalized it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalizedCheckpoint {
+    pub height: u64,
+    pub block_hash: B256,
+    pub state_root: B256,
+}
+
 impl TxOutcome {
     /// Canonical block number from the mined receipt.
     pub fn block_number(&self) -> Option<u64> {
@@ -368,6 +415,18 @@ impl TxOutcome {
     /// Exact native fee charged by this transaction.
     pub fn gas_cost(&self) -> Option<U256> {
         Rpc::receipt_gas_cost(&self.receipt)
+    }
+
+    /// Canonical block hash carried by the mined receipt.
+    pub fn block_hash(&self) -> Result<B256> {
+        let encoded = self
+            .receipt
+            .get("blockHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("mined receipt omitted blockHash"))?;
+        encoded
+            .parse()
+            .wrap_err_with(|| format!("parse mined receipt blockHash {encoded}"))
     }
 }
 
@@ -764,17 +823,84 @@ impl Rpc {
     }
 
     /// Whether the node at `port` still holds `tx_hash` in either sub-pool.
-    pub fn txpool_has(&self, port: u16, tx_hash: &str) -> bool {
-        let Some(content) = eth::raw_json(&self.url(port), "txpool_content") else {
-            return false;
-        };
-        let needle = tx_hash.to_ascii_lowercase();
-        // `txpool_content` is {pending|queued: {sender: {nonce: tx}}}; the hash
-        // lives inside each tx object, so a serialized-contains check is both
-        // sufficient and immune to field-layout changes.
-        serde_json::to_string(&content)
-            .map(|text| text.to_ascii_lowercase().contains(&needle))
-            .unwrap_or(false)
+    pub fn txpool_has(&self, port: u16, tx_hash: &str) -> Result<bool> {
+        Ok(self.txpool_location(port, tx_hash)?.is_some())
+    }
+
+    /// Exact sub-pool containing `tx_hash`, preserving transport/decode errors.
+    pub fn txpool_location(&self, port: u16, tx_hash: &str) -> Result<Option<&'static str>> {
+        let needle: B256 = tx_hash
+            .parse()
+            .wrap_err("parse requested transaction hash")?;
+        let content =
+            eth::raw_json_result(&self.url(port), "txpool_content", serde_json::json!([]))
+                .wrap_err_with(|| format!("read txpool_content from RPC port {port}"))?;
+        let mut found = None;
+        let mut seen = BTreeMap::new();
+        let mut positions = BTreeMap::new();
+        for kind in ["pending", "queued"] {
+            let section = content
+                .get(kind)
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| {
+                    eyre!("txpool_content omitted or malformed {kind} on RPC port {port}")
+                })?;
+            for (sender, nonces) in section {
+                let sender: Address = sender.parse().wrap_err("parse txpool sender")?;
+                let nonces = nonces.as_object().ok_or_else(|| {
+                    eyre!("txpool {kind} sender {sender} has malformed nonce map")
+                })?;
+                for (nonce_key, transaction) in nonces {
+                    let nonce: u64 = nonce_key
+                        .parse()
+                        .wrap_err("parse txpool decimal nonce key")?;
+                    ensure!(
+                        nonce.to_string() == *nonce_key,
+                        "txpool nonce key is not canonical decimal: {nonce_key}"
+                    );
+                    let hash: B256 = serde_json::from_value(
+                        transaction.get("hash").cloned().unwrap_or_default(),
+                    )
+                    .wrap_err("parse txpool transaction hash")?;
+                    let from: Address = serde_json::from_value(
+                        transaction.get("from").cloned().unwrap_or_default(),
+                    )
+                    .wrap_err("parse txpool transaction sender")?;
+                    let encoded_nonce = transaction
+                        .get("nonce")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|value| value.strip_prefix("0x"))
+                        .ok_or_else(|| {
+                            eyre!("txpool transaction {hash} omitted or malformed nonce")
+                        })?;
+                    let transaction_nonce = u64::from_str_radix(encoded_nonce, 16)
+                        .wrap_err("parse txpool transaction nonce")?;
+                    ensure!(
+                        !encoded_nonce.is_empty()
+                            && encoded_nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            && (encoded_nonce == "0" || !encoded_nonce.starts_with('0')),
+                        "txpool transaction {hash} has noncanonical nonce quantity"
+                    );
+                    ensure!(
+                        from == sender && transaction_nonce == nonce,
+                        "txpool transaction {hash} contradicts sender/nonce map entry"
+                    );
+                    ensure!(
+                        seen.insert(hash, kind).is_none(),
+                        "txpool returned duplicate transaction {hash}"
+                    );
+                    ensure!(
+                        positions.insert((sender, nonce), hash).is_none(),
+                        "txpool returned conflicting transactions for sender {sender} nonce {nonce}"
+                    );
+                    if hash == needle {
+                        found = Some(kind);
+                    }
+                }
+            }
+        }
+        // Validate both complete sub-pools even after finding the requested hash.
+        Ok(found)
     }
 
     /// Chain identity reported by the node at `port`.
@@ -787,6 +913,170 @@ impl Rpc {
     /// Finalized block number on the node at `port`.
     pub fn finalized(&self, port: u16) -> Option<u64> {
         eth::finalized_number(&self.url(port))
+    }
+
+    /// Finalized height with transport, shape, and decode errors preserved.
+    pub fn finalized_result(&self, port: u16) -> Result<u64> {
+        let value = eth::raw_json_result(
+            &self.url(port),
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )
+        .wrap_err_with(|| format!("read finalized block from RPC port {port}"))?;
+        let number = value
+            .get("number")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("finalized block on RPC port {port} omitted number"))?;
+        u64::from_str_radix(number.trim_start_matches("0x"), 16)
+            .wrap_err_with(|| format!("decode finalized height {number} from RPC port {port}"))
+    }
+
+    /// Require one exact canonical block identity from a node.
+    pub fn checkpoint_at(&self, port: u16, height: u64) -> Result<FinalizedCheckpoint> {
+        let (block_hash, state_root, _) = eth::block_commitment_result(&self.url(port), height)
+            .wrap_err_with(|| format!("read checkpoint h{height} from RPC port {port}"))?;
+        Ok(FinalizedCheckpoint {
+            height,
+            block_hash,
+            state_root,
+        })
+    }
+
+    pub fn finalize_outcome(
+        &self,
+        outcome: &TxOutcome,
+        ports: &[u16],
+        tries: u32,
+    ) -> Result<FinalizedCheckpoint> {
+        let receipt_success = match outcome
+            .receipt
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("0x1") => true,
+            Some("0x0") => false,
+            _ => return Err(eyre!("mined receipt omitted or malformed status")),
+        };
+        ensure!(
+            outcome.success == receipt_success,
+            "transaction outcome contradicts mined receipt status"
+        );
+        let transaction_hash: B256 = outcome
+            .transaction_hash
+            .parse()
+            .wrap_err("parse transaction outcome hash")?;
+        let receipt_transaction_hash: B256 = serde_json::from_value(
+            outcome
+                .receipt
+                .get("transactionHash")
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .wrap_err("parse mined receipt transactionHash")?;
+        ensure!(
+            transaction_hash == receipt_transaction_hash,
+            "transaction outcome contradicts mined receipt transactionHash"
+        );
+        ensure!(
+            outcome.success,
+            "cannot finalize a reverted transaction outcome"
+        );
+        ensure!(
+            !ports.is_empty(),
+            "finalized outcome requires at least one RPC"
+        );
+        let height = outcome
+            .block_number()
+            .ok_or_else(|| eyre!("mined receipt omitted or malformed blockNumber"))?;
+        let receipt_hash = outcome.block_hash()?;
+        self.wait_finalized_checkpoint(ports, height, tries)?;
+        let mut expected = None;
+        for &port in ports {
+            let observed = self.checkpoint_at(port, height)?;
+            ensure!(
+                observed.block_hash == receipt_hash,
+                "RPC port {port} canonical hash at h{height} differs from receipt: {} != {receipt_hash}",
+                observed.block_hash
+            );
+            if let Some(expected) = expected {
+                ensure!(
+                    observed == expected,
+                    "RPC port {port} disagrees on finalized checkpoint h{height}: {observed:?} != {expected:?}"
+                );
+            } else {
+                expected = Some(observed);
+            }
+        }
+        expected.ok_or_else(|| eyre!("finalized outcome had no checkpoint observations"))
+    }
+
+    /// Capture a post-event progress target from every expected live node.
+    /// Call only after repair completes: neither an unavailable node nor a
+    /// faster peer may disappear from the anchor used to prove fresh finality.
+    pub fn fresh_finality_target(&self, ports: &[u16]) -> Result<u64> {
+        ensure!(
+            !ports.is_empty(),
+            "fresh finality requires at least one RPC"
+        );
+        let mut maximum = 0;
+        for &port in ports {
+            maximum = maximum.max(self.finalized_result(port)?);
+        }
+        maximum
+            .checked_add(2)
+            .ok_or_else(|| eyre!("post-repair finalized target overflow"))
+    }
+
+    /// Wait until every expected node has finalized `min_height`, then require
+    /// exact hash/root agreement at one shared finalized height.
+    pub fn wait_finalized_checkpoint(
+        &self,
+        ports: &[u16],
+        min_height: u64,
+        tries: u32,
+    ) -> Result<FinalizedCheckpoint> {
+        ensure!(
+            !ports.is_empty(),
+            "finalized checkpoint wait requires at least one RPC"
+        );
+        let mut last_observation = String::new();
+        for _ in 0..tries {
+            let observations = ports
+                .iter()
+                .map(|&port| (port, self.finalized_result(port)))
+                .collect::<Vec<_>>();
+            if observations
+                .iter()
+                .all(|(_, height)| height.as_ref().is_ok_and(|height| *height >= min_height))
+            {
+                let height = observations
+                    .iter()
+                    .filter_map(|(_, height)| height.as_ref().ok().copied())
+                    .min()
+                    .ok_or_else(|| eyre!("finalized checkpoint observations disappeared"))?;
+                let expected = self.checkpoint_at(ports[0], height)?;
+                for &port in &ports[1..] {
+                    let observed = self.checkpoint_at(port, height)?;
+                    ensure!(
+                        observed == expected,
+                        "RPC port {port} disagrees on finalized checkpoint h{height}: {observed:?} != {expected:?}"
+                    );
+                }
+                return Ok(expected);
+            }
+            last_observation = observations
+                .into_iter()
+                .map(|(port, height)| match height {
+                    Ok(height) => format!("{port}=h{height}"),
+                    Err(error) => format!("{port}=unavailable({error:#})"),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            sleep(Duration::from_secs(3));
+        }
+        Err(eyre!(
+            "RPC ports did not converge on finalized h{min_height} after {tries} attempts; last observations: {last_observation}"
+        ))
     }
 
     /// Timestamp of the latest block, in EVM seconds.
@@ -915,13 +1205,13 @@ impl Rpc {
     }
 
     /// TEE registry `isBootstrapped()` on the primary node.
-    pub fn is_bootstrapped(&self) -> bool {
-        eth::read_call(
+    pub fn is_bootstrapped(&self) -> Result<bool> {
+        eth::read_call_result(
             &self.cfg.rpc0,
             addresses::TEE_ADDR,
             &ITeeRegistryV1::isBootstrappedCall {},
         )
-        .unwrap_or(false)
+        .map_err(|error| eyre!("read TeeRegistry bootstrap state: {error}"))
     }
 
     /// Active protocol version (`IUpdate.getActiveVersion`).
@@ -984,28 +1274,47 @@ impl Rpc {
     }
 
     /// Scheduled update tuple for `id` (`IUpdate.getScheduledUpdate`).
-    pub fn scheduled_update(&self, id: u64) -> Option<ScheduledUpdate> {
+    pub fn scheduled_update(&self, id: u64) -> Result<ScheduledUpdate> {
         self.scheduled_update_on_url(&self.cfg.rpc0, id)
     }
 
     /// Scheduled update tuple for `id` on the node at `port`.
-    pub fn scheduled_update_on(&self, port: u16, id: u64) -> Option<ScheduledUpdate> {
+    pub fn scheduled_update_on(&self, port: u16, id: u64) -> Result<ScheduledUpdate> {
         self.scheduled_update_on_url(&self.url(port), id)
     }
 
-    fn scheduled_update_on_url(&self, rpc_url: &str, id: u64) -> Option<ScheduledUpdate> {
-        let r = eth::read_call(
+    fn scheduled_update_on_url(&self, rpc_url: &str, id: u64) -> Result<ScheduledUpdate> {
+        let r = eth::read_call_result(
             rpc_url,
             addresses::UPDATE_ADDR,
             &IUpdate::getScheduledUpdateCall {
                 proposalId: U256::from(id),
             },
-        )?;
-        Some(ScheduledUpdate {
+        )
+        .map_err(|error| eyre!("read scheduled update {id} at {rpc_url}: {error}"))?;
+        Ok(ScheduledUpdate {
             version: r.version as u64,
             activation: r.activationHeight,
             status: r.status as u64,
         })
+    }
+
+    /// Prove that `getScheduledUpdate(id)` rejected with the protocol's exact
+    /// not-found reason. Transport, decode, and unrelated reverts stay errors.
+    pub fn scheduled_update_absent_on(&self, port: u16, id: u64) -> Result<bool> {
+        match eth::read_call_result(
+            &self.url(port),
+            addresses::UPDATE_ADDR,
+            &IUpdate::getScheduledUpdateCall {
+                proposalId: U256::from(id),
+            },
+        ) {
+            Ok(_) => Ok(false),
+            Err(error) if error.contains("scheduled update not found") => Ok(true),
+            Err(error) => Err(eyre!(
+                "scheduled update {id} absence was not observable on RPC port {port}: {error}"
+            )),
+        }
     }
 
     /// OIP record (`IGovernance.getOip`) - `(status, author, text)`.
@@ -1057,16 +1366,16 @@ impl Rpc {
     }
 
     /// Parsed `outbe-cli vote status` for proposal `id`.
-    pub fn vote_status(&self, id: u64) -> VoteStatus {
+    pub fn vote_status(&self, id: u64) -> Result<VoteStatus> {
         self.vote_status_on_url(&self.cfg.rpc0, id)
     }
 
     /// Parsed `outbe-cli vote status` from the node at `port`.
-    pub fn vote_status_on(&self, port: u16, id: u64) -> VoteStatus {
+    pub fn vote_status_on(&self, port: u16, id: u64) -> Result<VoteStatus> {
         self.vote_status_on_url(&self.url(port), id)
     }
 
-    fn vote_status_on_url(&self, rpc_url: &str, id: u64) -> VoteStatus {
+    fn vote_status_on_url(&self, rpc_url: &str, id: u64) -> Result<VoteStatus> {
         let ids = id.to_string();
         let out = self
             .sh()
@@ -1078,8 +1387,8 @@ impl Rpc {
                 "--proposal-id",
                 ids.as_str(),
             ])
-            .unwrap_or_default();
-        parse::parse_vote_status(&out, id)
+            .wrap_err_with(|| format!("read proposal {id} through outbe-cli at {rpc_url}"))?;
+        Ok(parse::parse_vote_status(&out, id))
     }
 
     // ---- sends (governance / tribute go through outbe-cli) --------------
@@ -1222,10 +1531,10 @@ impl Rpc {
         address: Address,
         signature: &str,
         proposal_id: u64,
-    ) -> Vec<u64> {
+    ) -> Result<Vec<u64>> {
         let signature = keccak256(signature.as_bytes());
         let indexed_id = format!("0x{proposal_id:064x}");
-        eth::raw_json_with_params(
+        let value = eth::raw_json_result(
             &self.url(port),
             "eth_getLogs",
             serde_json::json!([{
@@ -1235,18 +1544,24 @@ impl Rpc {
                 "topics": [format!("{signature:#x}"), indexed_id],
             }]),
         )
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|log| {
-            log.get("blockNumber")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
-        })
-        .collect()
+        .wrap_err_with(|| format!("read finalized proposal events from RPC {port}"))?;
+        let logs = value
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs on RPC {port} returned a non-array result"))?;
+        logs.iter()
+            .map(|log| {
+                let encoded = log
+                    .get("blockNumber")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| eyre!("proposal event on RPC {port} has no blockNumber"))?;
+                u64::from_str_radix(encoded.trim_start_matches("0x"), 16).wrap_err_with(|| {
+                    format!("decode proposal event block {encoded} on RPC {port}")
+                })
+            })
+            .collect()
     }
 
-    pub fn proposal_approved_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+    pub fn proposal_approved_event_blocks(&self, port: u16, proposal_id: u64) -> Result<Vec<u64>> {
         self.proposal_event_blocks(
             port,
             addresses::VOTE_ADDR,
@@ -1255,7 +1570,11 @@ impl Rpc {
         )
     }
 
-    pub fn scheduled_update_created_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+    pub fn scheduled_update_created_event_blocks(
+        &self,
+        port: u16,
+        proposal_id: u64,
+    ) -> Result<Vec<u64>> {
         self.proposal_event_blocks(
             port,
             addresses::UPDATE_ADDR,
@@ -1310,6 +1629,7 @@ impl Rpc {
     // ---- waits (poll loops) --------------------------------------------
 
     /// Wait until head on `port` reaches at least `min`; returns the last head seen.
+    #[must_use = "a block wait must be checked; ignoring it can turn a stalled node into PASS"]
     pub fn wait_block(&self, port: u16, min: u64, tries: u32) -> Option<u64> {
         for _ in 0..tries {
             if let Some(h) = self.head(port) {
@@ -1323,6 +1643,7 @@ impl Rpc {
     }
 
     /// Wait until head on `port` is strictly greater than `height`.
+    #[must_use = "a block wait must be checked; ignoring it can turn a stalled node into PASS"]
     pub fn wait_block_gt(&self, port: u16, height: u64, tries: u32) -> Option<u64> {
         for _ in 0..tries {
             if let Some(h) = self.head(port) {
@@ -1336,17 +1657,32 @@ impl Rpc {
     }
 
     /// Wait for the primary node's TEE bootstrap (5s polls).
-    pub fn wait_bootstrapped(&self, tries: u32) -> bool {
+    #[must_use = "TEE bootstrap completion must be checked"]
+    pub fn wait_bootstrapped(
+        &self,
+        tries: u32,
+        mut ensure_processes_alive: impl FnMut() -> Result<()>,
+    ) -> Result<bool> {
+        let mut observed = false;
+        let mut last_error = None;
         for _ in 0..tries {
-            if self.is_bootstrapped() {
-                return true;
+            ensure_processes_alive()?;
+            match self.is_bootstrapped() {
+                Ok(true) => return Ok(true),
+                Ok(false) => observed = true,
+                Err(error) => last_error = Some(error),
             }
             sleep(Duration::from_secs(5));
         }
-        false
+        if observed {
+            Ok(false)
+        } else {
+            Err(last_error.unwrap_or_else(|| eyre!("TEE bootstrap state was never observable")))
+        }
     }
 
     /// Wait for a tx receipt; `true` on success, `false` on revert/timeout.
+    #[must_use = "transaction completion must be checked"]
     pub fn wait_tx(&self, tx: &str, tries: u32) -> bool {
         for _ in 0..tries {
             match eth::receipt_success(&self.cfg.rpc0, tx) {
@@ -1360,22 +1696,37 @@ impl Rpc {
     }
 
     /// Wait until proposal `id` reports `status=want`.
-    pub fn wait_vote_status(&self, id: u64, want: &str, tries: u32) -> bool {
+    #[must_use = "proposal status wait must be checked"]
+    pub fn wait_vote_status(&self, id: u64, want: &str, tries: u32) -> Result<bool> {
+        let mut observed = false;
+        let mut last_error = None;
         for _ in 0..tries {
-            if self.vote_status(id).status == want {
-                return true;
+            match self.vote_status(id) {
+                Ok(status) => {
+                    observed = true;
+                    if status.status == want {
+                        return Ok(true);
+                    }
+                }
+                Err(error) => last_error = Some(error),
             }
             sleep(Duration::from_secs(3));
         }
-        false
+        if observed {
+            Ok(false)
+        } else {
+            Err(last_error.unwrap_or_else(|| eyre!("proposal {id} was never observable")))
+        }
     }
 
     /// Wait until the active protocol version equals `want`.
+    #[must_use = "protocol-version wait must be checked"]
     pub fn wait_active_version(&self, want: u64, tries: u32) -> Option<u64> {
         self.wait_active_version_on(self.cfg.primary_port(), want, tries)
     }
 
     /// Wait until one validator reports the requested active protocol version.
+    #[must_use = "protocol-version wait must be checked"]
     pub fn wait_active_version_on(&self, port: u16, want: u64, tries: u32) -> Option<u64> {
         for _ in 0..tries {
             if let Some(v) = self.active_version_on(port) {
@@ -1505,22 +1856,26 @@ impl Rpc {
     }
 
     /// Whether an address currently owns a ValidatorSet record.
-    pub fn is_validator(&self, port: u16, addr: &str) -> Option<bool> {
-        let v: Address = addr.parse().ok()?;
-        eth::read_call(
+    pub fn is_validator(&self, port: u16, addr: &str) -> Result<bool> {
+        let v: Address = addr
+            .parse()
+            .wrap_err_with(|| format!("parse validator address {addr}"))?;
+        eth::read_call_result(
             &self.url(port),
             addresses::VS_ADDR,
             &IValidatorSet::isValidatorCall { addr: v },
         )
+        .map_err(|error| eyre!("read isValidator on RPC {port}: {error}"))
     }
 
     /// Whether consensus should schedule another validator-set change.
-    pub fn has_pending_set_change(&self, port: u16) -> Option<bool> {
-        eth::read_call(
+    pub fn has_pending_set_change(&self, port: u16) -> Result<bool> {
+        eth::read_call_result(
             &self.url(port),
             addresses::VS_ADDR,
             &IValidatorSet::hasPendingSetChangeCall {},
         )
+        .map_err(|error| eyre!("read hasPendingSetChange on RPC {port}: {error}"))
     }
 
     /// ValidatorSet epoch start timestamp.
@@ -1533,12 +1888,13 @@ impl Rpc {
     }
 
     /// ValidatorSet epoch start block.
-    pub fn epoch_start_block(&self, port: u16) -> Option<u64> {
-        eth::read_call(
+    pub fn epoch_start_block(&self, port: u16) -> Result<u64> {
+        eth::read_call_result(
             &self.url(port),
             addresses::VS_ADDR,
             &IValidatorSet::getEpochStartBlockCall {},
         )
+        .map_err(|error| eyre!("read epoch start block on RPC {port}: {error}"))
     }
 
     /// Version and encoded P2P address. `(0, empty)` means no address is set.
@@ -1662,14 +2018,18 @@ impl Rpc {
 
     /// Whether a finalized VoterFelony event exists for `validator` at or after
     /// `from_block`. The validator is the event's first indexed argument.
-    pub fn has_voter_felony_event(&self, port: u16, validator: &str, from_block: u64) -> bool {
-        let validator: Address = match validator.parse() {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
+    pub fn has_voter_felony_event(
+        &self,
+        port: u16,
+        validator: &str,
+        from_block: u64,
+    ) -> Result<bool> {
+        let validator: Address = validator
+            .parse()
+            .wrap_err_with(|| format!("parse validator address {validator}"))?;
         let signature = keccak256("VoterFelony(address,uint64,uint64)");
         let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
-        eth::raw_json_with_params(
+        let value = eth::raw_json_result(
             &self.url(port),
             "eth_getLogs",
             serde_json::json!([{
@@ -1679,8 +2039,11 @@ impl Rpc {
                 "topics": [format!("{signature:#x}"), indexed_validator],
             }]),
         )
-        .and_then(|value| value.as_array().map(|logs| !logs.is_empty()))
-        .unwrap_or(false)
+        .wrap_err_with(|| format!("read finalized VoterFelony logs from RPC port {port}"))?;
+        let logs = value
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs returned a non-array response on RPC port {port}"))?;
+        Ok(!logs.is_empty())
     }
 
     /// Number of finalized evidence-felony applications for `validator` at or
@@ -1690,11 +2053,13 @@ impl Rpc {
         port: u16,
         validator: &str,
         from_block: u64,
-    ) -> Option<usize> {
-        let validator: Address = validator.parse().ok()?;
+    ) -> Result<usize> {
+        let validator: Address = validator
+            .parse()
+            .wrap_err_with(|| format!("parse validator address {validator}"))?;
         let signature = keccak256("EvidenceFelonyApplied(address,address,uint256,uint256)");
         let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
-        eth::raw_json_with_params(
+        let value = eth::raw_json_result(
             &self.url(port),
             "eth_getLogs",
             serde_json::json!([{
@@ -1703,9 +2068,14 @@ impl Rpc {
                 "toBlock": "finalized",
                 "topics": [format!("{signature:#x}"), indexed_validator],
             }]),
-        )?
-        .as_array()
-        .map(Vec::len)
+        )
+        .wrap_err_with(|| {
+            format!("read finalized EvidenceFelonyApplied logs from RPC port {port}")
+        })?;
+        value
+            .as_array()
+            .map(Vec::len)
+            .ok_or_else(|| eyre!("eth_getLogs returned a non-array response on RPC port {port}"))
     }
 
     /// Whether the validator holds a live DKG share.
@@ -1714,16 +2084,16 @@ impl Rpc {
     }
 
     /// Whether `addr` is a current consensus participant (ACTIVE or EXITING-with-share).
-    pub fn is_participant(&self, port: u16, addr: &str) -> bool {
-        let Ok(v) = addr.parse::<Address>() else {
-            return false;
-        };
-        eth::read_call(
+    pub fn is_participant(&self, port: u16, addr: &str) -> Result<bool> {
+        let v = addr
+            .parse::<Address>()
+            .wrap_err_with(|| format!("parse consensus participant address {addr}"))?;
+        eth::read_call_result(
             &self.url(port),
             addresses::VS_ADDR,
             &IValidatorSet::isConsensusParticipantCall { addr: v },
         )
-        .unwrap_or(false)
+        .map_err(|error| eyre!("read consensus participation from RPC port {port}: {error}"))
     }
 
     /// Number of ACTIVE validators.
@@ -2421,11 +2791,13 @@ impl Rpc {
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.
+    #[must_use = "receipt completion must be checked"]
     pub fn wait_successful_receipt(&self, tx_hash: &str, tries: u32) -> bool {
         self.wait_receipt_status(tx_hash, true, tries)
     }
 
     /// Wait until a transaction receipt exists with the expected success bit.
+    #[must_use = "receipt status must be checked"]
     pub fn wait_receipt_status(&self, tx_hash: &str, expected: bool, tries: u32) -> bool {
         let started = Instant::now();
         for _ in 0..tries {
@@ -2504,7 +2876,10 @@ impl Rpc {
     /// provide any of its bindings. The returned block hash is checked against
     /// the canonical block independently read from the same validator.
     #[cfg(feature = "ocomp-integration")]
-    pub fn finalized_ocomp_job_request(&self, from_height: u64) -> Option<OcompPublicJobRequestV1> {
+    pub fn finalized_ocomp_job_request(
+        &self,
+        from_height: u64,
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height, None)
     }
 
@@ -2514,20 +2889,44 @@ impl Rpc {
         &self,
         port: u16,
         from_height: u64,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, None)
     }
 
     /// Observe the latest finalized OCOMP request for one exact WorldwideDay.
-    /// Later retry-chain events for another day cannot hide the requested job.
+    /// Later events for another day cannot hide the requested job. A valid
+    /// pending request returns `None` only on this positive-poll interface.
     #[cfg(feature = "ocomp-integration")]
     pub fn finalized_ocomp_job_request_for_worldwide_day_on(
         &self,
         port: u16,
         from_height: u64,
         worldwide_day: u32,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
         self.finalized_ocomp_job_request_on_url(&self.url(port), from_height, Some(worldwide_day))
+    }
+
+    /// Observe one exact WorldwideDay while preserving transport, response
+    /// shape, canonicality, and protocol-decoding failures. Negative assertions
+    /// must use this method: an unavailable RPC is not proof that no request
+    /// exists.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request_for_worldwide_day_result_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        worldwide_day: u32,
+    ) -> Result<OcompRequestObservation> {
+        self.finalized_ocomp_job_request_result_on_url(
+            &self.url(port),
+            from_height,
+            Some(worldwide_day),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "observe finalized OCOMP request for WWD {worldwide_day} from h{from_height} on RPC port {port}"
+            )
+        })
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -2536,14 +2935,37 @@ impl Rpc {
         rpc_url: &str,
         from_height: u64,
         worldwide_day: Option<u32>,
-    ) -> Option<OcompPublicJobRequestV1> {
+    ) -> Result<Option<OcompPublicJobRequestV1>> {
+        self.finalized_ocomp_job_request_result_on_url(rpc_url, from_height, worldwide_day)
+            .and_then(OcompRequestObservation::into_bound_request)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn finalized_ocomp_job_request_result_on_url(
+        &self,
+        rpc_url: &str,
+        from_height: u64,
+        worldwide_day: Option<u32>,
+    ) -> Result<OcompRequestObservation> {
         const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
-        let finalized_height = eth::finalized_number(rpc_url)?;
+        let finalized_block = eth::raw_json_result(
+            rpc_url,
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )
+        .wrap_err("read finalized block")?;
+        let finalized_number = finalized_block
+            .get("number")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("finalized block omitted number"))?;
+        let finalized_height =
+            u64::from_str_radix(finalized_number.trim_start_matches("0x"), 16)
+                .wrap_err_with(|| format!("decode finalized height {finalized_number}"))?;
         if finalized_height < from_height {
-            return None;
+            return Ok(OcompRequestObservation::Absent);
         }
         let topic0 = keccak256(EVENT_SIGNATURE.as_bytes());
-        let logs = eth::raw_json_with_params(
+        let logs = eth::raw_json_result(
             rpc_url,
             "eth_getLogs",
             serde_json::json!([{
@@ -2552,65 +2974,149 @@ impl Rpc {
                 "toBlock": format!("0x{finalized_height:x}"),
                 "topics": [format!("{topic0:#x}")]
             }]),
-        )?;
-        let logs = logs.as_array()?;
-        let log = select_ocomp_job_request_log(logs, worldwide_day)?;
-        let topics = log.get("topics")?.as_array()?;
-        if topics.len() != 3 || topics[0].as_str()? != format!("{topic0:#x}") {
-            return None;
-        }
-        let intent_id = topics[1].as_str()?.parse::<B256>().ok()?;
-        let worldwide_day = u32::try_from(parse_rpc_word(topics[2].as_str()?)?).ok()?;
-        let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
-        if data.len() != 3 * 32 {
-            return None;
-        }
-        let pending_nonce = u64::try_from(U256::from_be_slice(&data[0..32])).ok()?;
-        let attempt = u32::try_from(U256::from_be_slice(&data[32..64])).ok()?;
-        let activation_preconditions_hash = B256::from_slice(&data[64..96]);
-        let request_height = u64::from_str_radix(
-            log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
-            16,
         )
-        .ok()?;
-        if request_height < from_height || request_height > finalized_height {
-            return None;
-        }
-        let request_block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
-        if eth::block_hash(rpc_url, request_height)?
+        .wrap_err_with(|| {
+            format!("read OCOMP request logs through finalized h{finalized_height}")
+        })?;
+        let logs = logs
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs returned a non-array response"))?;
+        let Some(log) = select_ocomp_job_request_log_result(logs, worldwide_day)? else {
+            return Ok(OcompRequestObservation::Absent);
+        };
+        let topics = log
+            .get("topics")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted topics"))?;
+        ensure!(
+            topics.len() == 3,
+            "OffchainJobRequested log has {} topics, expected 3",
+            topics.len()
+        );
+        let observed_topic0 = topics[0]
+            .as_str()
+            .ok_or_else(|| eyre!("OffchainJobRequested topic0 is not a string"))?;
+        ensure!(
+            observed_topic0.eq_ignore_ascii_case(&format!("{topic0:#x}")),
+            "OffchainJobRequested topic0 mismatch"
+        );
+        let intent_id = topics[1]
+            .as_str()
+            .ok_or_else(|| eyre!("OffchainJobRequested intent topic is not a string"))?
             .parse::<B256>()
-            .ok()?
-            != request_block_hash
-        {
-            return None;
-        }
-        let encoded_record = eth::read_call_at(
+            .wrap_err("decode OffchainJobRequested intent id")?;
+        let worldwide_day = topics[2]
+            .as_str()
+            .and_then(parse_rpc_word)
+            .and_then(|word| u32::try_from(word).ok())
+            .ok_or_else(|| eyre!("decode OffchainJobRequested WorldwideDay"))?;
+        let data_hex = log
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted data"))?;
+        let data = hex::decode(data_hex.trim_start_matches("0x"))
+            .wrap_err("decode OffchainJobRequested data")?;
+        ensure!(
+            data.len() == 3 * 32,
+            "OffchainJobRequested data has {} bytes, expected 96",
+            data.len()
+        );
+        let pending_nonce = u64::try_from(U256::from_be_slice(&data[0..32]))
+            .wrap_err("decode OffchainJobRequested pending nonce")?;
+        let attempt = u32::try_from(U256::from_be_slice(&data[32..64]))
+            .wrap_err("decode OffchainJobRequested attempt")?;
+        let activation_preconditions_hash = B256::from_slice(&data[64..96]);
+        let request_number = log
+            .get("blockNumber")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted blockNumber"))?;
+        let request_height = u64::from_str_radix(request_number.trim_start_matches("0x"), 16)
+            .wrap_err_with(|| format!("decode request block number {request_number}"))?;
+        ensure!(
+            request_height >= from_height && request_height <= finalized_height,
+            "request h{request_height} is outside scanned finalized range h{from_height}..=h{finalized_height}"
+        );
+        let request_block_hash = log
+            .get("blockHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted blockHash"))?
+            .parse::<B256>()
+            .wrap_err("decode OffchainJobRequested block hash")?;
+        let (canonical_block_hash, canonical_state_root, _) =
+            eth::block_commitment_result(rpc_url, request_height)
+                .wrap_err_with(|| format!("read canonical request block h{request_height}"))?;
+        ensure!(
+            canonical_block_hash == request_block_hash,
+            "request log block hash {request_block_hash:#x} is not canonical {canonical_block_hash:#x} at h{request_height}"
+        );
+        let encoded_record = eth::read_call_at_result(
             rpc_url,
             addresses::WWD_ADDR,
             &IMetadosis::getOffchainJobCall {
                 intentId: intent_id,
             },
             finalized_height,
-        )?;
+        )
+        .map_err(|error| eyre!(error))
+        .wrap_err_with(|| format!("read finalized OCOMP job {intent_id:#x}"))?;
         let limits = poc_schema_limits();
-        let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits).ok()?;
-        let finalized = record.finalized.as_ref()?;
-        if record.intent.intent_id(&limits).ok()? != intent_id
-            || record.intent.wwd != worldwide_day
-            || record.intent.pending_nonce != pending_nonce
-            || record.intent.attempt != attempt
-            || record
+        let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits)
+            .wrap_err("decode finalized OCOMP job record")?;
+        ensure!(
+            record.intent.intent_id(&limits)? == intent_id,
+            "job intent id mismatch"
+        );
+        ensure!(
+            record.intent_height == request_height,
+            "job request height mismatch"
+        );
+        ensure!(
+            record.intent.wwd == worldwide_day,
+            "job WorldwideDay mismatch"
+        );
+        ensure!(
+            record.intent.pending_nonce == pending_nonce,
+            "job pending nonce mismatch"
+        );
+        ensure!(record.intent.attempt == attempt, "job attempt mismatch");
+        ensure!(
+            record
                 .intent
                 .activation_preconditions
-                .activation_preconditions_hash(&limits)
-                .ok()?
-                != activation_preconditions_hash
-            || finalized.deadline_height <= finalized.open_height
-        {
-            return None;
-        }
-        Some(OcompPublicJobRequestV1 {
+                .activation_preconditions_hash(&limits)?
+                == activation_preconditions_hash,
+            "job activation preconditions hash mismatch"
+        );
+        let transaction_hash = log
+            .get("transactionHash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted transactionHash"))?
+            .parse::<B256>()
+            .wrap_err("decode OffchainJobRequested transaction hash")?;
+        // Validate every event/record binding before declaring any request
+        // present, including the legitimate pre-binding interval.
+        let Some(finalized) = record.finalized.as_ref() else {
+            return Ok(if record.status == OcompJobStatus::AwaitingFinality {
+                OcompRequestObservation::AwaitingFinality { intent_id }
+            } else {
+                OcompRequestObservation::TerminalWithoutBinding {
+                    intent_id,
+                    status: record.status,
+                }
+            });
+        };
+        ensure!(
+            finalized.finalized_request_block_hash == canonical_block_hash
+                && finalized.finalized_request_state_root == canonical_state_root,
+            "finalized job request commitment mismatch"
+        );
+        ensure!(
+            finalized.finality_recorded_height <= finalized_height,
+            "job binding is ahead of sampled finalized state"
+        );
+        Ok(OcompRequestObservation::Bound(OcompPublicJobRequestV1 {
             intent_id,
+            job_id: finalized.job_id,
             worldwide_day,
             pending_nonce,
             attempt,
@@ -2620,8 +3126,8 @@ impl Rpc {
             activation_preconditions_hash,
             request_height,
             request_block_hash,
-            transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
-        })
+            transaction_hash,
+        }))
     }
 
     /// Read and decode the canonical finalized job record on one validator.
@@ -2631,17 +3137,30 @@ impl Rpc {
         port: u16,
         intent_id: B256,
     ) -> Option<OcompJobRecordV1> {
-        let rpc_url = self.url(port);
-        let finalized_height = eth::finalized_number(&rpc_url)?;
-        let encoded = eth::read_call_at(
-            &rpc_url,
+        let finalized_height = self.finalized_result(port).ok()?;
+        self.ocomp_job_record_at_on(port, intent_id, finalized_height)
+            .ok()
+    }
+
+    /// Read and decode one OCOMP job record at an exact already-finalized height.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_job_record_at_on(
+        &self,
+        port: u16,
+        intent_id: B256,
+        height: u64,
+    ) -> Result<OcompJobRecordV1> {
+        let encoded = eth::read_call_at_result(
+            &self.url(port),
             addresses::WWD_ADDR,
             &IMetadosis::getOffchainJobCall {
                 intentId: intent_id,
             },
-            finalized_height,
-        )?;
-        OcompJobRecordV1::decode_canonical(encoded.as_ref(), &poc_schema_limits()).ok()
+            height,
+        )
+        .map_err(|error| eyre!(error))?;
+        OcompJobRecordV1::decode_canonical(encoded.as_ref(), &poc_schema_limits())
+            .map_err(|error| eyre!("decode OCOMP job record at h{height} on port {port}: {error}"))
     }
 
     /// Read and decode the four fixed result-vote slots at the finalized head.
@@ -2651,20 +3170,34 @@ impl Rpc {
         port: u16,
         job_id: B256,
     ) -> Option<OcompPublicVoteAccountabilityV1> {
-        let rpc_url = self.url(port);
-        let finalized_height = eth::finalized_number(&rpc_url)?;
-        let encoded = eth::read_call_at(
-            &rpc_url,
+        let finalized_height = self.finalized_result(port).ok()?;
+        self.ocomp_vote_accountability_at_on(port, job_id, finalized_height)
+            .ok()
+    }
+
+    /// Read OCOMP vote accountability at one exact already-finalized height.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_vote_accountability_at_on(
+        &self,
+        port: u16,
+        job_id: B256,
+        height: u64,
+    ) -> Result<OcompPublicVoteAccountabilityV1> {
+        let encoded = eth::read_call_at_result(
+            &self.url(port),
             addresses::WWD_ADDR,
             &IMetadosis::getOffchainVoteAccountabilityCall { jobId: job_id },
-            finalized_height,
-        )?;
+            height,
+        )
+        .map_err(|error| eyre!(error))?;
         let accountability =
             OcompVoteAccountabilityV1::decode_canonical(encoded.as_ref(), &poc_schema_limits())
-                .ok()?;
+                .map_err(|error| {
+                    eyre!("decode OCOMP vote accountability at h{height} on port {port}: {error}")
+                })?;
         let quorum = accountability.quorum.as_ref();
         let closed = accountability.closed_summary.as_ref();
-        Some(OcompPublicVoteAccountabilityV1 {
+        Ok(OcompPublicVoteAccountabilityV1 {
             job_id: accountability.job_id,
             result_validator_set_epoch: accountability.result_validator_set_epoch,
             result_committee_set_hash: accountability.result_committee_set_hash,
@@ -2905,6 +3438,43 @@ impl Rpc {
             block_hash,
             transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
         })
+    }
+
+    /// Prove that no finalized `LysisActivated` event exists for one intent.
+    ///
+    /// An unreadable finalized height, RPC failure, or malformed log response
+    /// is not evidence of absence and therefore remains an error.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_activation_absent_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        expected_intent_id: B256,
+    ) -> Result<bool> {
+        let finalized_height = self.finalized_result(port)?;
+        ensure!(
+            finalized_height >= from_height,
+            "RPC {port} has only finalized {finalized_height}, below OCOMP request {from_height}"
+        );
+        let topic0 = keccak256(b"LysisActivated(bytes32,bytes32,bytes32,bytes32,bytes32,uint32)");
+        let value = eth::raw_json_result(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": format!("0x{from_height:x}"),
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [
+                    format!("{topic0:#x}"),
+                    format!("{expected_intent_id:#x}")
+                ]
+            }]),
+        )
+        .wrap_err_with(|| format!("read finalized LysisActivated events from RPC {port}"))?;
+        let logs = value
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs on RPC {port} returned a non-array result"))?;
+        Ok(logs.is_empty())
     }
 
     /// Read and verify the Metadosis and Nod generation projections at the
@@ -3388,17 +3958,24 @@ impl Rpc {
     // ---- lifecycle waits -----------------------------------------------------
 
     /// Poll until `addr` is a consensus participant (10s polls, like the shell loops).
-    pub fn wait_participant(&self, port: u16, addr: &str, tries: u32) -> bool {
+    pub fn wait_participant(&self, port: u16, addr: &str, tries: u32) -> Result<bool> {
+        let mut last_error = None;
         for _ in 0..tries {
-            if self.is_participant(port, addr) {
-                return true;
+            match self.is_participant(port, addr) {
+                Ok(true) => return Ok(true),
+                Ok(false) => last_error = None,
+                Err(error) => last_error = Some(error),
             }
             sleep(Duration::from_secs(10));
         }
-        false
+        if let Some(error) = last_error {
+            return Err(error.wrap_err("consensus participation remained unobservable"));
+        }
+        Ok(false)
     }
 
     /// Poll until ACTIVE validator count equals `want` (10s polls).
+    #[must_use = "active-validator count wait must be checked"]
     pub fn wait_active_count(&self, port: u16, want: u64, tries: u32) -> bool {
         for _ in 0..tries {
             if self.active_count(port) == Some(want) {
@@ -3410,6 +3987,7 @@ impl Rpc {
     }
 
     /// Poll until finalized height reaches `want` on `port`.
+    #[must_use = "finality wait must be checked"]
     pub fn wait_finalized_at_least(&self, port: u16, want: u64, tries: u32) -> bool {
         for _ in 0..tries {
             if self.finalized(port).is_some_and(|height| height >= want) {
@@ -4154,21 +4732,30 @@ fn parse_rpc_word(encoded: &str) -> Option<U256> {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn select_ocomp_job_request_log(
+fn select_ocomp_job_request_log_result(
     logs: &[serde_json::Value],
     worldwide_day: Option<u32>,
-) -> Option<&serde_json::Value> {
-    logs.iter().rev().find(|log| {
-        worldwide_day.is_none_or(|expected| {
-            log.get("topics")
-                .and_then(serde_json::Value::as_array)
-                .and_then(|topics| topics.get(2))
-                .and_then(serde_json::Value::as_str)
-                .and_then(parse_rpc_word)
-                .and_then(|word| u32::try_from(word).ok())
-                == Some(expected)
-        })
-    })
+) -> Result<Option<&serde_json::Value>> {
+    let Some(expected) = worldwide_day else {
+        return Ok(logs.last());
+    };
+    for log in logs.iter().rev() {
+        let topics = log
+            .get("topics")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted topics"))?;
+        let encoded_day = topics
+            .get(2)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("OffchainJobRequested log omitted WorldwideDay topic"))?;
+        let observed = parse_rpc_word(encoded_day)
+            .and_then(|word| u32::try_from(word).ok())
+            .ok_or_else(|| eyre!("decode OffchainJobRequested WorldwideDay topic {encoded_day}"))?;
+        if observed == expected {
+            return Ok(Some(log));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4276,6 +4863,11 @@ fn decode_nod_materialization_progress(
 }
 
 #[cfg(test)]
+#[cfg(feature = "ocomp-integration")]
+#[path = "rpc_ocomp_observation_tests.rs"]
+mod ocomp_observation_tests;
+
+#[cfg(test)]
 mod ocomp_tests {
     use alloy_primitives::B256;
     use outbe_primitives::reshare_artifact::{
@@ -4338,7 +4930,7 @@ mod ocomp_tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn job_request_selection_keeps_the_requested_day_visible_after_later_retries() {
+    fn job_request_selection_keeps_the_requested_day_visible_after_later_requests() {
         let day = |worldwide_day: u32| {
             serde_json::json!({
                 "topics": [
@@ -4353,9 +4945,17 @@ mod ocomp_tests {
         let logs = vec![requested.clone(), later_retry];
 
         assert_eq!(
-            select_ocomp_job_request_log(&logs, Some(20260807)),
-            Some(&requested)
+            select_ocomp_job_request_log_result(&logs, Some(20260807)).unwrap(),
+            Some(&requested),
         );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn job_request_selection_does_not_treat_malformed_rpc_data_as_absence() {
+        let logs = vec![serde_json::json!({"topics": ["0x00", "0x00"]})];
+
+        assert!(select_ocomp_job_request_log_result(&logs, Some(20260807)).is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]

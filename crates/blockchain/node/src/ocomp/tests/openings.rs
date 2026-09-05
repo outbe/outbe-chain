@@ -9,7 +9,6 @@ use std::{
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
-use outbe_common::WorldwideDay;
 use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
     league_snapshot::{league_snapshot_slot, ordered_league_snapshot_slots},
@@ -17,6 +16,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
 use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::time::WorldwideDay;
 use reth_chainspec::ChainInfo;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{

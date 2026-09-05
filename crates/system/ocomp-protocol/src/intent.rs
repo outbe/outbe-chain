@@ -300,8 +300,8 @@ impl JobIntentV1 {
 
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         require(
-            u64::from(self.attempt) == self.pending_nonce,
-            "attempt equals checked pending nonce",
+            self.attempt == 0 && self.pending_nonce == 0,
+            "single-attempt OCOMP identity",
         )?;
         let split_total = self
             .frozen_metadosis_values

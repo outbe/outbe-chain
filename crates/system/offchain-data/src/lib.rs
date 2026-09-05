@@ -21,7 +21,6 @@ use std::{
 
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
@@ -37,6 +36,7 @@ use outbe_offchain_storage::{
     StorageMetadata, StorageReaderHandle, StorageWriterHandle, StoredValue, Value,
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     precompile::ITribute, projection::TRIBUTE_PROJECTION_NAMESPACES, RetainedTributePin,
     RetainedTributeReader, TributeData, TributeRepositoryError, TributeRepositoryReader,
@@ -1038,7 +1038,7 @@ fn validate_poseidon_identity(
     entity: &'static str,
     actual: WwdEntityId,
     owner: Address,
-    worldwide_day: outbe_common::WorldwideDay,
+    worldwide_day: outbe_primitives::time::WorldwideDay,
 ) -> Result<(), ProjectionError> {
     let expected = derive_poseidon_entity_id(owner, worldwide_day)
         .map_err(|error| malformed_event(source, error))?;

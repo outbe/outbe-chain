@@ -3,7 +3,6 @@ mod support;
 use std::fs;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
     tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
@@ -32,6 +31,7 @@ use outbe_ocomp_protocol::{
     },
     opening::{LysisOpeningsProofV1, RawContractOpeningProofV1, RawStorageSlotV1},
 };
+use outbe_primitives::time::WorldwideDay;
 
 fn checkpoint() -> CheckpointIdentityV1 {
     CheckpointIdentityV1 {
@@ -107,7 +107,7 @@ fn inventory(
         TributeInventorySubjectV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
             job_id: B256::repeat_byte(2),
-            attempt: 1,
+            attempt: 0,
             checkpoint: checkpoint(),
             worldwide_day: day,
             sealed_tribute_collection_root: root,
@@ -186,7 +186,7 @@ fn split_tree_and_completed_openings_replay_identically_after_restart() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),
@@ -289,7 +289,7 @@ fn opening_stage_rejects_a_substituted_finalized_checkpoint() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),
@@ -311,7 +311,7 @@ fn contradictory_done_and_split_markers_fail_before_replay_side_effects() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),
@@ -375,7 +375,7 @@ fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),
@@ -495,7 +495,7 @@ fn durable_oracle_subject_substitution_fails_before_replay_side_effects() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),
@@ -559,7 +559,7 @@ fn oracle_conflict_after_partial_publication_fails_closed() {
     let subject = OpeningStageSubjectV1 {
         protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         checkpoint: checkpoint(),
         worldwide_day: day.value(),
         inventory_authority_digest: inventory.authority_digest(),

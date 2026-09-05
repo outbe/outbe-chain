@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::B256;
@@ -13,6 +14,7 @@ use outbe_primitives::runtime_audit_v1::{
 use serde_json::{json, Value};
 
 use super::Localnet;
+use crate::world::state::TeeLeaseShutdownV1;
 
 impl Localnet {
     /// Audits runtime health independently from functional scenario acceptance.
@@ -22,9 +24,9 @@ impl Localnet {
         expected_dkg_reveal: Option<&str>,
         expected_ocomp_full_node_mismatch: Option<B256>,
         expected_tee_lease_guard_shutdown_validator: Option<usize>,
-        expected_tee_lease_guard_shutdown_full_node: Option<usize>,
+        expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
     ) -> Result<LogAudit> {
-        audit_runtime_logs(
+        let result = audit_runtime_logs(
             &self.cfg.dir,
             self.cfg.validators,
             unsupported_version,
@@ -32,7 +34,13 @@ impl Localnet {
             expected_ocomp_full_node_mismatch,
             expected_tee_lease_guard_shutdown_validator,
             expected_tee_lease_guard_shutdown_full_node,
-        )
+        );
+        // Keep an unavailable audit as a failed audit result so the after hook
+        // can publish already-captured public evidence before failing closed.
+        Ok(result.unwrap_or_else(|error| LogAudit {
+            findings: vec![format!("runtime log audit unavailable: {error:#}")],
+            ..LogAudit::default()
+        }))
     }
 }
 
@@ -140,8 +148,24 @@ pub(super) fn audit_runtime_logs(
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    expected_tee_lease_guard_shutdown_full_node: Option<usize>,
+    expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
 ) -> Result<LogAudit> {
+    if let Some(proof) = expected_tee_lease_guard_shutdown_full_node {
+        for interval in &proof.sinks {
+            let metadata =
+                fs::metadata(&interval.path).wrap_err("stat retained lease shutdown sink")?;
+            eyre::ensure!(
+                metadata.dev() == interval.device && metadata.ino() == interval.inode,
+                "retained lease shutdown sink was replaced: {}",
+                interval.path.display()
+            );
+            eyre::ensure!(
+                metadata.len() >= interval.end,
+                "retained lease shutdown sink was truncated: {}",
+                interval.path.display()
+            );
+        }
+    }
     let mut paths = Vec::new();
     collect_logs(root, &mut paths)?;
     paths.sort();
@@ -196,7 +220,7 @@ fn audit_loaded_logs_with_all_expectations(
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    expected_tee_lease_guard_shutdown_full_node: Option<usize>,
+    expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
 ) -> LogAudit {
     let mut findings = Vec::new();
     let mut counts = LogCounts {
@@ -448,6 +472,7 @@ fn is_machine_audit_log(path: &Path) -> bool {
 fn unexpected_log_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     exact_tee_lease_jailed_guard_shutdown(line)
+        || exact_tee_lease_expired_full_node_guard_shutdown(line)
         || fatal_at_runtime_severity(line)
         || lower.contains("panic")
         || (lower.contains("dkg")
@@ -905,175 +930,136 @@ fn expected_tee_lease_guard_shutdown_records(
 fn expected_tee_lease_full_node_shutdown_records(
     logs: &[(PathBuf, String)],
     validators: usize,
-    expected_full_node: usize,
+    proof: &crate::world::state::TeeLeaseShutdownV1,
 ) -> Result<BTreeSet<(PathBuf, usize)>, String> {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum Record {
-        Guard,
-        StackShutdown,
-        EngineFatal,
-        CliFatal,
+    if proof.slot != validators
+        || proof.pid == 0
+        || proof.deadline == 0
+        || proof.exit_code != Some(0)
+        || proof.exit_signal.is_some()
+    {
+        return Err(
+            "TEE lease FullNode proof lacks the exact owned successful exit/slot/deadline"
+                .to_owned(),
+        );
     }
-
-    if expected_full_node != validators {
-        return Err(format!(
-            "expected TEE lease FullNode slot {expected_full_node} must equal committee size {validators}"
-        ));
+    if proof.sinks.len() != 2 {
+        return Err(
+            "TEE lease FullNode proof requires both immutable process sink intervals".to_owned(),
+        );
     }
-
     let mut accepted = BTreeSet::new();
     let mut sinks = BTreeSet::new();
-    for (path, content) in logs {
-        if validator_log_index(path, validators.saturating_add(1)) != Some(expected_full_node) {
-            continue;
+    for interval in &proof.sinks {
+        if validator_log_index(&interval.path, validators + 1) != Some(proof.slot) {
+            return Err("TEE lease FullNode proof sink belongs to another slot".to_owned());
         }
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
+        let sink = interval
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if !["node.log", "reth.log"].contains(&sink) || !sinks.insert(sink) {
+            return Err("TEE lease FullNode proof has duplicate or unexpected sinks".to_owned());
+        }
+        let Some((_, full_content)) = logs.iter().find(|(path, _)| path == &interval.path) else {
+            return Err(format!(
+                "missing retained lease sink {}",
+                interval.path.display()
+            ));
         };
-        let sink = if file_name == "node.log" {
-            "node.log"
-        } else if file_name == "reth.log" {
-            "reth.log"
-        } else {
-            continue;
-        };
-
-        let lines = content.lines().collect::<Vec<_>>();
-        let guard_indices = lines
+        let start = usize::try_from(interval.start).map_err(|_| "invalid interval start")?;
+        let end = usize::try_from(interval.end).map_err(|_| "invalid interval end")?;
+        if start > end
+            || full_content.get(start..end) != Some(interval.content.as_str())
+            || (start > 0 && full_content.as_bytes().get(start - 1) != Some(&b'\n'))
+        {
+            return Err(format!(
+                "changed or truncated lease process interval in {}",
+                interval.path.display()
+            ));
+        }
+        let offset = full_content[..start].lines().count();
+        let lines: Vec<_> = interval.content.lines().collect();
+        let guards: Vec<_> = lines
             .iter()
             .enumerate()
             .filter_map(|(index, line)| {
                 exact_tee_lease_expired_full_node_guard_shutdown(line).then_some(index)
             })
-            .collect::<Vec<_>>();
-        if guard_indices.is_empty() {
-            continue;
-        }
-        if guard_indices.len() != 1 {
+            .collect();
+        let stacks: Vec<_> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| exact_consensus_stack_shutdown(line).then_some(index))
+            .collect();
+        if guards.len() != 1 || stacks.len() != 1 {
             return Err(format!(
-                "expected exactly one TEE lease FullNode guard in {}, observed {}",
-                path.display(),
-                guard_indices.len()
+                "expected exactly one FullNode guard/stack pair in {}",
+                interval.path.display()
             ));
         }
-
-        let guard_index = guard_indices[0];
-        let mut records = vec![(guard_index, Record::Guard)];
-        let mut cursor = guard_index.saturating_add(1);
-        for expected in [Record::StackShutdown] {
-            loop {
-                let Some(line) = lines.get(cursor).copied() else {
+        let guard = guards[0];
+        let stack = stacks[0];
+        let expected_reason = format!(
+            "reason=finalized TEE lease expired at {}; stop node and run tee join",
+            proof.deadline
+        );
+        if !lines[guard].trim_end().ends_with(&expected_reason)
+            || stack <= guard
+            || stack - guard > 64
+        {
+            return Err("FullNode lease guard deadline or shutdown ordering differs".to_owned());
+        }
+        // Only the guard and stack records are exempted. Generic fatal/panic
+        // records, including EngineFatal/CliFatal, remain ordinary audit failures.
+        accepted.insert((interval.path.clone(), offset + guard));
+        accepted.insert((interval.path.clone(), offset + stack));
+        let mut last = stack;
+        if sink == "reth.log" {
+            for marker in [
+                "reth::cli: received engine shutdown request",
+                "engine::tree: received terminate request",
+                "engine::tree: persistence complete, signaling termination",
+                "reth::cli: shutting down gracefully",
+            ] {
+                let matches: Vec<_> = lines
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, line)| {
+                        let (prefix, _) = line.split_once(marker)?;
+                        (prefix.split_whitespace().last() == Some("DEBUG")
+                            && line.trim_end().ends_with(marker))
+                        .then_some(index)
+                    })
+                    .collect();
+                if matches.len() != 1 || matches[0] <= last || matches[0] - guard > 64 {
                     return Err(format!(
-                        "incomplete expected TEE lease FullNode shutdown bundle in {}: missing {expected:?}",
-                        path.display()
-                    ));
-                };
-                if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
-                    return Err(format!(
-                        "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before {expected:?}",
-                        path.display()
+                        "missing, duplicate or unordered FullNode termination record: {marker}"
                     ));
                 }
-                let observed = if exact_tee_lease_expired_full_node_guard_shutdown(line) {
-                    Some(Record::Guard)
-                } else if exact_consensus_stack_shutdown(line) {
-                    Some(Record::StackShutdown)
-                } else if exact_engine_fatal_trailer(line) {
-                    Some(Record::EngineFatal)
-                } else if exact_cli_fatal_trailer(line) {
-                    Some(Record::CliFatal)
-                } else {
-                    None
-                };
-                cursor = cursor.saturating_add(1);
-                let Some(observed) = observed else {
-                    continue;
-                };
-                if observed != expected {
-                    return Err(format!(
-                        "malformed expected TEE lease FullNode shutdown bundle in {}: expected {expected:?}, observed {observed:?}",
-                        path.display()
-                    ));
-                }
-                records.push((cursor - 1, observed));
-                break;
+                last = matches[0];
             }
         }
-
-        // The role-neutral FullNode path must append its exact deterministic
-        // EngineFatal→CliFatal trailer. Never accept a partial bundle or cross
-        // into the restarted process while looking for either record.
-        loop {
-            let Some(line) = lines.get(cursor).copied() else {
-                return Err(format!(
-                    "incomplete expected TEE lease FullNode shutdown bundle in {}: missing EngineFatal",
-                    path.display()
-                ));
-            };
-            if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
-                return Err(format!(
-                    "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before EngineFatal",
-                    path.display()
-                ));
-            }
-            if exact_tee_lease_expired_full_node_guard_shutdown(line)
-                || exact_consensus_stack_shutdown(line)
-                || exact_cli_fatal_trailer(line)
-            {
-                return Err(format!(
-                    "malformed expected TEE lease FullNode shutdown bundle in {} after StackShutdown",
-                    path.display()
-                ));
-            }
-            if !exact_engine_fatal_trailer(line) {
-                cursor = cursor.saturating_add(1);
-                continue;
-            }
-
-            records.push((cursor, Record::EngineFatal));
-            cursor = cursor.saturating_add(1);
-            loop {
-                let Some(line) = lines.get(cursor).copied() else {
-                    return Err(format!(
-                        "incomplete expected TEE lease FullNode shutdown bundle in {}: missing CliFatal",
-                        path.display()
-                    ));
-                };
-                if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
-                    return Err(format!(
-                        "expected TEE lease FullNode shutdown crossed its line or process-epoch bound in {} before CliFatal",
-                        path.display()
-                    ));
-                }
-                if exact_cli_fatal_trailer(line) {
-                    records.push((cursor, Record::CliFatal));
-                    break;
-                }
-                if exact_tee_lease_expired_full_node_guard_shutdown(line)
-                    || exact_consensus_stack_shutdown(line)
-                    || exact_engine_fatal_trailer(line)
-                {
-                    return Err(format!(
-                        "malformed expected TEE lease FullNode shutdown bundle in {} before CliFatal",
-                        path.display()
-                    ));
-                }
-                cursor = cursor.saturating_add(1);
-            }
-            break;
+        if lines[guard + 1..]
+            .iter()
+            .any(|line| process_start_boundary(line))
+        {
+            return Err(
+                "FullNode lease shutdown evidence crossed a process replacement".to_owned(),
+            );
         }
-        if !sinks.insert(sink) {
-            return Err(format!(
-                "duplicate expected TEE lease FullNode shutdown sink {sink} for validator-{expected_full_node}"
-            ));
+        if lines[..guard]
+            .iter()
+            .filter(|line| line.contains("reth::cli: Starting Reth version="))
+            .count()
+            > 1
+        {
+            return Err("FullNode lease interval contains multiple process launches".to_owned());
         }
-        accepted.extend(records.into_iter().map(|(index, _)| (path.clone(), index)));
     }
-
     if sinks != BTreeSet::from(["node.log", "reth.log"]) {
-        return Err(format!(
-            "expected one node.log and one reth.log TEE lease FullNode shutdown bundle for validator-{expected_full_node}, observed {sinks:?}"
-        ));
+        return Err("FullNode lease shutdown omitted an expected sink".to_owned());
     }
     Ok(accepted)
 }
@@ -1092,13 +1078,13 @@ fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();
-    let Some((_, deadline_and_suffix)) = line.split_once(PREFIX) else {
+    let Some((prefix, deadline_and_suffix)) = line.split_once(PREFIX) else {
         return false;
     };
     let Some(deadline) = deadline_and_suffix.trim_end().strip_suffix(SUFFIX) else {
         return false;
     };
-    line.contains("error")
+    prefix.split_whitespace().last() == Some("error")
         && !deadline.is_empty()
         && deadline.bytes().all(|byte| byte.is_ascii_digit())
         && !contains_nonfatal_alarm(&line)
@@ -1671,23 +1657,36 @@ mod tests {
     }
 
     fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
-        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
-            reason=finalized TEE lease expired at 1789389965; stop node and run tee join";
+        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
         let shutdown = "INFO outbe_chain: consensus stack shutting down";
-        let engine = "ERROR engine::tree: Fatal error";
-        let cli = "ERROR reth::cli: Fatal error in consensus engine";
         vec![
-            (
-                PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
-                format!("{guard}\n{shutdown}\n{engine}\n{cli}"),
-            ),
-            (
-                PathBuf::from(format!(
-                    "scenario-1/validator-{full_node}/logs/54322345/reth.log"
-                )),
-                format!("{guard}\n{shutdown}\n{engine}\n{cli}"),
-            ),
+            (PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")), format!("{guard}\n{shutdown}\n")),
+            (PathBuf::from(format!("scenario-1/validator-{full_node}/logs/54322345/reth.log")),
+             format!("{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n")),
         ]
+    }
+
+    fn full_node_proof(logs: &[(PathBuf, String)]) -> crate::world::state::TeeLeaseShutdownV1 {
+        crate::world::state::TeeLeaseShutdownV1 {
+            slot: 4,
+            pid: 1234,
+            deadline: 1789793371,
+            exit_code: Some(0),
+            exit_signal: None,
+            sinks: logs
+                .iter()
+                .map(
+                    |(path, content)| crate::world::state::TeeLeaseLogIntervalV1 {
+                        path: path.clone(),
+                        device: 1,
+                        inode: 2,
+                        start: 0,
+                        end: content.len() as u64,
+                        content: content.clone(),
+                    },
+                )
+                .collect(),
+        }
     }
 
     #[test]
@@ -1833,64 +1832,164 @@ mod tests {
     }
 
     #[test]
-    fn tee_lease_full_node_accepts_only_the_guarded_execution_shutdown_bundle() {
+    fn tee_lease_full_node_accepts_only_owned_controlled_shutdown() {
         let expected = tee_lease_full_node_shutdown_bundle(4);
-        let accepted =
-            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, None, Some(4));
+        let proof = full_node_proof(&expected);
+        let audit = |logs: &[(PathBuf, String)],
+                     proof: &crate::world::state::TeeLeaseShutdownV1| {
+            audit_loaded_logs_with_all_expectations(logs, 4, None, None, None, None, Some(proof))
+        };
+        let accepted = audit(&expected, &proof);
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
-        assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 8);
+        assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
+        let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
+        assert!(!unarmed.is_clean());
+        assert_eq!(unarmed.findings.len(), 2);
+        let mut later_expiry = expected.clone();
+        let guard = expected[0].1.lines().next().unwrap();
+        later_expiry[0].1.push_str(guard);
+        later_expiry[0].1.push('\n');
+        assert!(!audit(&later_expiry, &proof).is_clean());
+        for (code, signal, slot, pid, deadline) in [
+            (None, None, 4, 1234, 1789793371),
+            (Some(1), None, 4, 1234, 1789793371),
+            (None, Some(15), 4, 1234, 1789793371),
+            (Some(0), Some(9), 4, 1234, 1789793371),
+            (Some(0), None, 5, 1234, 1789793371),
+            (Some(0), None, 4, 0, 1789793371),
+            (Some(0), None, 4, 1234, 1789793372),
+        ] {
+            let mut bad = proof.clone();
+            bad.exit_code = code;
+            bad.exit_signal = signal;
+            bad.slot = slot;
+            bad.pid = pid;
+            bad.deadline = deadline;
+            assert!(!audit(&expected, &bad).is_clean());
+        }
+        for trailer in [
+            "thread tokio-rt panicked",
+            "ERROR engine::tree: Fatal error",
+            "ERROR reth::cli: Fatal error in consensus engine",
+            "ERROR other: unrelated fatal",
+        ] {
+            let mut bad = expected.clone();
+            bad[0].1.push_str(trailer);
+            assert!(!audit(&bad, &proof).is_clean(), "{trailer}");
+        }
+    }
 
-        let graceful = expected
-            .iter()
-            .map(|(path, content)| {
-                (
-                    path.clone(),
-                    content.lines().take(2).collect::<Vec<_>>().join("\n"),
-                )
-            })
-            .collect::<Vec<_>>();
-        let graceful_rejected =
-            audit_loaded_logs_with_all_expectations(&graceful, 4, None, None, None, None, Some(4));
-        assert!(!graceful_rejected.is_clean());
-
-        assert!(!audit_loaded_logs_with_expectations(&expected, 4, None, None, None).is_clean());
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &expected,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(5),
-        )
-        .is_clean());
-
-        let mut panic = expected.clone();
-        panic[0].1.push_str("\nthread tokio-rt panicked");
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &panic,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(4),
-        )
-        .is_clean());
-
-        let mut malformed = expected;
-        malformed[0].1 = malformed[0].1.replace(
-            "ERROR engine::tree: Fatal error\nERROR reth::cli: Fatal error in consensus engine",
-            "ERROR reth::cli: Fatal error in consensus engine\nERROR engine::tree: Fatal error",
+    #[test]
+    fn tee_lease_full_node_rejects_every_incomplete_or_cross_process_bundle() {
+        let baseline = tee_lease_full_node_shutdown_bundle(4);
+        let check = |logs: &[(PathBuf, String)]| {
+            let proof = full_node_proof(logs);
+            audit_loaded_logs_with_all_expectations(logs, 4, None, None, None, None, Some(&proof))
+                .is_clean()
+        };
+        assert!(check(&baseline));
+        for sink in 0..2 {
+            let lines: Vec<_> = baseline[sink].1.lines().collect();
+            for removed in 0..lines.len() {
+                let mut bad = baseline.clone();
+                bad[sink].1 = lines
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, line)| (i != removed).then_some(*line))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(!check(&bad), "missing sink {sink} line {removed}");
+            }
+            for (duplicated, line) in lines.iter().enumerate() {
+                let mut bad = baseline.clone();
+                bad[sink].1.push_str(line);
+                bad[sink].1.push('\n');
+                assert!(!check(&bad), "duplicate sink {sink} line {duplicated}");
+            }
+        }
+        for replacement in [
+            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain: consensus stack shutting down",
+            "INFO outbe_chain: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
+        ] {
+            let mut bad = baseline.clone();
+            bad[1].1 = bad[1].1.replace("INFO outbe_chain: consensus stack shutting down", replacement);
+            assert!(!check(&bad));
+        }
+        let mut reordered = baseline.clone();
+        reordered[1].1 = reordered[1].1.replace("DEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request",
+            "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: received engine shutdown request");
+        assert!(!check(&reordered));
+        for replacement in [
+            "WARN outbe_chain:",
+            "ERROR other:",
+            "ERROR outbe_chain: unrelated reason ",
+        ] {
+            let mut bad = baseline.clone();
+            bad[0].1 = bad[0].1.replace("ERROR outbe_chain:", replacement);
+            assert!(!check(&bad));
+        }
+        let mut too_far = baseline.clone();
+        too_far[1].1 = too_far[1].1.replace(
+            "DEBUG reth::cli: shutting down gracefully",
+            &format!(
+                "{}DEBUG reth::cli: shutting down gracefully",
+                "INFO noise\n".repeat(65)
+            ),
         );
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &malformed,
+        assert!(!check(&too_far));
+        assert!(!check(&baseline[..1]));
+        let mut mismatched = baseline.clone();
+        mismatched[1].0 = PathBuf::from("scenario-1/validator-5/logs/54322345/reth.log");
+        assert!(!check(&mismatched));
+    }
+
+    #[test]
+    fn tee_lease_full_node_immutable_intervals_exclude_future_and_detect_changes() {
+        let baseline = tee_lease_full_node_shutdown_bundle(4);
+        let proof = full_node_proof(&baseline);
+        let mut appended = baseline.clone();
+        for (_, log) in &mut appended {
+            log.push_str("INFO reth::cli: Starting Reth version=new\n");
+        }
+        assert!(audit_loaded_logs_with_all_expectations(
+            &appended,
             4,
             None,
             None,
             None,
             None,
-            Some(4),
+            Some(&proof)
+        )
+        .is_clean());
+        for changed in ["", "INFO replaced process\n"] {
+            let mut bad = baseline.clone();
+            bad[1].1 = changed.to_owned();
+            assert!(!audit_loaded_logs_with_all_expectations(
+                &bad,
+                4,
+                None,
+                None,
+                None,
+                None,
+                Some(&proof)
+            )
+            .is_clean());
+        }
+        let mut previous = baseline.clone();
+        let mut shifted = proof.clone();
+        for (index, (_, content)) in previous.iter_mut().enumerate() {
+            *content = format!("INFO previous process\n{content}");
+            shifted.sinks[index].start += 22;
+            shifted.sinks[index].end += 22;
+        }
+        assert!(audit_loaded_logs_with_all_expectations(
+            &previous,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(&shifted)
         )
         .is_clean());
     }

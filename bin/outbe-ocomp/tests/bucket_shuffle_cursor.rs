@@ -86,7 +86,7 @@ fn admitted_bucket_fixture() -> AdmittedBucketFixture {
     let spec = UnitSpecV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::BucketShuffle,
         interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan {
             start_run: 0,

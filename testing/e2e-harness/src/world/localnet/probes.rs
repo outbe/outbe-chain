@@ -386,9 +386,9 @@ impl Localnet {
         }
     }
 
-    fn node_log(&self, node: &str) -> String {
+    fn node_log(&self, node: &str) -> Result<String> {
         let path = self.cfg.dir.join(node).join("node.log");
-        fs::read_to_string(path).unwrap_or_default()
+        read_required_node_log(&path, node)
     }
 
     /// Parse bounded OCOMP runtime markers for one exact owned node.
@@ -485,17 +485,19 @@ impl Localnet {
     }
 
     /// Whether validator `index`'s log contains `needle` (`e2e_joiner_log_has`).
-    pub fn log_has(&self, index: usize, needle: &str) -> bool {
-        self.node_log(&format!("validator-{index}"))
-            .contains(needle)
+    pub fn log_has(&self, index: usize, needle: &str) -> Result<bool> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
+            .contains(needle))
     }
 
     /// Count of log LINES containing `needle` (matches shell `grep -c`).
-    pub fn log_count(&self, index: usize, needle: &str) -> usize {
-        self.node_log(&format!("validator-{index}"))
+    pub fn log_count(&self, index: usize, needle: &str) -> Result<usize> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
             .lines()
             .filter(|l| l.contains(needle))
-            .count()
+            .count())
     }
 
     /// First runtime-log line containing `needle`, including its path and line.
@@ -507,11 +509,11 @@ impl Localnet {
     }
 
     /// Whether validator `index`'s enclave log contains `needle`.
-    pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
+    pub fn enclave_log_has(&self, index: usize, needle: &str) -> Result<bool> {
         let path = self.cfg.validator_dir(index).join("enclave.log");
-        fs::read_to_string(path)
-            .unwrap_or_default()
-            .contains(needle)
+        let log = fs::read_to_string(&path)
+            .wrap_err_with(|| format!("read validator-{index} enclave log {}", path.display()))?;
+        Ok(log.contains(needle))
     }
 
     /// The `--consensus.keys-dir` for validator `index` (persisted-share restart).

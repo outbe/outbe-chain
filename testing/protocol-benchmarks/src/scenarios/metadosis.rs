@@ -1,9 +1,9 @@
 use std::time::Instant;
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_metadosis::WwdMembership;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};

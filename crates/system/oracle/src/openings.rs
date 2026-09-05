@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::storage::types::StorageKey;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::OracleOcompError;
 

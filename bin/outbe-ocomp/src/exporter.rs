@@ -376,7 +376,7 @@ struct BodyCandidate {
 
 struct CurrentPager<'a> {
     reader: &'a TributeRepositoryReader,
-    day: outbe_common::WorldwideDay,
+    day: outbe_primitives::time::WorldwideDay,
     limit: u32,
     cursor: Option<WwdEntityId>,
     buffered: VecDeque<WwdEntityId>,
@@ -387,7 +387,7 @@ struct CurrentPager<'a> {
 impl<'a> CurrentPager<'a> {
     fn new(
         reader: &'a TributeRepositoryReader,
-        day: outbe_common::WorldwideDay,
+        day: outbe_primitives::time::WorldwideDay,
         page_limit: usize,
     ) -> Result<Self, FinalizedTributeError> {
         Ok(Self {

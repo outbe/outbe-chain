@@ -2,7 +2,6 @@
 //! + the unqualified-series bin index). Orchestration lives in `runtime.rs`.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -11,6 +10,7 @@ use outbe_primitives::math::{
 };
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::constants::{BIN_STEP_BP, MAX_SERIES_ACTIONS_PER_BLOCK};
 use crate::errors::IntexFactoryError;

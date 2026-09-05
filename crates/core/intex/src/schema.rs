@@ -2,11 +2,11 @@
 //! identity + lifecycle ledger. One record per `seriesId`.
 
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
+use outbe_primitives::time::WorldwideDay;
 use std::fmt;
 
 use crate::errors::IntexError;

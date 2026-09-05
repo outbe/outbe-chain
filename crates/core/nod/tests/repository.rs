@@ -9,7 +9,6 @@ use std::{
 
 use alloy_primitives::{Address, B256, U256};
 use mongodb::sync::Client;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
     encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
@@ -23,6 +22,7 @@ use outbe_offchain_storage::{
     StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
     MAX_SCAN_ENTRIES,
 };
+use outbe_primitives::time::WorldwideDay;
 
 fn entity(seed: U256, worldwide_day: WorldwideDay) -> WwdEntityId {
     WwdEntityId::from_day_and_digest(worldwide_day, seed.to_be_bytes::<32>())

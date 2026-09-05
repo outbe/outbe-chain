@@ -1,5 +1,5 @@
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_primitives::time::WorldwideDay;
 #[cfg(test)]
 use outbe_primitives::time::{
     date_key_to_utc_timestamp as primitives_date_key_to_timestamp,
@@ -9,11 +9,8 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
 use crate::{
-    aggregate::ValidatedWwdAggregate,
-    lifecycle,
-    ocomp::{
-        schema::require_active_ocomp_profile as load_active_ocomp_profile, OcompRequestProfileExt,
-    },
+    aggregate::ValidatedWwdAggregate, lifecycle,
+    ocomp::schema::require_active_ocomp_profile as load_active_ocomp_profile,
     settlement::process_ocomp_ready_candidate,
 };
 
@@ -71,7 +68,7 @@ pub fn start_metadosis(
     for current in aggregate.ready_records() {
         let wwd = current.worldwide_day;
         if !metadosis.ocomp_fsm_states.get_bytes(&wwd).is_empty()? {
-            metadosis.ocomp_fsm_state(wwd, &schema_limits, ocomp_profile.fsm_limits())?;
+            metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
             continue;
         }
         process_ocomp_ready_candidate(&mut metadosis, ctx, scope, parent, current, &ocomp_profile)?;

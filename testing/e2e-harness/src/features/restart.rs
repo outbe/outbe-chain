@@ -43,10 +43,14 @@ fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
     };
     for _ in 0..30 {
         sleep(Duration::from_secs(2));
-        let ch = rpc.head(committee).unwrap_or(0);
-        let vh = rpc.head(joiner).unwrap_or(0);
-        let cf = rpc.finalized(committee).unwrap_or(0);
-        let vf = rpc.finalized(joiner).unwrap_or(0);
+        let (Some(ch), Some(vh), Some(cf), Some(vf)) = (
+            rpc.head(committee),
+            rpc.head(joiner),
+            rpc.finalized(committee),
+            rpc.finalized(joiner),
+        ) else {
+            continue;
+        };
         if cf > initial_committee
             && vf > initial_joiner
             && ch.abs_diff(vh) <= 3
@@ -74,7 +78,6 @@ fn wait_for_dkg_retry_snapshot(keys_dir: impl AsRef<Path>, validator: usize, fil
 fn joiner_active_persisted_share(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     let wwd = world.state.wwd.clone().expect("wwd");
 
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
@@ -90,9 +93,8 @@ fn joiner_active_persisted_share(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner (keys-dir)");
-    world.rpc.wait_block(joiner_port, 20, 40);
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
@@ -106,7 +108,10 @@ fn joiner_active_persisted_share(world: &mut World) {
     // old 400-second allowance to reach that boundary; use the same bounded
     // allowance as the lifecycle admission scenario.
     assert!(
-        world.rpc.wait_participant(primary, &addr, 70),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 70)
+            .expect("wait for observable consensus participation"),
         "joiner did not reach ACTIVE before the restart"
     );
     assert!(
@@ -122,7 +127,12 @@ fn joiner_active_persisted_share(world: &mut World) {
 fn node_killed_and_restarted(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    world.state.marker_count = Some(world.localnet.log_count(idx, "running DKG ceremony"));
+    world.state.marker_count = Some(
+        world
+            .localnet
+            .log_count(idx, "running DKG ceremony")
+            .expect("read required owned process log"),
+    );
     world.state.marker_height = world.rpc.head(primary);
     world.localnet.stop_joiner(idx).expect("stop joiner");
     let keys = world.localnet.keys_dir(idx);
@@ -139,7 +149,12 @@ fn node_killed_and_restarted(world: &mut World) {
 fn committee_and_enclaves_restarted(world: &mut World) {
     let primary = world.validators.primary_port();
     world.state.marker_height = world.rpc.head(primary);
-    world.state.marker_count = Some(world.localnet.log_count(0, "running DKG ceremony"));
+    world.state.marker_count = Some(
+        world
+            .localnet
+            .log_count(0, "running DKG ceremony")
+            .expect("read required owned process log"),
+    );
     world
         .localnet
         .restart_committee_and_enclaves()
@@ -155,7 +170,10 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
     let mut ports = vec![world.validators.primary_port()];
     ports.extend(world.validators.peer_ports());
     for port in ports {
-        let height = world.rpc.wait_block(port, target, 60).unwrap_or(0);
+        let height = world
+            .rpc
+            .wait_block(port, target, 60)
+            .unwrap_or_else(|| panic!("validator RPC {port} did not reach target {target}"));
         assert!(
             height >= target,
             "validator RPC {port} did not advance after full restart ({height} < {target})"
@@ -167,12 +185,15 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
             world.localnet.enclave_log_has(
                 index,
                 "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
-            ),
+            ).expect("read restarted validator enclave log"),
             "validator-{index} enclave did not recover its sealed offer key"
         );
     }
     assert_eq!(
-        world.localnet.log_count(0, "running DKG ceremony"),
+        world
+            .localnet
+            .log_count(0, "running DKG ceremony")
+            .expect("read required owned process log"),
         world.state.marker_count.expect("pre-restart DKG count"),
         "full restart unexpectedly triggered a new DKG ceremony"
     );
@@ -190,7 +211,8 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
         assert!(
             world
                 .localnet
-                .enclave_log_has(index, "req=process_tribute_offer_batch"),
+                .enclave_log_has(index, "req=process_tribute_offer_batch")
+                .expect("read required owned process log"),
             "validator-{index} restarted enclave log lacks the offer telemetry line"
         );
     }
@@ -210,18 +232,24 @@ fn resumes_without_new_ceremony(world: &mut World) {
     let h = world
         .rpc
         .wait_block(joiner_port, restart_h, 30)
-        .unwrap_or(0);
+        .expect("restarted node RPC must reach its pre-restart height");
     assert!(
         h >= restart_h,
         "restarted node did not catch up (head {h} < {restart_h})"
     );
     assert_eq!(
-        world.localnet.log_count(idx, "running DKG ceremony"),
+        world
+            .localnet
+            .log_count(idx, "running DKG ceremony")
+            .expect("read required owned process log"),
         pre_ceremony,
         "a fresh DKG ceremony was triggered by the restart"
     );
     assert!(
-        world.rpc.is_participant(primary, &addr),
+        world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "node is not an ACTIVE participant after restart"
     );
     assert!(
@@ -229,7 +257,10 @@ fn resumes_without_new_ceremony(world: &mut World) {
         "restarted validator does not resume signing in lockstep"
     );
     assert_eq!(
-        world.localnet.log_count(0, "byzantine evidence observed"),
+        world
+            .localnet
+            .log_count(0, "byzantine evidence observed")
+            .expect("read required owned process log"),
         0,
         "byzantine/equivocation evidence around the restart"
     );
@@ -250,7 +281,6 @@ fn resumes_without_new_ceremony(world: &mut World) {
 fn joiner_completes_dkg_before_activation(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -258,12 +288,8 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 20, 40).is_some(),
-        "joiner never cold-synced"
-    );
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -276,6 +302,7 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
         if world
             .localnet
             .log_has(idx, "persisted completed DKG state before activation")
+            .expect("read required owned process log")
         {
             observed = true;
             break;
@@ -289,7 +316,10 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
         "joiner must remain PENDING before activation"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "joiner participated before the activation boundary"
     );
     assert!(
@@ -311,7 +341,10 @@ fn restart_joiner_before_activation(world: &mut World) {
     let idx = world.validators.joiner_index();
     let addr = world.state.joiner_addr.clone().expect("joiner address");
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
-    assert!(!world.rpc.is_participant(primary, &addr));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation"));
 
     world.localnet.stop_joiner(idx).expect("stop joiner");
     world
@@ -336,7 +369,10 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
     let old_epoch = world.state.marker_count.expect("pre-restart epoch");
 
     assert!(
-        world.rpc.wait_participant(primary, &addr, 60),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 60)
+            .expect("wait for observable consensus participation"),
         "restarted joiner never activated from pending DKG"
     );
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
@@ -346,17 +382,23 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
     assert!(
         world
             .localnet
-            .log_has(idx, "recovered durable pending DKG boundary snapshot",),
+            .log_has(idx, "recovered durable pending DKG boundary snapshot",)
+            .expect("read required owned process log"),
         "restart did not use durable pending DKG recovery"
     );
     assert!(
         world
             .localnet
-            .enclave_log_has(idx, "unsealed offer key + group signature"),
+            .enclave_log_has(idx, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "joiner enclave did not recover sealed state"
     );
 
-    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let target = world
+        .rpc
+        .head(primary)
+        .expect("primary head after pending-DKG recovery")
+        + 3;
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
     for port in ports {
@@ -379,7 +421,6 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
 fn restart_joiner_during_dkg(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -387,9 +428,8 @@ fn restart_joiner_during_dkg(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -402,6 +442,7 @@ fn restart_joiner_during_dkg(world: &mut World) {
         if world
             .localnet
             .log_has(idx, "freezing validator set and starting DKG rotation")
+            .expect("read required owned process log")
         {
             ceremony_started = true;
             break;
@@ -413,11 +454,15 @@ fn restart_joiner_during_dkg(world: &mut World) {
     assert!(
         !world
             .localnet
-            .log_has(idx, "persisted completed DKG state before activation"),
+            .log_has(idx, "persisted completed DKG state before activation")
+            .expect("read required owned process log"),
         "DKG completed before the intended in-flight restart"
     );
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
-    assert!(!world.rpc.is_participant(primary, &addr));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation"));
     world.state.marker_height = world.rpc.head(primary);
     world.state.marker_count = world
         .rpc
@@ -451,13 +496,20 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         world.rpc.wait_block(primary, marker + 3, 40).is_some(),
         "old committee stopped while joiner DKG was interrupted"
     );
-    if !world.rpc.is_participant(primary, &addr) {
+    if !world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation")
+    {
         assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
         assert_eq!(world.rpc.active_count(primary), Some(4));
     }
 
     assert!(
-        world.rpc.wait_participant(primary, &addr, 90),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 90)
+            .expect("wait for observable consensus participation"),
         "joiner did not activate after interrupted DKG retry"
     );
     let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
@@ -484,9 +536,20 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
     assert!(
         world
             .localnet
-            .enclave_log_has(idx, "unsealed offer key + group signature"),
+            .enclave_log_has(idx, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "joiner enclave did not recover its sealed state during DKG restart"
     );
+    let baseline = world
+        .rpc
+        .finalized_result(primary)
+        .expect("read finalized baseline after interrupted DKG activation");
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, baseline.saturating_add(2), 90)
+        .expect("all five nodes converge after interrupted DKG recovery");
 
     // ACTIVE is committed while executing the epoch-boundary block, after that
     // block was already finalized by the old committee. Its absentee window
@@ -494,7 +557,10 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
     // finalization. Close the window before taking the signer-liveness baseline;
     // otherwise this assertion races delayed accounting for a block the joiner
     // was canonically forbidden to sign.
-    let eligibility_height = world.rpc.head(primary).unwrap_or_default();
+    let eligibility_height = world
+        .rpc
+        .head(primary)
+        .expect("primary head at joiner eligibility");
     assert!(
         world
             .rpc
@@ -506,7 +572,11 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         .rpc
         .voter_miss_count(primary, &addr)
         .expect("joiner voter-miss count after activation");
-    let target = world.rpc.head(primary).unwrap_or_default() + 5;
+    let target = world
+        .rpc
+        .head(primary)
+        .expect("primary head after joiner eligibility")
+        + 5;
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
     for port in ports {
@@ -527,7 +597,6 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
 fn restart_registered_joiner_before_staking(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -535,9 +604,8 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -547,7 +615,10 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
         world.rpc.stake_on(primary, &addr),
         Some(alloy_primitives::U256::ZERO)
     );
-    assert!(!world.rpc.is_participant(primary, &addr));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation"));
     assert_eq!(world.rpc.active_count(primary), Some(4));
     world.state.joiner_offer_public_before_restart = Some(
         world
@@ -590,7 +661,10 @@ fn registered_restart_then_join_activates(world: &mut World) {
         world.rpc.stake_on(primary, &addr),
         Some(alloy_primitives::U256::ZERO)
     );
-    assert!(!world.rpc.is_participant(primary, &addr));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation"));
     assert_eq!(world.rpc.active_count(primary), Some(4));
     assert_eq!(
         world.rpc.epoch_on(primary),
@@ -611,7 +685,8 @@ fn registered_restart_then_join_activates(world: &mut World) {
     assert!(
         world
             .localnet
-            .enclave_log_has(idx, "unsealed offer key + group signature"),
+            .enclave_log_has(idx, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "registered joiner's enclave did not recover sealed state"
     );
 
@@ -623,7 +698,10 @@ fn registered_restart_then_join_activates(world: &mut World) {
         .confirm_ready(&key)
         .expect("confirm after restart");
     assert!(
-        world.rpc.wait_participant(primary, &addr, 90),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 90)
+            .expect("wait for observable consensus participation"),
         "registered joiner did not activate after restart"
     );
     let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
@@ -631,11 +709,17 @@ fn registered_restart_then_join_activates(world: &mut World) {
     assert_eq!(world.rpc.active_count(primary), Some(5));
     assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
 
-    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let baseline = world
+        .rpc
+        .finalized_result(primary)
+        .expect("read finalized baseline after registered joiner activation");
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, baseline.saturating_add(2), 90)
+        .expect("all five nodes converge after registered joiner restart");
     for port in ports {
-        assert!(world.rpc.wait_block(port, target, 60).is_some());
         assert_eq!(world.rpc.active_count(port), Some(5));
         assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
     }
@@ -648,16 +732,14 @@ fn registered_restart_then_join_activates(world: &mut World) {
 fn restart_active_validator_during_reshare(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -670,6 +752,7 @@ fn restart_active_validator_during_reshare(world: &mut World) {
         if world
             .localnet
             .log_has(0, "freezing validator set and starting DKG rotation")
+            .expect("read required owned process log")
         {
             ceremony_started = true;
             break;
@@ -680,11 +763,15 @@ fn restart_active_validator_during_reshare(world: &mut World) {
     assert!(
         !world
             .localnet
-            .log_has(0, "persisted completed DKG state before activation"),
+            .log_has(0, "persisted completed DKG state before activation")
+            .expect("read required owned process log"),
         "reshare completed before the intended active-validator restart"
     );
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
-    assert!(!world.rpc.is_participant(primary, &addr));
+    assert!(!world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation"));
     assert_eq!(world.rpc.active_count(primary), Some(4));
     let incumbent_keys = world.localnet.scenario_dir().join("validator-3/data/keys");
     wait_for_dkg_retry_snapshot(&incumbent_keys, 3, "dkg_dealer_retry.hex");
@@ -731,17 +818,28 @@ fn active_restart_reshare_converges(world: &mut World) {
         world.rpc.wait_block(restarted, marker + 3, 60).is_some(),
         "restarted active validator did not catch up"
     );
-    if !world.rpc.is_participant(primary, &addr) {
+    if !world
+        .rpc
+        .is_participant(primary, &addr)
+        .expect("observe consensus participation")
+    {
         assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
         assert_eq!(world.rpc.active_count(primary), Some(4));
     }
 
     assert!(
-        world.rpc.wait_participant(primary, &addr, 90),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 90)
+            .expect("wait for observable consensus participation"),
         "frozen reshare did not activate after active-validator recovery"
     );
     let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
-    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let target = world
+        .rpc
+        .head(primary)
+        .expect("primary head after active-validator recovery")
+        + 3;
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
     for port in ports {
@@ -761,13 +859,15 @@ fn active_restart_reshare_converges(world: &mut World) {
     assert!(
         world
             .localnet
-            .enclave_log_has(3, "unsealed offer key + group signature"),
+            .enclave_log_has(3, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "restarted active validator did not recover sealed enclave state"
     );
     assert!(
         world
             .localnet
-            .log_has(3, "restoring durable DKG dealer transcript"),
+            .log_has(3, "restoring durable DKG dealer transcript")
+            .expect("read required owned process log"),
         "restarted active dealer did not restore the interrupted DKG transcript"
     );
     assert_eq!(
@@ -779,7 +879,11 @@ fn active_restart_reshare_converges(world: &mut World) {
         .rpc
         .voter_miss_count(primary, &restarted_addr)
         .expect("restarted validator voter-miss count after activation");
-    let voting_target = world.rpc.head(primary).unwrap_or_default() + 5;
+    let voting_target = world
+        .rpc
+        .head(primary)
+        .expect("primary head before recovered-validator voting window")
+        + 5;
     assert!(
         world.rpc.wait_block(primary, voting_target, 60).is_some(),
         "committee did not continue after restarted validator activation"
