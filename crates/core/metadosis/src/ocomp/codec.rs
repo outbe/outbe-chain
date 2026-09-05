@@ -1,8 +1,8 @@
 use crate::errors::storage_corruption_message;
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::SchemaLimits;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use super::state::{
     JobFsmSnapshot, JobFsmState, LiveAttemptSnapshot, ReadyAttemptSnapshot,

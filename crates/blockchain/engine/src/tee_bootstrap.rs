@@ -991,6 +991,7 @@ where
     /// early and recording the `tee_bls -> consensus_pubkey` routing. Returns the
     /// identities sorted canonically by `tee_bls` (so every node derives the same
     /// ceremony id and participant order).
+    #[allow(clippy::too_many_arguments)]
     pub async fn exchange_identities(
         &mut self,
         my_bls: Vec<u8>,

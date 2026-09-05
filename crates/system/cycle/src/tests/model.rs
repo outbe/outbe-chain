@@ -4,7 +4,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_metadosis::{
     api::{
         capacity_forfeiture_receipt, day_limit_formation_receipt, missed_offering_receipt,
@@ -13,6 +12,7 @@ use outbe_metadosis::{
     constants::MAX_RETAINED_WWDS,
     WwdMembership, WwdStatus,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{CYCLE_ADDRESS, METADOSIS_ADDRESS},
     block::{BlockRuntimeContext, BlockRuntimeContext as RuntimeContext},

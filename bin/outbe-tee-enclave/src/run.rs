@@ -20,6 +20,7 @@ use crate::initialization::InitializationState;
 use crate::keys::EnclaveKeys;
 use crate::seal::EnclaveBootConfig;
 use crate::transport::{serve, serve_tcp};
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]; the
 /// dev mock binary has its feature-gated constructor. The private field prevents
@@ -82,6 +83,20 @@ pub fn run(opts: RunOpts) -> i32 {
              NOT confidential (dev/CI only, never production)"
         );
     }
+
+    let chain_id = B256::from(
+        arg_value(&args, "--chain-id")
+            .and_then(|h| parse_hex32(&h))
+            .unwrap_or([0u8; 32]),
+    );
+    let development_network_binding =
+        match resolve_development_network_binding(&args, opts.is_mock(), chain_id) {
+            Ok(binding) => binding,
+            Err(error) => {
+                eprintln!("outbe-tee-enclave: development network binding failed: {error}");
+                return 2;
+            }
+        };
 
     // Detect the real attestation environment up front so the startup banner
     // tells the truth (hardware-attested vs unattested) instead of claiming SGX.
@@ -165,12 +180,6 @@ pub fn run(opts: RunOpts) -> i32 {
     // fidelity query, which cross-checks it against the node's chain. Sourcing it
     // from `--chain-id` here (not from the seal-only boot config) is what lets a
     // non-sealing enclave still answer chain-scoped queries.
-    let chain_id = B256::from(
-        arg_value(&args, "--chain-id")
-            .and_then(|h| parse_hex32(&h))
-            .unwrap_or([0u8; 32]),
-    );
-
     // Shared, write-once permanent offer-key slot. It is restored only after the
     // sealed initialization manifest has established the exact network binding.
     let offer_key: crate::transport::SharedTributeOfferKey =
@@ -178,7 +187,9 @@ pub fn run(opts: RunOpts) -> i32 {
 
     #[cfg(feature = "mock")]
     let initialization = if opts.is_mock() {
-        InitializationState::development()
+        InitializationState::development_for_network(
+            development_network_binding.expect("mock binding was required above"),
+        )
     } else {
         let Some(boot) = boot.clone() else {
             eprintln!(
@@ -196,6 +207,7 @@ pub fn run(opts: RunOpts) -> i32 {
     };
     #[cfg(not(feature = "mock"))]
     let initialization = {
+        let _ = development_network_binding;
         let Some(boot) = boot.clone() else {
             eprintln!(
                 "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
@@ -306,6 +318,34 @@ pub fn run(opts: RunOpts) -> i32 {
         return 1;
     }
     0
+}
+
+fn resolve_development_network_binding(
+    args: &[String],
+    mock: bool,
+    chain_id: B256,
+) -> Result<Option<NetworkBindingV1>, String> {
+    let encoded = arg_value(args, "--dev-network-binding");
+    if !mock {
+        return encoded
+            .is_none()
+            .then_some(None)
+            .ok_or_else(|| "--dev-network-binding is accepted only by the mock binary".to_owned());
+    }
+    let encoded = encoded.ok_or_else(|| {
+        "mock binary requires --dev-network-binding <canonical NetworkBindingV1 hex>".to_owned()
+    })?;
+    let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
+        .map_err(|error| format!("decode --dev-network-binding hex: {error}"))?;
+    let binding = NetworkBindingV1::decode_canonical(&bytes)
+        .map_err(|error| format!("decode canonical NetworkBindingV1: {error}"))?;
+    if binding.attestation_mode != AttestationMode::GramineDirectDev {
+        return Err("development network binding must use GramineDirectDev mode".to_owned());
+    }
+    if B256::from(binding.chain_id) != chain_id {
+        return Err("development network binding chain id does not match --chain-id".to_owned());
+    }
+    Ok(Some(binding))
 }
 
 /// Resolve the one seed backing every persistent enclave identity key.
@@ -518,7 +558,94 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_loopback_endpoint, resolve_enclave_identity_seed};
+    use alloy_primitives::{B256, U256};
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+
+    use super::{
+        is_loopback_endpoint, resolve_development_network_binding, resolve_enclave_identity_seed,
+    };
+
+    fn development_binding(mode: AttestationMode) -> NetworkBindingV1 {
+        NetworkBindingV1 {
+            chain_id: U256::from(424_242u64).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(0x5b),
+            attestation_mode: mode,
+        }
+    }
+
+    fn development_args(binding: NetworkBindingV1) -> Vec<String> {
+        vec![
+            "outbe-tee-enclave-mock".to_owned(),
+            "--dev-network-binding".to_owned(),
+            hex::encode(binding.encode_canonical().unwrap()),
+        ]
+    }
+
+    #[test]
+    fn mock_network_binding_is_required_and_must_be_canonical() {
+        let chain_id = B256::from(development_binding(AttestationMode::GramineDirectDev).chain_id);
+        let missing = resolve_development_network_binding(&[], true, chain_id).unwrap_err();
+        assert!(missing.contains("requires --dev-network-binding"));
+
+        let malformed = resolve_development_network_binding(
+            &[
+                "outbe-tee-enclave-mock".to_owned(),
+                "--dev-network-binding".to_owned(),
+                "not-hex".to_owned(),
+            ],
+            true,
+            chain_id,
+        )
+        .unwrap_err();
+        assert!(malformed.contains("decode --dev-network-binding hex"));
+    }
+
+    #[test]
+    fn mock_network_binding_rejects_production_mode_and_another_chain() {
+        let direct = development_binding(AttestationMode::GramineDirectDev);
+        let production = development_binding(AttestationMode::DcapRequired);
+        let mode_error = resolve_development_network_binding(
+            &development_args(production),
+            true,
+            B256::from(production.chain_id),
+        )
+        .unwrap_err();
+        assert!(mode_error.contains("GramineDirectDev"));
+
+        let chain_error = resolve_development_network_binding(
+            &development_args(direct),
+            true,
+            B256::repeat_byte(0x77),
+        )
+        .unwrap_err();
+        assert!(chain_error.contains("does not match --chain-id"));
+    }
+
+    #[test]
+    fn mock_network_binding_accepts_the_matching_development_binding() {
+        let binding = development_binding(AttestationMode::GramineDirectDev);
+        assert_eq!(
+            resolve_development_network_binding(
+                &development_args(binding),
+                true,
+                B256::from(binding.chain_id),
+            )
+            .unwrap(),
+            Some(binding)
+        );
+    }
+
+    #[test]
+    fn production_binary_rejects_the_development_only_flag() {
+        let binding = development_binding(AttestationMode::GramineDirectDev);
+        let error = resolve_development_network_binding(
+            &development_args(binding),
+            false,
+            B256::from(binding.chain_id),
+        )
+        .unwrap_err();
+        assert!(error.contains("accepted only by the mock binary"));
+    }
 
     fn production_args(root: &std::path::Path) -> Vec<String> {
         vec![

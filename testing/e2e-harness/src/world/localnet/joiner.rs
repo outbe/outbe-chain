@@ -26,6 +26,12 @@ use crate::world::validators::RegistrationIdentity;
 use super::Localnet;
 
 const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+const PRODUCTION_NO_ATTEST_REJECTION: &str = "production DCAP release refuses runtime attestation \
+none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)";
+
+fn has_exact_production_no_attest_rejection(log: &str) -> bool {
+    log.contains(PRODUCTION_NO_ATTEST_REJECTION)
+}
 
 fn retry_node_offer_read(real_sgx: bool, attempt: usize, error: &TransportError) -> bool {
     real_sgx
@@ -46,6 +52,24 @@ pub(crate) struct ManualRenewalStatusObservationV1 {
     pub finalized_timestamp: u64,
     pub valid_until: u64,
     pub journal_state: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualRenewalCliOutcomeV1 {
+    Finalized,
+    NotDue,
+    Unexpected,
+}
+
+fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1 {
+    let output = output.trim_start();
+    if output.starts_with("Finalized {") {
+        ManualRenewalCliOutcomeV1::Finalized
+    } else if output.starts_with("NotDue {") {
+        ManualRenewalCliOutcomeV1::NotDue
+    } else {
+        ManualRenewalCliOutcomeV1::Unexpected
+    }
 }
 
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
@@ -74,6 +98,19 @@ fn full_node_joiner_role_args(
     ]
 }
 
+fn require_cold_admission_checkpoint(
+    anchor: outbe_tee::FinalizedJoinAdmissionAnchorV1,
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+) -> Result<()> {
+    eyre::ensure!(
+        checkpoint.height == anchor.finalized_height
+            && checkpoint.block_hash == anchor.finalized_hash
+            && checkpoint.state_root == anchor.finalized_state_root,
+        "cold joiner disagrees with its durable admission checkpoint"
+    );
+    Ok(())
+}
+
 impl Localnet {
     /// Canonical ownership key for the role-neutral FullNode process. Launch,
     /// stop, and exit probes must all use this exact identity.
@@ -96,6 +133,7 @@ impl Localnet {
         fs::create_dir_all(vd.join("logs"))?;
         let secret_path = vd.join("reth-p2p-secret.hex");
         self.provision_full_node_node_host(index)?;
+        self.wait_selected_upstream_admission(index, upstream_slot)?;
         // File-based flag: the key must never appear in argv (`ps` leak).
         let secret_file = proc::normalized_secret_file(&secret_path)?;
         let mut process_args = self.reth_base_args(&vd, index);
@@ -115,7 +153,7 @@ impl Localnet {
             .env("RUST_LOG", "info,outbe_consensus::follow=debug")
             .args(&process_args);
         attach_log(&mut command, &vd)?;
-        let guard = self.spawn_node(&name, &vd, command)?;
+        let guard = self.spawn_node(&name, index, &vd, command)?;
         self.followers.insert(name, guard);
         Ok(())
     }
@@ -131,6 +169,19 @@ impl Localnet {
         self.followers
             .get_mut(&Self::joiner_full_node_name(index))
             .map(crate::internal::proc::ChildGuard::exited)
+    }
+
+    /// Observe the exact owned FullNode before replacement or teardown. A
+    /// missing owner and an observation error are not evidence of an exit.
+    pub(crate) fn owned_full_node_process(
+        &mut self,
+        index: usize,
+    ) -> Result<(u32, Option<std::process::ExitStatus>)> {
+        let child = self
+            .followers
+            .get_mut(&Self::joiner_full_node_name(index))
+            .ok_or_else(|| eyre!("FullNode {index} is not owned"))?;
+        Ok((child.pid(), child.exit_status()?))
     }
 
     /// Whether the owned non-voting FullNode process has exited.
@@ -579,7 +630,7 @@ impl Localnet {
         index: usize,
     ) -> Result<ManualRenewalObservationV1> {
         let vd = self.cfg.validator_dir(index);
-        Sh::new(&self.cfg).cli_required(args![
+        let output = Sh::new(&self.cfg).cli_required(args![
             "tee",
             "renew",
             "--enclave-socket",
@@ -593,8 +644,24 @@ impl Localnet {
             "--private-key",
             read_evm_key(&vd)?,
         ])?;
+        match classify_manual_renewal_cli_output(&output) {
+            ManualRenewalCliOutcomeV1::Finalized => {}
+            ManualRenewalCliOutcomeV1::NotDue => {
+                return Err(eyre!(
+                    "manual renewal remained NotDue after the harness entered the finalized renewal window for node {index}: {output}"
+                ));
+            }
+            ManualRenewalCliOutcomeV1::Unexpected => {
+                return Err(eyre!(
+                    "manual renewal returned an unexpected successful result for node {index}: {output}"
+                ));
+            }
+        }
         let journal_path = vd.join("data/tee-renewal-v1/journal.json");
-        let journal: serde_json::Value = serde_json::from_slice(&fs::read(&journal_path)?)?;
+        let journal: serde_json::Value = serde_json::from_slice(
+            &fs::read(&journal_path)
+                .wrap_err_with(|| format!("read finalized renewal journal {journal_path:?}"))?,
+        )?;
         if journal
             .pointer("/lifecycle/state")
             .and_then(|value| value.as_str())
@@ -663,6 +730,7 @@ impl Localnet {
             enclave_bin: self.real_enclave_bin()?,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: true,
@@ -692,9 +760,7 @@ impl Localnet {
             .join("enclave-no-attest-downgrade.log");
         let log = fs::read_to_string(&log_path)
             .wrap_err_with(|| format!("read downgrade log {}", log_path.display()))?;
-        if !log.contains("production DCAP release refuses runtime attestation sgx-no-attest")
-            && !log.contains("does not satisfy DcapRequired")
-        {
+        if !has_exact_production_no_attest_rejection(&log) {
             bail!("downgrade runtime did not report a fail-closed DCAP policy rejection");
         }
         if log.contains("unsealed offer key + group signature")
@@ -707,14 +773,6 @@ impl Localnet {
 
     pub fn stop_node_enclave(&mut self, index: usize) {
         self.enclaves.remove(&index);
-    }
-
-    /// Move one complete harness-owned node slot without changing any identity
-    /// or key material. Production nodes keep their directory in place; this
-    /// exists only because the harness reserves distinct numeric port slots.
-    pub fn move_role_neutral_node_slot(&mut self, from: usize, to: usize) -> Result<()> {
-        self.stop_node_enclave(from);
-        self.move_datadir(&format!("validator-{from}"), &format!("validator-{to}"))
     }
 
     pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -784,6 +842,10 @@ impl Localnet {
     }
 
     pub(super) fn start_node_enclave(&mut self, index: usize) -> Result<()> {
+        eyre::ensure!(
+            !self.enclaves.contains_key(&index),
+            "enclave slot {index} is already owned"
+        );
         let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
         self.ensure_enclave_image_once()?;
@@ -792,55 +854,190 @@ impl Localnet {
         } else {
             self.real_enclave_bin()?
         };
-        let guard = proc::spawn_enclave(proc::EnclaveSpec {
-            name: self.cfg.tee_container(index),
-            tee_port: port,
-            enclave_bin,
-            signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
-            network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
-                .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
-            launch: self.enclave_launch()?,
-            sudo: self.cfg.sudo,
-            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
-            remote_attestation: match self.cfg.tee_mode {
-                crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
-                crate::env::TeeMode::SgxNoAttest
-                | crate::env::TeeMode::GramineDirect
-                | crate::env::TeeMode::Mock
-                | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+        let guard = proc::spawn_enclave_ready(
+            proc::EnclaveSpec {
+                name: self.cfg.tee_container(index),
+                tee_port: port,
+                enclave_bin,
+                signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+                network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
+                    .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
+                dev_network_binding: self.dev_network_binding_hex()?,
+                launch: self.enclave_launch()?,
+                sudo: self.cfg.sudo,
+                pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+                remote_attestation: match self.cfg.tee_mode {
+                    crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
+                    crate::env::TeeMode::SgxNoAttest
+                    | crate::env::TeeMode::GramineDirect
+                    | crate::env::TeeMode::Mock
+                    | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+                },
+                dkg_seed: self
+                    .cfg
+                    .tee_mode
+                    .uses_deterministic_dkg_seed()
+                    .then(|| format!("{:064x}", index + 1)),
+                seal: Some(SealSpec {
+                    tee_dir: vd.join("tee"),
+                    chain_id_hex: self.chain_id_hex()?,
+                }),
+                log_path: vd.join("enclave.log"),
+                debug: self.cfg.debug,
             },
-            dkg_seed: self
-                .cfg
-                .tee_mode
-                .uses_deterministic_dkg_seed()
-                .then(|| format!("{:064x}", index + 1)),
-            seal: Some(SealSpec {
-                tee_dir: vd.join("tee"),
-                chain_id_hex: self.chain_id_hex()?,
-            }),
-            log_path: vd.join("enclave.log"),
-            debug: self.cfg.debug,
-        })?;
+            self.enclave_startup_deadline(10),
+        )?;
         self.enclaves.insert(index, guard);
-        if !wait_tcp(port, 100) {
-            self.enclaves.remove(&index);
-            return Err(eyre!("enclave socket 127.0.0.1:{port} never came up"));
-        }
         Ok(())
     }
 
     /// Launch the joiner node (validator-mode, verifier-join args), passing any
     /// extra node args (e.g. `--consensus.keys-dir ...`). Port of `e2e_launch_joiner`.
     pub fn launch_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
-        #[cfg(not(feature = "ocomp-integration"))]
-        self.ensure_embedded_ocomp_validator_domain_material(index)?;
+        let argv = self.joiner_validator_args(index, extra)?;
+        self.spawn_joiner_with_args(index, argv)
+    }
 
+    /// Cold admission only. Deliberate warm promotion and crash/restart tests
+    /// use launch_joiner directly so their fault boundary is not pre-recovered.
+    pub fn launch_caught_up_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
+        use std::thread::sleep;
+        use std::time::{Duration, Instant};
+
+        use crate::internal::launch_log::LaunchLog;
+        use crate::world::rpc::Rpc;
+        use eyre::ensure;
+
+        ensure!(
+            !self.validators.contains_key(&index),
+            "validator-{index} is already owned"
+        );
+        let name = Self::joiner_full_node_name(index);
+        ensure!(
+            !self.followers.contains_key(&name),
+            "{name} is already owned"
+        );
+        let argv = self.joiner_validator_args(index, extra)?;
+        let vd = self.cfg.validator_dir(index);
+        ensure!(
+            !self
+                .validators
+                .values()
+                .chain(self.followers.values())
+                .any(|child| child.owns_node_data_dir(&vd.join("data"))),
+            "cold joiner datadir already has an owned process"
+        );
+        // This API reconciles the durable journal and takes its owner lock.
+        // Read it exactly once, while the node is stopped, never inside polling.
+        let anchor = if self.cfg.tee_mode.passes_sgx_devices() {
+            Some(
+                outbe_tee::load_finalized_join_admission_anchor(&vd.join("data"))?
+                    .ok_or_else(|| eyre!("cold joiner has no finalized admission anchor"))?,
+            )
+        } else {
+            None
+        };
+        let rpc = Rpc::new(self.cfg.clone());
+        let primary = self.cfg.http_port(0);
+        let port = self.cfg.http_port(index);
+        let baseline = rpc.finalized_result(primary)?;
+        if let Some(anchor) = anchor {
+            ensure!(
+                baseline >= anchor.finalized_height,
+                "cold joiner upstream has not finalized its admission anchor"
+            );
+            ensure!(
+                rpc.checkpoint_at(primary, 0)?.block_hash == anchor.genesis_hash,
+                "cold joiner admission belongs to another genesis"
+            );
+            let checkpoint = rpc.checkpoint_at(primary, anchor.finalized_height)?;
+            require_cold_admission_checkpoint(anchor, checkpoint)?;
+        }
+        let follower_args = super::follower::derive_validator_recovery_follower_args(
+            &argv,
+            &format!("http://127.0.0.1:{primary}"),
+        )?;
+        let mut log = LaunchLog::arm(&vd.join("node.log"))?;
+        self.launch_certified_follower_with_args(
+            &name,
+            index,
+            follower_args,
+            super::committee::validator_protocol_environment(&self.start_opts),
+        )?;
+        let result = (|| -> Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(240);
+            let mut target = None;
+            loop {
+                self.live_follower_pid(&name)?;
+                let text = log.read()?;
+                // Pin once: a follower that is consistently a few blocks behind
+                // must not chase a moving head forever.
+                if target.is_none() {
+                    let upstream = rpc.finalized_result(primary)?;
+                    if upstream > baseline {
+                        target = Some(rpc.checkpoint_at(primary, upstream)?);
+                    }
+                }
+                let observation = rpc.finalized_result(port);
+                let last_observation = match (target, observation) {
+                    (Some(expected), Ok(local)) if local >= expected.height => {
+                        ensure!(
+                            rpc.checkpoint_at(port, expected.height)? == expected,
+                            "cold joiner finalized checkpoint diverged from upstream"
+                        );
+                        if let Some(anchor) = anchor {
+                            let observed = rpc.checkpoint_at(port, anchor.finalized_height)?;
+                            require_cold_admission_checkpoint(anchor, observed)?;
+                            if !text.contains(
+                                "local TEE lease guard armed at authenticated catch-up anchor",
+                            ) {
+                                "finalized parity reached; lease guard not yet armed".to_owned()
+                            } else {
+                                return Ok(());
+                            }
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    observation => format!("finalized observations: {observation:?}"),
+                };
+                ensure!(
+                    Instant::now() < deadline,
+                    "cold joiner certified catch-up timed out: {last_observation}; see {}",
+                    vd.join("node.log").display()
+                );
+                sleep(Duration::from_millis(200));
+            }
+        })();
+        // Drop/interrupt reaps the sole writer before authority is launched.
+        self.stop_follower(&name)?;
+        log.seal()?;
+        result?;
+        self.spawn_joiner_with_args(index, argv)?;
+        rpc.wait_finalized_checkpoint(
+            &[primary, port],
+            baseline
+                .checked_add(1)
+                .ok_or_else(|| eyre!("cold joiner finalized height overflow"))?,
+            80,
+        )?;
+        ensure!(
+            self.validators
+                .get_mut(&index)
+                .ok_or_else(|| eyre!("cold joiner authority process is not owned"))?
+                .exit_status()?
+                .is_none(),
+            "cold joiner authority process exited after catch-up"
+        );
+        Ok(())
+    }
+
+    fn joiner_validator_args(&self, index: usize, extra: &[&str]) -> Result<Vec<String>> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
         // File-based flag: the key must never appear in argv (`ps` leak).
         let secret_file = proc::normalized_secret_file(&vd.join("reth-p2p-secret.hex"))?;
-        self.start_radicle(index)?;
 
         let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
@@ -873,12 +1070,26 @@ impl Localnet {
             dkg_output.display(),
         ]);
         self.extend_real_sgx_startup_timeout(&mut a);
+        if let Some(offset) = self.start_opts.unix_time_offset_secs {
+            a.push(format!("--testnet.unix-time-offset-secs={offset}"));
+        }
         a.extend(extra.iter().map(|s| s.to_string()));
+        Ok(a)
+    }
 
+    fn spawn_joiner_with_args(&mut self, index: usize, a: Vec<String>) -> Result<()> {
+        #[cfg(not(feature = "ocomp-integration"))]
+        self.ensure_embedded_ocomp_validator_domain_material(index)?;
+        self.start_radicle(index)?;
+        let vd = self.cfg.validator_dir(index);
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216").args(&a);
+        for (name, value) in super::committee::validator_protocol_environment(&self.start_opts) {
+            cmd.env(name, value);
+        }
         attach_log(&mut cmd, &vd)?;
-        let guard = self.spawn_node(&format!("validator-{index}"), &vd, cmd)?;
+        let guard = self.spawn_node(&format!("validator-{index}"), index, &vd, cmd)?;
+        self.validator_argv.insert(index, a);
         self.validators.insert(index, guard);
         Ok(())
     }
@@ -937,6 +1148,161 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lease_full_node_releases_only_proven_exited_ownership_with_logs_retained() {
+        use crate::internal::launch_log::LaunchLog;
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        let root = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..crate::env::Environment::default()
+        };
+        let mut cfg = crate::internal::config::Config::resolve(&env);
+        cfg.dir = root.path().to_owned();
+        let mut localnet = Localnet::new(cfg);
+        let index = 4;
+        let vd = localnet.cfg.validator_dir(index);
+        fs::create_dir_all(&vd).unwrap();
+        let mut log = LaunchLog::arm(&vd.join("node.log")).unwrap();
+        let name = Localnet::joiner_full_node_name(index);
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf 'controlled exit\\n'", "fixture", "--datadir"]);
+        command.arg(vd.join("data"));
+        attach_log(&mut command, &vd).unwrap();
+        let child = proc::ChildGuard::spawn(&name, command).unwrap();
+        let pid = child.pid();
+        localnet.followers.insert(name.clone(), child);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let (observed_pid, exit) = localnet.owned_full_node_process(index).unwrap();
+            assert_eq!(observed_pid, pid);
+            if let Some(exit) = exit {
+                assert!(exit.success());
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        log.seal().unwrap();
+        let proof = log.read().unwrap();
+        assert_eq!(proof, "controlled exit\n");
+        assert!(localnet
+            .wait_selected_upstream_admission(index, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("still owned"));
+        localnet.stop_follower(&name).unwrap();
+        assert!(localnet.owned_full_node_process(index).is_err());
+        let error = localnet
+            .wait_selected_upstream_admission(index, 0)
+            .unwrap_err();
+        assert!(!error.to_string().contains("still owned"), "{error:#}");
+        assert_eq!(log.read().unwrap(), proof);
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec sleep 30", "fixture", "--datadir"]);
+        command.arg(vd.join("data"));
+        let child = proc::ChildGuard::spawn(&name, command).unwrap();
+        localnet.followers.insert(name, child);
+        assert!(localnet.owned_full_node_process(index).unwrap().1.is_none());
+        assert!(localnet
+            .wait_selected_upstream_admission(index, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("still owned"));
+    }
+
+    #[test]
+    fn cold_joiner_follower_preserves_provisioned_paths_and_protocol_options() {
+        let root = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment::default();
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.dir = root.path().to_owned();
+        let mut localnet = Localnet::new(cfg);
+        localnet.start_opts.unix_time_offset_secs = Some(123);
+        localnet.start_opts.voting_window = Some(42);
+        fs::write(
+            localnet.cfg.dir.join("validators.json"),
+            r#"[{"public_key":"fixture-peer","p2p_address":"127.0.0.1:9000"}]"#,
+        )
+        .unwrap();
+        let vd = localnet.cfg.validator_dir(4);
+        fs::create_dir_all(&vd).unwrap();
+        fs::write(vd.join("reth-p2p-secret.hex"), "11".repeat(32)).unwrap();
+        let argv = localnet
+            .joiner_validator_args(4, &["--consensus.keys-dir", "/exact/custom-keys"])
+            .unwrap();
+        let follower = super::super::follower::derive_validator_recovery_follower_args(
+            &argv,
+            "http://127.0.0.1:8545",
+        )
+        .unwrap();
+        for option in [
+            "--datadir",
+            "--chain",
+            "--p2p-secret-key",
+            "--tee-enclave-socket",
+            "--consensus.keys-dir",
+        ] {
+            let original = argv.windows(2).find(|pair| pair[0] == option).unwrap();
+            assert!(
+                follower.windows(2).any(|pair| pair == original),
+                "lost {option}"
+            );
+        }
+        assert!(follower.contains(&"--testnet.unix-time-offset-secs=123".to_owned()));
+        assert!(!follower.contains(&"--validator".to_owned()));
+        assert!(!follower.contains(&"--validator.evm-key".to_owned()));
+        assert_eq!(
+            super::super::committee::validator_protocol_environment(&localnet.start_opts),
+            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "42".to_owned())]
+        );
+        assert_eq!(
+            fs::read_to_string(vd.join("reth-p2p-secret.hex")).unwrap(),
+            "11".repeat(32)
+        );
+    }
+
+    #[test]
+    fn cold_joiner_requires_exact_admission_height_hash_and_root() {
+        let anchor = outbe_tee::FinalizedJoinAdmissionAnchorV1 {
+            chain_id: [0; 32],
+            genesis_hash: B256::repeat_byte(1),
+            node_id_hash: B256::repeat_byte(2),
+            enclave_id: B256::repeat_byte(3),
+            intent_hash: B256::repeat_byte(4),
+            finalized_height: 19,
+            finalized_hash: B256::repeat_byte(5),
+            finalized_state_root: B256::repeat_byte(6),
+            finalized_consensus_timestamp: 20,
+        };
+        let exact = crate::world::rpc::FinalizedCheckpoint {
+            height: 19,
+            block_hash: anchor.finalized_hash,
+            state_root: anchor.finalized_state_root,
+        };
+        require_cold_admission_checkpoint(anchor, exact).unwrap();
+        for wrong in [
+            crate::world::rpc::FinalizedCheckpoint {
+                height: 18,
+                ..exact
+            },
+            crate::world::rpc::FinalizedCheckpoint {
+                block_hash: B256::ZERO,
+                ..exact
+            },
+            crate::world::rpc::FinalizedCheckpoint {
+                state_root: B256::ZERO,
+                ..exact
+            },
+        ] {
+            assert!(require_cold_admission_checkpoint(anchor, wrong).is_err());
+        }
+    }
+
+    #[test]
     fn real_sgx_offer_read_retries_only_bounded_io_timeouts() {
         assert!(retry_node_offer_read(
             true,
@@ -980,6 +1346,26 @@ mod tests {
     }
 
     #[test]
+    fn manual_renewal_cli_result_is_checked_before_reading_the_journal() {
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "Finalized {\n    finalized_height: 42,\n    valid_until: 99,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::Finalized
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output(
+                "NotDue {\n    finalized_height: 41,\n    opens_at_timestamp: 98,\n}"
+            ),
+            ManualRenewalCliOutcomeV1::NotDue
+        );
+        assert_eq!(
+            classify_manual_renewal_cli_output("Submitted { transaction_hash: 0x01 }"),
+            ManualRenewalCliOutcomeV1::Unexpected
+        );
+    }
+
+    #[test]
     fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
         let args = full_node_joiner_role_args(
             "p2p-secret",
@@ -1018,5 +1404,18 @@ mod tests {
             root.join("validator-0/data/keys/dkg_polynomial.hex")
         );
         assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
+    }
+
+    #[test]
+    fn downgrade_log_requires_the_exact_production_no_attest_rejection() {
+        assert!(has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "runtime mode does not satisfy DcapRequired"
+        ));
+        assert!(!has_exact_production_no_attest_rejection(
+            "production DCAP release refuses runtime attestation sgx-no-attest"
+        ));
     }
 }

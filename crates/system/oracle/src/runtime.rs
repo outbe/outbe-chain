@@ -3,11 +3,11 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
@@ -271,7 +271,7 @@ impl OracleContract<'_> {
     /// Calculates VWAP for a specific pair over a time range.
     ///
     /// VWAP = sum(price_i * volume_i) / sum(volume_i)
-    /// Values remain in the pair's canonical scale.
+    /// Values remain in the pair's registered scale.
     pub fn calculate_vwap(
         &self,
         pair: AddressPair,

@@ -4,8 +4,7 @@ use outbe_ocomp_protocol::{
     abi::{
         GET_ACTIVE_LYSIS_GENERATION_SELECTOR, GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,
         GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0, OCOMP_ACTIVATION_REJECTED_SELECTOR,
-        OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0, OCOMP_REQUESTED_TOPIC0,
-        SUBMIT_LYSIS_RESULT_SELECTOR,
+        OCOMP_EXPIRED_TOPIC0, OCOMP_REQUESTED_TOPIC0, SUBMIT_LYSIS_RESULT_SELECTOR,
     },
     activation::{ActivationCallCoreV1, SignOncePurpose, SignOnceRecordV1},
     codec::CodecLimits,
@@ -49,8 +48,8 @@ use outbe_ocomp_protocol::{
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
-        ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
-        OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome,
+        ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
+        OcompTerminalOutcome,
     },
     system_carrier::{
         classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
@@ -171,7 +170,7 @@ fn preconditions() -> ActivationPreconditionsV1 {
         },
         metadosis: MetadosisAttemptPreconditionV1 {
             wwd: 7,
-            pending_nonce: 1,
+            pending_nonce: 0,
             expected_status: MetadosisExpectedStatus::OffchainPending,
             state_version: 12,
         },
@@ -184,8 +183,8 @@ fn intent() -> JobIntentV1 {
         genesis_hash: hash(40),
         fork_id: hash(1),
         wwd: 7,
-        pending_nonce: 1,
-        attempt: 1,
+        pending_nonce: 0,
+        attempt: 0,
         protocol_bundle_hash: hash(41),
         ce_sealed_root: hash(42),
         sealed_tribute_collection_key: hash(30),
@@ -224,19 +223,16 @@ fn intent() -> JobIntentV1 {
 }
 
 #[test]
-fn retry_reuses_only_a_byte_identical_authenticated_input_lease() {
+fn single_attempt_identity_rejects_nonzero_attempt_or_nonce() {
     let first = intent();
-    let mut retry = first.clone();
-    retry.attempt += 1;
-    retry.pending_nonce += 1;
-    retry.activation_preconditions.metadosis.pending_nonce += 1;
-    assert_eq!(
-        first.input_lease_id().unwrap(),
-        retry.input_lease_id().unwrap(),
-        "attempt identity is independent from authenticated source retention"
-    );
+    let mut invalid = first.clone();
+    invalid.attempt = 1;
+    invalid.pending_nonce = 1;
+    invalid.activation_preconditions.metadosis.pending_nonce = 1;
+    assert!(invalid.validate_semantics().is_err());
+    assert!(invalid.input_lease_id().is_err());
 
-    let mut changed_input = retry;
+    let mut changed_input = first.clone();
     changed_input.sealed_tribute_collection_root = hash(0xa1);
     changed_input
         .activation_preconditions
@@ -287,7 +283,7 @@ fn result() -> LysisResultV1 {
     };
     let metadosis_completion_summary = MetadosisCompletionSummaryV1 {
         wwd: 7,
-        pending_nonce: 1,
+        pending_nonce: 0,
         day_type: DayType::Green,
         tribute_nominal_total: U256::ZERO,
         day_limit: U256::ZERO,
@@ -347,7 +343,7 @@ fn result() -> LysisResultV1 {
     LysisResultV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         input_manifest_hash: summary.input_manifest_hash,
         plan_hash: summary.plan_hash,
         unit_artifact_root: summary.unit_artifact_root,
@@ -456,7 +452,7 @@ fn vote_signing_subject_binds_all_snapshot_coordinates_and_ocomp_key_hash() {
         fork_id: hash(1),
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         result_validator_set_epoch: 7,
         result_committee_set_hash: hash(45),
         result_ocomp_binding_hash: hash(46),
@@ -793,7 +789,7 @@ fn binding() -> EffectBindingV1 {
     EffectBindingV1 {
         intent_id: hash(80),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         protocol_bundle_hash: hash(41),
         result_digest: hash(81),
         activation_preconditions_hash: hash(82),
@@ -818,11 +814,12 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
     }
 }
 
-fn canceled_job_record(finalized: bool) -> OcompJobRecordV1 {
+#[test]
+fn expired_job_has_no_successor_nonce_or_retry_shape() {
     let intent = intent();
     let finalized_request_block_hash = hash(46);
     let finalized_request_state_root = hash(49);
-    let finalized = finalized.then(|| OcompFinalizedJobV1 {
+    let finalized = OcompFinalizedJobV1 {
         job_id: intent
             .job_id(
                 finalized_request_block_hash,
@@ -836,79 +833,21 @@ fn canceled_job_record(finalized: bool) -> OcompJobRecordV1 {
         open_height: 106,
         deadline_height: 110,
         quorum: None,
-    });
-    OcompJobRecordV1 {
+    };
+    let record = OcompJobRecordV1 {
         intent,
         intent_height: 100,
-        status: OcompJobStatus::Canceled,
-        finalized,
+        status: OcompJobStatus::Expired,
+        finalized: Some(finalized),
         terminal: Some(LysisTerminalV1 {
-            outcome: OcompTerminalOutcome::Canceled,
-            terminal_height: 108,
-            terminal_time: 1_080,
-            next_pending_nonce: None,
+            outcome: OcompTerminalOutcome::Expired,
+            terminal_height: 110,
+            terminal_time: 1_100,
             completed_binding: None,
         }),
-    }
-}
+    };
 
-fn dummy_completed_binding() -> OcompCompletedBindingV1 {
-    OcompCompletedBindingV1 {
-        job_id: hash(59),
-        activation_call_id: hash(83),
-        result_digest: hash(81),
-        quorum_height: 107,
-        quorum_signer_bitmap: vec![1],
-        quorum_evidence_hash: hash(84),
-        result_evidence_hash: hash(85),
-        terminal_receipt_hash: hash(86),
-        terminal_receipt: conflict_receipt(),
-    }
-}
-
-#[test]
-fn canceled_job_accepts_only_the_two_production_shapes() {
-    canceled_job_record(false)
-        .validate_semantics(&LIMITS)
-        .unwrap();
-    canceled_job_record(true)
-        .validate_semantics(&LIMITS)
-        .unwrap();
-
-    let mut with_next_nonce = canceled_job_record(false);
-    with_next_nonce
-        .terminal
-        .as_mut()
-        .unwrap()
-        .next_pending_nonce = Some(2);
-    assert!(with_next_nonce.validate_semantics(&LIMITS).is_err());
-
-    let mut with_completed_binding = canceled_job_record(false);
-    with_completed_binding
-        .terminal
-        .as_mut()
-        .unwrap()
-        .completed_binding = Some(dummy_completed_binding());
-    assert!(with_completed_binding.validate_semantics(&LIMITS).is_err());
-
-    let mut with_quorum = canceled_job_record(true);
-    with_quorum.finalized.as_mut().unwrap().quorum = Some(OcompQuorumV1 {
-        member_count: 1,
-        quorum_threshold: 1,
-        result_digest: hash(81),
-        quorum_height: 107,
-        signer_bitmap: vec![1],
-        evidence_hash: hash(84),
-    });
-    assert!(with_quorum.validate_semantics(&LIMITS).is_err());
-
-    let mut without_terminal = canceled_job_record(false);
-    without_terminal.terminal = None;
-    assert!(without_terminal.validate_semantics(&LIMITS).is_err());
-
-    let mut wrong_outcome = canceled_job_record(false);
-    wrong_outcome.terminal.as_mut().unwrap().outcome = OcompTerminalOutcome::Expired;
-    assert!(wrong_outcome.validate_semantics(&LIMITS).is_err());
+    record.validate_semantics(&LIMITS).unwrap();
 }
 
 macro_rules! assert_round_trip {
@@ -947,8 +886,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         max_activations_per_block: 2,
         max_ready_inspections_per_block: 4,
         max_expirations_per_block: 4,
-        retry_backoff_blocks: 2,
-        max_terminal_job_records: 365,
+        ready_backoff_blocks: 2,
         max_reference_currencies: 16,
         max_oracle_wwd_pair_entries: 128,
         max_active_scurve_entries: 128,
@@ -989,7 +927,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let manifest = InputManifestV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 90,
             finalized_block_hash: hash(46),
@@ -1022,7 +960,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let unit_spec = UnitSpecV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::Enumerate,
         interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
             start: B256::from([0; 32]),
@@ -1074,7 +1012,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         protocol_bundle_hash: result.protocol_bundle_hash,
         result_digest,
         activation_preconditions_hash: hash(82),
-        terminal_pending_nonce: 1,
+        terminal_pending_nonce: 0,
     };
     let nod_receipt = NodBatchReceiptV1 {
         binding: binding(),
@@ -1106,7 +1044,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let request_budget_split_receipt = RequestBudgetSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
-        pending_nonce: 1,
+        pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::ZERO,
         lysis_budget: U256::ZERO,
@@ -1164,7 +1102,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         outcome: OcompTerminalOutcome::Expired,
         terminal_height: 111,
         terminal_time: 1_100,
-        next_pending_nonce: Some(2),
         completed_binding: None,
     };
     let job_record = OcompJobRecordV1 {
@@ -1177,7 +1114,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let shuffle_run = ShuffleRunArtifactV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         unit_id: hash(117),
         kind: ShuffleRunKindV1::Owner,
         run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan {
@@ -1490,7 +1427,7 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
-            "attempt equals checked pending nonce"
+            "single-attempt OCOMP identity"
         ))
     ));
 
@@ -1643,7 +1580,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
         let plan = PlanCommitmentV1 {
             protocol_bundle_hash: hash(1),
             job_id: hash(2),
-            attempt: 1,
+            attempt: 0,
             input_manifest_hash: hash(3),
             wwd: 20_260_724,
             lysis_budget: U256::from(99_000_000_u64),
@@ -1681,7 +1618,7 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
     let prefix_down = UnitSpecV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::GratisPrefixDown,
         interval: UnitInterval::BinaryReducerNode(BinaryReducerNode {
             level: 21,
@@ -1696,9 +1633,57 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
 }
 
 #[test]
+fn a_split_short_of_the_day_limit_is_accepted() {
+    let mut short_intent = intent();
+    short_intent.frozen_metadosis_values.day_limit = U256::from(10);
+    short_intent.frozen_metadosis_values.lysis_budget = U256::from(3);
+    short_intent.frozen_metadosis_values.auction_base = U256::from(2);
+    short_intent.encode_canonical(&LIMITS).unwrap();
+}
+
+#[test]
+fn a_split_receipt_accounts_for_the_day_limit_down_to_the_last_unit() {
+    let credited_headroom = RequestBudgetSplitReceiptV1 {
+        protocol_bundle_hash: hash(41),
+        wwd: 7,
+        pending_nonce: 0,
+        day_type: DayType::Green,
+        day_limit: U256::from(10),
+        lysis_budget: U256::from(4),
+        auction_base: U256::from(5),
+        destination: BudgetSplitDestination::DesisAuction,
+        desis_brief_hash: Some(hash(113)),
+        carry_over_credit: U256::from(1),
+        auction_entry_prices: vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
+            reference_currency: 840,
+            entry_price_minor: U256::from(2),
+            source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
+            source_day: 6,
+        }],
+        logical_anchor: 10,
+    };
+    credited_headroom.encode_canonical(&LIMITS).unwrap();
+
+    let mut dropped_headroom = credited_headroom.clone();
+    dropped_headroom.carry_over_credit = U256::ZERO;
+    assert!(matches!(
+        dropped_headroom.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("request budget split"))
+    ));
+
+    // A red day briefs nothing, so its base returns together with the headroom.
+    let mut red_returns_everything = credited_headroom;
+    red_returns_everything.day_type = DayType::Red;
+    red_returns_everything.destination = BudgetSplitDestination::CarryOver;
+    red_returns_everything.carry_over_credit = U256::from(6);
+    red_returns_everything.encode_canonical(&LIMITS).unwrap();
+}
+
+#[test]
 fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut invalid_intent = intent();
     invalid_intent.frozen_metadosis_values.day_limit = U256::from(1);
+    invalid_intent.frozen_metadosis_values.auction_base = U256::from(2);
     assert!(matches!(
         invalid_intent.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("Metadosis budget split"))
@@ -1707,7 +1692,7 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     let green_split = RequestBudgetSplitReceiptV1 {
         protocol_bundle_hash: hash(41),
         wwd: 7,
-        pending_nonce: 1,
+        pending_nonce: 0,
         day_type: DayType::Green,
         day_limit: U256::from(10),
         lysis_budget: U256::from(4),
@@ -1957,7 +1942,7 @@ fn worker_run_unit_body_is_canonical_and_bounded() {
     let request = RunUnitV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
-        attempt: 1,
+        attempt: 0,
         plan_hash: hash(3),
         unit_index: 0,
         canonical_unit_spec: BoundedBytes(vec![1]),
@@ -2315,12 +2300,8 @@ fn public_abi_constants_match_independent_keccak_derivation() {
         OCOMP_REQUESTED_TOPIC0
     );
     assert_eq!(
-        keccak256(b"OffchainJobExpired(bytes32,uint32,uint64,uint64,uint64)"),
+        keccak256(b"OffchainJobExpired(bytes32,uint32,uint64)"),
         OCOMP_EXPIRED_TOPIC0
-    );
-    assert_eq!(
-        keccak256(b"OffchainJobConflicted(bytes32,bytes32,uint32,uint64,uint64,bytes32)"),
-        OCOMP_CONFLICTED_TOPIC0
     );
     assert_eq!(
         keccak256(b"LysisActivated(bytes32,bytes32,bytes32,bytes32,bytes32,uint32)"),
@@ -2333,7 +2314,7 @@ fn unit_artifact_constructor_binds_spec_output_and_coverage() {
     let spec = UnitSpecV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::Enumerate,
         interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
             start: B256::from([0; 32]),

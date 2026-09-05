@@ -25,7 +25,6 @@ use serde::Serialize;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::internal::proc::{first_hex, run_capture};
-use crate::internal::shell::Sh;
 
 use super::Localnet;
 
@@ -387,29 +386,9 @@ impl Localnet {
         }
     }
 
-    /// Relocate a datadir under the data dir (warm promotion reuses synced state).
-    pub fn move_datadir(&self, from_rel: &str, to_rel: &str) -> Result<()> {
-        let from = self.cfg.dir.join(from_rel);
-        let to = self.cfg.dir.join(to_rel);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        match fs::rename(&from, &to) {
-            Ok(()) => Ok(()),
-            Err(_) if self.cfg.sudo => {
-                Sh::new(&self.cfg).sudo_best_effort(
-                    "mv",
-                    &[&from.display().to_string(), &to.display().to_string()],
-                );
-                Ok(())
-            }
-            Err(e) => Err(e).wrap_err("move datadir"),
-        }
-    }
-
-    fn node_log(&self, node: &str) -> String {
+    fn node_log(&self, node: &str) -> Result<String> {
         let path = self.cfg.dir.join(node).join("node.log");
-        fs::read_to_string(path).unwrap_or_default()
+        read_required_node_log(&path, node)
     }
 
     /// Parse bounded OCOMP runtime markers for one exact owned node.
@@ -506,17 +485,19 @@ impl Localnet {
     }
 
     /// Whether validator `index`'s log contains `needle` (`e2e_joiner_log_has`).
-    pub fn log_has(&self, index: usize, needle: &str) -> bool {
-        self.node_log(&format!("validator-{index}"))
-            .contains(needle)
+    pub fn log_has(&self, index: usize, needle: &str) -> Result<bool> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
+            .contains(needle))
     }
 
     /// Count of log LINES containing `needle` (matches shell `grep -c`).
-    pub fn log_count(&self, index: usize, needle: &str) -> usize {
-        self.node_log(&format!("validator-{index}"))
+    pub fn log_count(&self, index: usize, needle: &str) -> Result<usize> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
             .lines()
             .filter(|l| l.contains(needle))
-            .count()
+            .count())
     }
 
     /// First runtime-log line containing `needle`, including its path and line.
@@ -528,11 +509,11 @@ impl Localnet {
     }
 
     /// Whether validator `index`'s enclave log contains `needle`.
-    pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
+    pub fn enclave_log_has(&self, index: usize, needle: &str) -> Result<bool> {
         let path = self.cfg.validator_dir(index).join("enclave.log");
-        fs::read_to_string(path)
-            .unwrap_or_default()
-            .contains(needle)
+        let log = fs::read_to_string(&path)
+            .wrap_err_with(|| format!("read validator-{index} enclave log {}", path.display()))?;
+        Ok(log.contains(needle))
     }
 
     /// The `--consensus.keys-dir` for validator `index` (persisted-share restart).

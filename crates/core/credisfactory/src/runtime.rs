@@ -13,7 +13,6 @@ use outbe_primitives::units::checked_protocol_to_native;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
-use crate::schema::CredisFactoryContract;
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::IERC20;
 
@@ -94,11 +93,11 @@ pub fn request_credis(
     }
 
     // The CCA matches the borrower's six-decimal GRATIS collateral one for one in
-    // value, but msg.value and the escrow are native 18-decimal COEN. Checked only
-    // after `consume_pledge` because the required amount is sealed in the ticket, not
-    // in calldata - a caller cannot know it from the call alone, and must read it from
-    // the pledge quote. Exact equality, not a floor: an overpayment has no release path
-    // (the escrow returns exactly what the position recorded) and would strand.
+    // value, but msg.value is native 18-decimal COEN. Checked only after
+    // `consume_pledge` because the required amount is sealed in the ticket, not in
+    // calldata - a caller cannot know it from the call alone, and must read it from the
+    // pledge quote. Exact equality, not a floor: matching one for one is the rule, and a
+    // floor would let the amount handed to the borrower drift off the collateral.
     let required_stake = checked_protocol_to_native(terms.gratis_amount)
         .ok_or_else(|| PrecompileError::Revert("native COEN stake overflow".into()))?;
     if stake != required_stake {
@@ -138,20 +137,11 @@ pub fn request_credis(
         originated_at: current_time,
     })?;
 
-    // Record the CCA's claim on the value the boundary already credited to this
-    // precompile's balance. Written before the loan leaves so an escrow can never be
-    // owed against a position that failed to disburse.
+    // The stake is the borrower's from here on: the boundary credited it to this
+    // precompile's balance, and it passes straight through to the smart account as
+    // ordinary native COEN - no escrow, no claim, nothing to release or burn later.
     if !stake.is_zero() {
-        let factory = CredisFactoryContract::new(storage.clone());
-        factory.cca_stake.write(&position_id, stake)?;
-        storage.emit_event(
-            CREDIS_FACTORY_ADDRESS,
-            alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeEscrowed {
-                positionId: position_id,
-                cca: caller,
-                amount: stake,
-            }),
-        )?;
+        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, smart_account, stake)?;
     }
 
     // Withdraw the matching stablecoin from the vault to the smart account.
@@ -259,38 +249,7 @@ pub fn settle(
         )?;
     }
 
-    // 5) The settlement that clears the last principal returns the originating CCA's
-    //    stake. Keyed off `closed` rather than a balance read, so a position that never
-    //    escrowed simply finds zero.
-    if settlement.closed {
-        release_cca_stake(&storage, position_id, settlement.cca)?;
-    }
-
     Ok((settlement.principal_paid, settlement.interest))
-}
-
-/// Returns the escrowed stake for a closed position to its originating CCA and clears
-/// the claim. A no-op when nothing was escrowed.
-fn release_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Address) -> Result<()> {
-    let factory = CredisFactoryContract::new(storage.clone());
-    let stake = factory.cca_stake.read(&position_id)?;
-    if stake.is_zero() {
-        return Ok(());
-    }
-    // Clear first: the transfer is the last step, so a revert inside it unwinds the
-    // whole frame anyway, and clearing up front leaves no window where the claim and
-    // the payout could both succeed.
-    factory.cca_stake.write(&position_id, U256::ZERO)?;
-    storage.transfer_balance(CREDIS_FACTORY_ADDRESS, cca, stake)?;
-    storage.emit_event(
-        CREDIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeReleased {
-            positionId: position_id,
-            cca,
-            amount: stake,
-        }),
-    )?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -334,31 +293,6 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(void.gratis_burned)?;
 
-    // The originating CCA's stake is burned with the collateral it matched - that is
-    // what makes origination accountable rather than free.
-    burn_cca_stake(&storage, position_id, void.cca)?;
-
-    Ok(())
-}
-
-/// Burns the escrowed stake of a voided position: the claim is cleared and the COEN
-/// leaves the factory's balance without a recipient, reducing supply.
-fn burn_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Address) -> Result<()> {
-    let factory = CredisFactoryContract::new(storage.clone());
-    let stake = factory.cca_stake.read(&position_id)?;
-    if stake.is_zero() {
-        return Ok(());
-    }
-    factory.cca_stake.write(&position_id, U256::ZERO)?;
-    storage.decrease_balance(CREDIS_FACTORY_ADDRESS, stake)?;
-    storage.emit_event(
-        CREDIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeBurned {
-            positionId: position_id,
-            cca,
-            amount: stake,
-        }),
-    )?;
     Ok(())
 }
 

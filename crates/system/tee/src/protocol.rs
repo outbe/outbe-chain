@@ -17,7 +17,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-pub use outbe_common::WorldwideDay;
+pub use outbe_primitives::time::WorldwideDay;
 
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller; this prevents a
@@ -823,6 +823,25 @@ pub enum EnclaveRequest {
         round: u64,
         participant_bls: Vec<Vec<u8>>,
     },
+    /// Produce a deterministic offer-key onboarding artifact for one exact
+    /// GramineDirectDev registration. This is available only to an initialized
+    /// local NodeHost whose sealed network binding selected GramineDirectDev and
+    /// whose permanent offer key is already resident. The recipient still must
+    /// prove finalized TeeRegistry admission before it can install the key.
+    PrepareGramineDirectDevOnboardingArtifactV1 {
+        request_hash: B256,
+        context: Vec<u8>,
+    },
+    /// Install an exact finalized DirectDev onboarding artifact into this
+    /// initialized keyless enclave. The CLI exposes this only after the exact
+    /// registration transaction and TeeRegistry binding are finalized.
+    IngestGramineDirectDevOnboardingArtifactV1 {
+        artifact: Vec<u8>,
+        expected_intent_hash: B256,
+        expected_tribute_offer_public: [u8; 32],
+        expected_key_epoch: u64,
+        expected_tribute_offer_epoch: u64,
+    },
 }
 
 impl EnclaveRequest {
@@ -873,6 +892,12 @@ impl EnclaveRequest {
             Self::SnapshotFidelityLeagues { .. } => "snapshot_fidelity_leagues",
             Self::QueryFidelityIndex { .. } => "query_fidelity_index",
             Self::Health => "health",
+            Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+                "prepare_gramine_direct_dev_onboarding_artifact_v1"
+            }
+            Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
+                "ingest_gramine_direct_dev_onboarding_artifact_v1"
+            }
         }
     }
 
@@ -895,7 +920,8 @@ impl EnclaveRequest {
             | Self::ApplyFidelityCohortOp { .. }
             | Self::SnapshotFidelityLeagues { .. }
             | Self::QueryFidelityIndex { .. }
-            | Self::Health => true,
+            | Self::Health
+            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
             Self::GetInitializationChallenge
             | Self::Initialize { .. }
             | Self::OpenSession
@@ -918,7 +944,8 @@ impl EnclaveRequest {
             | Self::BeginDcapOnboardingArtifactIngestV1 { .. }
             | Self::DcapOnboardingArtifactChunkV1 { .. }
             | Self::CommitDcapOnboardingArtifactRecordV1 { .. }
-            | Self::FinishDcapOnboardingArtifactIngestV1 { .. } => false,
+            | Self::FinishDcapOnboardingArtifactIngestV1 { .. }
+            | Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => false,
         }
     }
 }
@@ -1211,10 +1238,8 @@ pub enum EnclaveResponse {
     /// group signature (the secret stays resident in the enclave).
     DkgTributeOfferKey {
         tribute_offer_public: [u8; 32],
-        /// The committee's DKG group public KEY (constant term) - the public
-        /// verification key for this committee's threshold group signatures.
-        /// Carried into the bootstrap payload so a later reshare endorsement can be
-        /// verified on-chain against this committee's key.
+        /// The committee's DKG group public key (constant term), carried into the
+        /// founding bootstrap payload with the derived tribute offer key.
         group_public_key: Vec<u8>,
     },
     /// One-time onboarding result: the installed offer public key matched the
@@ -1278,6 +1303,16 @@ pub enum EnclaveResponse {
     /// validates the exact participant set and derived ceremony id.
     DkgParticipantAnnounceV1 {
         participant: ParticipantAnnounce,
+    },
+    /// Exact purpose-bound artifact produced by the resident source enclave for
+    /// a GramineDirectDev registration. The attestation tag authenticates the
+    /// request commitment and artifact to the local NodeHost.
+    GramineDirectDevOnboardingArtifactPreparedV1 {
+        request_hash: B256,
+        onboarding_artifact: Vec<u8>,
+    },
+    GramineDirectDevOnboardingArtifactIngestedV1 {
+        tribute_offer_public: [u8; 32],
     },
 }
 

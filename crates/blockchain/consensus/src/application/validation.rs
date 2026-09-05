@@ -669,7 +669,6 @@ mod tests {
                 planned_activation_height: 0,
                 vrf_material_version: 0,
                 is_validator_set_change: true,
-                tee_reshare_registrations: Vec::new(),
                 tee_expired_target_exclusions: Vec::new(),
             })
             .unwrap();

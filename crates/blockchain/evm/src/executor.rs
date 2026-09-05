@@ -4452,7 +4452,6 @@ mod tests {
     };
     use alloy_sol_types::{SolCall, SolEvent};
     use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-    use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
@@ -4481,6 +4480,7 @@ mod tests {
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+    use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::OutbeHeader;
     use outbe_primitives::{
         stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
@@ -8468,7 +8468,7 @@ mod tests {
                     feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                     formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
                         storage,
-                        outbe_common::WorldwideDay::new(PREVIOUS_DAY),
+                        outbe_primitives::time::WorldwideDay::new(PREVIOUS_DAY),
                     )
                     .unwrap()
                     .is_some(),
@@ -12654,10 +12654,8 @@ mod tests {
             outcome: Bytes::new(),
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: outbe_primitives::consensus::ReshareResult {
                 new_active_set,
                 active_set_hash,
@@ -13414,6 +13412,14 @@ mod tests {
     use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
     use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
+    fn agent_reward_query_input() -> Vec<u8> {
+        let selector = keccak256(b"getClaimableBalance(address)");
+        let mut input = Vec::with_capacity(36);
+        input.extend_from_slice(&selector[..4]);
+        input.extend_from_slice(&[0u8; 32]);
+        input
+    }
+
     /// Sponsored signer derived from the alloy test-signature recovery.
     /// We don't care WHICH address it is - only that it is stable across
     /// runs and we attach delegation + balance + nonce to it.
@@ -13712,9 +13718,7 @@ mod tests {
     #[test]
     fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
         let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]); // pad selector to selector+32-byte uint256 arg
-        let recovered = sponsored_test_tx(input)
+        let recovered = sponsored_test_tx(agent_reward_query_input())
             .try_into_recovered()
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
@@ -13739,6 +13743,7 @@ mod tests {
 
             let receipts = executor.receipts();
             assert_eq!(receipts.len(), 1);
+            assert!(receipts[0].success, "sponsored transaction must succeed");
 
             // Find the SponsorshipAuthorized log on the receipt - this
             // is the guarantee. Topic[0] must match the event sig
@@ -13789,9 +13794,7 @@ mod tests {
     #[test]
     fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
         let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]);
-        let recovered = sponsored_test_tx(input)
+        let recovered = sponsored_test_tx(agent_reward_query_input())
             .try_into_recovered()
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
@@ -13864,9 +13867,7 @@ mod tests {
     #[test]
     fn eip7702_sponsored_tx_accepts_fresh_zero_balance_signer() {
         let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]);
-        let recovered = sponsored_test_tx(input)
+        let recovered = sponsored_test_tx(agent_reward_query_input())
             .try_into_recovered()
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
@@ -13932,9 +13933,7 @@ mod tests {
     #[test]
     fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
         let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]);
-        let recovered = sponsored_test_tx(input)
+        let recovered = sponsored_test_tx(agent_reward_query_input())
             .try_into_recovered()
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
@@ -14028,9 +14027,7 @@ mod tests {
     #[test]
     fn eip7702_delegation_detected_via_code_by_hash_fallback() {
         let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]);
-        let recovered = sponsored_test_tx(input)
+        let recovered = sponsored_test_tx(agent_reward_query_input())
             .try_into_recovered()
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
@@ -14131,8 +14128,6 @@ mod tests {
         let config = OutbeEvmConfig::new(test_chain_spec());
         // Same target/calldata as the sponsored happy path, but with a
         // non-zero priority fee - the "I am paying" signal.
-        let mut input = vec![0xae, 0x16, 0x9a, 0x50];
-        input.extend_from_slice(&[0u8; 32]);
         let paying_tx: reth_ethereum::TransactionSigned = TxEip1559 {
             chain_id: CHAIN_ID,
             nonce: 0,
@@ -14141,7 +14136,7 @@ mod tests {
             max_priority_fee_per_gas: 1, // tip > 0 => paying, not sponsored
             to: TxKind::Call(AGENT_REWARD_ADDRESS),
             value: U256::ZERO,
-            input: input.into(),
+            input: agent_reward_query_input().into(),
             access_list: Default::default(),
         }
         .into_signed(Signature::test_signature())

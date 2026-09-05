@@ -3,8 +3,8 @@
 use std::fmt;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{TributeBodyV1, WwdEntityId};
+use outbe_primitives::time::WorldwideDay;
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]

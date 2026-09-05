@@ -11,6 +11,12 @@ use xshell::Shell;
 
 use super::config::Config;
 use super::proc::redact_args_for_log;
+use crate::env::{TeeMode, CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS};
+
+fn cli_io_timeout_override(mode: TeeMode) -> Option<u64> {
+    mode.passes_sgx_devices()
+        .then_some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
+}
 
 pub(crate) struct Sh<'a> {
     cfg: &'a Config,
@@ -28,14 +34,17 @@ impl<'a> Sh<'a> {
     }
 
     fn cli_output(&self, argv: &[String]) -> Result<Output> {
-        Ok(self
-            .shell()?
+        let sh = self.shell()?;
+        let mut cmd = sh
             .cmd(&self.cfg.bin_cli)
             .args(argv)
             .env("PATH", &self.cfg.path)
             .quiet()
-            .ignore_status()
-            .output()?)
+            .ignore_status();
+        if let Some(timeout) = cli_io_timeout_override(self.cfg.tee_mode) {
+            cmd = cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", timeout.to_string());
+        }
+        Ok(cmd.output()?)
     }
 
     /// Run `outbe-cli <args>` (caller supplies global `--rpc-url` / `--private-key`)
@@ -160,5 +169,29 @@ impl<'a> Sh<'a> {
         } else {
             let _ = cmd.output();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hardware_sgx_cli_uses_the_co_located_io_timeout() {
+        assert_eq!(
+            cli_io_timeout_override(TeeMode::Real),
+            Some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            cli_io_timeout_override(TeeMode::SgxNoAttest),
+            Some(CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn non_sgx_cli_keeps_the_production_io_timeout() {
+        assert_eq!(cli_io_timeout_override(TeeMode::GramineDirect), None);
+        assert_eq!(cli_io_timeout_override(TeeMode::Mock), None);
+        assert_eq!(cli_io_timeout_override(TeeMode::MockNative), None);
     }
 }

@@ -19,6 +19,7 @@ use crate::world::World;
 
 const FOLLOWER1_SLOT: usize = 14;
 const FOLLOWER2_SLOT: usize = 15;
+const ENCLAVE_LESS_FOLLOWER: &str = "enclave-less-follower";
 
 /// Hold readiness until the current DKG target has already been frozen, while
 /// leaving enough blocks for the readiness transaction to finalize before the
@@ -144,6 +145,53 @@ fn production_full_node_follower(world: &mut World) {
         .expect("launch production FullNode follower");
 }
 
+#[when("a certified FullNode is launched without its mandatory enclave")]
+fn launch_enclave_less_follower(world: &mut World) {
+    world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), 1, 60)
+        .expect("initial exact committee checkpoint before negative follower launch");
+    world
+        .localnet
+        .launch_enclave_less_follower(ENCLAVE_LESS_FOLLOWER, FOLLOWER1_SLOT, 0)
+        .expect("launch owned enclave-less follower negative probe");
+}
+
+#[then("the FullNode exits on the mandatory TEE guardrail before opening RPC")]
+fn enclave_less_follower_fails_closed(world: &mut World) {
+    world
+        .localnet
+        .wait_for_follower_guardrail(
+            ENCLAVE_LESS_FOLLOWER,
+            FOLLOWER1_SLOT,
+            "mandatory GramineDirectDev ChainSpec requires --tee-enclave-socket before node startup",
+            Duration::from_secs(20),
+        )
+        .expect("enclave-less follower must fail on the exact production guardrail");
+}
+
+#[then("the committee finalizes two new blocks after the rejected FullNode startup")]
+fn committee_survives_rejected_follower(world: &mut World) {
+    let ports = world.validators.committee_ports();
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("read every validator after follower rejection");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("two fresh exact finalized blocks after follower rejection");
+}
+
+#[when("the fifth production FullNode with its own enclave syncs from the committee")]
+fn production_full_node_in_joiner_slot(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world
+        .localnet
+        .launch_joiner_full_node(index, 0, &[])
+        .expect("launch the fifth node as a production FullNode");
+}
+
 /// S1 - follower1 reaches lockstep with the committee.
 #[then("the follower reaches lockstep with the committee")]
 fn follower_lockstep(world: &mut World) {
@@ -175,69 +223,26 @@ fn follower_exact_finality(world: &mut World) {
     );
 }
 
-#[when("the follower loses its only upstream while the committee advances")]
-fn lose_upstream(world: &mut World) {
-    let follower = world.validators.http_port(FOLLOWER1_SLOT);
-    let surviving_validator = world.validators.http_port(1);
-    let follower_before = world
-        .rpc
-        .finalized(follower)
-        .expect("follower finalized height");
-    let committee_before = world
-        .rpc
-        .finalized(surviving_validator)
-        .expect("committee finalized height");
-    world.state.marker_height = Some(follower_before);
-    world
-        .localnet
-        .kill_validator(0)
-        .expect("kill follower upstream");
-    assert!(
-        world
-            .rpc
-            .wait_block(surviving_validator, committee_before.saturating_add(5), 60)
-            .is_some(),
-        "remaining 3-of-4 committee did not advance after upstream loss"
-    );
-}
-
-#[then("the disconnected follower makes no unverified finalized progress")]
-fn follower_stalls_safely(world: &mut World) {
-    let follower = world.validators.http_port(FOLLOWER1_SLOT);
-    let before = world.state.marker_height.expect("captured follower height");
-    let after = world
-        .rpc
-        .finalized(follower)
-        .expect("follower RPC remains readable");
-    assert!(
-        after <= before.saturating_add(1),
-        "disconnected follower advanced from {before} to {after} without its upstream"
-    );
-}
-
-#[when("the follower switches to a healthy upstream and restarts from its durable datadir")]
-fn switch_upstream_and_restart_follower(world: &mut World) {
-    world
-        .localnet
-        .restart()
-        .expect("restore validator-0 upstream");
+#[then(
+    "the fifth FullNode reaches the committee finalized checkpoint with matching hash and state root"
+)]
+fn fifth_full_node_exact_finality(world: &mut World) {
     let primary = world.validators.primary_port();
-    let target = world
-        .rpc
-        .finalized(world.validators.http_port(1))
-        .expect("surviving committee finalized height");
+    let follower = world.validators.http_port(world.validators.joiner_index());
     assert!(
-        world.rpc.wait_block(primary, target, 60).is_some(),
-        "restored upstream did not catch up"
+        wait_finalized_checkpoint_match(&world.rpc, primary, follower, 45),
+        "fifth FullNode never reached the committee finalized checkpoint with matching hash/state root"
     );
-    world
-        .localnet
-        .stop_follower("follower")
-        .expect("stop follower during catch-up");
-    world
-        .localnet
-        .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 1)
-        .expect("restart follower from durable datadir against healthy upstream");
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "isValidator"),
+        Some("false".to_string()),
+        "fifth FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(follower),
+        Some(false),
+        "fifth FullNode unexpectedly required participant DKG material"
+    );
 }
 
 #[when("the follower restarts from its durable datadir against the same upstream")]
@@ -307,18 +312,13 @@ fn validator_relockstep(world: &mut World) {
 
 /// S2 - stop followers, preserve follower1's complete node identity and local
 /// state, then assign validator role through the ordinary ValidatorSet path.
-#[when("the first follower is promoted to a validator with its warm datadir")]
+#[when("the fifth FullNode is promoted to a validator in place")]
 fn warm_promotion(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
 
-    world.localnet.stop_followers().expect("stop followers");
-    sleep(Duration::from_secs(3));
-    world
-        .localnet
-        .move_role_neutral_node_slot(FOLLOWER1_SLOT, idx)
-        .expect("move the complete role-neutral node slot");
+    world.localnet.stop_joiner_full_node(idx);
     world
         .localnet
         .provision_existing_node_as_joiner(idx)
@@ -326,7 +326,7 @@ fn warm_promotion(world: &mut World) {
     world
         .localnet
         .restart_joiner_enclave(idx)
-        .expect("restart the moved role-neutral enclave");
+        .expect("restart the role-neutral enclave in place");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
@@ -355,7 +355,10 @@ fn warm_promotion(world: &mut World) {
         "promotion readiness reached too late: head {head}, activation {activation}"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "warm joiner participated before readiness and activation boundary"
     );
     world.state.activation_height = Some(activation);
@@ -389,7 +392,10 @@ fn resubmit_promotion_readiness(world: &mut World) {
         "duplicate readiness changed the joiner from PENDING before activation"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "duplicate readiness made the joiner participate before activation"
     );
 }
@@ -439,7 +445,10 @@ fn promotion_boundary_and_recovery(world: &mut World) {
 
     for _ in 0..120 {
         let head = world.rpc.head(primary).expect("committee head");
-        let participant = world.rpc.is_participant(primary, &addr);
+        let participant = world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation");
         if head < activation {
             assert!(
                 !participant,
@@ -457,7 +466,10 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         "joiner activated before planned boundary {activation}"
     );
     assert!(
-        world.rpc.is_participant(primary, &addr),
+        world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "warm joiner was not a participant after activation boundary"
     );
     let restarted_validator = world.validators.http_port(3);
@@ -511,15 +523,21 @@ fn promotion_boundary_and_recovery(world: &mut World) {
             "DKG share state differs on RPC port {port}"
         );
         assert!(
-            world.rpc.is_participant(port, &addr),
+            world
+                .rpc
+                .is_participant(port, &addr)
+                .expect("observe consensus participation"),
             "participant state differs on RPC port {port}"
         );
     }
     assert!(
-        world.localnet.enclave_log_has(
-            idx,
-            "unsealed offer key + group signature <- /tee/sealed_root.bin"
-        ),
+        world
+            .localnet
+            .enclave_log_has(
+                idx,
+                "unsealed offer key + group signature <- /tee/sealed_root.bin"
+            )
+            .expect("read required owned process log"),
         "warm-promoted enclave did not restore its EGETKEY-sealed state"
     );
     assert!(
@@ -542,7 +560,10 @@ fn promoted_activates(world: &mut World) {
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
 
     assert!(
-        world.rpc.wait_participant(primary, &addr, 60),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 60)
+            .expect("wait for observable consensus participation"),
         "warm-promoted node never became a consensus participant"
     );
     sleep(Duration::from_secs(20));

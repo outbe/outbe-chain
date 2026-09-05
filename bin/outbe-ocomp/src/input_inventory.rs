@@ -16,7 +16,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_tribute_v1, BoundedTributePartitionVerifier, Commitment,
     TributePartitionExpectationV1, TributePartitionRetentionStatsV1, TributePartitionWorkConfig,
@@ -24,6 +23,7 @@ use outbe_compressed_entities::{
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_oracle::MAX_OCOMP_REFERENCE_ISOS;
+use outbe_primitives::time::WorldwideDay;
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
 

@@ -118,6 +118,13 @@ pub const fn protocol_block_gas_limit(block_number: u64) -> u64 {
 /// block gas limit.
 pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 
+/// Visible compressed-entity gas reserved for the OCOMP lifecycle phase.
+///
+/// Terminal expiry can request the first Tribute-partition retirement in the
+/// block. Its current cleanup precharge is 15,000 gas; the additional 5,000
+/// keeps the mandatory phase from sitting exactly on that boundary.
+pub const OCOMP_LIFECYCLE_CE_GAS_RESERVE: u64 = 20_000;
+
 /// Minimum visible gas charged by a system transaction envelope.
 pub const SYSTEM_TX_VISIBLE_GAS_FLOOR: u64 = 21_000;
 
@@ -925,9 +932,8 @@ struct SystemTxVisibleGasEntry {
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
 /// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
-/// precharge. `CycleTick` receives the remaining block gas as its
-/// compressed-entity execution budget, while preserving every other mandatory
-/// envelope's complete visible base charge.
+/// precharge and phase-specific compressed-entity budget. `CycleTick` receives
+/// the remaining block gas while preserving every mandatory phase reserve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTxVisibleGasPlan {
     entries: Vec<SystemTxVisibleGasEntry>,
@@ -957,12 +963,14 @@ impl SystemTxVisibleGasPlan {
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
             let protocol_precharge = system_tx_protocol_precharge(&decoded)?;
-            let gas_limit = intrinsic_gas.checked_add(protocol_precharge).ok_or(
-                SystemTxError::VisibleGasPlanExceedsBlock {
+            let ce_gas_reserve = system_tx_ce_gas_reserve(*kind);
+            let gas_limit = intrinsic_gas
+                .checked_add(protocol_precharge)
+                .and_then(|gas| gas.checked_add(ce_gas_reserve))
+                .ok_or(SystemTxError::VisibleGasPlanExceedsBlock {
                     required_gas: u64::MAX,
                     block_gas_limit,
-                },
-            )?;
+                })?;
             required_total = required_total.checked_add(gas_limit).ok_or(
                 SystemTxError::VisibleGasPlanExceedsBlock {
                     required_gas: u64::MAX,
@@ -1030,6 +1038,13 @@ impl SystemTxVisibleGasPlan {
     #[must_use]
     pub const fn total_envelope_gas(&self) -> u64 {
         self.total_envelope_gas
+    }
+}
+
+const fn system_tx_ce_gas_reserve(kind: SystemTxKind) -> u64 {
+    match kind {
+        SystemTxKind::OcompLifecycleBegin => OCOMP_LIFECYCLE_CE_GAS_RESERVE,
+        _ => 0,
     }
 }
 
@@ -1472,10 +1487,8 @@ mod tests {
             outcome: Bytes::from_static(b"boundary"),
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: alloy_primitives::Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![address!("0x3333333333333333333333333333333333333333")],
                 active_set_hash: B256::repeat_byte(0x55),
@@ -1766,6 +1779,37 @@ mod tests {
             Some(plan.intrinsic_gas(1).unwrap() + 50_000)
         );
         assert_eq!(plan.gas_limit(2), Some(plan.intrinsic_gas(2).unwrap()));
+        assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+    }
+
+    #[test]
+    fn visible_gas_plan_reserves_ocomp_terminal_ce_before_cycle_remainder() {
+        let ocomp = input_for(SystemTxKind::OcompLifecycleBegin)
+            .encode()
+            .expect("OCOMP lifecycle input encodes");
+        let cycle = input_for(SystemTxKind::CycleTick)
+            .encode()
+            .expect("CycleTick input encodes");
+        let entries = [
+            (SystemTxKind::OcompLifecycleBegin, ocomp.clone()),
+            (SystemTxKind::CycleTick, cycle.clone()),
+        ];
+        let intrinsic_total = system_tx_intrinsic_gas(&ocomp)
+            .expect("OCOMP intrinsic gas computes")
+            + system_tx_intrinsic_gas(&cycle).expect("Cycle intrinsic gas computes");
+        let cycle_remainder = 50_000;
+        let block_gas_limit = intrinsic_total + OCOMP_LIFECYCLE_CE_GAS_RESERVE + cycle_remainder;
+
+        let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
+            .expect("system gas plan fits the block");
+
+        assert_eq!(plan.protocol_precharge(0), Some(0));
+        assert_eq!(plan.ce_gas_limit(0), Some(OCOMP_LIFECYCLE_CE_GAS_RESERVE));
+        assert_eq!(
+            plan.gas_limit(0),
+            Some(plan.intrinsic_gas(0).unwrap() + OCOMP_LIFECYCLE_CE_GAS_RESERVE)
+        );
+        assert_eq!(plan.ce_gas_limit(1), Some(cycle_remainder));
         assert_eq!(plan.total_envelope_gas(), block_gas_limit);
     }
 

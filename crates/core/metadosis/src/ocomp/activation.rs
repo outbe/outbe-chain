@@ -1,5 +1,4 @@
 use alloy_primitives::{Bytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1};
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
@@ -9,22 +8,18 @@ use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGene
 use outbe_ocomp_protocol::OCB1_HEADER_LEN;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
-    hash::hash_framed,
     intent::{
         ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FinalizedIntentVerificationError,
         VerifiedFinalizedIntentV1,
     },
     profile::ProtocolBundleV1,
-    receipts::{
-        empty_apply_event_summary_hash, ActivationOutcome, AggregateActivationReceiptV1,
-        RequestBudgetSplitReceiptV1,
-    },
-    registry::HashDomain,
-    state::{ActiveGenerationV1, OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus},
+    receipts::{ActivationOutcome, RequestBudgetSplitReceiptV1},
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_promislimit::certified::{credit_certified_carry_over, CertifiedCarryOverCreditV1};
 use outbe_tribute::{
     certified::{
@@ -38,16 +33,11 @@ use crate::{
     errors::{
         activation_rejection as reject, activation_rejection_code::*, storage_corruption_message,
     },
-    precompile::IMetadosis,
     reducer::OuterWwdTransition,
     schema::MetadosisContract,
 };
 
-use super::{
-    profile::{OcompRequestProfile, OcompRequestProfileExt},
-    state::JobFsmLimits,
-    transitions::OcompExpiryDisposition,
-};
+use super::profile::OcompRequestProfile;
 
 /// Complete immutable consensus authority used by public LYSIS_V1 activation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,21 +77,16 @@ pub(crate) struct QuorumApplyContext<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     scope: &'a ExecutionScope,
     completed_transition: &'a OuterWwdTransition,
-    conflict_transition: &'a OuterWwdTransition,
-    conflict_exhausted_transition: &'a OuterWwdTransition,
     current_height: u64,
     current_time: u64,
     limits: &'a SchemaLimits,
 }
 
 impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         storage: &'a StorageHandle<'storage>,
         scope: &'a ExecutionScope,
         completed_transition: &'a OuterWwdTransition,
-        conflict_transition: &'a OuterWwdTransition,
-        conflict_exhausted_transition: &'a OuterWwdTransition,
         current_height: u64,
         current_time: u64,
         limits: &'a SchemaLimits,
@@ -110,8 +95,6 @@ impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
             storage,
             scope,
             completed_transition,
-            conflict_transition,
-            conflict_exhausted_transition,
             current_height,
             current_time,
             limits,
@@ -243,38 +226,28 @@ pub(crate) fn apply_quorum_result(
     )
     .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
 
-    let job_fsm_limits = profile.fsm_limits();
-    if target_preconditions_changed(context, metadosis, record, job_fsm_limits)? {
-        commit_conflict(
-            context,
-            metadosis,
-            &plan,
-            quorum,
-            result_evidence_hash,
-            job_fsm_limits,
-        )
-    } else {
-        let certified = CertifiedResultInput {
-            result,
-            bundle: &authority.bundle,
-            plan: &plan,
-            quorum,
-            result_evidence_hash,
-        };
-        apply_certified_result(context, metadosis, certified, job_fsm_limits)
+    if target_preconditions_changed(context, metadosis, record)? {
+        return Err(reject(ACTIVATION_PRECONDITIONS_CHANGED));
     }
+    let certified = CertifiedResultInput {
+        result,
+        bundle: &authority.bundle,
+        plan: &plan,
+        quorum,
+        result_evidence_hash,
+    };
+    apply_certified_result(context, metadosis, certified)
 }
 
 fn target_preconditions_changed(
     context: QuorumApplyContext<'_, '_>,
     metadosis: &MetadosisContract<'_>,
     record: &OcompJobRecordV1,
-    fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<bool> {
     let storage = context.storage;
     let limits = context.limits;
     let expected = &record.intent.activation_preconditions;
-    let wwd = outbe_common::WorldwideDay::new(record.intent.wwd);
+    let wwd = outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
     let tribute = TributeContract::new(storage.clone()).pre_admission_projection(wwd)?;
     let nod = NodContract::new(storage.clone()).ocomp_target_projection(wwd)?;
     let contributors = outbe_intex::api::ocomp_contributor_target_projection(
@@ -286,7 +259,7 @@ fn target_preconditions_changed(
         storage_corruption_message(format!("hash target OCOMP intent: {error}"))
     })?;
     let fsm = metadosis
-        .live_ocomp_fsm_state_by_intent(intent_id, limits, fsm_limits)?
+        .live_ocomp_fsm_state_by_intent(intent_id, limits)?
         .ok_or_else(|| storage_corruption_message("pending OCOMP job has no live FSM state"))?
         .projection();
     let status = metadosis.get_wwd_status(wwd)?;
@@ -311,113 +284,10 @@ fn target_preconditions_changed(
         || fsm.pending_nonce != expected.metadosis.pending_nonce)
 }
 
-fn commit_conflict(
-    context: QuorumApplyContext<'_, '_>,
-    metadosis: &mut MetadosisContract<'_>,
-    plan: &LysisApplyPlanV1,
-    quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
-    result_evidence_hash: B256,
-    fsm_limits: JobFsmLimits,
-) -> PrecompileResult<Bytes> {
-    let projection = metadosis
-        .live_ocomp_fsm_state_by_intent(plan.binding().intent_id, context.limits, fsm_limits)?
-        .ok_or_else(|| storage_corruption_message("OCOMP conflict has no live job"))?
-        .projection();
-    let exhausts_attempts = projection
-        .terminal_records
-        .checked_add(1)
-        .is_some_and(|count| count == fsm_limits.max_terminal_records);
-    let outer_transition = if exhausts_attempts {
-        context.conflict_exhausted_transition
-    } else {
-        context.conflict_transition
-    };
-    let current_height = context.current_height;
-    let current_time = context.current_time;
-    let limits = context.limits;
-    let binding = plan.binding().clone();
-    let receipt = AggregateActivationReceiptV1 {
-        binding: binding.clone(),
-        outcome: ActivationOutcome::ConflictResolved,
-        nod_receipt_hash: None,
-        contributor_receipt_hash: None,
-        tribute_receipt_hash: None,
-        carry_over_receipt_hash: None,
-        request_budget_split_receipt_hash: plan.request_budget_split_receipt_hash(),
-        active_generation_hash: None,
-        effect_commitment: hash_framed(HashDomain::Effects, &[]).map_err(|error| {
-            storage_corruption_message(format!("hash empty conflict effects: {error}"))
-        })?,
-        event_summary_hash: empty_apply_event_summary_hash().map_err(|error| {
-            storage_corruption_message(format!("hash empty conflict event summary: {error}"))
-        })?,
-        activated_at_height: current_height,
-        activated_at_time: current_time,
-    };
-    let terminal_receipt_hash = receipt
-        .terminal_receipt_hash(limits)
-        .map_err(|error| storage_corruption_message(format!("hash conflict receipt: {error}")))?;
-    let completed_binding = OcompCompletedBindingV1 {
-        job_id: binding.job_id,
-        activation_call_id: binding.activation_call_id,
-        result_digest: binding.result_digest,
-        quorum_height: quorum.quorum_height,
-        quorum_signer_bitmap: quorum.signer_bitmap.clone(),
-        quorum_evidence_hash: quorum.evidence_hash,
-        result_evidence_hash,
-        terminal_receipt_hash,
-        terminal_receipt: receipt,
-    };
-    let disposition = metadosis.commit_ocomp_conflict(
-        outer_transition,
-        binding.intent_id,
-        completed_binding,
-        quorum,
-        current_height,
-        current_time,
-        limits,
-        fsm_limits,
-    )?;
-    match disposition {
-        OcompExpiryDisposition::RetryScheduled { next_pending_nonce } => {
-            metadosis.emit(IMetadosis::OffchainJobConflicted {
-                intentId: binding.intent_id,
-                jobId: binding.job_id,
-                attempt: binding.attempt,
-                oldPendingNonce: plan.call_core().terminal_pending_nonce,
-                nextPendingNonce: next_pending_nonce,
-                resultDigest: binding.result_digest,
-            })?;
-        }
-        // No retry follows, so the day fails here rather than announcing a
-        // continuation nonce nothing will claim.
-        OcompExpiryDisposition::TerminalNoRetry {
-            retained_lysis_budget,
-            ..
-        } => {
-            crate::terminal::fail_exhausted_ocomp_day(
-                context.storage.clone(),
-                current_height,
-                context.scope,
-                projection.worldwide_day,
-                binding.intent_id,
-                retained_lysis_budget,
-                outer_transition,
-            )?;
-        }
-    }
-    Ok(encode_activation_return(
-        binding.activation_call_id,
-        binding.result_digest,
-        ActivationOutcome::ConflictResolved,
-    ))
-}
-
 fn apply_certified_result(
     context: QuorumApplyContext<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
     certified: CertifiedResultInput<'_>,
-    fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<Bytes> {
     let storage = context.storage;
     let scope = context.scope;
@@ -435,7 +305,7 @@ fn apply_certified_result(
     let binding = plan.binding().clone();
     let mut request_receipt = metadosis
         .request_budget_receipt(
-            outbe_common::WorldwideDay::new(plan.carry_over().source_wwd()),
+            outbe_primitives::time::WorldwideDay::new(plan.carry_over().source_wwd()),
             limits,
         )?
         .ok_or_else(|| storage_corruption_message("OCOMP request budget receipt is missing"))?;
@@ -532,7 +402,6 @@ fn apply_certified_result(
             permit,
             quorum,
             limits,
-            fsm_limits,
         )?;
         Ok(encode_activation_return(
             completed.activation_call_id,

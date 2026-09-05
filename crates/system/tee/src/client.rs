@@ -29,8 +29,8 @@ use crate::codec::{decode_response, encode_request, read_frame, write_frame};
 use crate::dcap_protocol::{
     dcap_onboarding_attestation_preimage, dcap_onboarding_request_hash,
     dcap_verification_attestation_preimage, dcap_verification_request_hash,
-    DcapOnboardingArtifactV1, DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1,
-    MAX_DCAP_VERIFICATION_CHUNK_BYTES,
+    DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapOnboardingVerificationResultV1,
+    DcapVerificationOutcomeV1, MAX_DCAP_VERIFICATION_CHUNK_BYTES,
 };
 use crate::errors::TransportError;
 use crate::finalized_admission::{
@@ -1011,6 +1011,44 @@ impl AuthorizedEnclaveClient {
             },
         )?;
         validate_dcap_onboarding_response(self.attestation_pub, request_hash, response)
+    }
+
+    pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
+        &mut self,
+        context: DcapOnboardingContextV1,
+    ) -> Result<DcapOnboardingArtifactV1, TransportError> {
+        let request_hash = context.context_hash();
+        let response = self.request(
+            &EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+                request_hash,
+                context: context.encode_canonical(),
+            },
+        )?;
+        let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV1 {
+            request_hash: actual_request_hash,
+            onboarding_artifact,
+        } = response
+        else {
+            return Err(TransportError::UnexpectedResponse);
+        };
+        if actual_request_hash != request_hash {
+            return Err(TransportError::EnclaveError(
+                "GramineDirectDev onboarding response context hash mismatch".into(),
+            ));
+        }
+        let artifact =
+            DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).map_err(|code| {
+                TransportError::EnclaveError(format!(
+                    "GramineDirectDev onboarding artifact is non-canonical: {:#06x}",
+                    code.code()
+                ))
+            })?;
+        if artifact.context != context {
+            return Err(TransportError::EnclaveError(
+                "GramineDirectDev onboarding artifact context mismatch".into(),
+            ));
+        }
+        Ok(artifact)
     }
 
     fn upload_dcap_verification_v1(

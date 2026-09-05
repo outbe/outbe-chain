@@ -7,10 +7,10 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
@@ -178,6 +178,13 @@ fn scan(
         storage.clone(),
     );
     crate::called::scan_and_call(&ctx, scope, parent).unwrap()
+}
+
+/// Promis Reserve balance - what a forfeited `gratis_load_minor` returns to.
+fn reserve(storage: &StorageHandle<'_>) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
 }
 
 fn called_at(storage: &StorageHandle<'_>, bucket_key: B256) -> u64 {
@@ -563,6 +570,44 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
             );
         }
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
+    harness(|storage, scope, parent| {
+        let owners = [0x11u8, 0x22, 0x33].map(Address::repeat_byte);
+        let items: Vec<NodItemState> = owners
+            .iter()
+            .map(|owner| {
+                let item = nod_item(*owner, ISO);
+                api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+                item
+            })
+            .collect();
+        let bucket_key = items[0].bucket_key;
+        NodContract::new(storage.clone())
+            .qualify_bucket(scope, parent, bucket_key)
+            .unwrap();
+
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 1);
+
+        // The call alone forfeits nothing, so nothing is returned yet.
+        assert_eq!(reserve(storage), U256::ZERO);
+
+        let past = at + CALL_NOTICE_PERIOD + 1;
+        finalize_through(storage, past);
+        assert_eq!(scan(storage, scope, parent, past), 3);
+
+        let expected: U256 = items.iter().map(|item| item.gratis_load_minor).sum();
+        assert_eq!(reserve(storage), expected);
     });
 }
 

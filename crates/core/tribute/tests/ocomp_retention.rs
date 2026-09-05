@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, Namespace, StorageReaderHandle, StorageWriterHandle,
     Value,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData,
     TributeRepositoryError, TributeRepositoryReader, TributeRepositoryWriter,

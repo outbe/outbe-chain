@@ -5,7 +5,6 @@
 //! drained entry is gone.
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::NOTIFY_CHUNK_LIMIT;
 use outbe_intexfactory::qualified::{drain_notices, NOTICE_CALLED};
@@ -14,6 +13,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;

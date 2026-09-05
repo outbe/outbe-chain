@@ -12,13 +12,6 @@ const MAGIC: &[u8; 4] = b"OART";
 /// This pre-genesis hard fork makes the exact freeze-height expiry authority
 /// committee-notarized and replayable by execution.
 ///
-/// Version 0x08 (R5): the `DkgBoundaryArtifact` boundary payload (tag 0x02) is
-/// extended with a trailing `tee_reshare_registrations` section (u16 count +
-/// per-validator `Address(20) + recipient_x25519(32) + attestation_pub(32) +
-/// noise_static_pub(32)`), so a tribute-offer reshare can re-register the new
-/// committee's enclave keys on-chain at the activation boundary. Empty except at a
-/// reshare boundary.
-///
 /// Version 0x06: the
 /// `DkgBoundaryArtifact` boundary payload (tag 0x02) is extended with
 /// the V2 `committee_set_hash` (32 bytes) and the raw encoded VRF group
@@ -279,22 +272,6 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                     payload.extend_from_slice(address.as_slice());
                     payload.extend_from_slice(recipient_pubkey.as_slice());
                 }
-                // V0.08: tee_reshare_registrations (u16 count + entries of
-                // Address(20) + recipient_x25519(32) + attestation_pub(32) +
-                // noise_static_pub(32)). Empty except at a reshare boundary.
-                ensure_count_fits_u16(
-                    "tee reshare registrations",
-                    result.tee_reshare_registrations.len(),
-                )?;
-                payload.extend_from_slice(
-                    &(result.tee_reshare_registrations.len() as u16).to_be_bytes(),
-                );
-                for reg in &result.tee_reshare_registrations {
-                    payload.extend_from_slice(reg.validator.as_slice());
-                    payload.extend_from_slice(reg.recipient_x25519.as_slice());
-                    payload.extend_from_slice(reg.attestation_pub.as_slice());
-                    payload.extend_from_slice(reg.noise_static_pub.as_slice());
-                }
                 // V0.0B: exact freeze-height TEE expiry exclusions. The explicit
                 // commitment is carried with the ordered unique list so proposal
                 // equality and execution bind the same authority.
@@ -305,15 +282,6 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
                 for address in &result.tee_expired_target_exclusions {
                     payload.extend_from_slice(address.as_slice());
                 }
-                // V0.09: endorsement_signature (u32 length prefix + bytes). Empty
-                // except at a reshare boundary carrying a prior-committee endorsement.
-                ensure_len_fits_u32(
-                    "boundary endorsement signature",
-                    result.endorsement_signature.len(),
-                )?;
-                payload
-                    .extend_from_slice(&(result.endorsement_signature.len() as u32).to_be_bytes());
-                payload.extend_from_slice(result.endorsement_signature.as_ref());
                 records.push((BOUNDARY_TAG, payload));
             }
             ConsensusHeaderArtifact::DealerLog(log) => {
@@ -935,7 +903,7 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         .ok_or_else(|| PrecompileError::Fatal("tee recipient pubkeys length overflow".into()))?;
     let needed_after_recipients = offset
         .checked_add(tee_bytes)
-        .and_then(|v| v.checked_add(2)) // V0.08 reshare-registration count
+        .and_then(|v| v.checked_add(32 + 2))
         .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
     if payload.len() < needed_after_recipients {
         return Err(PrecompileError::Fatal(format!(
@@ -950,44 +918,6 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         let recipient_pubkey = B256::from_slice(&payload[offset..offset + 32]);
         offset += 32;
         tee_recipient_pubkeys.push((address, recipient_pubkey));
-    }
-
-    // V0.08: tee_reshare_registrations.
-    let reshare_count = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
-    offset += 2;
-    let reshare_bytes = reshare_count
-        .checked_mul(20 + 32 + 32 + 32)
-        .ok_or_else(|| {
-            PrecompileError::Fatal("tee reshare registrations length overflow".into())
-        })?;
-    // Need room for the registrations + V0.0B expiry commitment/count + the
-    // V0.09 endorsement_signature u32 prefix.
-    let needed_after_reshare = offset
-        .checked_add(reshare_bytes)
-        .and_then(|v| v.checked_add(32 + 2 + 4))
-        .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
-    if payload.len() < needed_after_reshare {
-        return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_reshare}",
-            payload.len()
-        )));
-    }
-    let mut tee_reshare_registrations = Vec::with_capacity(reshare_count);
-    for _ in 0..reshare_count {
-        let validator = Address::from_slice(&payload[offset..offset + 20]);
-        offset += 20;
-        let recipient_x25519 = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        let attestation_pub = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        let noise_static_pub = B256::from_slice(&payload[offset..offset + 32]);
-        offset += 32;
-        tee_reshare_registrations.push(crate::consensus::TeeReshareRegistration {
-            validator,
-            recipient_x25519,
-            attestation_pub,
-            noise_static_pub,
-        });
     }
 
     // V0.0B: domain-separated commitment plus bounded ordered unique list.
@@ -1006,7 +936,6 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         .ok_or_else(|| PrecompileError::Fatal("TEE expiry exclusions length overflow".into()))?;
     let needed_after_exclusions = offset
         .checked_add(exclusions_bytes)
-        .and_then(|v| v.checked_add(4))
         .ok_or_else(|| PrecompileError::Fatal("boundary payload length overflow".into()))?;
     if payload.len() < needed_after_exclusions {
         return Err(PrecompileError::Fatal(format!(
@@ -1027,24 +956,12 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
         ));
     }
 
-    // V0.09: endorsement_signature (u32 length prefix + bytes), exact end match.
-    let endorsement_sig_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-    let needed_payload = offset.checked_add(endorsement_sig_len).ok_or_else(|| {
-        PrecompileError::Fatal("boundary endorsement signature length overflow".into())
-    })?;
-    if payload.len() != needed_payload {
+    if payload.len() != offset {
         return Err(PrecompileError::Fatal(format!(
-            "invalid boundary header artifact payload length: {} != {needed_payload}",
+            "invalid boundary header artifact payload length: {} != {offset}",
             payload.len()
         )));
     }
-    let endorsement_signature = Bytes::from(payload[offset..needed_payload].to_vec());
 
     Ok(DkgBoundaryArtifact {
         epoch,
@@ -1064,10 +981,8 @@ fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtifact> {
             active_set_hash,
         },
         tee_recipient_pubkeys,
-        tee_reshare_registrations,
         tee_expired_target_exclusions,
         tee_expired_target_exclusions_hash: carried_tee_expired_target_exclusions_hash,
-        endorsement_signature,
     })
 }
 
@@ -1145,10 +1060,8 @@ mod tests {
                 active_set_hash: B256::ZERO,
             },
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: exclusions,
             tee_expired_target_exclusions_hash: exclusions_hash,
-            endorsement_signature: Bytes::new(),
         }
     }
 
@@ -1166,6 +1079,30 @@ mod tests {
     }
 
     #[test]
+    fn boundary_wire_ends_after_tee_expiry_exclusions() {
+        let artifact = boundary_with_expiry_exclusions(Vec::new());
+        let encoded = encode_boundary_artifact(&artifact).unwrap();
+
+        // OART envelope (6 bytes) + boundary record header (3 bytes) precede the
+        // payload. With empty variable-length collections, the canonical boundary
+        // payload ends at the expiry-exclusions count and is exactly 216 bytes.
+        let payload_len = u16::from_be_bytes([encoded[7], encoded[8]]) as usize;
+        assert_eq!(payload_len, 216);
+        assert_eq!(encoded.len(), 6 + 3 + payload_len);
+    }
+
+    #[test]
+    fn boundary_wire_rejects_data_after_tee_expiry_exclusions() {
+        let artifact = boundary_with_expiry_exclusions(Vec::new());
+        let mut encoded = encode_boundary_artifact(&artifact).unwrap().to_vec();
+        let payload_len = u16::from_be_bytes([encoded[7], encoded[8]]);
+        encoded[7..9].copy_from_slice(&(payload_len + 1).to_be_bytes());
+        encoded.push(0);
+
+        assert!(decode_boundary_artifact(&encoded).is_err());
+    }
+
+    #[test]
     fn boundary_rejects_duplicate_oversized_and_tampered_tee_expiry_exclusions() {
         let validator = address!("0x1111111111111111111111111111111111111111");
         assert!(tee_expired_target_exclusions_hash(&[validator, validator]).is_err());
@@ -1180,9 +1117,8 @@ mod tests {
 
         let artifact = boundary_with_expiry_exclusions(vec![validator]);
         let mut encoded = encode_boundary_artifact(&artifact).unwrap().to_vec();
-        // The final four bytes are the empty endorsement length; the preceding
-        // twenty bytes are the sole exclusion address.
-        let address_last_byte = encoded.len() - 5;
+        // The sole exclusion address is the final value in the payload.
+        let address_last_byte = encoded.len() - 1;
         encoded[address_last_byte] ^= 0x01;
         assert!(decode_boundary_artifact(&encoded).is_err());
     }
@@ -1203,10 +1139,8 @@ mod tests {
             outcome: Bytes::from_static(b"dkg-outcome"),
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
                     address!("0x1111111111111111111111111111111111111111"),
@@ -1254,69 +1188,14 @@ mod tests {
             outcome: Bytes::from_static(b"dkg-outcome"),
             is_full_dkg: true,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![
                     address!("0x1111111111111111111111111111111111111111"),
                     address!("0x2222222222222222222222222222222222222222"),
                 ],
                 active_set_hash: B256::with_last_byte(0x41),
-            },
-        };
-
-        let encoded = encode_boundary_artifact(&result).unwrap();
-        let decoded = decode_boundary_artifact(&encoded).unwrap();
-        assert_eq!(decoded, Some(result));
-    }
-
-    /// R5.1: a reshare boundary carrying non-empty per-validator TEE
-    /// re-registrations round-trips through the V0.08 codec.
-    #[test]
-    fn roundtrip_boundary_with_tee_reshare_registrations() {
-        use crate::consensus::TeeReshareRegistration;
-        let result = DkgBoundaryArtifact {
-            epoch: 9,
-            dkg_cycle: 2,
-            freeze_height: 300,
-            planned_activation_height: 400,
-            target_set_hash: B256::with_last_byte(0x51),
-            vrf_material_version: 2,
-            vrf_group_public_key: B256::with_last_byte(0x52),
-            vrf_group_public_key_bytes: Bytes::from_static(b"\x33\x33"),
-            committee_set_hash: B256::with_last_byte(0x5F),
-            is_validator_set_change: true,
-            outcome: Bytes::from_static(b"reshare-outcome"),
-            is_full_dkg: false,
-            tee_recipient_pubkeys: vec![(
-                address!("0x1111111111111111111111111111111111111111"),
-                B256::with_last_byte(0xA1),
-            )],
-            tee_reshare_registrations: vec![
-                TeeReshareRegistration {
-                    validator: address!("0x1111111111111111111111111111111111111111"),
-                    recipient_x25519: B256::with_last_byte(0xB1),
-                    attestation_pub: B256::with_last_byte(0xB2),
-                    noise_static_pub: B256::with_last_byte(0xB3),
-                },
-                TeeReshareRegistration {
-                    validator: address!("0x2222222222222222222222222222222222222222"),
-                    recipient_x25519: B256::with_last_byte(0xC1),
-                    attestation_pub: B256::with_last_byte(0xC2),
-                    noise_static_pub: B256::with_last_byte(0xC3),
-                },
-            ],
-            tee_expired_target_exclusions: Vec::new(),
-            tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: Bytes::from(vec![0xEE; 48]),
-            reshare: ReshareResult {
-                new_active_set: vec![
-                    address!("0x1111111111111111111111111111111111111111"),
-                    address!("0x2222222222222222222222222222222222222222"),
-                ],
-                active_set_hash: B256::with_last_byte(0x51),
             },
         };
 
@@ -1413,10 +1292,8 @@ mod tests {
             outcome: Bytes::from_static(b"x"),
             is_full_dkg: false,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set: vec![],
                 active_set_hash: B256::ZERO,
@@ -1489,10 +1366,8 @@ mod tests {
             outcome: Bytes::from(vec![0xABu8; outcome_len]),
             is_full_dkg,
             tee_recipient_pubkeys: Vec::new(),
-            tee_reshare_registrations: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
-            endorsement_signature: Bytes::new(),
             reshare: ReshareResult {
                 new_active_set,
                 active_set_hash: B256::with_last_byte(0x41),
@@ -1629,15 +1504,13 @@ mod tests {
         // u16 cap (65535) but whose total framed length (6-byte envelope +
         // 3-byte record header + payload) exceeds OUTBE_MAX_EXTRA_DATA_SIZE.
         //
-        // Fixed boundary payload prefix is 184 bytes; the rest is the outcome
+        // Fixed boundary payload prefix is 216 bytes; the rest is the outcome
         // blob. We size the outcome so the total framed length is just over the
         // 64 KiB budget while the record payload stays <= 65535.
-        // (180 V0.06 fields + 2-byte V0.07 tee_recipient_pubkeys count + 2-byte
-        // V0.08 tee_reshare_registrations count + 32-byte V0.0B expiry-exclusions
-        // commitment + 2-byte exclusions count + 4-byte V0.09
-        // endorsement_signature length prefix.)
+        // (180 base fields + 2-byte tee_recipient_pubkeys count + 32-byte
+        // expiry-exclusions commitment + 2-byte exclusions count.)
         const FIXED_PREFIX: usize =
-            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 2 + 32 + 2 + 4;
+            8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 32 + 2;
         const ENVELOPE: usize = 4 + 1 + 1; // MAGIC + version + record count
         const RECORD_HEADER: usize = 1 + 2; // tag + u16 length
 

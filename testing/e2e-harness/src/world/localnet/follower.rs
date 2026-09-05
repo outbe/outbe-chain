@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::process::Command;
+use std::time::Duration;
 
 use eyre::{bail, ensure, eyre, Result};
 
@@ -52,7 +53,7 @@ fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn derive_validator_recovery_follower_args(
+pub(super) fn derive_validator_recovery_follower_args(
     original: &[String],
     certified_upstream: &str,
 ) -> Result<Vec<String>> {
@@ -99,11 +100,128 @@ fn derive_validator_recovery_follower_args(
     Ok(follower)
 }
 
-fn validator_projection_identity(index: usize) -> String {
-    format!("validator-{index}")
-}
-
 impl Localnet {
+    /// Positive-start barrier for the selected upstream, not a substitute for
+    /// the node's own authenticated admission. The owner is stopped while its
+    /// exact durable anchor is loaded; polling never reopens the owner journal.
+    pub(super) fn wait_selected_upstream_admission(
+        &self,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        use crate::world::rpc::Rpc;
+        use alloy_primitives::B256;
+        use alloy_signer_local::PrivateKeySigner;
+        use outbe_primitives::tee_attestation_v1::TeePolicyV1;
+        use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+
+        if !self.cfg.tee_mode.passes_sgx_devices() {
+            return Ok(());
+        }
+        let node_dir = self.cfg.validator_dir(index);
+        ensure!(
+            !self
+                .validators
+                .values()
+                .chain(self.followers.values())
+                .any(|child| child.owns_node_data_dir(&node_dir.join("data"))),
+            "cannot load admission anchor while its node is still owned"
+        );
+        let anchor = outbe_tee::load_finalized_join_admission_anchor(&node_dir.join("data"))?
+            .ok_or_else(|| eyre!("positive FullNode startup has no finalized admission anchor"))?;
+        let secret = fs::read_to_string(node_dir.join("reth-p2p-secret.hex"))?;
+        let signer: PrivateKeySigner = secret
+            .trim()
+            .parse()
+            .map_err(|_| eyre!("invalid provisioned FullNode P2P signer"))?;
+        let public = signer.credential().verifying_key().to_encoded_point(true);
+        let public = public.as_bytes();
+        let selector = ITeeRegistryV1::nodeHostEnclaveBindingCall {
+            rethP2pPrefix: public[0],
+            rethP2pX: B256::from_slice(&public[1..]),
+        };
+        let rpc = Rpc::new(self.cfg.clone());
+        let port = self.cfg.http_port(upstream_slot);
+        let url = format!("http://127.0.0.1:{port}");
+        let deadline = std::time::Instant::now() + Duration::from_secs(240);
+        loop {
+            let observation = rpc.finalized_result(port);
+            if let Ok(height) = observation.as_ref() {
+                if *height >= anchor.finalized_height {
+                    ensure!(
+                        rpc.checkpoint_at(port, 0)?.block_hash == anchor.genesis_hash,
+                        "selected upstream has a different genesis"
+                    );
+                    let historical = rpc.checkpoint_at(port, anchor.finalized_height)?;
+                    ensure!(
+                        historical.block_hash == anchor.finalized_hash
+                            && historical.state_root == anchor.finalized_state_root,
+                        "selected upstream has a different finalized admission checkpoint"
+                    );
+                    let address = outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
+                    let admitted =
+                        eth::read_call_at_result(&url, address, &selector, anchor.finalized_height)
+                            .map_err(eyre::Report::msg)?;
+                    ensure!(
+                        admitted.exists
+                            && admitted.nodeIdHash == anchor.node_id_hash
+                            && admitted.enclaveId == anchor.enclave_id
+                            && admitted.intentHash == anchor.intent_hash,
+                        "selected upstream lacks the exact historical admission binding"
+                    );
+
+                    // Pin all current reads to this finalized height. Renewal
+                    // may change the nonce/deadline; identity must still match.
+                    let current = eth::read_call_at_result(&url, address, &selector, *height)
+                        .map_err(eyre::Report::msg)?;
+                    let canonical = eth::read_call_at_result(
+                        &url,
+                        address,
+                        &ITeeRegistryV1::activePolicyV1Call {},
+                        *height,
+                    )
+                    .map_err(eyre::Report::msg)?;
+                    let policy = TeePolicyV1::decode_canonical(&canonical)
+                        .map_err(|error| eyre!("invalid finalized TEE policy: {error}"))?;
+                    ensure!(
+                        policy.chain_id == anchor.chain_id
+                            && policy.genesis_hash == anchor.genesis_hash,
+                        "selected upstream TEE policy belongs to another network"
+                    );
+                    let block = eth::raw_json_result(
+                        &url,
+                        "eth_getBlockByNumber",
+                        serde_json::json!([format!("0x{height:x}"), false]),
+                    )?;
+                    let timestamp = block
+                        .get("timestamp")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            eyre!("selected upstream finalized block has no timestamp")
+                        })?;
+                    let timestamp = u64::from_str_radix(timestamp.trim_start_matches("0x"), 16)?;
+                    ensure!(
+                        current.exists
+                            && current.nodeIdHash == anchor.node_id_hash
+                            && current.enclaveId == anchor.enclave_id,
+                        "selected upstream current admission has a different identity"
+                    );
+                    ensure!(
+                        current.validUntil > timestamp,
+                        "selected upstream TEE lease is expired"
+                    );
+                    return Ok(());
+                }
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "selected upstream {upstream_slot} did not reach admission h{}: {observation:?}",
+                anchor.finalized_height
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// Provision a production full-node enclave with its persistent Reth and
     /// EVM identities. The global EVM key owns both the Registry association
     /// and the transaction envelope.
@@ -186,6 +304,7 @@ impl Localnet {
         index: usize,
         upstream_slot: usize,
     ) -> Result<()> {
+        self.wait_selected_upstream_admission(index, upstream_slot)?;
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
         // File-based flag: the key must never appear in argv (`ps` leak).
@@ -203,13 +322,116 @@ impl Localnet {
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
-        self.launch_certified_follower_with_args(name, name, index, args, Vec::new())
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
     }
 
-    fn launch_certified_follower_with_args(
+    /// Launch the real certified-follower command while deliberately omitting
+    /// the mandatory enclave endpoint. This is a negative acceptance probe:
+    /// production startup must fail before RPC/network service is available.
+    pub fn launch_enclave_less_follower(
         &mut self,
         name: &str,
-        projection_identity: &str,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        ensure!(
+            !self.followers.contains_key(name) && !self.follower_startup_probes.contains_key(name),
+            "negative follower {name} is already owned"
+        );
+        let node_dir = self.cfg.validator_dir(index);
+        fs::create_dir_all(node_dir.join("logs"))?;
+        self.ensure_node_key_material(index)?;
+        let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
+        if !reth_secret_path.is_file() {
+            fs::write(&reth_secret_path, random_hex_32()?)?;
+        }
+        let p2p_secret_file = proc::normalized_secret_file(&reth_secret_path)?;
+        let mut args = self.reth_base_args(&node_dir, index);
+        args.extend(args![
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
+        ]);
+        let probe = crate::internal::startup_rejection::StartupRejectionProbe::arm(
+            &node_dir.join("node.log"),
+            ([127, 0, 0, 1], self.cfg.http_port(index)).into(),
+        )?;
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())?;
+        self.follower_startup_probes
+            .insert(name.to_owned(), (index, probe));
+        Ok(())
+    }
+
+    /// Launch a production follower whose execution head advances only from its
+    /// certified HTTP upstream and whose transaction pool has no P2P gossip
+    /// path. This isolates the real pending-staleness policy from block
+    /// production without mocking the node or its canonical-state stream.
+    pub fn launch_isolated_txpool_follower(
+        &mut self,
+        name: &str,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        ensure!(
+            self.start_opts.is_txpool_eviction_profile,
+            "isolated txpool follower requires the explicit eviction profile"
+        );
+        let node_dir = self.cfg.validator_dir(index);
+        fs::create_dir_all(node_dir.join("logs"))?;
+        let p2p_secret_file = proc::normalized_secret_file(&node_dir.join("reth-p2p-secret.hex"))?;
+        let mut args = self.reth_base_args(&node_dir, index);
+        args.extend(args![
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
+            "--disable-discovery",
+            "--tee-enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
+            "--txpool.outbe.pending-staleness-secs",
+            "20",
+            "--txpool.lifetime",
+            "30s",
+        ]);
+        self.extend_real_sgx_startup_timeout(&mut args);
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+    }
+
+    /// Require an owned negative-probe follower to terminate with the exact
+    /// startup guardrail. Missing process ownership or a missing log is an
+    /// error, never evidence that the guardrail worked.
+    pub fn wait_for_follower_guardrail(
+        &mut self,
+        name: &str,
+        index: usize,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let (observed_index, probe) = self
+            .follower_startup_probes
+            .remove(name)
+            .ok_or_else(|| eyre!("negative follower {name} has no pre-launch observer"))?;
+        ensure!(
+            observed_index == index,
+            "negative follower observer belongs to a different node"
+        );
+        let child = self
+            .followers
+            .get_mut(name)
+            .ok_or_else(|| eyre!("negative follower {name} is not owned by the scenario"))?;
+        probe.wait(child, expected, timeout)?;
+        self.followers.remove(name);
+        Ok(())
+    }
+
+    pub(super) fn launch_certified_follower_with_args(
+        &mut self,
+        name: &str,
         index: usize,
         args: Vec<String>,
         protocol_environment: Vec<(&'static str, String)>,
@@ -225,12 +447,7 @@ impl Localnet {
         }
         command.args(&args);
         attach_log(&mut command, &node_dir)?;
-        let guard = self.spawn_node_with_projection_identity(
-            name,
-            projection_identity,
-            &node_dir,
-            command,
-        )?;
+        let guard = self.spawn_node(name, index, &node_dir, command)?;
         self.followers.insert(name.to_owned(), guard);
         Ok(())
     }
@@ -276,10 +493,8 @@ impl Localnet {
             .entry(index)
             .or_insert(original);
         let protocol_environment = validator_protocol_environment(&self.start_opts);
-        let projection_identity = validator_projection_identity(index);
         self.launch_certified_follower_with_args(
             &name,
-            &projection_identity,
             index,
             follower_args,
             protocol_environment,
@@ -295,6 +510,19 @@ impl Localnet {
         self.followers
             .get_mut(name)
             .is_some_and(|guard| !guard.exited())
+    }
+
+    /// Exact owned live process, with observation errors preserved.
+    pub(crate) fn live_follower_pid(&mut self, name: &str) -> Result<u32> {
+        let child = self
+            .followers
+            .get_mut(name)
+            .ok_or_else(|| eyre!("missing owned follower {name}"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "owned follower {name} exited"
+        );
+        Ok(child.pid())
     }
 
     pub fn validator_radicle_sidecar_running(&mut self, index: usize) -> bool {
@@ -406,7 +634,7 @@ mod tests {
             "validator restart must retain byte-for-byte original argv"
         );
         assert_eq!(
-            super::validator_projection_identity(3),
+            super::super::node_slot_projection_identity(3),
             "validator-3",
             "recovery follower must reuse the validator's durable projection identity"
         );

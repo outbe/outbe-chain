@@ -9,20 +9,23 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/
 import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
+import {IStablecoin} from "@precompiles/IStablecoin.sol";
+
 import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 
 /// @title ERC7786TokenBridge
-/// @notice ERC-7786 fungible token bridge supporting lock/unlock and ERC-7802 burn/mint sides.
-///         Composed transfers (`sendAndCall`) additionally invoke an ERC-1363-style receiver hook
-///         on the destination after the tokens are credited.
+/// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
+///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
+///         ERC-1363-style receiver hook on the destination after the tokens are credited.
 contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipient {
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
 
     enum TokenBridgeMode {
         LockUnlock,
-        BurnMint
+        BurnMint,
+        IssuerBurnMint
     }
 
     IERC20 public immutable token;
@@ -38,6 +41,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     event CrosschainTransferReceived(
         bytes32 indexed receiveId, uint32 indexed sourceDomain, bytes from, address indexed to, uint256 amount
     );
+    event EmergencyWithdrawn(address indexed to, uint256 amount);
 
     error InvalidToken();
     error InvalidBridge();
@@ -49,6 +53,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
+    error NothingToWithdraw();
 
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
@@ -60,6 +65,17 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         token = IERC20(token_);
         bridge = IERC7786GatewaySource(bridge_);
         mode = mode_;
+    }
+
+    /// @notice TEMPORARY: recovers everything this bridge holds when a remote chain is down and no delivery can
+    ///         release it. Only `LockUnlock` custodies tokens, so only that mode has anything to recover.
+    function emergencyWithdraw() external onlyOwner {
+        if (mode != TokenBridgeMode.LockUnlock) revert NothingToWithdraw();
+
+        address to = owner();
+        uint256 amount = token.balanceOf(address(this));
+        token.safeTransfer(to, amount);
+        emit EmergencyWithdrawn(to, amount);
     }
 
     function setRemoteBridge(uint32 domain, bytes calldata recipient) external onlyOwner {
@@ -173,6 +189,8 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     function _onSend(address from, uint256 amount) internal {
         if (mode == TokenBridgeMode.LockUnlock) {
             token.safeTransferFrom(from, address(this), amount);
+        } else if (mode == TokenBridgeMode.IssuerBurnMint) {
+            IStablecoin(address(token)).burnFrom(from, amount);
         } else {
             IERC7802(address(token)).crosschainBurn(from, amount);
         }
@@ -181,6 +199,8 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     function _onReceive(address to, uint256 amount) internal {
         if (mode == TokenBridgeMode.LockUnlock) {
             token.safeTransfer(to, amount);
+        } else if (mode == TokenBridgeMode.IssuerBurnMint) {
+            IStablecoin(address(token)).mint(to, amount);
         } else {
             IERC7802(address(token)).crosschainMint(to, amount);
         }

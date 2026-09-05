@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ocomp::OcompRequestProfileExt, WwdDayType, WwdStatus};
+use crate::{WwdDayType, WwdStatus};
 use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
 use outbe_oracle::schema::OracleContract;
@@ -164,7 +164,7 @@ impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionL
 
 fn create_waiting_day(
     storage: &StorageHandle,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     dtype: u8,
     day_limit: U256,
 ) -> u64 {
@@ -195,7 +195,7 @@ fn create_waiting_day(
 
 fn issue_one_tribute_and_run_metadosis(
     storage: &StorageHandle,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     nominal: U256,
     block_number: u64,
     timestamp: u64,
@@ -216,7 +216,7 @@ fn issue_one_tribute_in_scope(
     scope: &ExecutionScope,
     parent: &TestParent,
     owner: Address,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     nominal: U256,
 ) {
     let mut tribute = TributeContract::new(storage.clone());
@@ -242,7 +242,7 @@ fn issue_one_tribute_in_scope(
     tribute.seal_day(wwd).unwrap();
 }
 
-fn assert_no_ocomp_job(storage: &StorageHandle, wwd: outbe_common::WorldwideDay) {
+fn assert_no_ocomp_job(storage: &StorageHandle, wwd: outbe_primitives::time::WorldwideDay) {
     let metadosis = MetadosisContract::new(storage.clone());
     let limits = crate::ocomp::schema::poc_schema_limits();
     assert!(metadosis.ocomp_scheduler.is_empty().unwrap());
@@ -265,7 +265,7 @@ fn assert_no_ocomp_job(storage: &StorageHandle, wwd: outbe_common::WorldwideDay)
 
 fn seed_missed_offering_day(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     base_limit: U256,
     formation_carry_over: U256,
     later_carry_over: U256,
@@ -405,8 +405,8 @@ fn seed_genesis_profile(provider: &mut HashMapStorageProvider) {
 fn assert_genesis_created_once(
     provider: &mut HashMapStorageProvider,
     timestamp: u64,
-) -> outbe_common::WorldwideDay {
-    let expected = outbe_common::WorldwideDay::from_timestamp(timestamp);
+) -> outbe_primitives::time::WorldwideDay {
+    let expected = outbe_primitives::time::WorldwideDay::from_timestamp(timestamp);
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![expected]);
@@ -427,8 +427,8 @@ fn assert_genesis_created_once(
 
 #[test]
 fn genesis_creation_command_rolls_back_every_mutation_and_retries_exactly_once() {
-    let timestamp =
-        outbe_common::WorldwideDay::new(2026_0810).to_timestamp_utc() + 2 * SECONDS_PER_HOUR;
+    let timestamp = outbe_primitives::time::WorldwideDay::new(2026_0810).to_timestamp_utc()
+        + 2 * SECONDS_PER_HOUR;
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     seed_genesis_profile(&mut probe);
@@ -476,7 +476,7 @@ fn genesis_creation_command_rolls_back_every_mutation_and_retries_exactly_once()
 
 fn provider_status_events(
     provider: &HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> Vec<(u8, u8, u64)> {
     provider
         .get_ordered_events()
@@ -495,7 +495,7 @@ fn provider_status_events(
 
 fn seed_forming_day_for_advance(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> u64 {
     StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -521,7 +521,7 @@ fn seed_forming_day_for_advance(
 
 fn seed_unformed_missed_offering_day(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     carry_over: U256,
 ) -> u64 {
     provider.enable_metadosis_mutation_frame(
@@ -554,7 +554,7 @@ fn seed_unformed_missed_offering_day(
 
 fn assert_opened_offering_once(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
 ) {
     StorageHandle::enter(provider, |storage| {
@@ -574,7 +574,7 @@ fn assert_opened_offering_once(
 
 fn seed_positive_ocomp_admission_fixture(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> (ExecutionScope, TestParent, u64) {
     let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
     let nominal = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u64));
@@ -598,7 +598,7 @@ fn seed_positive_ocomp_admission_fixture(
 
 #[test]
 fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0819);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0819);
     let block_number = 2;
 
     let mut control = HashMapStorageProvider::new(CHAIN_ID);
@@ -665,7 +665,7 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
 
 #[test]
 fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edges() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0811);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0811);
     let block_number = 2;
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
@@ -717,7 +717,7 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
 
 fn seed_local_terminal_fixture(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     day_type: u8,
     day_limit: U256,
     tribute_count: u32,
@@ -757,7 +757,7 @@ fn seed_local_terminal_fixture(
 
 fn assert_local_terminal_completed(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     expected_promis: U256,
 ) {
     assert_local_terminal_outcome(provider, wwd, status::COMPLETED, expected_promis);
@@ -765,7 +765,7 @@ fn assert_local_terminal_completed(
 
 fn assert_local_terminal_outcome(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     expected_status: u8,
     expected_promis: U256,
 ) {
@@ -784,7 +784,7 @@ fn assert_local_terminal_outcome(
 }
 
 fn exercise_local_terminal_fault_matrix(
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     day_type: u8,
     day_limit: U256,
     tribute_count: u32,
@@ -889,7 +889,7 @@ fn exercise_local_terminal_fault_matrix(
 #[test]
 fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0812),
+        outbe_primitives::time::WorldwideDay::new(2026_0812),
         day_type::RED,
         U256::from(777),
         0,
@@ -902,7 +902,7 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
 #[test]
 fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0813),
+        outbe_primitives::time::WorldwideDay::new(2026_0813),
         day_type::RED,
         U256::from(2),
         1,
@@ -915,7 +915,7 @@ fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
 #[test]
 fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0820),
+        outbe_primitives::time::WorldwideDay::new(2026_0820),
         day_type::GREEN,
         U256::ZERO,
         1,
@@ -928,7 +928,7 @@ fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
 #[test]
 fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0821),
+        outbe_primitives::time::WorldwideDay::new(2026_0821),
         day_type::UNKNOWN,
         U256::from(777),
         1,
@@ -941,32 +941,32 @@ fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
 #[test]
 fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0822),
+        outbe_primitives::time::WorldwideDay::new(2026_0822),
         day_type::GREEN,
         U256::from(777),
         0,
         U256::ZERO,
         status::COMPLETED,
-        U256::ZERO,
+        U256::from(777),
     );
 }
 
 #[test]
 fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
-        outbe_common::WorldwideDay::new(2026_0823),
+        outbe_primitives::time::WorldwideDay::new(2026_0823),
         day_type::GREEN,
         U256::from(2),
         1,
         U256::ONE,
         status::COMPLETED,
-        U256::ZERO,
+        U256::ONE,
     );
 }
 
 #[test]
 fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0818);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0818);
     let day_limit = U256::from(2);
     let nominal = U256::from(1_000);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -1023,7 +1023,7 @@ fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input(
 
 #[test]
 fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then_retries() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0814);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0814);
     let day_limit = U256::from(777);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled =
@@ -1081,8 +1081,8 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
 fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
     with_storage(|storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
-        let timestamp =
-            outbe_common::WorldwideDay::new(20241221).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let timestamp = outbe_primitives::time::WorldwideDay::new(20241221).start_timestamp()
+            + 2 * SECONDS_PER_HOUR;
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
             storage.clone(),
@@ -1090,7 +1090,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
 
         // The terminal sink now writes the limit onto the WorldwideDay record
         // (UTC+14 keyed) for the block timestamp, not a separate UTC-date-key map.
-        let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
+        let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(timestamp);
 
         let day_limit = U256::from(500_000_000u64);
         crate::emission_sink::apply(&ctx, day_limit).unwrap();
@@ -1123,7 +1123,7 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
     fn apply_limit(
         provider: &mut HashMapStorageProvider,
         block_number: u64,
-        wwd: outbe_common::WorldwideDay,
+        wwd: outbe_primitives::time::WorldwideDay,
         amount: U256,
     ) -> outbe_primitives::error::Result<U256> {
         provider.enable_metadosis_mutation_frame(
@@ -1143,9 +1143,9 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
         })
     }
 
-    let first = outbe_common::WorldwideDay::new(20260725);
-    let second = outbe_common::WorldwideDay::new(20260726);
-    let third = outbe_common::WorldwideDay::new(20260727);
+    let first = outbe_primitives::time::WorldwideDay::new(20260725);
+    let second = outbe_primitives::time::WorldwideDay::new(20260726);
+    let third = outbe_primitives::time::WorldwideDay::new(20260727);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -1260,7 +1260,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
         provider.enable_metadosis_mutation_frame(
             outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
         );
-        let wwd = outbe_common::WorldwideDay::new(20260727);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260727);
         StorageHandle::enter(provider, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(
@@ -1292,7 +1292,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
             U256::from(1)
         );
         assert!(MetadosisContract::new(storage)
-            .ocomp_day_limit_formation(outbe_common::WorldwideDay::new(20260727))
+            .ocomp_day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
             .unwrap()
             .is_none());
     });
@@ -1352,7 +1352,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
         );
         StorageHandle::enter(&mut provider, |storage| {
             let formed = MetadosisContract::new(storage.clone())
-                .ocomp_day_limit_formation(outbe_common::WorldwideDay::new(20260727))
+                .ocomp_day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
                 .unwrap()
                 .unwrap();
             assert_eq!(formed.base_limit, U256::from(100));
@@ -1370,7 +1370,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
 
 #[test]
 fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0731);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0731);
     let base_limit = U256::from(100);
     let formation_carry = U256::from(9);
     let later_carry = U256::from(7);
@@ -1457,7 +1457,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
 
 #[test]
 fn malformed_missed_offering_receipt_is_fatal() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0801);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);
     with_contract(|metadosis| {
         metadosis
             .worldwide_day_terminal_receipts
@@ -1481,7 +1481,7 @@ fn malformed_missed_offering_receipt_is_fatal() {
 
 #[test]
 fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0802);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0802);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
@@ -1515,7 +1515,7 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 
 #[test]
 fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0803);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0803);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
@@ -1562,7 +1562,7 @@ fn missed_receipt_with_capacity_detail_is_fatal_in_reader_and_aggregate() {
 
 #[test]
 fn missed_receipt_status_drift_is_fatal_in_reader_and_aggregate() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0804);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0804);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
@@ -1588,7 +1588,7 @@ fn missed_receipt_status_drift_is_fatal_in_reader_and_aggregate() {
 
 #[test]
 fn missed_receipt_membership_drift_is_fatal_in_reader_and_aggregate() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0805);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0805);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
@@ -1612,7 +1612,7 @@ fn missed_receipt_membership_drift_is_fatal_in_reader_and_aggregate() {
 
 #[test]
 fn duplicate_closed_membership_is_fatal_in_reader_and_aggregate() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0806);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0806);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
@@ -1636,7 +1636,7 @@ fn duplicate_closed_membership_is_fatal_in_reader_and_aggregate() {
 
 #[test]
 fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0801);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0801);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end = seed_missed_offering_day(
         &mut provider,
@@ -1688,7 +1688,7 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
 
 #[test]
 fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retries() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0802);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0802);
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut probe, wwd, U256::from(100), U256::ZERO, U256::from(7));
@@ -1790,7 +1790,7 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
 
 #[test]
 fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0808);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0808);
     let later_carry = U256::from(7);
     let formed_limit = U256::from(100);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -1875,8 +1875,8 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
 
 #[test]
 fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
-    let first = outbe_common::WorldwideDay::new(2026_0815);
-    let second = outbe_common::WorldwideDay::new(2026_0816);
+    let first = outbe_primitives::time::WorldwideDay::new(2026_0815);
+    let second = outbe_primitives::time::WorldwideDay::new(2026_0816);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let first_offering_end = seed_missed_offering_day(
         &mut provider,
@@ -1990,7 +1990,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
 
 #[test]
 fn absent_profile_rejects_the_offering_edge_before_any_effect() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0803);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0803);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_entry = StorageHandle::enter(&mut provider, |storage| {
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -2045,7 +2045,7 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
 
 #[test]
 fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0804);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0804);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled = StorageHandle::enter(&mut provider, |storage| {
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::from(1_000));
@@ -2100,8 +2100,8 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
 #[test]
 fn test_cold_start_creates_only_current_utc_plus_14_day() {
     with_storage(|storage| {
-        let timestamp =
-            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let timestamp = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp()
+            + 2 * SECONDS_PER_HOUR;
         run_begin_block(storage.clone(), 1, timestamp);
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -2130,7 +2130,7 @@ fn genesis_day_uses_the_canonical_utc_plus_14_boundary() {
         run_init_genesis_command(&mut provider, 1, timestamp).unwrap();
 
         let created = assert_genesis_created_once(&mut provider, timestamp);
-        assert_eq!(created, outbe_common::WorldwideDay::new(expected));
+        assert_eq!(created, outbe_primitives::time::WorldwideDay::new(expected));
         let constants = outbe_chain_constants::GenesisProtocolParametersV1::default();
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage);
@@ -2154,8 +2154,8 @@ fn genesis_day_uses_the_canonical_utc_plus_14_boundary() {
 #[test]
 fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
     with_storage(|storage| {
-        let timestamp =
-            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let timestamp = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp()
+            + 2 * SECONDS_PER_HOUR;
         run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -2168,7 +2168,7 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
         assert_eq!(active, vec![20260302u32.into()]);
 
         let wwd = 20260302u32;
-        let forming_start = outbe_common::WorldwideDay::new(wwd).start_timestamp();
+        let forming_start = outbe_primitives::time::WorldwideDay::new(wwd).start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let expected_lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
         let expected_offering_end =
@@ -2199,7 +2199,7 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
 fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
     with_storage(|storage| {
         let wwd_raw = 20260302u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let previous_wwd = wwd.previous_date_key();
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -2327,7 +2327,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
 fn advance_active_worldwide_days_advances_status_without_creating_or_settling() {
     with_storage(|storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
-        let wwd = outbe_common::WorldwideDay::new(20260302u32);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260302u32);
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
@@ -2389,7 +2389,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
 fn test_missing_previous_vwap_results_in_red_day() {
     with_storage(|storage| {
         let wwd_raw = 20260303u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
         let offering_entry = forming_start
@@ -2459,7 +2459,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
 fn test_equal_vwap_results_in_red_day() {
     with_storage(|storage| {
         let wwd_raw = 20260303u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let previous_wwd = wwd.previous_date_key();
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -2527,7 +2527,7 @@ fn test_equal_vwap_results_in_red_day() {
 fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
     with_storage(|storage| {
         let wwd_raw = 20260304u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let previous_wwd = wwd.previous_date_key();
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -2591,7 +2591,7 @@ fn test_normal_lifecycle_never_leaves_ready_day_type_unknown() {
 fn test_ready_processing_missing_limit_fails_like_source() {
     with_storage(|storage| {
         let wwd_raw = 20260310u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
@@ -2625,7 +2625,7 @@ fn test_ready_processing_missing_limit_fails_like_source() {
 fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
     with_storage(|storage| {
         let wwd_raw = 20260310u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let day_limit = U256::from(333u64);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
@@ -2663,7 +2663,7 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
 fn test_ready_processing_zero_limit_fails() {
     with_storage(|storage| {
         let wwd_raw = 20260311u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
@@ -2695,10 +2695,10 @@ fn test_ready_processing_zero_limit_fails() {
 }
 
 #[test]
-fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
+fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
     with_storage(|storage| {
         let wwd_raw = 20260312u32;
-        let wwd = outbe_common::WorldwideDay::new(wwd_raw);
+        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
         let day_limit = U256::from(777u64);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
@@ -2728,7 +2728,8 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a supply-less brief; the limit stays in PROMIS.
+        // A red day is recorded as a supply-less brief; a day with no tributes issues nothing,
+        // so its whole limit goes back to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
@@ -2749,8 +2750,8 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
 #[test]
 fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
     with_storage(|storage| {
-        let first_wwd = outbe_common::WorldwideDay::new(2026_0316);
-        let second_wwd = outbe_common::WorldwideDay::new(2026_0317);
+        let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0316);
+        let second_wwd = outbe_primitives::time::WorldwideDay::new(2026_0317);
         let nominal = U256::from(1_000);
         let first_scheduled =
             create_waiting_day(&storage, first_wwd, day_type::GREEN, U256::from(800));
@@ -2804,13 +2805,12 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
 
         let metadosis = MetadosisContract::new(storage);
         let schema_limits = crate::ocomp::schema::poc_schema_limits();
-        let fsm_limits = super::ocomp_storage::request_profile().fsm_limits();
         let first = metadosis
-            .ocomp_fsm_state(first_wwd, &schema_limits, fsm_limits)
+            .ocomp_fsm_state(first_wwd, &schema_limits)
             .unwrap()
             .projection();
         let second = metadosis
-            .ocomp_fsm_state(second_wwd, &schema_limits, fsm_limits)
+            .ocomp_fsm_state(second_wwd, &schema_limits)
             .unwrap()
             .projection();
         assert_eq!(first.phase, crate::ocomp::state::DayPhase::Ready);
@@ -2827,7 +2827,7 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
 #[test]
 fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0313);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0313);
         let day_limit = U256::from(777);
         let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -2869,13 +2869,11 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
-    use alloy_sol_types::SolEvent;
-
+fn green_empty_day_briefs_no_supply_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0321);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0321);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::MAX);
         arm_genesis_ocomp(&storage, CHAIN_ID);
 
@@ -2886,9 +2884,10 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd).unwrap()).unwrap(),
-            outbe_desis::AuctionStage::None
+            outbe_desis::AuctionStage::Briefed
         );
-        assert_eq!(desis.sched_active_count.read().unwrap(), 0);
+        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
+        assert_eq!(desis.pending_supply_promis.read(&wwd).unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -2896,31 +2895,12 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
             U256::MAX
         );
     });
-
-    let signature =
-        outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::SIGNATURE_HASH;
-    let events = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    let rejection = events
-        .iter()
-        .filter(|event| event.topics().first() == Some(&signature))
-        .map(|event| {
-            outbe_desis::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(event)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(rejection.len(), 1);
-    assert_eq!(rejection[0].supply, U256::MAX);
-    assert_eq!(rejection[0].maxAccepted, U256::from(u128::MAX));
-    assert_eq!(
-        rejection[0].reasonCode,
-        outbe_desis::api::AuctionBriefRejectionReason::SupplyExceedsAuctionDomain.code()
-    );
 }
 
 #[test]
 fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0322);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0322);
         let day_limit = U256::from(777_u64);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -2971,7 +2951,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
 #[test]
 fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0314);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0314);
         let nominal = U256::from(1_000);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::ZERO);
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -3015,7 +2995,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
 #[test]
 fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0318);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
         let nominal = U256::from(1_000);
         // A red day divides supply by RED_DAY_REDUCTION_COEF. This non-zero
         // day limit therefore produces an exact zero Lysis allocation.
@@ -3068,7 +3048,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
 #[test]
 fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0315);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0315);
         let nominal = U256::from(1_000);
         let day_limit = U256::from(333);
         let scheduled = create_waiting_day(&storage, wwd, day_type::UNKNOWN, day_limit);
@@ -3113,7 +3093,7 @@ fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
 #[test]
 fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0313);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0313);
         let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
         let nominal = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u64));
         let owner = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -3158,12 +3138,12 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
         assert!(metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(!metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         let limits = crate::ocomp::schema::poc_schema_limits();
-        let profile = metadosis
+        let _profile = metadosis
             .read_ocomp_request_profile(&limits)
             .unwrap()
             .unwrap();
         let fsm = metadosis
-            .ocomp_fsm_state(wwd, &limits, profile.fsm_limits())
+            .ocomp_fsm_state(wwd, &limits)
             .unwrap()
             .projection();
         assert_eq!(fsm.phase, crate::ocomp::state::DayPhase::Ready);
@@ -3183,9 +3163,9 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
 }
 
 #[test]
-fn no_tributes_green_day_briefs_the_full_limit() {
+fn no_tributes_green_day_briefs_no_supply_and_returns_the_limit() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20260401u32);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
         let forming_start = wwd.start_timestamp();
 
@@ -3223,17 +3203,17 @@ fn no_tributes_green_day_briefs_the_full_limit() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 1);
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_supply_promis.read(&series).unwrap(),
-            day_limit
+            U256::ZERO
         );
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(
             promis.get_total_unallocated().unwrap(),
-            U256::ZERO,
-            "a green brief takes the whole no-tributes limit"
+            day_limit,
+            "a day that earned nothing auctions nothing and leaves its limit on the warehouse"
         );
     });
 }
@@ -3241,7 +3221,7 @@ fn no_tributes_green_day_briefs_the_full_limit() {
 #[test]
 fn zero_limit_green_day_dispatches_no_brief() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20260501u32);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260501u32);
         let forming_start = wwd.start_timestamp();
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -3293,8 +3273,8 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
 
     StorageHandle::enter(&mut storage, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
-        let timestamp =
-            outbe_common::WorldwideDay::new(20260302).start_timestamp() + 2 * SECONDS_PER_HOUR;
+        let timestamp = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp()
+            + 2 * SECONDS_PER_HOUR;
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, timestamp, outbe_primitives::chain::CHAIN_ID),
             storage.clone(),
@@ -3316,7 +3296,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
 #[test]
 fn test_terminal_day_leaves_active_set() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20260315u32);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20260315u32);
         let forming_start = wwd.start_timestamp();
         let scheduled = forming_start
             + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
@@ -3359,7 +3339,7 @@ fn test_terminal_day_leaves_active_set() {
 #[test]
 fn the_local_brief_prices_a_day_by_the_canonical_projection() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(2026_0805);
+        let wwd = outbe_primitives::time::WorldwideDay::new(2026_0805);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::from(1_000_u64));
         arm_genesis_ocomp(&storage, CHAIN_ID);
 
@@ -3412,7 +3392,7 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
 
 #[test]
 fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0803);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0803);
     let carry_over = U256::from(11);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, carry_over);
@@ -3444,7 +3424,7 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
 
 #[test]
 fn missed_offering_rejects_a_day_limit_with_no_formation() {
-    let wwd = outbe_common::WorldwideDay::new(2026_0804);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0804);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
     StorageHandle::enter(&mut provider, |storage| {

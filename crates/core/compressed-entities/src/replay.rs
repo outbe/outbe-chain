@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::{
@@ -275,7 +275,7 @@ pub enum ReplayEventError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, Bytes, U256};
-    use outbe_common::WorldwideDay;
+    use outbe_primitives::time::WorldwideDay;
 
     use super::*;
     use crate::{encode_tribute_v1, TributeBodyV1};

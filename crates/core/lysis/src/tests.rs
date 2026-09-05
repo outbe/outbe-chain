@@ -2,7 +2,6 @@ use crate::algorithm::*;
 use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityRef,
     ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
@@ -13,6 +12,7 @@ use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 use std::sync::Arc;
 
@@ -725,10 +725,10 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 #[test]
 fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     use alloy_primitives::{address, U256};
-    use outbe_common::WorldwideDay;
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::time::WorldwideDay;
     use outbe_tribute::TributeData;
 
     use crate::runtime::lysis;
@@ -1064,10 +1064,10 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 #[test]
 fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     use alloy_primitives::{address, U256};
-    use outbe_common::WorldwideDay;
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::time::WorldwideDay;
     use outbe_tribute::{TributeContract, TributeData};
 
     use crate::runtime::lysis;

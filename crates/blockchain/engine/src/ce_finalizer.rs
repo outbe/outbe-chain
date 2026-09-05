@@ -572,12 +572,14 @@ impl RethCeFinalizer {
         match self.probe_durable(block)? {
             DurableCeProbe::Absent => Ok(None),
             DurableCeProbe::Exact(root) => Ok(Some(root)),
-            DurableCeProbe::DifferentHash(actual) => eyre::bail!(
-                "durable canonical conflict at height {}: finalized={}, Reth={}",
-                block.height,
-                block.block_hash,
-                actual
-            ),
+            DurableCeProbe::DifferentHash(actual) => {
+                eyre::bail!(
+                    "durable canonical conflict at height {}: finalized={}, Reth={}",
+                    block.height,
+                    block.block_hash,
+                    actual
+                );
+            }
         }
     }
 

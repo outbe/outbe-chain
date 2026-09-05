@@ -28,12 +28,12 @@ interface INodFactory {
     error NodMaterializationRejected(uint8 code);
 
     /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
-    ///         Names the spent nullifier instead of a payer address: the note
-    ///         is what pays, and it is deliberately not linkable to a payer.
+    /// Names the spent nullifier instead of a payer address: the note is what
+    /// pays, and it is deliberately not linkable to a payer.
     event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
-    ///         There is deliberately no matching public installation selector.
+    /// There is deliberately no matching public installation selector.
     event CertifiedNodGenerationInstalled(
         bytes32 indexed activationCallId,
         uint32 indexed worldwideDay,
@@ -54,30 +54,28 @@ interface INodFactory {
     /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
     ///
     /// @dev Callable only by the Nod's owner, who is also the gratis recipient
-    ///      and so can always supply the mint authorization.
+    /// and so can always supply the mint authorization.
     ///
-    ///      The Nod's cost is discharged here, by spending a PayNote.
-    ///      The underlying value already reached the reserve vault when the note
-    ///      was deposited, so this call moves no tokens: it books the note's nullifier,
-    ///      appends any change note to the pool, and logs `NodPaid` event.
+    /// The Nod's cost is discharged here, by spending a PayNote.
+    /// The underlying value already reached the reserve vault when the note
+    /// was deposited, so this call moves no tokens: it books the note's nullifier,
+    /// appends any change note to the pool, and logs `NodPaid` event.
     ///
     /// @param nodId        Identifier of a Nod owned by the caller.
-    /// @param nonce        Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
-    ///                     MUST have the protocol's required leading zero bytes.
-    /// @param mac          Gratis mint authorization, `HMAC(modifyKey,
-    ///                     op-preimage)` under the caller's Gratis modify key.
-    /// @param opNonce      MUST equal the caller's current on-chain gratis
-    ///                     op-nonce; binds `mac` to exactly this mint.
-    /// @param payNoteProof `outbe.paynote` spend proof, carrying one of the assets the
-    ///                     VaultRouter registers under the Nod's `referenceCurrency`,
-    ///                     and covering at least `costAmountMinor`.
+    /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
+    /// MUST have the protocol's required leading zero bytes.
+    /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
+    /// under the caller's Gratis modify key.
+    /// @param opNonce MUST equal the caller's current on-chain gratis op-nonce;
+    /// binds `mac` to exactly this mint.
+    /// @param payNoteProof `outbe.paynote` spend proof.
     /// @return Gratis minor units minted to the caller.
     function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
         external
         returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
-    ///         proof-backed OCOMP batch.
+    /// proof-backed OCOMP batch.
     function materializeCertifiedNods(bytes calldata canonicalBatch) external;
 
     /// @notice Return the canonical current FIFO head, or `exists=false` when empty.

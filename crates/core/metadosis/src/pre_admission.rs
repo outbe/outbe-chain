@@ -1,5 +1,4 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{AuctionEntryPriceSource, PreAdmissionEnvelopeV1, ReferenceEntryPriceV1},
@@ -8,6 +7,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_oracle::api::{OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection};
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::TributePreAdmissionProjection;
 
 use crate::{

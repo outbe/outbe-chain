@@ -13,7 +13,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -108,16 +108,36 @@ pub(crate) use args;
 /// An owned child process: killed and reaped on drop.
 #[derive(Debug)]
 pub(crate) struct ChildGuard {
-    #[allow(dead_code)] // retained for Debug / future diagnostics
     label: String,
     child: Child,
+    node_data_dir: Option<PathBuf>,
 }
 
 impl ChildGuard {
     pub(crate) fn spawn(label: impl Into<String>, mut cmd: Command) -> Result<Self> {
         let label = label.into();
+        let argv = cmd.get_args().collect::<Vec<_>>();
+        let node_data_dir = argv
+            .windows(2)
+            .find(|pair| pair[0] == "--datadir")
+            .map(|pair| PathBuf::from(pair[1]))
+            .or_else(|| {
+                argv.iter().find_map(|arg| {
+                    arg.to_str()
+                        .and_then(|arg| arg.strip_prefix("--datadir="))
+                        .map(PathBuf::from)
+                })
+            });
         let child = cmd.spawn().wrap_err_with(|| format!("spawn {label}"))?;
-        Ok(Self { label, child })
+        Ok(Self {
+            label,
+            child,
+            node_data_dir,
+        })
+    }
+
+    pub(crate) fn owns_node_data_dir(&self, path: &Path) -> bool {
+        self.node_data_dir.as_deref() == Some(path)
     }
 
     /// Whether the child has already exited (non-blocking).
@@ -125,9 +145,45 @@ impl ChildGuard {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
+    /// Observe this exact owned child without discarding status or wait errors.
+    pub(crate) fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
+        self.child
+            .try_wait()
+            .wrap_err_with(|| format!("observe owned child {}", self.label))
+    }
+
     /// The OS process id (for `--debug` launch logging).
     pub(crate) fn pid(&self) -> u32 {
         self.child.id()
+    }
+
+    /// Abrupt fault of this owned live child, without waiting for its peers.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn signal_fault(&mut self) -> Result<()> {
+        if self.exit_status()?.is_some() {
+            bail!(
+                "owned child {} exited before the requested fault",
+                self.label
+            );
+        }
+        self.child
+            .kill()
+            .wrap_err_with(|| format!("SIGKILL owned child {}", self.label))
+    }
+
+    /// Observe a previously signalled fault without discarding wait errors.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn reap_fault(&mut self, timeout: Duration) -> Result<ExitStatus> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.exit_status()? {
+                return Ok(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                bail!("owned child {} did not exit after fault", self.label);
+            }
+            sleep(Duration::from_millis(10));
+        }
     }
 
     /// Stop and synchronously reap this owned process. Idempotent after exit.
@@ -208,10 +264,187 @@ impl Drop for DockerGuard {
 /// child guard alone owns its whole lifetime.
 #[derive(Debug)]
 pub(crate) struct EnclaveGuard {
-    #[allow(dead_code)] // owned for its Drop (kills the child)
     child: ChildGuard,
-    #[allow(dead_code)] // owned for its Drop (`docker rm -f`)
     docker: Option<DockerGuard>,
+}
+
+fn enclave_listener_ready(
+    status: Option<ExitStatus>,
+    log: &str,
+    port: u16,
+    reachable: bool,
+) -> Result<bool> {
+    if let Some(status) = status {
+        bail!("owned enclave child exited before readiness: {status}");
+    }
+    let prefix = format!("outbe-tee-enclave: listening on tcp://127.0.0.1:{port} (attestation: ");
+    Ok(reachable
+        && log.split_inclusive('\n').any(|line| {
+            line.starts_with(&prefix)
+                && line.contains("; enclave identity: ")
+                && line.ends_with(")\n")
+        }))
+}
+
+/// Positive startup only: observe this process's successful bind, not merely
+/// an open port. Authentication and sealed recovery remain NodeHost operations.
+pub(crate) fn spawn_enclave_ready(
+    spec: EnclaveSpec,
+    deadline: std::time::Instant,
+) -> Result<EnclaveGuard> {
+    use crate::internal::launch_log::LaunchLog;
+    use std::time::Instant;
+
+    eyre::ensure!(
+        Instant::now() < deadline,
+        "enclave startup deadline already expired"
+    );
+    let address = ([127, 0, 0, 1], spec.tee_port).into();
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    eyre::ensure!(
+        !remaining.is_zero(),
+        "enclave startup deadline already expired"
+    );
+    match TcpStream::connect_timeout(&address, remaining.min(Duration::from_millis(100))) {
+        Ok(_) => {
+            bail!("enclave endpoint {address} is already occupied; refusing to replace its owner")
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Err(error) => return Err(error).wrap_err("probe enclave endpoint before launch"),
+    }
+    let mut log = LaunchLog::arm(&spec.log_path)?;
+    let path = spec.log_path.clone();
+    let name = spec.name.clone();
+    let port = spec.tee_port;
+    let started = Instant::now();
+    let mut child = spawn_enclave_before(spec, Some(deadline))?;
+    let evidence = path.with_file_name(format!("enclave-startup-{}.json", child.child.pid()));
+    let starting = serde_json::json!({"phase": "starting", "name": name,
+        "pid": child.child.pid(), "endpoint": address.to_string(),
+        "budget_ms": deadline.saturating_duration_since(started).as_millis(), "log": path});
+    fs::write(&evidence, serde_json::to_vec_pretty(&starting)?)?;
+    let result = (|| -> Result<()> {
+        loop {
+            let status = child.child.exit_status()?;
+            enclave_listener_ready(status, "", port, false)?;
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "owned enclave remained alive without readiness until deadline"
+            );
+            let log = log.read()?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                bail!("enclave startup deadline expired before TCP probe");
+            }
+            let reachable = match TcpStream::connect_timeout(
+                &address,
+                remaining.min(Duration::from_millis(100)),
+            ) {
+                Ok(_) => true,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    false
+                }
+                Err(error) => return Err(error).wrap_err("probe current enclave listener"),
+            };
+            let status = child.child.exit_status()?;
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "enclave became observable after its startup deadline"
+            );
+            if enclave_listener_ready(status, &log, port, reachable)? {
+                return Ok(());
+            }
+            sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            );
+        }
+    })();
+    // Capture original status and this attempt's logs before Drop can cause
+    // termination. A cleanup signal is not evidence of a spontaneous crash.
+    let final_status = child.child.exit_status();
+    let status_description = format!("{final_status:?}");
+    let result = result.and_then(|()| {
+        enclave_listener_ready(final_status?, "", port, false)?;
+        eyre::ensure!(
+            Instant::now() < deadline,
+            "enclave startup deadline expired before handoff"
+        );
+        Ok(())
+    });
+    let mut report = starting;
+    report["phase"] = serde_json::json!(if result.is_ok() {
+        "listening"
+    } else {
+        "failed"
+    });
+    report["elapsed_ms"] = serde_json::json!(started.elapsed().as_millis());
+    report["child_status_before_cleanup"] = serde_json::json!(status_description);
+    if let Err(error) = &result {
+        report["error"] = serde_json::json!(format!("{error:#}"));
+        report["container_state_before_cleanup"] = match &child.docker {
+            Some(container) => match enclave_container_state(container) {
+                Ok(value) => value,
+                Err(error) => serde_json::json!({"unavailable": format!("{error:#}")}),
+            },
+            None => serde_json::Value::Null,
+        };
+        report["log_tail"] = match log.read() {
+            Ok(text) => {
+                let mut lines = text.lines().rev().take(40).collect::<Vec<_>>();
+                lines.reverse();
+                serde_json::json!(lines.join("\n"))
+            }
+            Err(error) => serde_json::json!({"unavailable": format!("{error:#}")}),
+        };
+    }
+    if let Err(error) = fs::write(&evidence, serde_json::to_vec_pretty(&report)?) {
+        eprintln!(
+            "cannot retain enclave startup evidence {}: {error}",
+            evidence.display()
+        );
+        result?;
+        return Err(error).wrap_err("retain enclave startup evidence");
+    }
+    result.wrap_err_with(|| {
+        format!(
+            "enclave {name} startup failed; diagnostics: {}",
+            evidence.display()
+        )
+    })?;
+    Ok(child)
+}
+
+fn enclave_container_state(container: &DockerGuard) -> Result<serde_json::Value> {
+    let mut command = base_cmd("docker", container.sudo);
+    command
+        .args(["inspect", "--format", "{{json .State}}", &container.name])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    let mut child = command.spawn()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("container state observation timed out");
+        }
+        sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output()?;
+    eyre::ensure!(
+        output.status.success(),
+        "container state unavailable: {}",
+        output.status
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 /// Optional sealed-restart parameters (persistent `/tee` mount + chain-id).
@@ -266,6 +499,9 @@ pub(crate) struct EnclaveSpec {
     pub signing_key: PathBuf,
     /// Seeded-genesis authority measured into every real-DCAP test enclave.
     pub network_descriptor: Option<PathBuf>,
+    /// Canonical `NetworkBindingV1` hex for the mock binary. Production launch
+    /// profiles leave this absent.
+    pub dev_network_binding: Option<String>,
     /// Which execution profile runs this enclave.
     pub launch: EnclaveLaunch,
     pub sudo: bool,
@@ -493,10 +729,6 @@ fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
 
 fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
-    cmd.env(
-        "OUTBE_TEST_REMOTE_ATTESTATION",
-        spec.remote_attestation.as_str(),
-    );
     cmd.args([
         "run",
         "--name",
@@ -506,6 +738,10 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
         "--network",
         "host",
     ]);
+    cmd.arg("--env").arg(format!(
+        "OUTBE_TEST_REMOTE_ATTESTATION={}",
+        spec.remote_attestation.as_str()
+    ));
 
     // Real SGX: fail closed when no enclave device exists. The same test image
     // also supports the separately selected GramineDirectDev lane, so silently
@@ -573,6 +809,9 @@ fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result
     if let Some(seed) = &spec.dkg_seed {
         cmd.args(["--dkg-seed", seed]);
     }
+    if let Some(binding) = &spec.dev_network_binding {
+        cmd.args(["--dev-network-binding", binding]);
+    }
     if let Some(seal) = &spec.seal {
         cmd.args(["--tee-dir", "/tee", "--chain-id", &seal.chain_id_hex]);
     }
@@ -587,6 +826,9 @@ fn build_native_command(spec: &EnclaveSpec) -> Result<Command> {
     cmd.args(["--socket", &format!("127.0.0.1:{}", spec.tee_port)]);
     if let Some(seed) = &spec.dkg_seed {
         cmd.args(["--dkg-seed", seed]);
+    }
+    if let Some(binding) = &spec.dev_network_binding {
+        cmd.args(["--dev-network-binding", binding]);
     }
     if let Some(seal) = &spec.seal {
         fs::create_dir_all(&seal.tee_dir)?;
@@ -619,8 +861,16 @@ fn pinned_qvl_mount_args() -> Result<Vec<String>> {
 
 /// Launch the enclave in the **foreground** as an owned child, returning a guard
 /// that kills it (and, under Gramine, `docker rm -f`s its container) on drop.
-/// The caller waits on socket readiness with [`wait_tcp`].
+/// Positive launches use [`spawn_enclave_ready`]; rejection probes keep their
+/// separate fail-closed observation of the expected policy error.
 pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
+    spawn_enclave_before(spec, None)
+}
+
+fn spawn_enclave_before(
+    spec: EnclaveSpec,
+    deadline: Option<std::time::Instant>,
+) -> Result<EnclaveGuard> {
     let (mut cmd, docker) = match &spec.launch {
         EnclaveLaunch::Gramine { image_id } => {
             // Remove any stale container of the same name first.
@@ -675,6 +925,12 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
         eprintln!("           log: {}", spec.log_path.display());
     }
 
+    if let Some(deadline) = deadline {
+        eyre::ensure!(
+            std::time::Instant::now() < deadline,
+            "enclave startup deadline expired during launch preparation"
+        );
+    }
     let child = ChildGuard::spawn(format!("enclave {}", spec.name), cmd)?;
     Ok(EnclaveGuard { child, docker })
 }
@@ -815,6 +1071,196 @@ pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
 mod tests {
     use super::*;
 
+    fn startup_spec(root: &Path, port: u16, binary: &str) -> EnclaveSpec {
+        EnclaveSpec {
+            name: "startup-fixture".into(),
+            tee_port: port,
+            enclave_bin: binary.into(),
+            signing_key: root.join("unused.pem"),
+            network_descriptor: None,
+            dev_network_binding: None,
+            launch: EnclaveLaunch::NativeHost,
+            sudo: false,
+            pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
+            dkg_seed: None,
+            seal: None,
+            log_path: root.join("enclave.log"),
+            debug: false,
+        }
+    }
+
+    #[test]
+    fn enclave_readiness_requires_exact_current_marker_and_live_child() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let marker = "outbe-tee-enclave: listening on tcp://127.0.0.1:7000 (attestation: none; enclave identity: public)\n";
+        assert!(enclave_listener_ready(None, marker, 7000, true).unwrap());
+        assert!(!enclave_listener_ready(None, marker.trim_end(), 7000, true).unwrap());
+        assert!(!enclave_listener_ready(None, marker, 7001, true).unwrap());
+        assert!(!enclave_listener_ready(None, marker, 7000, false).unwrap());
+        assert!(!enclave_listener_ready(None, "Gramine is starting", 7000, true).unwrap());
+        assert!(
+            !enclave_listener_ready(None, &format!("old diagnostic: {marker}"), 7000, true)
+                .unwrap()
+        );
+        for status in [
+            ExitStatus::from_raw(0),
+            ExitStatus::from_raw(23 << 8),
+            ExitStatus::from_raw(9),
+        ] {
+            assert!(enclave_listener_ready(Some(status), marker, 7000, true).is_err());
+        }
+    }
+
+    #[test]
+    fn enclave_readiness_rejects_foreign_listener_before_native_or_docker_spawn() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let root = tempfile::tempdir().unwrap();
+        for docker in [false, true] {
+            let mut spec = startup_spec(root.path(), port, "/nonexistent-enclave");
+            if docker {
+                spec.launch = EnclaveLaunch::Gramine {
+                    image_id: DockerImageId::from_inspect_output(&format!(
+                        "sha256:{}",
+                        "ab".repeat(32)
+                    ))
+                    .unwrap(),
+                };
+            }
+            let error =
+                spawn_enclave_ready(spec, std::time::Instant::now() + Duration::from_secs(2))
+                    .unwrap_err();
+            assert!(error.to_string().contains("already occupied"), "{error:#}");
+            assert!(!root.path().join("enclave.log").exists());
+        }
+        assert!(TcpStream::connect(listener.local_addr().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn enclave_readiness_expired_deadline_never_spawns() {
+        let root = tempfile::tempdir().unwrap();
+        let error = spawn_enclave_ready(
+            startup_spec(root.path(), 0, "/nonexistent-enclave"),
+            std::time::Instant::now() - Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline already expired"));
+        assert!(!root.path().join("enclave.log").exists());
+    }
+
+    #[test]
+    fn enclave_deadline_expiring_during_preparation_prevents_child_spawn() {
+        let root = tempfile::tempdir().unwrap();
+        let reserved = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        drop(reserved);
+        let error = spawn_enclave_before(
+            startup_spec(root.path(), port, "/nonexistent-enclave"),
+            Some(std::time::Instant::now() - Duration::from_secs(1)),
+        )
+        .unwrap_err();
+        // Command preparation completed, but the nonexistent executable was
+        // never spawned: the failure is the deadline, not an exec error.
+        assert!(format!("{error:#}").contains("deadline expired during launch preparation"));
+        assert!(root.path().join("enclave.log").exists());
+    }
+
+    #[test]
+    fn enclave_readiness_preserves_early_exit_before_cleanup() {
+        for binary in ["/bin/true", "/bin/false"] {
+            let root = tempfile::tempdir().unwrap();
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            let error = spawn_enclave_ready(
+                startup_spec(root.path(), port, binary),
+                std::time::Instant::now() + Duration::from_secs(2),
+            )
+            .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("child exited before readiness"),
+                "{error:#}"
+            );
+            let evidence = fs::read_dir(root.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .unwrap();
+            let record: serde_json::Value =
+                serde_json::from_slice(&fs::read(evidence).unwrap()).unwrap();
+            assert_eq!(record["phase"], "failed");
+            assert!(record["child_status_before_cleanup"]
+                .as_str()
+                .unwrap()
+                .contains("Some"));
+        }
+    }
+
+    #[test]
+    fn enclave_readiness_accepts_delayed_current_bind_and_cleans_owned_child() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("listener-fixture");
+        fs::write(&binary, br#"#!/usr/bin/env python3
+import socket, sys, time
+time.sleep(0.1)
+endpoint = sys.argv[2]
+host, port = endpoint.rsplit(':', 1)
+listener = socket.socket()
+listener.bind((host, int(port)))
+listener.listen()
+print(f'outbe-tee-enclave: listening on tcp://{endpoint} (attestation: none; enclave identity: fixture)', file=sys.stderr, flush=True)
+while True:
+    connection, _ = listener.accept()
+    connection.close()
+"#).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let reserved = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = reserved.local_addr().unwrap();
+        drop(reserved);
+        let mut guard = spawn_enclave_ready(
+            startup_spec(root.path(), address.port(), binary.to_str().unwrap()),
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(guard.child.exit_status().unwrap().is_none());
+        assert!(TcpStream::connect(address).is_ok());
+        let evidence = root
+            .path()
+            .join(format!("enclave-startup-{}.json", guard.child.pid()));
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence).unwrap()).unwrap();
+        assert_eq!(report["phase"], "listening");
+        drop(guard);
+        assert!(TcpStream::connect(address).is_err());
+    }
+
+    #[test]
+    fn enclave_readiness_timeout_keeps_original_alive_observation() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("non-listening-fixture");
+        fs::write(&binary, b"#!/bin/sh\nexec sleep 60\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let reserved = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        drop(reserved);
+        let error = spawn_enclave_ready(
+            startup_spec(root.path(), port, binary.to_str().unwrap()),
+            std::time::Instant::now() + Duration::from_millis(500),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("deadline"), "{error:#}");
+        let evidence = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .unwrap();
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(evidence).unwrap()).unwrap();
+        assert_eq!(record["phase"], "failed");
+        assert_eq!(record["child_status_before_cleanup"], "Ok(None)");
+    }
+
     #[test]
     fn child_guard_interrupts_and_reaps_the_operator_ctrl_c_path() {
         let mut command = Command::new("sh");
@@ -907,6 +1353,7 @@ mod tests {
             enclave_bin,
             signing_key,
             network_descriptor: None,
+            dev_network_binding: Some("01".repeat(66)),
             launch: EnclaveLaunch::Gramine {
                 image_id: image_id.clone(),
             },
@@ -927,12 +1374,24 @@ mod tests {
         assert!(arguments
             .iter()
             .any(|argument| argument == image_id.as_str()));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair[0] == "--dev-network-binding" && pair[1] == "01".repeat(66) }));
         assert!(!arguments
             .iter()
             .any(|argument| argument == TEST_ENCLAVE_IMAGE));
-        assert!(command.get_envs().any(|(key, value)| {
-            key == "OUTBE_TEST_REMOTE_ATTESTATION" && value.is_some_and(|value| value == "none")
-        }));
+        let remote_attestation = arguments
+            .windows(2)
+            .position(|pair| pair[0] == "--env" && pair[1] == "OUTBE_TEST_REMOTE_ATTESTATION=none")
+            .expect("Docker must pass the selected attestation mode into the container");
+        let image = arguments
+            .iter()
+            .position(|argument| argument == image_id.as_str())
+            .expect("pinned image ID argument");
+        assert!(remote_attestation < image);
+        assert!(command
+            .get_envs()
+            .all(|(key, _)| key != "OUTBE_TEST_REMOTE_ATTESTATION"));
         assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
     }
 
@@ -951,6 +1410,7 @@ mod tests {
             enclave_bin: enclave_bin.clone(),
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: Some("01".repeat(66)),
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -975,6 +1435,9 @@ mod tests {
         assert!(arguments
             .windows(2)
             .any(|pair| pair[0] == "--socket" && pair[1] == "127.0.0.1:19501"));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair[0] == "--dev-network-binding" && pair[1] == "01".repeat(66) }));
         // The container's `/tee` would be meaningless to a host process: the
         // sealed offer key has to land in this validator's own directory.
         let canonical = tee_dir.canonicalize().expect("seal dir created by builder");
@@ -997,6 +1460,7 @@ mod tests {
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: true,
             pass_sgx_devices: false,
@@ -1031,6 +1495,7 @@ mod tests {
             enclave_bin,
             signing_key: root.path().join("unused-signing-key.pem"),
             network_descriptor: None,
+            dev_network_binding: None,
             launch: EnclaveLaunch::NativeHost,
             sudo: false,
             pass_sgx_devices: false,
@@ -1051,6 +1516,22 @@ mod tests {
     fn only_explicit_dcap_remote_attestation_requires_qvl() {
         assert!(!TestRemoteAttestation::None.requires_qvl());
         assert!(TestRemoteAttestation::Dcap.requires_qvl());
+    }
+
+    #[test]
+    fn dcap_test_renderers_bind_the_pinned_container_qvl_directory() {
+        const ENTRYPOINT: &str =
+            include_str!("../../../../bin/outbe-tee-enclave/gramine/entrypoint.test.sh");
+        const INSPECTOR: &str =
+            include_str!("../../../../bin/outbe-tee-enclave/gramine/inspect-test-measurement.sh");
+
+        for (name, renderer) in [("entrypoint", ENTRYPOINT), ("inspector", INSPECTOR)] {
+            assert_eq!(
+                renderer.matches("-Dqvl_host_dir=/qvl").count(),
+                1,
+                "{name} must bind the already pinned /qvl directory into the DCAP manifest"
+            );
+        }
     }
 
     #[test]

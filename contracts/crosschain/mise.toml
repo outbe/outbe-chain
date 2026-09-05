@@ -32,13 +32,6 @@ rm -rf ./out ./build ./cache
 
 # Deploy tasks load NETWORK and other vars from an env file (default .env; override with ENV_FILE=...).
 
-[tasks.deploy-createx]
-description = "Deploy CreateX deterministic factory"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/0_DeployCreateX.s.sol:DeployCreateXDeterministic --rpc-url "$NETWORK" --broadcast --verify --slow -vvv
-'''
-
 [tasks.deploy-adapters]
 description = "Deploy gateway adapters (LZ and/or Hyperlane, per env) via CREATE3"
 run = '''
@@ -61,7 +54,7 @@ forge script script/3_ConfigureBridge.s.sol:ConfigureBridge --rpc-url "$NETWORK"
 '''
 
 [tasks.deploy-all]
-description = "Deploy the whole hub (CreateX + adapters + bridge) on one chain"
+description = "Deploy the whole hub (adapters + bridge) on one chain"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/DeployAll.s.sol:DeployAll --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation

@@ -9,11 +9,34 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
 };
 
+use eyre::{Result, WrapErr as _};
+use sha2::{Digest as _, Sha256};
+
 use crate::env::{Environment, TeeMode};
 use crate::internal::ports::{Ports, Service};
+
+/// The exact pathname passed to reth, without relocating persistent node data.
+pub(crate) fn node_ipc_path(node_dir: &Path) -> PathBuf {
+    node_dir.join("data/reth.ipc")
+}
+
+/// Validate the platform's socket-address representation without binding a socket.
+pub(crate) fn validate_node_ipc_path(node_dir: &Path) -> Result<()> {
+    let path = node_ipc_path(node_dir);
+    std::os::unix::net::SocketAddr::from_pathname(&path).wrap_err_with(|| {
+        format!(
+            "invalid node IPC socket path {} ({} bytes); choose a shorter --data-dir; \
+                 the expanded path includes run, scenario and node directories",
+            path.display(),
+            path.as_os_str().as_bytes().len(),
+        )
+    })?;
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
@@ -66,6 +89,9 @@ pub(crate) struct Config {
     /// (`outbe-tee-gramine-<tag>-s<scenario>-<i>`) and teardown sweep -
     /// independent of ports.
     pub run_tag: String,
+    /// Short, run-scoped root for Unix-domain control sockets. Persistent
+    /// Radicle state remains under `dir`; only bounded UDS paths live here.
+    pub radicle_runtime_root: PathBuf,
     /// This scenario's 1-based id, or `0` for the run-level config (which only
     /// sweeps, and never names a container).
     pub scenario: usize,
@@ -78,10 +104,19 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    /// Reject unusable paths before allocating scenario services or bootstrap state.
+    pub fn validate_committee_ipc_paths(&self, validators: usize) -> Result<()> {
+        for index in 0..validators {
+            validate_node_ipc_path(&self.validator_dir(index))?;
+        }
+        Ok(())
+    }
+
     /// Run-level config: `dir` is the run dir itself. Used by the SIGINT teardown
     /// sweep and the end-of-run wipe, both of which act on the whole run.
     pub fn resolve(env: &Environment) -> Self {
         let run_tag = dir_tag(&env.data_dir);
+        let radicle_runtime_root = short_radicle_runtime_root(&env.data_dir);
         let projection_database_prefix = format!("outbe_e2e_{:016x}", stable_hash(&run_tag));
         Self {
             repo: env.repo.clone(),
@@ -113,6 +148,7 @@ impl Config {
             validators: env.validators,
             ports: env.ports.clone(),
             run_tag,
+            radicle_runtime_root,
             scenario: 0,
             tee_mode: env.tee_mode,
             sudo: env.sudo,
@@ -230,6 +266,23 @@ impl Config {
         self.dir.join(format!("validator-{i}"))
     }
 
+    /// Private runtime directory for this scenario's Radicle control sockets.
+    pub fn radicle_scenario_runtime_dir(&self) -> PathBuf {
+        self.radicle_runtime_root
+            .join(format!("scenario-{}", self.scenario))
+    }
+
+    /// Stable, bounded control socket path for one validator/joiner/follower.
+    pub fn radicle_control_socket(&self, i: usize) -> PathBuf {
+        self.radicle_scenario_runtime_dir()
+            .join(format!("v{i}.sock"))
+    }
+
+    /// Stable, bounded control socket path for the independent source node.
+    pub fn user_radicle_control_socket(&self) -> PathBuf {
+        self.radicle_scenario_runtime_dir().join("user.sock")
+    }
+
     /// Exact projection database assigned to validator `i`.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub fn validator_projection_database(&self, i: usize) -> String {
@@ -238,6 +291,11 @@ impl Config {
             self.projection_database_prefix, self.scenario
         )
     }
+}
+
+fn short_radicle_runtime_root(run_dir: &Path) -> PathBuf {
+    let digest = Sha256::digest(run_dir.as_os_str().as_bytes());
+    PathBuf::from("/tmp").join(format!("outbe-e2e-rad-{}", hex::encode(&digest[..16])))
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -282,6 +340,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn node_ipc_preflight_preserves_valid_paths() {
+        let node = Path::new("/tmp/e2e/run-1/scenario-1/validator-15");
+        validate_node_ipc_path(node).expect("valid dynamic follower path");
+        assert_eq!(node_ipc_path(node), node.join("data/reth.ipc"));
+    }
+
+    #[test]
+    fn node_ipc_preflight_rejects_expanded_long_paths_and_reports_the_exact_path() {
+        let env = Environment {
+            data_dir: PathBuf::from(
+                "/tmp/e2e-full-features-bb384e97.gP5n4Y/governance/run-1788583332-2183308",
+            ),
+            ..Environment::default()
+        };
+        let cfg = Config::for_scenario(&env, 1);
+        let error = cfg
+            .validate_committee_ipc_paths(4)
+            .expect_err("old failing run path");
+        assert!(format!("{error:#}")
+            .contains(&node_ipc_path(&cfg.validator_dir(0)).display().to_string()));
+        assert!(error.to_string().contains("shorter --data-dir"));
+    }
+
+    #[test]
+    fn node_ipc_preflight_uses_bytes_and_rejects_nul() {
+        let multibyte = PathBuf::from("/tmp").join("界".repeat(40));
+        assert!(validate_node_ipc_path(&multibyte).is_err());
+        assert!(validate_node_ipc_path(Path::new("/tmp/invalid\0path")).is_err());
+    }
+
+    #[test]
     fn dir_tag_is_docker_safe() {
         assert_eq!(
             dir_tag(Path::new("/tmp/outbe-e2e-harness")),
@@ -323,8 +412,43 @@ mod tests {
 
         assert_eq!(scenario.dir, env.data_dir.join("scenario-3"));
         assert_eq!(scenario.run_tag, run.run_tag);
+        assert_eq!(scenario.radicle_runtime_root, run.radicle_runtime_root);
         assert!(scenario.dir.starts_with(&run.dir));
         assert_eq!(scenario.validator_dir(2), scenario.dir.join("validator-2"));
+    }
+
+    #[test]
+    fn radicle_socket_paths_are_short_disjoint_and_restart_stable() {
+        let env = Environment {
+            data_dir: PathBuf::from("/tmp").join("very-long-component-".repeat(32)),
+            ..Environment::default()
+        };
+        let s1 = Config::for_scenario(&env, 1);
+        let s2 = Config::for_scenario(&env, 2);
+        let v0 = s1.radicle_control_socket(0);
+        let v1 = s1.radicle_control_socket(1);
+        let user = s1.user_radicle_control_socket();
+
+        for path in [&v0, &v1, &user, &s2.radicle_control_socket(0)] {
+            assert!(
+                path.as_os_str().as_bytes().len() < 104,
+                "Unix socket path is not portable: {}",
+                path.display()
+            );
+        }
+        assert_eq!(v0, Config::for_scenario(&env, 1).radicle_control_socket(0));
+        assert_ne!(v0, v1);
+        assert_ne!(v0, user);
+        assert_ne!(v0, s2.radicle_control_socket(0));
+
+        let other_run = Environment {
+            data_dir: PathBuf::from("/tmp/a-different-run"),
+            ..Environment::default()
+        };
+        assert_ne!(
+            v0,
+            Config::for_scenario(&other_run, 1).radicle_control_socket(0)
+        );
     }
 
     /// Two scenarios never name the same container, and the run-level sweep

@@ -119,7 +119,6 @@ TOP_LEVEL_KEYS = {
     "chain_binary",
     "keygen_binary",
     "consensus_p2p_port",
-    "ocomp_discovery_control_port",
     "gas_limit",
     "timestamp",
     "epoch_length_blocks",
@@ -391,13 +390,10 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 "Mainnet forbids protocol_constants overrides and uses canonical production defaults"
             )
-        endpoints = [
-            str(config.get("price_feed_rest", "")),
-            str(config.get("price_feed_websocket", "")),
-        ]
-        if not all(endpoints):
-            raise ValueError("Mainnet requires explicit production price feed endpoints")
-        if any("testnet" in endpoint.lower() for endpoint in endpoints):
+        endpoint = str(config.get("price_feed_rest", ""))
+        if not endpoint:
+            raise ValueError("Mainnet requires an explicit production price feed REST endpoint")
+        if "testnet" in endpoint.lower():
             raise ValueError("Mainnet may not use a testnet price endpoint")
     if mode == "gramine-direct-dev" and chain_id not in (
         DEVNET_CHAIN_ID,
@@ -429,9 +425,6 @@ def validate_config(config: dict[str, Any]) -> None:
     ports["consensus_p2p_port"] = consensus_port
     ports["ocomp_embedded_port"] = launch_bundle.embedded_ocomp_endpoint_port(
         config, consensus_port
-    )
-    ports["ocomp_discovery_control_port"] = launch_bundle.ocomp_discovery_control_port(
-        config, ports["ocomp_embedded_port"]
     )
     seen: dict[int, str] = {}
     for name, port_value in sorted(ports.items()):

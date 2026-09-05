@@ -478,8 +478,9 @@ impl LysisResultV1 {
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "day budget conservation",
             })?;
+        // Bounded, not exact: the unissued headroom returns to the warehouse (see the split receipt).
         require(
-            split_sum == self.conservation.day_limit,
+            split_sum <= self.conservation.day_limit,
             "day budget conservation",
         )?;
         let lysis_sum = self

@@ -592,27 +592,12 @@ fn unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        closure_launch_evidence, required_execution_lanes, retain_scenario_image_identity,
-        retain_scenario_launch_evidence, rewrite_assertions,
+        closure_launch_evidence, retain_scenario_image_identity, retain_scenario_launch_evidence,
+        rewrite_assertions,
     };
-    use crate::ocomp_evidence::{AssertionRecordV1, AssertionStatus, PlanningLedger};
+    use crate::ocomp_evidence::{AssertionRecordV1, AssertionStatus};
     use serde_json::json;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
-
-    fn ledger() -> PlanningLedger {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        PlanningLedger::parse(&root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"))
-            .expect("checked-in planning ledger")
-    }
-
-    #[test]
-    fn closure_requires_every_execution_lane_but_not_a_self_attested_verify_input() {
-        assert_eq!(
-            required_execution_lanes(&ledger()).expect("required lanes"),
-            ["OCM-E2E", "OCM-FAST", "OCM-INT", "OCM-PUBLIC"]
-        );
-    }
 
     #[test]
     fn closure_requires_one_immutable_gramine_image_across_scenario_lanes() {

@@ -4,15 +4,19 @@
 //! validators to bootstrap, which enclave mode, whether we have `sudo`. Each
 //! Gherkin scenario declares what it *needs* via tags. The runner matches the
 //! two: a scenario the environment can't satisfy is **skipped**, or - with
-//! `--all` - turned into a **failure**. Explicit `@real-sgx` scenarios remain
-//! skipped outside the DCAP lane even under `--all`.
+//! `--all` - turned into a **failure**. Scenarios pinned to a different explicit
+//! TEE execution profile remain skipped even under `--all`; each profile has
+//! its own lane.
 //!
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
 //!   - `min-validators-N` -> requires `--validators >= N` (N parsed from the tag).
+//!   - `validators-N`     -> requires `--validators == N` (N parsed from the tag).
 //!   - `tee`              -> requires an enabled enclave mode.
 //!   - `sudo`             -> requires `sudo` (no `--no-sudo`).
-//!   - `real-sgx`         -> always skipped outside `--tee real`, regardless of `--all`.
+//!   - explicit TEE profile tags (`real-sgx`, `sgx-no-attest`,
+//!     `gramine-direct`) -> always skipped outside that profile, regardless of
+//!     `--all`.
 //!   - `todo`             -> always skipped (unimplemented stub), regardless of `--all`.
 
 use std::path::{Path, PathBuf};
@@ -46,6 +50,11 @@ pub enum TeeMode {
     /// every macOS box. Development only; it proves nothing Gramine proves.
     MockNative,
 }
+
+/// Co-located hardware enclaves share one physical EPC, so SGX E2E subprocesses
+/// need one wider budget for both individual enclave calls and the complete
+/// block-1 TEE bootstrap. Production/testnet defaults are not changed.
+pub(crate) const CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS: u64 = 1_800;
 
 impl TeeMode {
     /// Whether an enclave is launched.
@@ -170,6 +179,17 @@ pub struct EnvCli {
     #[arg(long)]
     pub evidence_dir: Option<PathBuf>,
 
+    /// Build manifest produced by `outbe-e2e-build` for the exact binaries
+    /// admitted into this run. Required for every executable scenario.
+    #[arg(long)]
+    pub artifact_manifest: Option<PathBuf>,
+
+    /// Hard wall-clock deadline for one scenario, including setup, teardown,
+    /// evidence capture, and log audit. A timeout tears down owned processes
+    /// and exits non-zero with a durable timeout record.
+    #[arg(long, default_value_t = 3_600)]
+    pub scenario_timeout_secs: u64,
+
     /// Exact Metadosis P0 parity case. Test-only: validates and retains the
     /// removed process input inherited by every node child.
     #[arg(long, value_enum)]
@@ -242,6 +262,8 @@ pub struct Environment {
     pub repo: PathBuf,
     pub data_dir: PathBuf,
     pub evidence_dir: Option<PathBuf>,
+    pub artifact_manifest: Option<PathBuf>,
+    pub scenario_timeout_secs: u64,
     pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
     pub ocomp_bin: PathBuf,
@@ -279,6 +301,8 @@ impl Environment {
             debug: cli.debug,
             data_dir: cli.data_dir.clone().unwrap_or_else(default_data_dir),
             evidence_dir: cli.evidence_dir.clone(),
+            artifact_manifest: cli.artifact_manifest.clone(),
+            scenario_timeout_secs: cli.scenario_timeout_secs,
             metadosis_p0,
             chain_bin: cli
                 .chain_bin
@@ -345,6 +369,8 @@ impl Default for Environment {
             repo: None,
             data_dir: None,
             evidence_dir: None,
+            artifact_manifest: None,
+            scenario_timeout_secs: 3_600,
             metadosis_p0_case: None,
             chain_bin: None,
             ocomp_bin: None,
@@ -437,9 +463,17 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 
 /// Why the environment can't satisfy this scenario, or `None` if it can.
 ///
-/// Every requirement is declared as a tag (`@tee`, `@min-validators-N`, `@sudo`),
+/// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
 /// so the Given text stays purely descriptive - nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
+    if let Some(n) = exact_validators(feature, scenario) {
+        if env.validators != n {
+            return Some(format!(
+                "needs exactly {n} validators, have {}",
+                env.validators
+            ));
+        }
+    }
     if let Some(n) = required_validators(feature, scenario) {
         if env.validators < n {
             return Some(format!("needs >={n} validators, have {}", env.validators));
@@ -479,6 +513,15 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
     None
 }
 
+/// The exact validator count from a `@validators-N` tag, if present.
+pub fn exact_validators(feature: &Feature, scenario: &Scenario) -> Option<usize> {
+    feature
+        .tags
+        .iter()
+        .chain(scenario.tags.iter())
+        .find_map(|tag| parse_exact_validators_tag(tag))
+}
+
 /// The minimum validator count from a `@min-validators-N` tag, if present.
 pub fn required_validators(feature: &Feature, scenario: &Scenario) -> Option<usize> {
     feature
@@ -498,6 +541,11 @@ fn parse_min_validators_tag(tag: &str) -> Option<usize> {
     tag.strip_prefix("min-validators-")?.parse().ok()
 }
 
+/// Parse `N` out of a `validators-<N>` tag (tags are `@`-less here).
+fn parse_exact_validators_tag(tag: &str) -> Option<usize> {
+    tag.strip_prefix("validators-")?.parse().ok()
+}
+
 /// What to do with a scenario given the environment.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Decision {
@@ -512,9 +560,13 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
         return Decision::Skip("not implemented (@todo)".to_string());
     }
     let requirement = unmet(feature, scenario, env);
-    let dcap_unavailable =
-        has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real);
-    decide_requirement(requirement, env.all, dcap_unavailable)
+    let profile_mismatch = (has_tag(feature, scenario, "real-sgx")
+        && !matches!(env.tee_mode, TeeMode::Real))
+        || (has_tag(feature, scenario, "sgx-no-attest")
+            && !env.tee_mode.satisfies_sgx_no_attest_requirement())
+        || (has_tag(feature, scenario, "gramine-direct")
+            && !env.tee_mode.satisfies_gramine_direct_requirement());
+    decide_requirement(requirement, env.all, profile_mismatch)
 }
 
 fn decide_requirement(requirement: Option<String>, run_all: bool, force_skip: bool) -> Decision {
@@ -542,6 +594,219 @@ fn has_tag(feature: &Feature, scenario: &Scenario, tag: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn settlement_scenarios_declare_their_integration_build_requirement() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/settlement.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse settlement feature");
+        assert_eq!(feature.scenarios.len(), 2);
+        assert!(
+            feature.tags.iter().any(|tag| tag == "ocomp"),
+            "settlement step registration requires the OCOMP integration build"
+        );
+        let mut env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            ..Environment::default()
+        };
+        for scenario in &feature.scenarios {
+            if cfg!(feature = "ocomp-integration") {
+                assert_eq!(unmet(&feature, scenario, &env), None);
+                assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+            } else {
+                assert!(unmet(&feature, scenario, &env)
+                    .expect("missing build requirement")
+                    .contains("built without --features ocomp-integration"));
+                assert!(matches!(
+                    decide(&feature, scenario, &env),
+                    Decision::Skip(_)
+                ));
+            }
+            env.all = true;
+            assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+            assert_eq!(
+                unmet(&feature, scenario, &env).is_some(),
+                !cfg!(feature = "ocomp-integration"),
+                "--all must expose missing capabilities to the failing before hook"
+            );
+            env.all = false;
+        }
+    }
+
+    fn assert_registered_steps(feature: &Feature, scenario: &Scenario) {
+        use cucumber::World as _;
+
+        let steps = crate::world::World::collection();
+        for step in feature
+            .background
+            .iter()
+            .flat_map(|background| &background.steps)
+            .chain(&scenario.steps)
+        {
+            assert!(
+                steps
+                    .find(step)
+                    .unwrap_or_else(|error| panic!("ambiguous step in {}: {error}", scenario.name))
+                    .is_some(),
+                "unregistered {:?} step in {}: {}",
+                step.ty,
+                scenario.name,
+                step.value
+            );
+        }
+    }
+
+    #[test]
+    fn chained_followers_keep_all_twelve_live_handoff_and_restart_steps() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/fullnode.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = feature.scenarios.iter().find(|scenario| scenario.name == "Chained FullNodes stop on upstream loss and recover through a healthy upstream").unwrap();
+        assert_eq!(scenario.steps.len(), 12);
+        assert_eq!(unmet(&feature, scenario, &env), None);
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn worker_outage_fault_is_after_public_input_and_includes_independent_recovery() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = feature
+            .scenarios
+            .iter()
+            .find(|scenario| {
+                scenario.name
+                    == "Complete worker outage preserves exports and cannot halt consensus"
+            })
+            .unwrap();
+        assert_eq!(scenario.steps.len(), 10);
+        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens");
+        assert_eq!(
+            scenario.steps[9].value,
+            "the independent OCOMP job completes on every validator"
+        );
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[test]
+    fn active_pending_validator_restart_is_selected_with_all_eight_registered_steps() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/txpool_eviction.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let selected: Vec<_> = feature
+            .scenarios
+            .iter()
+            .filter(|scenario| has_tag(&feature, scenario, "pending-validator-restart"))
+            .collect();
+        assert_eq!(selected.len(), 1);
+        let scenario = selected[0];
+        assert_eq!(scenario.steps.len(), 8);
+        assert_eq!(unmet(&feature, scenario, &env), None);
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[test]
+    fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integration() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            ..Environment::default()
+        };
+        let mut checked = Vec::new();
+        for file in ["price_oracle.feature", "zerofee.feature"] {
+            let feature = Feature::parse_path(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("features")
+                    .join(file),
+                cucumber::gherkin::GherkinEnv::default(),
+            )
+            .expect("parse ordinary feeder-dependent fixture");
+            for scenario in &feature.scenarios {
+                if has_tag(&feature, scenario, "price-oracle")
+                    || has_tag(&feature, scenario, "pfs-007-12")
+                {
+                    assert_eq!(unmet(&feature, scenario, &env), None);
+                    assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+                    assert!(!has_tag(&feature, scenario, "ocomp"));
+                    assert_registered_steps(&feature, scenario);
+                    checked.push(scenario.name.clone());
+                }
+            }
+        }
+        assert_eq!(
+            checked,
+            [
+                "Per-pair quorum survives a sub-quorum cross intersection",
+                "Exhausted quota resets lazily across the worldwide-day boundary",
+            ]
+        );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let mut checked = Vec::new();
+        for file in ["settlement.feature", "ocomp.feature"] {
+            let feature = Feature::parse_path(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("features")
+                    .join(file),
+                cucumber::gherkin::GherkinEnv::default(),
+            )
+            .expect("parse settlement integration fixture");
+            for scenario in &feature.scenarios {
+                if has_tag(&feature, scenario, "settlement")
+                    || has_tag(&feature, scenario, "nod-settlement")
+                {
+                    assert_eq!(unmet(&feature, scenario, &env), None);
+                    assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+                    assert_registered_steps(&feature, scenario);
+                    checked.push(scenario.name.clone());
+                }
+            }
+        }
+        assert_eq!(checked, [
+            "A zero-balance validator redeems its reward Gem through ZeroFee",
+            "A stale Oracle rate defers validator Gem delivery and later recovers",
+            "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
+        ]);
+    }
 
     #[test]
     fn gramine_direct_uses_the_production_enclave_without_sgx_passthrough() {
@@ -665,6 +930,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_exact_validators_tag() {
+        assert_eq!(parse_exact_validators_tag("validators-4"), Some(4));
+        assert_eq!(parse_exact_validators_tag("validators-12"), Some(12));
+        assert_eq!(parse_exact_validators_tag("min-validators-4"), None);
+        assert_eq!(parse_exact_validators_tag("validators-"), None);
+        assert_eq!(parse_exact_validators_tag("validators-x"), None);
+    }
+
+    #[test]
+    fn exact_validator_requirement_rejects_a_larger_committee() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/price_oracle.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse price Oracle feature");
+        let scenario = feature.scenarios.first().expect("price Oracle scenario");
+        let mut env = Environment {
+            validators: 4,
+            ..Environment::default()
+        };
+        assert_eq!(unmet(&feature, scenario, &env), None);
+
+        env.validators = 5;
+        assert_eq!(
+            unmet(&feature, scenario, &env).as_deref(),
+            Some("needs exactly 4 validators, have 5")
+        );
+    }
+
+    #[test]
     fn real_sgx_requirement_stays_skipped_under_all() {
         let reason = "needs DcapRequired".to_string();
         assert_eq!(
@@ -693,6 +988,54 @@ mod tests {
 
         assert!(matches!(
             decide(&feature, scenario, &env),
+            Decision::Skip(_)
+        ));
+    }
+
+    #[test]
+    fn explicit_tee_profiles_are_disjoint_even_under_all() {
+        let no_attest_feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/tribute.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse SGX-no-attest feature");
+        let no_attest = no_attest_feature
+            .scenarios
+            .first()
+            .expect("SGX-no-attest scenario");
+        let direct_feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/intex.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse gramine-direct feature");
+        let direct = direct_feature
+            .scenarios
+            .first()
+            .expect("gramine-direct scenario");
+
+        let no_attest_env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            all: true,
+            sudo: true,
+            ..Environment::default()
+        };
+        assert_eq!(
+            decide(&no_attest_feature, no_attest, &no_attest_env),
+            Decision::Run
+        );
+        assert!(matches!(
+            decide(&direct_feature, direct, &no_attest_env),
+            Decision::Skip(_)
+        ));
+
+        let direct_env = Environment {
+            tee_mode: TeeMode::GramineDirect,
+            all: true,
+            ..Environment::default()
+        };
+        assert_eq!(decide(&direct_feature, direct, &direct_env), Decision::Run);
+        assert!(matches!(
+            decide(&no_attest_feature, no_attest, &direct_env),
             Decision::Skip(_)
         ));
     }

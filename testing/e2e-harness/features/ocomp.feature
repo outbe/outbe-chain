@@ -163,9 +163,9 @@ Feature: Off-chain computation and Metadosis
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
 
-  @ocomp-public-expiry-retry
+  @ocomp-public-expiry-terminal
   # OCOMP-TEST-ID: OCM-PUB-005
-  Scenario: An expired public job retries with its frozen receipt and completes
+  Scenario: An expired public job remains terminal after workers recover
     Given a fresh four-validator OCOMP short-window public measurement localnet
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
@@ -176,8 +176,38 @@ Feature: Off-chain computation and Metadosis
     And validator 2 prepares one valid vote without broadcasting it
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
-    When the stopped OCOMP workers restart for the automatic retry
-    Then the retry preserves the frozen receipt and completes on every validator
+    When the stopped OCOMP workers restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+
+  @ocomp-zero-vote-exporter-outage
+  # OCOMP-TEST-ID: OCM-PUB-006
+  Scenario: Complete snapshot-exporter outage cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public recovery localnet
+    When all four OCOMP snapshot exporters are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then the unexported zero-vote job expires and reaches Released without an ACK
+    When all stopped OCOMP snapshot exporters restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+    When one independent next-day Tribute is submitted after OCOMP recovery
+    Then the independent OCOMP job completes on every validator
+
+  @ocomp-zero-vote-worker-outage
+  # OCOMP-TEST-ID: OCM-PUB-007
+  Scenario: Complete worker outage preserves exports and cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public recovery localnet
+    When an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    When all four OCOMP workers stop after exact exports of the public JobIntent before voting opens
+    Then the exported zero-vote job expires at its exclusive deadline and finality continues
+    When all stopped OCOMP workers restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+    When one independent next-day Tribute is submitted after OCOMP recovery
+    Then the independent OCOMP job completes on every validator
 
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002

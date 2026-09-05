@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::WwdEntityId;

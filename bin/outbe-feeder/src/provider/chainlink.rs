@@ -8,7 +8,8 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{CandlePrice, Provider, TickerPrice};
+use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
+use crate::fixed::JsonDecimal;
 
 const CRYPTOCOMPARE_BASE_URL: &str = "https://min-api.cryptocompare.com";
 
@@ -49,9 +50,9 @@ struct CryptoCompareTickerResponse {
 #[derive(Debug, Deserialize)]
 struct CryptoCompareRawTicker {
     #[serde(rename = "PRICE")]
-    price: Option<f64>,
+    price: Option<JsonDecimal>,
     #[serde(rename = "VOLUME24HOUR")]
-    volume_24h: Option<f64>,
+    volume_24h: Option<JsonDecimal>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,8 +70,38 @@ struct CryptoCompareCandleData {
 #[derive(Debug, Deserialize)]
 struct CryptoCompareCandle {
     time: u64,
-    close: f64,
-    volumeto: f64,
+    close: JsonDecimal,
+    volumeto: JsonDecimal,
+}
+
+type MappedPair = (String, String, String, String);
+
+fn collect_tickers(
+    data: CryptoCompareTickerResponse,
+    mapped: &[MappedPair],
+) -> HashMap<String, TickerPrice> {
+    let mut result = HashMap::new();
+    let Some(raw) = data.raw else {
+        return result;
+    };
+    for (base, quote, fsym, tsym) in mapped {
+        let Some(ticker) = raw
+            .get(fsym.as_str())
+            .and_then(|quotes| quotes.get(tsym.as_str()))
+        else {
+            continue;
+        };
+        let key = format!("{base}/{quote}");
+        if let Some(ticker) = checked_ticker(
+            "chainlink",
+            &key,
+            ticker.price.as_ref().and_then(JsonDecimal::fixed),
+            VolumeInput::Present(ticker.volume_24h.as_ref().and_then(JsonDecimal::fixed)),
+        ) {
+            result.insert(key, ticker);
+        }
+    }
+    result
 }
 
 #[async_trait]
@@ -83,10 +114,10 @@ impl Provider for ChainlinkProvider {
         &self,
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
-        let mut result = HashMap::new();
+        let result = HashMap::new();
 
         // Collect all supported symbols for a batch request
-        let mapped: Vec<(String, String, String, String)> = pairs
+        let mapped: Vec<MappedPair> = pairs
             .iter()
             .filter_map(|(base, quote)| {
                 map_symbol(base, quote)
@@ -131,28 +162,7 @@ impl Provider for ChainlinkProvider {
             .await
             .with_context(|| "failed to parse cryptocompare response")?;
 
-        if let Some(raw) = data.raw {
-            for (base, quote, fsym, tsym) in &mapped {
-                if let Some(tsym_map) = raw.get(fsym.as_str()) {
-                    if let Some(ticker) = tsym_map.get(tsym.as_str()) {
-                        if let Some(price) = ticker.price {
-                            if price > 0.0 {
-                                let key = format!("{base}/{quote}");
-                                result.insert(
-                                    key,
-                                    TickerPrice {
-                                        price,
-                                        volume: ticker.volume_24h.unwrap_or(0.0),
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(result)
+        Ok(collect_tickers(data, &mapped))
     }
 
     async fn get_candle_prices(
@@ -204,11 +214,14 @@ impl Provider for ChainlinkProvider {
                     let key = format!("{base}/{quote}");
                     let entries: Vec<CandlePrice> = candles
                         .into_iter()
-                        .filter(|c| c.close > 0.0)
-                        .map(|c| CandlePrice {
-                            price: c.close,
-                            volume: c.volumeto,
-                            timestamp: c.time,
+                        .filter_map(|c| {
+                            checked_candle(
+                                "chainlink",
+                                &key,
+                                c.close.fixed(),
+                                VolumeInput::Present(c.volumeto.fixed()),
+                                c.time,
+                            )
                         })
                         .collect();
                     if !entries.is_empty() {
@@ -219,5 +232,44 @@ impl Provider for ChainlinkProvider {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixed::FixedValue;
+
+    #[test]
+    fn malformed_market_does_not_discard_a_valid_sibling() {
+        let payload = serde_json::json!({
+            "RAW": {
+                "BTC": { "USD": { "PRICE": "100", "VOLUME24HOUR": "-1" } },
+                "ETH": { "USD": { "PRICE": "200", "VOLUME24HOUR": "3" } }
+            }
+        });
+        let response: CryptoCompareTickerResponse = serde_json::from_value(payload).unwrap();
+        let mapped = vec![
+            (
+                "BTC".to_owned(),
+                "840".to_owned(),
+                "BTC".to_owned(),
+                "USD".to_owned(),
+            ),
+            (
+                "ETH".to_owned(),
+                "840".to_owned(),
+                "ETH".to_owned(),
+                "USD".to_owned(),
+            ),
+        ];
+
+        let prices = collect_tickers(response, &mapped);
+
+        assert!(!prices.contains_key("BTC/840"));
+        assert_eq!(
+            prices["ETH/840"].price.raw(),
+            FixedValue::parse("200").unwrap().raw()
+        );
     }
 }

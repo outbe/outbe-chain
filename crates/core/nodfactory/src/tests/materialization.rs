@@ -35,8 +35,8 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         league_id: 1,
         floor_price_minor,
         gratis_load_minor: U256::from(1_000),
-        entry_price_minor: U256::from(510),
-        cost_amount_minor: U256::ZERO,
+        entry_price_minor: U256::from(500_000),
+        cost_amount_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_600_000_000,
@@ -168,6 +168,8 @@ fn seed_projection(
                 .write(&worldwide_day, projection.nod_gratis_consumed)?;
             nod.ocomp_materialization_job_id
                 .write(&worldwide_day, projection.job_id)?;
+            nod.ocomp_materialization_protocol_bundle_hash
+                .write(&worldwide_day, projection.protocol_bundle_hash)?;
             nod.ocomp_materialization_program_semantics_hash
                 .write(&worldwide_day, projection.program_semantics_hash)?;
             nod.ocomp_materialization_next_nod_ordinal
@@ -622,6 +624,16 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = outbe_nod::api::cost_amount_minor(
+        population.actions[0].entry_price_minor,
+        population.actions[0].gratis_load_minor,
+    )
+    .unwrap()
+    .to::<u128>();
+    let paynote_proof = world
+        .fund_note(NOTE_ASSET, population.actions[0].owner, cost.max(1), cost)
+        .0;
     let nonce = find_valid_nonce(nod_id);
     assert_eq!(
         world
@@ -638,7 +650,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                             population.actions[0].owner,
                             population.actions[0].gratis_load_minor,
                         ),
-                        paynote_proof: &[],
+                        paynote_proof: &paynote_proof,
                     },
                 )
             })

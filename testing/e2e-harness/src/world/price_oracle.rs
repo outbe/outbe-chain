@@ -1,5 +1,6 @@
 //! Harness-owned mock price source and production `outbe-feeder` lifecycle.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -11,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::internal::config::Config;
@@ -21,10 +22,15 @@ const COEN_USD_SYMBOL: &str = "COEN840";
 const FEEDER_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PriceBook {
-    generation: u64,
+struct PricePoint {
     price: String,
     volume: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PriceBook {
+    generation: u64,
+    entries: BTreeMap<String, PricePoint>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -33,29 +39,146 @@ pub(crate) struct PriceQuote<'a> {
     pub(crate) volume: &'a str,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeederSource<'a> {
+    pub(crate) base: &'a str,
+    pub(crate) quote: &'a str,
+    pub(crate) price: &'a str,
+    pub(crate) volume: &'a str,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FeederPair<'a> {
+    pub(crate) base: &'a str,
+    pub(crate) quote: &'a str,
+    pub(crate) sources: Vec<FeederSource<'a>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeederLaunch<'a> {
+    pub(crate) validator_index: usize,
+    pub(crate) rpc_url: &'a str,
+    pub(crate) chain_id: u64,
+    pub(crate) private_key: &'a str,
+    pub(crate) validator_address: &'a str,
+    pub(crate) vote_period: u64,
+    pub(crate) phase: OracleEvidencePhaseV1,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OracleEvidencePhaseV1 {
+    Initial,
+    ClockRestart,
+    ControlledUpdate,
+    QuorumRecovery,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PriceOracleEvidenceV1 {
     pub feeder_binary: String,
     pub feeder_binary_sha256: String,
-    pub feeder_pid: Option<u32>,
-    pub feeder_log: String,
-    pub mock_generation: u64,
-    pub mock_price: String,
-    pub mock_volume: String,
+    pub feeder_processes: Vec<FeederProcessEvidenceV1>,
     pub ticker_requests: u64,
     pub candle_requests: u64,
+    pub controlled_sources: Vec<ControlledSourceEvidenceV1>,
     pub canonical_publications: Vec<CanonicalPricePublicationV1>,
+    pub quorum_loss_windows: Vec<QuorumLossEvidenceV1>,
+    pub penalty_snapshots: Vec<PenaltySnapshotEvidenceV1>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeederProcessEvidenceV1 {
+    pub validator_index: usize,
+    pub validator_address: String,
+    pub rpc_endpoint: String,
+    pub vote_period: u64,
+    pub attempt: u32,
+    pub pid: u32,
+    pub log: String,
+    pub started_at_millis: u64,
+    pub stopped_at_millis: Option<u64>,
+    pub oracle_pairs: Vec<String>,
+    pub source_markets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlledSourceEvidenceV1 {
+    pub phase: OracleEvidencePhaseV1,
+    pub generation: u64,
+    pub validator_index: usize,
+    pub oracle_pair: String,
+    pub source_market: String,
+    pub price: String,
+    pub volume: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanonicalPricePublicationV1 {
+    pub phase: OracleEvidencePhaseV1,
     pub validator_count: usize,
+    pub base: String,
+    pub quote: String,
     pub rate: String,
+    pub volume: String,
     pub oracle_block: u64,
     pub oracle_timestamp: u64,
     pub finalized_height: u64,
     pub finalized_timestamp: u64,
     pub age_seconds: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CanonicalPublicationObservation {
+    pub(crate) phase: OracleEvidencePhaseV1,
+    pub(crate) validator_count: usize,
+    pub(crate) base: alloy_primitives::Address,
+    pub(crate) quote: alloy_primitives::Address,
+    pub(crate) rate: alloy_primitives::U256,
+    pub(crate) volume: alloy_primitives::U256,
+    pub(crate) oracle_block: u64,
+    pub(crate) oracle_timestamp: u64,
+    pub(crate) finalized_height: u64,
+    pub(crate) finalized_timestamp: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuorumLossPairEvidenceV1 {
+    pub base: String,
+    pub quote: String,
+    pub last_block_before: u64,
+    pub last_block_after: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuorumLossEvidenceV1 {
+    pub stopped_validator_index: usize,
+    pub finalized_height_before: u64,
+    pub finalized_height_after: u64,
+    pub pairs: Vec<QuorumLossPairEvidenceV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidatorPenaltyEvidenceV1 {
+    pub validator_index: usize,
+    pub validator_address: String,
+    pub success: u64,
+    pub miss: u64,
+    pub abstain: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PenaltySnapshotEvidenceV1 {
+    pub phase: OracleEvidencePhaseV1,
+    pub validators: Vec<ValidatorPenaltyEvidenceV1>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,21 +194,36 @@ struct MockResponse<'a> {
 }
 
 fn mock_response(path: &str, symbols: &str, book: &PriceBook) -> Result<String> {
-    if symbols != COEN_USD_SYMBOL {
-        bail!("unsupported mock price symbols `{symbols}`")
-    }
+    let requested = symbols.split(',').filter(|symbol| !symbol.is_empty());
     let response = match path {
-        "/api/tickers" => MockResponse {
-            data: vec![MockEntry {
-                symbol: COEN_USD_SYMBOL,
-                price: &book.price,
-                volume: &book.volume,
-            }],
-        },
+        "/api/tickers" => {
+            let mut data = Vec::new();
+            for symbol in requested {
+                let point = book
+                    .entries
+                    .get(symbol)
+                    .ok_or_else(|| eyre!("unsupported mock price symbol `{symbol}`"))?;
+                data.push(MockEntry {
+                    symbol,
+                    price: &point.price,
+                    volume: &point.volume,
+                });
+            }
+            MockResponse { data }
+        }
         // An empty candle set deliberately exercises the production provider's
         // documented ticker-VWAP fallback.
-        "/api/candles" => MockResponse { data: Vec::new() },
-        other => bail!("unsupported mock price path `{other}`"),
+        "/api/candles" => {
+            for symbol in requested {
+                if !book.entries.contains_key(symbol) {
+                    bail!("unsupported mock price symbol `{symbol}`");
+                }
+            }
+            MockResponse { data: Vec::new() }
+        }
+        other => {
+            bail!("unsupported mock price path `{other}`");
+        }
     };
     serde_json::to_string(&response).map_err(Into::into)
 }
@@ -151,9 +289,9 @@ impl MockPriceServer {
             .clone()
     }
 
-    fn publish(&self, price: &str, volume: &str) -> Result<u64> {
+    fn publish(&self, symbol: &str, price: &str, volume: &str) -> Result<u64> {
         if price.is_empty() || volume.is_empty() {
-            bail!("controlled price and volume must be non-empty")
+            bail!("controlled price and volume must be non-empty");
         }
         let mut book = self
             .state
@@ -164,11 +302,15 @@ impl MockPriceServer {
             .generation
             .checked_add(1)
             .ok_or_else(|| eyre!("controlled price generation overflow"))?;
-        *book = PriceBook {
-            generation,
+        let point = book
+            .entries
+            .get_mut(symbol)
+            .ok_or_else(|| eyre!("controlled price symbol `{symbol}` is not configured"))?;
+        *point = PricePoint {
             price: price.to_owned(),
             volume: volume.to_owned(),
         };
+        book.generation = generation;
         Ok(generation)
     }
 
@@ -211,7 +353,30 @@ fn serve_mock_prices(listener: TcpListener, state: &MockServerState) {
 fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = [0_u8; 8_192];
-    let size = stream.read(&mut request)?;
+    let mut size = 0;
+    loop {
+        let read = stream.read(&mut request[size..])?;
+        if read == 0 {
+            break;
+        }
+        size += read;
+        if request[..size]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n")
+        {
+            break;
+        }
+        eyre::ensure!(
+            size < request.len(),
+            "mock HTTP request headers are too large"
+        );
+    }
+    eyre::ensure!(
+        request[..size]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n"),
+        "mock HTTP request ended before its headers"
+    );
     let request =
         std::str::from_utf8(&request[..size]).wrap_err("mock HTTP request is not UTF-8")?;
     let target = request
@@ -259,8 +424,8 @@ fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> 
 #[derive(Debug)]
 pub struct PriceOracleTopology {
     cfg: Config,
-    mock: Option<MockPriceServer>,
-    feeder: Option<ChildGuard>,
+    mocks: BTreeMap<usize, MockPriceServer>,
+    feeders: BTreeMap<usize, ChildGuard>,
     evidence: PriceOracleEvidenceV1,
 }
 
@@ -268,38 +433,75 @@ impl PriceOracleTopology {
     pub(crate) fn new(cfg: Config) -> Self {
         Self {
             cfg,
-            mock: None,
-            feeder: None,
+            mocks: BTreeMap::new(),
+            feeders: BTreeMap::new(),
             evidence: PriceOracleEvidenceV1::default(),
         }
     }
 
-    pub(crate) fn start(
+    pub(crate) fn start(&mut self, launch: FeederLaunch<'_>, quote: PriceQuote<'_>) -> Result<()> {
+        self.start_with_pairs(
+            launch,
+            &[FeederPair {
+                base: "COEN",
+                quote: "840",
+                sources: vec![FeederSource {
+                    base: "COEN",
+                    quote: "840",
+                    price: quote.price,
+                    volume: quote.volume,
+                }],
+            }],
+        )
+    }
+
+    pub(crate) fn start_with_pairs(
         &mut self,
-        rpc_url: &str,
-        chain_id: u64,
-        private_key: &str,
-        validator_address: &str,
-        quote: PriceQuote<'_>,
-        vote_period: u64,
+        launch: FeederLaunch<'_>,
+        pairs: &[FeederPair<'_>],
     ) -> Result<()> {
-        if self.feeder.is_some() {
-            bail!("price feeder is already running")
+        let FeederLaunch {
+            validator_index,
+            rpc_url,
+            chain_id,
+            private_key,
+            validator_address,
+            vote_period,
+            phase,
+        } = launch;
+        if self.feeders.contains_key(&validator_index) {
+            bail!("validator-{validator_index} price feeder is already running");
         }
-        if self.mock.is_none() {
-            let book = PriceBook {
-                generation: 1,
-                price: quote.price.to_owned(),
-                volume: quote.volume.to_owned(),
-            };
-            self.mock = Some(MockPriceServer::bind(book)?);
-        } else if self
-            .mock
-            .as_ref()
-            .map(MockPriceServer::book)
-            .is_some_and(|book| book.price != quote.price || book.volume != quote.volume)
-        {
-            bail!("price mock generation changed during one feeder acceptance window")
+        if pairs.is_empty() || pairs.iter().any(|pair| pair.sources.is_empty()) {
+            bail!("a feeder must configure at least one source for one Oracle pair");
+        }
+        let entries = pairs
+            .iter()
+            .flat_map(|pair| &pair.sources)
+            .map(|source| {
+                (
+                    format!("{}{}", source.base, source.quote).to_ascii_uppercase(),
+                    PricePoint {
+                        price: source.price.to_owned(),
+                        volume: source.volume.to_owned(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let expected_book = PriceBook {
+            generation: 1,
+            entries,
+        };
+        match self.mocks.entry(validator_index) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(MockPriceServer::bind(expected_book.clone())?);
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get().book().entries != expected_book.entries =>
+            {
+                bail!("price mock generation changed during one feeder acceptance window");
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
         }
 
         let directory = self.cfg.dir.join("price-oracle");
@@ -309,11 +511,24 @@ impl PriceOracleTopology {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
-        let config_path = directory.join("validator-0-feeder.toml");
-        let log_path = directory.join("validator-0-feeder.log");
+        let attempt = u32::try_from(
+            self.evidence
+                .feeder_processes
+                .iter()
+                .filter(|process| process.validator_index == validator_index)
+                .count()
+                + 1,
+        )
+        .map_err(|_| eyre!("validator-{validator_index} feeder attempt overflow"))?;
+        let config_path = directory.join(format!(
+            "validator-{validator_index}-feeder-attempt-{attempt}.toml"
+        ));
+        let log_path = directory.join(format!(
+            "validator-{validator_index}-feeder-attempt-{attempt}.log"
+        ));
         let mock_url = self
-            .mock
-            .as_ref()
+            .mocks
+            .get(&validator_index)
             .expect("mock exists before feeder config")
             .base_url();
         write_feeder_config(
@@ -325,6 +540,7 @@ impl PriceOracleTopology {
                 validator_address,
                 mock_url: &mock_url,
                 vote_period,
+                pairs,
             },
         )?;
 
@@ -343,7 +559,8 @@ impl PriceOracleTopology {
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        let mut feeder = ChildGuard::spawn("validator-0 price feeder", command)?;
+        let mut feeder =
+            ChildGuard::spawn(format!("validator-{validator_index} price feeder"), command)?;
         let deadline = Instant::now() + FEEDER_START_TIMEOUT;
         loop {
             if feeder.exited() {
@@ -351,7 +568,7 @@ impl PriceOracleTopology {
                 bail!(
                     "price feeder exited during startup; see {}",
                     log_path.display()
-                )
+                );
             }
             let started = log_suffix_contains(&log_path, log_start, "starting outbe-feeder");
             if started {
@@ -359,42 +576,93 @@ impl PriceOracleTopology {
             }
             if Instant::now() >= deadline {
                 let _ = fs::remove_file(&config_path);
-                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}")
+                bail!("price feeder did not start within {FEEDER_START_TIMEOUT:?}");
             }
             thread::sleep(Duration::from_millis(50));
         }
         fs::remove_file(&config_path).wrap_err("remove plaintext feeder config after startup")?;
 
-        let book = self.mock.as_ref().expect("mock exists").book();
         self.evidence.feeder_binary = self.cfg.bin_feeder.display().to_string();
         self.evidence.feeder_binary_sha256 = sha256_file(&self.cfg.bin_feeder)?;
-        self.evidence.feeder_pid = Some(feeder.pid());
-        self.evidence.feeder_log = log_path.display().to_string();
-        self.evidence.mock_generation = book.generation;
-        self.evidence.mock_price = book.price;
-        self.evidence.mock_volume = book.volume;
-        self.feeder = Some(feeder);
+        let feeder_pid = feeder.pid();
+        let feeder_log = log_path.display().to_string();
+        self.evidence
+            .feeder_processes
+            .push(FeederProcessEvidenceV1 {
+                validator_index,
+                validator_address: validator_address.to_owned(),
+                rpc_endpoint: sanitize_rpc_endpoint(rpc_url),
+                vote_period,
+                attempt,
+                pid: feeder_pid,
+                log: feeder_log,
+                started_at_millis: unix_millis(),
+                stopped_at_millis: None,
+                oracle_pairs: pairs
+                    .iter()
+                    .map(|pair| format!("{}/{}", pair.base, pair.quote))
+                    .collect(),
+                source_markets: pairs
+                    .iter()
+                    .flat_map(|pair| &pair.sources)
+                    .map(|source| format!("{}:{}/{}", "mock_http", source.base, source.quote))
+                    .collect(),
+            });
+        let generation = self
+            .mocks
+            .get(&validator_index)
+            .expect("mock exists while recording its sources")
+            .book()
+            .generation;
+        for pair in pairs {
+            for source in &pair.sources {
+                self.evidence
+                    .controlled_sources
+                    .push(ControlledSourceEvidenceV1 {
+                        phase,
+                        generation,
+                        validator_index,
+                        oracle_pair: format!("{}/{}", pair.base, pair.quote),
+                        source_market: format!("mock_http:{}/{}", source.base, source.quote),
+                        price: source.price.to_owned(),
+                        volume: source.volume.to_owned(),
+                    });
+            }
+        }
+        self.feeders.insert(validator_index, feeder);
         Ok(())
     }
 
     pub fn stop_feeder(&mut self) {
-        self.feeder = None;
-        self.evidence.feeder_pid = None;
+        let stopped_at = unix_millis();
+        for validator_index in self.feeders.keys().copied().collect::<Vec<_>>() {
+            self.mark_latest_process_stopped(validator_index, stopped_at);
+        }
+        self.feeders.clear();
+    }
+
+    pub fn stop_validator_feeder(&mut self, validator_index: usize) -> Result<()> {
+        self.feeders
+            .remove(&validator_index)
+            .ok_or_else(|| eyre!("validator-{validator_index} price feeder is not running"))?;
+        self.mark_latest_process_stopped(validator_index, unix_millis());
+        Ok(())
     }
 
     pub fn ensure_feeder_alive(&mut self) -> Result<()> {
-        let Some(feeder) = self.feeder.as_mut() else {
-            bail!("price feeder is not running")
-        };
-        if feeder.exited() {
-            bail!("owned price feeder exited")
-        } else {
-            Ok(())
+        if self.feeders.is_empty() {
+            bail!("price feeder is not running");
         }
+        for (index, feeder) in &mut self.feeders {
+            if feeder.exited() {
+                bail!("owned price feeder {index} exited");
+            }
+        }
+        Ok(())
     }
 
     pub fn is_feeder_running(&mut self) -> bool {
-        self.feeder.as_mut().is_some_and(|feeder| !feeder.exited())
+        !self.feeders.is_empty() && self.feeders.values_mut().all(|feeder| !feeder.exited())
     }
 
     pub fn last_oracle_block(&self) -> Option<u64> {
@@ -405,51 +673,79 @@ impl PriceOracleTopology {
     }
 
     pub(crate) fn read_controlled_quote(&self) -> Option<(String, String)> {
-        self.mock.as_ref().map(|mock| {
-            let book = mock.book();
-            (book.price, book.volume)
+        self.mocks.values().find_map(|mock| {
+            mock.book()
+                .entries
+                .get(COEN_USD_SYMBOL)
+                .map(|point| (point.price.clone(), point.volume.clone()))
         })
     }
 
-    pub fn publish_quote(&mut self, price: &str, volume: &str) -> Result<u64> {
-        if self.feeder.is_none() {
-            bail!("price feeder must be running before changing the controlled quote")
+    pub fn publish_quote(
+        &mut self,
+        phase: OracleEvidencePhaseV1,
+        price: &str,
+        volume: &str,
+    ) -> Result<u64> {
+        if self.feeders.is_empty() {
+            bail!("price feeder must be running before changing the controlled quote");
         }
-        let mock = self
-            .mock
-            .as_ref()
-            .ok_or_else(|| eyre!("controlled price source is not running"))?;
-        let generation = mock.publish(price, volume)?;
-        self.evidence.mock_generation = generation;
-        self.evidence.mock_price = price.to_owned();
-        self.evidence.mock_volume = volume.to_owned();
-        Ok(generation)
+        let mut generation = None;
+        for (validator_index, mock) in &self.mocks {
+            if mock.book().entries.contains_key(COEN_USD_SYMBOL) {
+                let next_generation = mock.publish(COEN_USD_SYMBOL, price, volume)?;
+                generation = Some(next_generation);
+                self.evidence
+                    .controlled_sources
+                    .push(ControlledSourceEvidenceV1 {
+                        phase,
+                        generation: next_generation,
+                        validator_index: *validator_index,
+                        oracle_pair: "COEN/840".to_owned(),
+                        source_market: "mock_http:COEN/840".to_owned(),
+                        price: price.to_owned(),
+                        volume: volume.to_owned(),
+                    });
+            }
+        }
+        generation.ok_or_else(|| eyre!("controlled COEN/840 price source is not configured"))
     }
 
     pub fn evidence_snapshot(&self) -> PriceOracleEvidenceV1 {
         let mut evidence = self.evidence.clone();
-        if let Some(mock) = &self.mock {
+        for mock in self.mocks.values() {
             let (ticker_requests, candle_requests) = mock.request_counts();
-            evidence.ticker_requests = ticker_requests;
-            evidence.candle_requests = candle_requests;
+            evidence.ticker_requests = evidence.ticker_requests.saturating_add(ticker_requests);
+            evidence.candle_requests = evidence.candle_requests.saturating_add(candle_requests);
         }
         evidence
     }
 
-    pub fn record_canonical_publication(
+    pub(crate) fn record_canonical_publication(
         &mut self,
-        validator_count: usize,
-        rate: alloy_primitives::U256,
-        oracle_block: u64,
-        oracle_timestamp: u64,
-        finalized_height: u64,
-        finalized_timestamp: u64,
+        observation: CanonicalPublicationObservation,
     ) {
+        let CanonicalPublicationObservation {
+            phase,
+            validator_count,
+            base,
+            quote,
+            rate,
+            volume,
+            oracle_block,
+            oracle_timestamp,
+            finalized_height,
+            finalized_timestamp,
+        } = observation;
         self.evidence
             .canonical_publications
             .push(CanonicalPricePublicationV1 {
+                phase,
                 validator_count,
+                base: format!("{base:#x}"),
+                quote: format!("{quote:#x}"),
                 rate: rate.to_string(),
+                volume: volume.to_string(),
                 oracle_block,
                 oracle_timestamp,
                 finalized_height,
@@ -458,10 +754,207 @@ impl PriceOracleTopology {
             });
     }
 
+    pub fn record_quorum_loss(&mut self, evidence: QuorumLossEvidenceV1) {
+        self.evidence.quorum_loss_windows.push(evidence);
+    }
+
+    pub fn record_penalty_snapshot(&mut self, evidence: PenaltySnapshotEvidenceV1) {
+        self.evidence.penalty_snapshots.push(evidence);
+    }
+
+    fn mark_latest_process_stopped(&mut self, validator_index: usize, stopped_at_millis: u64) {
+        if let Some(process) = self
+            .evidence
+            .feeder_processes
+            .iter_mut()
+            .rev()
+            .find(|process| {
+                process.validator_index == validator_index && process.stopped_at_millis.is_none()
+            })
+        {
+            process.stopped_at_millis = Some(stopped_at_millis);
+        }
+    }
+
     pub fn teardown(&mut self) {
         self.stop_feeder();
-        self.mock = None;
+        self.mocks.clear();
     }
+}
+
+fn unix_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
+fn sanitize_rpc_endpoint(endpoint: &str) -> String {
+    let without_query = endpoint.split(['?', '#']).next().unwrap_or(endpoint);
+    let Some((scheme, remainder)) = without_query.split_once("://") else {
+        return "<invalid-rpc-endpoint>".to_owned();
+    };
+    let authority = remainder.split('/').next().unwrap_or(remainder);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    format!("{scheme}://{authority}")
+}
+
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn verify_price_oracle_evidence(
+    evidence: &PriceOracleEvidenceV1,
+    validator_count: usize,
+) -> Result<()> {
+    eyre::ensure!(
+        validator_count > 0,
+        "Oracle validator count must be positive"
+    );
+    eyre::ensure!(
+        Path::new(&evidence.feeder_binary)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("outbe-feeder"),
+        "Oracle evidence does not identify outbe-feeder"
+    );
+    eyre::ensure!(
+        evidence.feeder_binary_sha256.len() == 64
+            && hex::decode(&evidence.feeder_binary_sha256).is_ok(),
+        "Oracle evidence has no exact feeder digest"
+    );
+    eyre::ensure!(
+        evidence.ticker_requests > 0 && evidence.candle_requests > 0,
+        "Oracle evidence has no provider request activity"
+    );
+    eyre::ensure!(
+        !evidence.feeder_processes.is_empty(),
+        "Oracle evidence has no feeder processes"
+    );
+
+    let mut attempts = BTreeMap::<usize, Vec<&FeederProcessEvidenceV1>>::new();
+    let mut live_pids = std::collections::BTreeSet::new();
+    for process in &evidence.feeder_processes {
+        eyre::ensure!(
+            process.validator_index < validator_count,
+            "Oracle feeder references a validator outside the active set"
+        );
+        eyre::ensure!(
+            process.vote_period > 0
+                && process.pid > 0
+                && process.started_at_millis > 0
+                && process
+                    .stopped_at_millis
+                    .is_none_or(|stopped| stopped >= process.started_at_millis),
+            "Oracle feeder lifecycle is malformed"
+        );
+        eyre::ensure!(
+            process.rpc_endpoint.starts_with("http://")
+                || process.rpc_endpoint.starts_with("https://"),
+            "Oracle feeder RPC endpoint is malformed"
+        );
+        eyre::ensure!(
+            !process.rpc_endpoint.contains(['@', '?', '#']),
+            "Oracle feeder RPC endpoint contains credentials or query data"
+        );
+        eyre::ensure!(
+            process.log.ends_with(&format!(
+                "validator-{}-feeder-attempt-{}.log",
+                process.validator_index, process.attempt
+            )),
+            "Oracle feeder log is not attempt-specific"
+        );
+        eyre::ensure!(
+            !process.oracle_pairs.is_empty() && !process.source_markets.is_empty(),
+            "Oracle feeder has no configured market"
+        );
+        if process.stopped_at_millis.is_none() {
+            eyre::ensure!(
+                live_pids.insert(process.pid),
+                "Oracle evidence reuses one PID for multiple live feeders"
+            );
+        }
+        attempts
+            .entry(process.validator_index)
+            .or_default()
+            .push(process);
+    }
+    for (validator_index, processes) in &mut attempts {
+        processes.sort_by_key(|process| process.attempt);
+        for (offset, process) in processes.iter().enumerate() {
+            eyre::ensure!(
+                process.attempt == u32::try_from(offset + 1)?,
+                "validator-{validator_index} feeder attempts are not monotonic"
+            );
+            eyre::ensure!(
+                (offset + 1 == processes.len()) == process.stopped_at_millis.is_none(),
+                "validator-{validator_index} feeder lifecycle has the wrong live attempt"
+            );
+        }
+    }
+
+    eyre::ensure!(
+        !evidence.controlled_sources.is_empty(),
+        "Oracle evidence has no independently recorded controlled sources"
+    );
+    for source in &evidence.controlled_sources {
+        eyre::ensure!(
+            source.generation > 0
+                && source.validator_index < validator_count
+                && canonical_unsigned_decimal(&source.price)
+                && canonical_unsigned_decimal(&source.volume)
+                && !source.oracle_pair.is_empty()
+                && source.source_market.starts_with("mock_http:"),
+            "Oracle controlled source record is malformed"
+        );
+    }
+
+    let mut publication_keys = std::collections::BTreeSet::new();
+    for publication in &evidence.canonical_publications {
+        eyre::ensure!(
+            publication.validator_count == validator_count
+                && publication
+                    .rate
+                    .parse::<alloy_primitives::U256>()
+                    .is_ok_and(|rate| !rate.is_zero())
+                && publication.volume.parse::<alloy_primitives::U256>().is_ok()
+                && publication.oracle_block > 0
+                && publication.oracle_block <= publication.finalized_height
+                && publication.oracle_timestamp > 0
+                && publication.age_seconds
+                    == publication
+                        .finalized_timestamp
+                        .saturating_sub(publication.oracle_timestamp)
+                && publication.age_seconds <= 21_600,
+            "Oracle publication is stale, malformed, or not finalized"
+        );
+        eyre::ensure!(
+            publication_keys.insert((
+                publication.phase,
+                publication.base.as_str(),
+                publication.quote.as_str(),
+                publication.oracle_block,
+            )),
+            "Oracle evidence contains a duplicate publication"
+        );
+    }
+    eyre::ensure!(
+        !evidence.canonical_publications.is_empty(),
+        "Oracle evidence has no canonical publications"
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn canonical_unsigned_decimal(value: &str) -> bool {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    !whole.is_empty()
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && value.matches('.').count() <= 1
 }
 
 fn log_suffix_contains(path: &Path, start: u64, needle: &str) -> bool {
@@ -489,11 +982,12 @@ struct FeederConfigInput<'a> {
     validator_address: &'a str,
     mock_url: &'a str,
     vote_period: u64,
+    pairs: &'a [FeederPair<'a>],
 }
 
 fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()> {
-    let config = format!(
-        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n\n[[provider_endpoints]]\nname = \"mock_http\"\nrest = \"{}\"\n\n[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nproviders = [\"mock_http\"]\n",
+    let mut config = format!(
+        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n\n[[provider_endpoints]]\nname = \"mock_http\"\nrest = \"{}\"\n",
         input.rpc_url,
         input.chain_id,
         input.private_key,
@@ -501,6 +995,18 @@ fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()>
         input.vote_period,
         input.mock_url,
     );
+    for pair in input.pairs {
+        config.push_str(&format!(
+            "\n[[currency_pairs]]\nbase = \"{}\"\nquote = \"{}\"\n",
+            pair.base, pair.quote
+        ));
+        for source in &pair.sources {
+            config.push_str(&format!(
+                "\n[[currency_pairs.sources]]\nprovider = \"mock_http\"\nbase = \"{}\"\nquote = \"{}\"\n",
+                source.base, source.quote
+            ));
+        }
+    }
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -535,13 +1041,29 @@ fn sha256_file(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
 
+    fn coen_book(generation: u64, price: &str, volume: &str) -> PriceBook {
+        PriceBook {
+            generation,
+            entries: BTreeMap::from([(
+                COEN_USD_SYMBOL.to_owned(),
+                PricePoint {
+                    price: price.to_owned(),
+                    volume: volume.to_owned(),
+                },
+            )]),
+        }
+    }
+
     #[test]
     fn mock_http_wire_is_exact_and_generation_owned() {
-        let book = PriceBook {
-            generation: 7,
-            price: "1.000000".into(),
-            volume: "1000.000000".into(),
-        };
+        let mut book = coen_book(7, "1.000000", "1000.000000");
+        book.entries.insert(
+            "COENUSDC".into(),
+            PricePoint {
+                price: "1.000001".into(),
+                volume: "500.000000".into(),
+            },
+        );
 
         assert_eq!(
             mock_response("/api/tickers", COEN_USD_SYMBOL, &book).unwrap(),
@@ -550,6 +1072,10 @@ mod tests {
         assert_eq!(
             mock_response("/api/candles", COEN_USD_SYMBOL, &book).unwrap(),
             r#"{"data":[]}"#
+        );
+        assert_eq!(
+            mock_response("/api/tickers", "COEN840,COENUSDC", &book).unwrap(),
+            r#"{"data":[{"symbol":"COEN840","price":"1.000000","volume":"1000.000000"},{"symbol":"COENUSDC","price":"1.000001","volume":"500.000000"}]}"#
         );
         assert!(mock_response("/api/tickers", "COEN978", &book).is_err());
         assert!(mock_response("/unknown", COEN_USD_SYMBOL, &book).is_err());
@@ -560,6 +1086,24 @@ mod tests {
     fn feeder_config_is_private_and_contains_only_the_frozen_interface() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("feeder.toml");
+        let pairs = [FeederPair {
+            base: "COEN",
+            quote: "840",
+            sources: vec![
+                FeederSource {
+                    base: "COEN",
+                    quote: "USDT",
+                    price: "1",
+                    volume: "2",
+                },
+                FeederSource {
+                    base: "COEN",
+                    quote: "USDC",
+                    price: "1",
+                    volume: "3",
+                },
+            ],
+        }];
         write_feeder_config(
             &path,
             &FeederConfigInput {
@@ -569,6 +1113,7 @@ mod tests {
                 validator_address: "0x0000000000000000000000000000000000000001",
                 mock_url: "http://127.0.0.1:31415",
                 vote_period: 8,
+                pairs: &pairs,
             },
         )
         .unwrap();
@@ -577,7 +1122,10 @@ mod tests {
         assert!(contents.contains("poll_interval_secs = 1"));
         assert!(contents.contains("gasless_oracle_votes = true"));
         assert!(contents.contains("enabled = false"));
-        assert!(contents.contains("providers = [\"mock_http\"]"));
+        assert!(contents.contains("[[currency_pairs.sources]]"));
+        assert!(contents.contains("quote = \"USDT\""));
+        assert!(contents.contains("quote = \"USDC\""));
+        assert!(!contents.contains("providers ="));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -614,14 +1162,18 @@ mod tests {
     }
 
     #[test]
+    fn retained_rpc_endpoint_omits_credentials_path_query_and_fragment() {
+        assert_eq!(
+            sanitize_rpc_endpoint("https://user:pass@rpc.example/v3/secret?key=hidden#fragment"),
+            "https://rpc.example"
+        );
+    }
+
+    #[test]
     fn bound_mock_server_serves_ticker_and_empty_candle_fallback() {
-        let mut server = match MockPriceServer::bind(PriceBook {
-            generation: 3,
-            price: "1.250000".into(),
-            volume: "4.000000".into(),
-        }) {
+        let mut server = match MockPriceServer::bind(coen_book(3, "1.250000", "4.000000")) {
             Ok(server) => server,
-            Err(error) if error.to_string().contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
@@ -636,32 +1188,33 @@ mod tests {
 
     #[test]
     fn bound_mock_server_publishes_one_atomic_new_price_generation() {
-        let mut server = match MockPriceServer::bind(PriceBook {
-            generation: 3,
-            price: "1.000000".into(),
-            volume: "4.000000".into(),
-        }) {
+        let mut server = match MockPriceServer::bind(coen_book(3, "1.000000", "4.000000")) {
             Ok(server) => server,
-            Err(error) if error.to_string().contains("Operation not permitted") => return,
+            Err(error) if bind_permission_denied(&error) => return,
             Err(error) => panic!("bind mock server: {error:#}"),
         };
 
         let generation = server
-            .publish("1.080001", "4.000000")
+            .publish(COEN_USD_SYMBOL, "1.080001", "4.000000")
             .expect("publish controlled qualification quote");
         assert_eq!(generation, 4);
-        assert_eq!(
-            server.book(),
-            PriceBook {
-                generation: 4,
-                price: "1.080001".into(),
-                volume: "4.000000".into(),
-            }
-        );
+        assert_eq!(server.book(), coen_book(4, "1.080001", "4.000000"));
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");
-        assert!(ticker
-            .contains(r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#));
+        assert!(
+            ticker.contains(
+                r#"{"data":[{"symbol":"COEN840","price":"1.080001","volume":"4.000000"}]}"#
+            ),
+            "unexpected ticker response: {ticker:?}"
+        );
         server.stop();
+    }
+
+    fn bind_permission_denied(error: &eyre::Report) -> bool {
+        error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        })
     }
 
     fn raw_get(addr: SocketAddr, target: &str) -> String {

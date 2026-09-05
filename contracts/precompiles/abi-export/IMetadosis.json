@@ -581,13 +581,13 @@
   },
   {
     "type": "event",
-    "name": "OffchainJobConflicted",
+    "name": "OcompVoteMissed",
     "inputs": [
       {
-        "name": "intentId",
-        "type": "bytes32",
+        "name": "validator",
+        "type": "address",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "address"
       },
       {
         "name": "jobId",
@@ -596,28 +596,28 @@
         "internalType": "bytes32"
       },
       {
-        "name": "attempt",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldPendingNonce",
+        "name": "missCount",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
       },
       {
-        "name": "nextPendingNonce",
+        "name": "slashedBonded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recoveryDeadline",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
       },
       {
-        "name": "resultDigest",
-        "type": "bytes32",
+        "name": "firstInWindow",
+        "type": "bool",
         "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -637,18 +637,6 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
-      },
-      {
-        "name": "oldPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "nextPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
       },
       {
         "name": "expiredAtHeight",

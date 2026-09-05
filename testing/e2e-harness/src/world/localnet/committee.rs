@@ -9,11 +9,12 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
+use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
+use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
-use crate::internal::proc::{self, args, attach_log, wait_tcp, SealSpec};
+use crate::internal::proc::{self, args, attach_log, SealSpec};
 
 use super::{Localnet, StartOpts};
 
@@ -69,6 +70,47 @@ fn quiesce_and_terminate_committee_with(
     signal(pids, "CONT")
 }
 
+/// Preparation may block on external services; no node gets a head start while
+/// another member is still preparing. Keep launch ownership with the caller.
+fn start_prepared_cohort<C>(
+    context: &mut C,
+    indices: &[usize],
+    mut prepare: impl FnMut(&mut C, usize) -> Result<()>,
+    mut launch: impl FnMut(&mut C, usize) -> Result<()>,
+) -> Result<()> {
+    for &index in indices {
+        prepare(context, index)?;
+    }
+    for &index in indices {
+        launch(context, index)?;
+    }
+    Ok(())
+}
+
+fn verify_pre_dkg_public_identity(
+    response: outbe_tee::protocol::EnclaveResponse,
+    manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+) -> Result<()> {
+    match response {
+        outbe_tee::protocol::EnclaveResponse::PublicKeys {
+            offer_key_ready: false,
+            recipient_x25519_pub,
+            attestation_pub,
+            noise_static_pub,
+            ..
+        } => {
+            ensure!(
+                recipient_x25519_pub == manifest.recipient_x25519
+                    && attestation_pub == manifest.attestation_ed25519
+                    && noise_static_pub == manifest.noise_responder_x25519,
+                "prepared founder public identity differs from its committed manifest"
+            );
+            Ok(())
+        }
+        _ => bail!("fresh founder preparation requires authenticated keyless PublicKeys"),
+    }
+}
+
 impl Localnet {
     /// Start the committee (and, when TEE is enabled, its enclaves). Idempotent:
     /// indices whose owned node is still alive are skipped, so [`restart`] only
@@ -95,21 +137,21 @@ impl Localnet {
             launched.push(i);
         }
 
-        // Bring the complete enclave cohort up before the first validator can
-        // enter genesis DKG. Starting enclave->validator per index gave the first
-        // nodes several seconds' head start and made them finalize before the
-        // last dealings existed (`MissingPlayerDealing`).
-        for &i in &launched {
-            if self.tee_enabled() && !self.enclaves.contains_key(&i) {
-                self.start_enclave(i, chain_id_hex.as_deref().unwrap_or_default())?;
-            }
-        }
-        for &i in &launched {
-            self.start_radicle(i)?;
-        }
-        for &i in &launched {
-            self.launch_validator(i, opts, bootnodes.as_deref())?;
-        }
+        // TCP listening alone does not prove authenticated NodeHost readiness.
+        // Complete cold initialization before any node starts its independent
+        // genesis-formation timer; actual formation and DKG remain node-owned.
+        start_prepared_cohort(
+            self,
+            &launched,
+            |localnet, i| {
+                if localnet.tee_enabled() && !localnet.enclaves.contains_key(&i) {
+                    localnet.start_enclave(i, chain_id_hex.as_deref().unwrap_or_default())?;
+                }
+                localnet.prepare_fresh_founder_node_host(i)?;
+                localnet.start_radicle(i)
+            },
+            |localnet, i| localnet.launch_validator(i, opts, bootnodes.as_deref()),
+        )?;
 
         // Survival check: a node that dies in the first couple seconds is a
         // config error - surface it with its log tail (`run-testnet.sh:386-407`).
@@ -249,8 +291,43 @@ impl Localnet {
     /// Stop and relaunch one committee validator while preserving its running
     /// enclave and persisted node data.
     pub fn restart_validator_preserving_enclave(&mut self, i: usize) -> Result<()> {
-        self.kill_validator(i)?;
-        self.restart_validator(i)?;
+        ensure!(
+            i < self.committee_size(),
+            "restart target is outside the committee"
+        );
+        ensure!(
+            !self.tee_enabled() || self.enclaves.contains_key(&i),
+            "validator-{i} restart must preserve its owned enclave"
+        );
+        let argv = self
+            .validator_argv
+            .get(&i)
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("validator-{i} has no captured launch argv"))?;
+        let child = self
+            .validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} restart requires an owned child"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "validator-{i} exited before restart fault"
+        );
+        // Stop only this owned node. A process-name backstop can kill a node
+        // from another concurrently running scenario using the same slot.
+        child.interrupt();
+        ensure!(child.exit_status()?.is_some(), "validator-{i} did not stop");
+        self.validators.remove(&i);
+        let opts = self.start_opts.clone();
+        self.spawn_validator_with_argv(i, &opts, argv)?;
+        sleep(Duration::from_secs(2));
+        let child = self
+            .validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} restart lost its child"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "validator-{i} exited during restart"
+        );
         Ok(())
     }
 
@@ -515,11 +592,6 @@ impl Localnet {
             self.extend_real_sgx_startup_timeout(&mut a);
         }
 
-        let mut cmd = Command::new(&self.cfg.bin_chain);
-        cmd.env("RUST_MIN_STACK", "16777216");
-        for (name, value) in validator_protocol_environment(opts) {
-            cmd.env(name, value);
-        }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }
@@ -528,10 +600,25 @@ impl Localnet {
         // snapshot verbatim instead of reconstructing a merely equivalent
         // command from mutable harness inputs.
         a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
-        self.validator_argv.insert(i, a.clone());
-        cmd.args(&a);
+        self.spawn_validator_with_argv(i, opts, a)
+    }
+
+    fn spawn_validator_with_argv(
+        &mut self,
+        i: usize,
+        opts: &StartOpts,
+        argv: Vec<String>,
+    ) -> Result<()> {
+        let vd = self.cfg.validator_dir(i);
+        let mut cmd = Command::new(&self.cfg.bin_chain);
+        cmd.env("RUST_MIN_STACK", "16777216");
+        for (name, value) in validator_protocol_environment(opts) {
+            cmd.env(name, value);
+        }
+        cmd.args(&argv);
         attach_log(&mut cmd, &vd)?;
-        let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;
+        let guard = self.spawn_node(&format!("validator-{i}"), i, &vd, cmd)?;
+        self.validator_argv.insert(i, argv);
         self.validators.insert(i, guard);
         Ok(())
     }
@@ -552,6 +639,111 @@ impl Localnet {
         self.start_enclave_with_seed(i, chain_id_hex, seed)
     }
 
+    /// Use the same persistent signer, final genesis and data directory as the
+    /// node entrypoint. Never pre-recover existing state: restart scenarios must
+    /// exercise the node's own reconnect/recovery path without harness warmup.
+    fn prepare_fresh_founder_node_host(&self, index: usize) -> Result<()> {
+        use alloy_signer::SignerSync as _;
+        use alloy_signer_local::PrivateKeySigner;
+
+        if !self.cfg.tee_mode.passes_sgx_devices() {
+            return Ok(());
+        }
+        let directory = self.cfg.validator_dir(index);
+        let data = directory.join("data");
+        if data
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .try_exists()?
+        {
+            return Ok(());
+        }
+        // The NodeHost API owns only its private child, while this parent is
+        // normally created by launch_validator after cohort preparation.
+        fs::create_dir_all(&data)
+            .wrap_err_with(|| format!("create founder node data directory {}", data.display()))?;
+        let started = std::time::Instant::now();
+        let secret = fs::read_to_string(directory.join("reth-p2p-secret.hex"))
+            .wrap_err("read founder's provisioned Reth P2P signer")?;
+        let signer: PrivateKeySigner = secret
+            .trim()
+            .parse()
+            .map_err(|_| eyre::eyre!("invalid provisioned founder Reth P2P signer"))?;
+        let reth_p2p_public = signer
+            .credential()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .map_err(|_| eyre::eyre!("founder Reth P2P identity is not SEC1-33"))?;
+        let genesis = self
+            .validator_chain_manifests
+            .get(&index)
+            .cloned()
+            .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
+        // Use the node's authoritative policy parser, not a mode inferred from
+        // the selected harness lane or the pre-measurement genesis helper.
+        let spec = reth_ethereum::cli::chainspec::chain_value_parser(
+            genesis
+                .to_str()
+                .ok_or_else(|| eyre::eyre!("founder genesis path is not UTF-8"))?,
+        )?
+        .as_ref()
+        .clone()
+        .map_header(outbe_primitives::OutbeHeader::new);
+        let state =
+            outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+                &spec,
+            );
+        let network_binding = state
+            .activation()
+            .map_err(|error| eyre::eyre!("invalid founder genesis TEE policy: {error}"))?
+            .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
+            .map_err(eyre::Report::msg)?
+            .network_binding();
+        let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
+        let mut client = outbe_tee::connect_or_initialize_node_host_enclave(
+            &endpoint,
+            &data,
+            outbe_tee::NodeHostIdentityV1 {
+                network_binding,
+                reth_p2p_public,
+            },
+            |hash| {
+                let signature = signer
+                    .sign_hash_sync(&hash)
+                    .map_err(|error| error.to_string())?;
+                let mut bytes = [0_u8; 65];
+                bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+                bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+                bytes[64] = u8::from(signature.v());
+                Ok(bytes)
+            },
+        )
+        .wrap_err_with(|| format!("initialize founder-{index} NodeHost before committee launch"))?;
+        let manifest = outbe_tee::load_committed_enclave_manifest_v1(&data)?;
+        ensure!(
+            manifest.node_id.reth_p2p_public == reth_p2p_public
+                && manifest.network_binding() == network_binding,
+            "prepared founder manifest changed its node/network identity"
+        );
+        verify_pre_dkg_public_identity(
+            client.request(&outbe_tee::protocol::EnclaveRequest::GetPublicKeys)?,
+            &manifest,
+        )?;
+        drop(client);
+        let mut reopened =
+            outbe_tee::node_host::connect_committed_node_host_enclave(&endpoint, &data)?;
+        verify_pre_dkg_public_identity(
+            reopened.request(&outbe_tee::protocol::EnclaveRequest::GetPublicKeys)?,
+            &manifest,
+        )?;
+        eprintln!(
+            "[e2e] founder-{index} authenticated keyless NodeHost prepared and reopened in {:?}",
+            started.elapsed()
+        );
+        Ok(())
+    }
+
     /// [`Self::start_enclave`] with an explicit DKG-seed override - the
     /// fresh-identity restart verb uses a different seed so the relaunched
     /// enclave presents different keys.
@@ -561,6 +753,10 @@ impl Localnet {
         chain_id_hex: &str,
         dkg_seed: Option<String>,
     ) -> Result<()> {
+        ensure!(
+            !self.enclaves.contains_key(&i),
+            "enclave slot {i} is already owned"
+        );
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
         let port = self.cfg.tee_port(i);
@@ -576,39 +772,58 @@ impl Localnet {
             chain_id_hex: chain_id_hex.to_string(),
         });
 
-        let guard = proc::spawn_enclave(proc::EnclaveSpec {
-            name: self.cfg.tee_container(i),
-            tee_port: port,
-            enclave_bin,
-            signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
-            network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
-                .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
-            launch: self.enclave_launch()?,
-            sudo: self.cfg.sudo,
-            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
-            remote_attestation: match self.cfg.tee_mode {
-                crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
-                crate::env::TeeMode::SgxNoAttest
-                | crate::env::TeeMode::GramineDirect
-                | crate::env::TeeMode::Mock
-                | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+        let guard = proc::spawn_enclave_ready(
+            proc::EnclaveSpec {
+                name: self.cfg.tee_container(i),
+                tee_port: port,
+                enclave_bin,
+                signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+                network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
+                    .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
+                dev_network_binding: self.dev_network_binding_hex()?,
+                launch: self.enclave_launch()?,
+                sudo: self.cfg.sudo,
+                pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+                remote_attestation: match self.cfg.tee_mode {
+                    crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
+                    crate::env::TeeMode::SgxNoAttest
+                    | crate::env::TeeMode::GramineDirect
+                    | crate::env::TeeMode::Mock
+                    | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+                },
+                dkg_seed,
+                seal,
+                log_path: vd.join("enclave.log"),
+                debug: self.cfg.debug,
             },
-            dkg_seed,
-            seal,
-            log_path: vd.join("enclave.log"),
-            debug: self.cfg.debug,
-        })?;
+            self.enclave_startup_deadline(20),
+        )?;
         self.enclaves.insert(i, guard);
-        if !wait_tcp(port, 200) {
-            self.enclaves.remove(&i);
-            bail!("enclave socket 127.0.0.1:{port} never came up for validator-{i}");
-        }
         Ok(())
     }
 
     /// The genesis chain id as `0x`-padded 64-hex (enclave seal `--chain-id`).
     pub(super) fn chain_id_hex(&self) -> Result<String> {
         Ok(format!("0x{:064x}", self.chain_id()?))
+    }
+
+    pub(super) fn dev_network_binding_hex(&self) -> Result<Option<String>> {
+        if !self.cfg.tee_mode.uses_mock_binary() {
+            return Ok(None);
+        }
+        let binding =
+            DcapSeededChainSpecBindingV1::from_genesis_path(&self.cfg.dir.join("genesis.json"))
+                .map_err(|error| {
+                    eyre::eyre!("derive mock network binding from final genesis: {error}")
+                })?;
+        let canonical = NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(binding.chain_id).to_be_bytes(),
+            genesis_hash: binding.genesis_hash,
+            attestation_mode: AttestationMode::GramineDirectDev,
+        }
+        .encode_canonical()
+        .map_err(|error| eyre::eyre!("encode mock network binding: {error}"))?;
+        Ok(Some(alloy_primitives::hex::encode(canonical)))
     }
 
     /// The chain ID from the immutable localnet genesis configuration.
@@ -650,7 +865,175 @@ mod owned_committee_tests {
     use crate::internal::config::Config;
     use crate::internal::proc::{ChildGuard, DockerImageId};
 
-    use super::{quiesce_and_terminate_committee_with, Localnet};
+    use super::{quiesce_and_terminate_committee_with, start_prepared_cohort, Localnet};
+
+    #[test]
+    fn founder_cohort_waits_for_all_authenticated_preparations_before_launch() {
+        let mut prepared = Vec::new();
+        let mut elapsed = 0;
+        let mut launched = Vec::new();
+        let mut state = (&mut prepared, &mut elapsed, &mut launched);
+        start_prepared_cohort(
+            &mut state,
+            &[0, 1, 2, 3],
+            |(prepared, elapsed, _), index| {
+                **elapsed += if index == 0 { 2 } else { 79 };
+                prepared.push(index);
+                Ok(())
+            },
+            |(prepared, elapsed, launched), index| {
+                assert_eq!(prepared.as_slice(), &[0, 1, 2, 3]);
+                assert_eq!(
+                    **elapsed, 239,
+                    "cold setup must be outside every node's timer"
+                );
+                launched.push(index);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(launched, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn founder_cohort_preparation_failure_never_launches_a_partial_committee() {
+        for failed_index in 0..4 {
+            let mut launched = Vec::new();
+            let result = start_prepared_cohort(
+                &mut launched,
+                &[0, 1, 2, 3],
+                |_, index| {
+                    eyre::ensure!(
+                        index != failed_index,
+                        "injected authenticated setup failure"
+                    );
+                    Ok(())
+                },
+                |launched, index| {
+                    launched.push(index);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert!(launched.is_empty());
+        }
+    }
+
+    #[test]
+    fn founder_cohort_checks_reconnect_identity_and_requires_no_offer_key() {
+        use alloy_primitives::B256;
+        use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, NodeIdV1};
+        use outbe_tee::protocol::EnclaveResponse;
+
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: B256::repeat_byte(1).0,
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: super::AttestationMode::GramineDirectDev,
+            node_id: NodeIdV1 {
+                reth_p2p_public: [3; 33],
+            },
+            initialization_challenge: [4; 32],
+            node_host_noise_x25519: [5; 32],
+            recipient_x25519: [6; 32],
+            attestation_ed25519: [7; 32],
+            noise_responder_x25519: [8; 32],
+        };
+        for mutation in 0..5 {
+            let response = EnclaveResponse::PublicKeys {
+                offer_key_ready: mutation == 1,
+                recipient_x25519_pub: if mutation == 2 {
+                    [9; 32]
+                } else {
+                    manifest.recipient_x25519
+                },
+                attestation_pub: if mutation == 3 {
+                    [9; 32]
+                } else {
+                    manifest.attestation_ed25519
+                },
+                noise_static_pub: if mutation == 4 {
+                    [9; 32]
+                } else {
+                    manifest.noise_responder_x25519
+                },
+                tee_bls_pub: Vec::new(),
+                dkg_enc_pub: [10; 32],
+                dkg_enc_sig: Vec::new(),
+            };
+            assert_eq!(
+                super::verify_pre_dkg_public_identity(response, &manifest).is_ok(),
+                mutation == 0
+            );
+        }
+    }
+
+    #[test]
+    fn founder_preparation_creates_node_datadir_before_authenticated_initialization() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        let cfg = Config::resolve(&env);
+        let data = cfg.validator_dir(0).join("data");
+        assert!(!data.exists());
+        let localnet = Localnet::new(cfg);
+        let error = localnet.prepare_fresh_founder_node_host(0).unwrap_err();
+        assert!(format!("{error:#}").contains("read founder's provisioned Reth P2P signer"));
+        assert!(
+            data.is_dir(),
+            "the NodeHost API owns only its private child; the harness must create the node datadir first"
+        );
+        assert!(
+            !data
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .exists(),
+            "missing credentials must not initialize NodeHost state"
+        );
+    }
+
+    #[test]
+    fn founder_preparation_rejects_a_file_instead_of_node_datadir_without_overwriting_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        let cfg = Config::resolve(&env);
+        std::fs::create_dir_all(cfg.validator_dir(0)).unwrap();
+        let data = cfg.validator_dir(0).join("data");
+        std::fs::write(&data, b"not a directory").unwrap();
+        let localnet = Localnet::new(cfg);
+        assert!(localnet.prepare_fresh_founder_node_host(0).is_err());
+        assert_eq!(std::fs::read(data).unwrap(), b"not a directory");
+    }
+
+    #[test]
+    fn founder_preparation_does_not_touch_existing_restart_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        let cfg = Config::resolve(&env);
+        let state = cfg
+            .validator_dir(0)
+            .join("data")
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("sentinel"), b"existing state").unwrap();
+        let localnet = Localnet::new(cfg);
+        // No endpoint or signer exists: touching recovery would fail here.
+        localnet.prepare_fresh_founder_node_host(0).unwrap();
+        assert_eq!(
+            std::fs::read(state.join("sentinel")).unwrap(),
+            b"existing state"
+        );
+        assert_eq!(std::fs::read_dir(state).unwrap().count(), 1);
+    }
 
     #[test]
     fn controlled_time_restart_resumes_the_frozen_cohort_for_graceful_shutdown() {
