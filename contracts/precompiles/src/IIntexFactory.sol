@@ -19,8 +19,7 @@ interface IIntexFactory {
     ///        spender, carry a token registered with the vault router under either of
     ///        the series' currencies, and cover the settlement cost. The issuance
     ///        currency converts through COEN and needs fresh rates.
-    function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof)
-        external;
+    function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;
 
     /// @notice What settling one Intex of `seriesId` with `paymentToken` costs, and
     ///         which of the series' two currencies that token settles on. Reverts
