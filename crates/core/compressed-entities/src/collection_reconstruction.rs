@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::{

@@ -467,7 +467,8 @@ impl MetadosisContract<'_> {
                     let current_time = storage.timestamp()?.try_into().map_err(|_| {
                         storage_corruption_message("OCOMP block timestamp does not fit u64")
                     })?;
-                    let worldwide_day = outbe_common::WorldwideDay::new(record.intent.wwd);
+                    let worldwide_day =
+                        outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
                     let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
                     let outer = aggregate.record(worldwide_day).ok_or_else(|| {
                         storage_corruption_message(

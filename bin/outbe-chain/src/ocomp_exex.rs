@@ -2061,7 +2061,9 @@ where
         // The bundle the generation was certified under is chain state, not runtime
         // state: a node that has forgotten every terminal job still materializes.
         let protocol_bundle_hash = outbe_nod::NodContract::new(storage)
-            .ocomp_certified_generation(outbe_common::WorldwideDay::from(head.worldwide_day))?
+            .ocomp_certified_generation(outbe_primitives::time::WorldwideDay::from(
+                head.worldwide_day,
+            ))?
             .ok_or_else(|| eyre::eyre!("materialization head has no certified generation"))?
             .protocol_bundle_hash;
         self.domain.spawn_validator_materialization(

@@ -8,10 +8,10 @@ import {Routes} from "./routes/Routes.sol";
 contract DeployRoutes is Routes {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");
-        address createX = vm.envAddress("CREATEX_ADDRESS");
+        address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
 
         vm.startBroadcast(_pk());
-        deployRoutes(createX, salt);
+        deployRoutes(factory, salt);
         vm.stopBroadcast();
     }
 }

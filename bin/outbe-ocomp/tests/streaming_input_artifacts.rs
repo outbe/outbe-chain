@@ -1,7 +1,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1, WwdEntityId,
 };
@@ -26,6 +25,7 @@ use outbe_ocomp_protocol::{
         RawStorageSlotV1,
     },
 };
+use outbe_primitives::time::WorldwideDay;
 
 #[test]
 fn input_reference_commitment_streams_past_the_old_4096_list_limit() {

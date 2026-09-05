@@ -1,7 +1,6 @@
 use std::fs;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
     tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
@@ -12,6 +11,7 @@ use outbe_ocomp::input_inventory::{
     TributeInventorySubjectV1, TributeInventoryWorkConfig,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
+use outbe_primitives::time::WorldwideDay;
 
 fn checkpoint() -> CheckpointIdentityV1 {
     CheckpointIdentityV1 {

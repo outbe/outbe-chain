@@ -171,7 +171,7 @@ fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
 #[test]
 fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20_260_105);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20_260_105);
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             wwd,

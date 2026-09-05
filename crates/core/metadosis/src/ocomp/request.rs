@@ -1,5 +1,4 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
 };
@@ -12,6 +11,7 @@ use outbe_ocomp_protocol::{
     },
     receipts::RequestBudgetSplitReceiptV1,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_tribute::{TributeContract, TributePreAdmissionProjection};
 

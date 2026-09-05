@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 /// Consensus-visible phase of one Metadosis day.

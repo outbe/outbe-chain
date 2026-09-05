@@ -120,7 +120,9 @@ async function main() {
   // amount is the gratis the quote cost, which the ticket recorded at pledge time -
   // it is not in calldata, because it was sealed into the pledge.
   const stake = protocolAmountToNativeCoen(BigInt(ticket.amount));
-  console.log(`CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral)`);
+  console.log(
+    `CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral, paid to the smart account)`,
+  );
 
   // The loan is delivered by a call into the smart account, so the precompile now
   // rejects an undeployed one. Fail here with a runnable instruction rather than

@@ -33,7 +33,7 @@ struct OneTributePartitionTree {
     parent_root: B256,
     parent_catalog_root: B256,
     parent_block_hash: B256,
-    partition_roots: Vec<(outbe_common::WorldwideDay, B256)>,
+    partition_roots: Vec<(outbe_primitives::time::WorldwideDay, B256)>,
 }
 
 impl AuthenticatedParentTree for OneTributePartitionTree {
@@ -97,7 +97,7 @@ struct OneTributePartitionFactory {
     parent_root: B256,
     parent_catalog_root: B256,
     parent_block_hash: B256,
-    partition_roots: Vec<(outbe_common::WorldwideDay, B256)>,
+    partition_roots: Vec<(outbe_primitives::time::WorldwideDay, B256)>,
 }
 
 impl AuthenticatedParentTreeFactory for OneTributePartitionFactory {
@@ -136,7 +136,7 @@ fn run_terminal_request(
 
 fn live_intent(
     provider: &mut HashMapStorageProvider,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> (B256, OcompJobRecordV1) {
     StorageHandle::enter(provider, |storage| {
         let limits = poc_schema_limits();
@@ -168,7 +168,7 @@ pub(super) fn begin_recovery_scope(
 pub(super) fn begin_recovery_scope_for_wwd(
     provider: &mut HashMapStorageProvider,
     completed_scope: &ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
 ) -> ExecutionScope {
     provider.set_block_number(block_number);
@@ -180,7 +180,7 @@ pub(super) fn begin_recovery_scope_for_wwd(
 pub(super) fn begin_recovery_scope_from_storage(
     storage: StorageHandle<'_>,
     completed_scope: &ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
 ) -> ExecutionScope {
     begin_recovery_scope_for_wwds_from_storage(storage, completed_scope, &[wwd], block_number)
@@ -189,7 +189,7 @@ pub(super) fn begin_recovery_scope_from_storage(
 pub(super) fn begin_recovery_scope_for_wwds_from_storage(
     storage: StorageHandle<'_>,
     completed_scope: &ExecutionScope,
-    worldwide_days: &[outbe_common::WorldwideDay],
+    worldwide_days: &[outbe_primitives::time::WorldwideDay],
     block_number: u64,
 ) -> ExecutionScope {
     let parent_root = completed_scope.completed_sealed_root().unwrap();
@@ -253,7 +253,7 @@ fn run_lifecycle_begin(
 fn run_direct_failed_day_recovery(
     provider: &mut HashMapStorageProvider,
     scope: &ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     timestamp: u64,
 ) -> Result<()> {

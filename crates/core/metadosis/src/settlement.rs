@@ -1,9 +1,9 @@
 //! Private READY classification and local settlement paths.
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_desis::ReferenceCurrencyPrice;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;

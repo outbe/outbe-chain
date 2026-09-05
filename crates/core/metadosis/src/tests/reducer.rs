@@ -17,7 +17,7 @@ fn projection(status: WwdStatus) -> WwdProjection {
 
 fn projection_for_day_type(status: WwdStatus, day_type: WwdDayType) -> WwdProjection {
     WwdProjection {
-        worldwide_day: outbe_common::WorldwideDay::new(2026_0730),
+        worldwide_day: outbe_primitives::time::WorldwideDay::new(2026_0730),
         status,
         day_type,
         membership: if status.is_terminal() {

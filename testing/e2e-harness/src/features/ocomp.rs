@@ -14,7 +14,6 @@ use std::{
 use alloy_primitives::B256;
 use cucumber::{given, then, when};
 use outbe_chain_constants::GenesisProtocolParametersV1;
-use outbe_common::WorldwideDay;
 use outbe_node::ocomp::retention::{inspect_retention_journal, PinReleaseReason, PinStateV1};
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
@@ -24,6 +23,7 @@ use outbe_ocomp_protocol::{
     vote::ResultVoteV1,
 };
 use outbe_ocompregistry::{OcompProtocolAuthorityV1, OcompRequestProfile, OcompSuccessorV1};
+use outbe_primitives::time::WorldwideDay;
 
 use crate::features::common::{bootstrap_localnet, start_bootstrapped_localnet};
 use crate::internal::addresses::UPDATE_ADDR;

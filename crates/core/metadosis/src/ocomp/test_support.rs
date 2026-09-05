@@ -16,7 +16,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
     EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
@@ -60,6 +59,7 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(test)]
 use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     error::{PrecompileError, Result as PrecompileResult},

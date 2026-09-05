@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, B256, U256};
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::Result,
     storage::{MetadosisCycleLifecycle, MetadosisMutationPurpose, StorageHandle},
@@ -540,12 +540,12 @@ mod tests {
     use std::cell::Cell;
 
     use alloy_primitives::{B256, U256};
-    use outbe_common::WorldwideDay;
     use outbe_ocomp_protocol::profile::CapacityProfileV1;
     use outbe_primitives::storage::{
         hashmap::HashMapStorageProvider, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
         MetadosisMutationPurposeTag,
     };
+    use outbe_primitives::time::WorldwideDay;
 
     use super::*;
     use crate::{

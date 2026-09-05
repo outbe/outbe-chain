@@ -58,14 +58,14 @@ pub enum IntexFactoryError {
     )]
     GroupBinMismatch {
         iso: u16,
-        worldwide_day: outbe_common::WorldwideDay,
+        worldwide_day: outbe_primitives::time::WorldwideDay,
         expected: u32,
         got: u32,
     },
     #[error("currency {iso} day {worldwide_day} is already indexed")]
     GroupAlreadyIndexed {
         iso: u16,
-        worldwide_day: outbe_common::WorldwideDay,
+        worldwide_day: outbe_primitives::time::WorldwideDay,
     },
 }
 

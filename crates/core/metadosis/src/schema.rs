@@ -1,8 +1,8 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, StorageBytes};
+use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 
 /// EVM base slot of `MetadosisContract::ocomp_job_records`.
 ///

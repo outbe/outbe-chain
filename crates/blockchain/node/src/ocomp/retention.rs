@@ -19,7 +19,6 @@ use std::{
 use alloy_consensus::{BlockHeader as _, TxReceipt as _};
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolEvent as _;
-use outbe_common::WorldwideDay;
 use outbe_consensus::{
     block::ConsensusBlock,
     finalization::parent_cert_store::FinalizedParentCertStore,
@@ -36,6 +35,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::TributeRetentionSelector;
 use outbe_offchain_storage::StorageErrorKind;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
     error::PrecompileError,

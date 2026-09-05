@@ -14,9 +14,9 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::IntexError;
 use crate::payout::{

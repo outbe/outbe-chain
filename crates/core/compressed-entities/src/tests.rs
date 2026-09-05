@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_common::WorldwideDay;
 use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_tribute_v1,

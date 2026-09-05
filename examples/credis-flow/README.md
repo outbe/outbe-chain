@@ -218,8 +218,8 @@ npx tsx src/2-top-up-smart-account.ts
 # CCA requests credis against a prior pledge (latest ticket, or an explicit path).
 # The disbursed amount and the asset come from the ticket, not from calldata.
 # Payable: the CCA converts the protocol-6 collateral to the same whole-token
-# amount of native-18 COEN and attaches it; that native value is escrowed
-# against the position, returned when it settles in full, and burned if it voids.
+# amount of native-18 COEN and attaches it; that native value goes straight to the
+# user's smart account as unrestricted balance and never comes back to the CCA.
 # Requires the smart account from the previous step to already be deployed.
 npx tsx src/3-request-credis.ts
 npx tsx src/3-request-credis.ts tickets/pledge-abc123def456.json

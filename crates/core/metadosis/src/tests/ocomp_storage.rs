@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::{
         intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
@@ -10,6 +9,7 @@ use outbe_ocomp_protocol::{
     receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
     state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},

@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_nod::NodContract;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::constants::calc_floor_price;
 

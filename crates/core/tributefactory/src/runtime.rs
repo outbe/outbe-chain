@@ -1,12 +1,12 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::time::timestamp_to_date_key;
+use outbe_primitives::time::WorldwideDay;
 use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
 };

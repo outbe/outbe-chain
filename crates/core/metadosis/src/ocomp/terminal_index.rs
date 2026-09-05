@@ -7,8 +7,8 @@
 //! with the day on retirement.
 
 use alloy_primitives::{keccak256, B256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{WwdDayType, WwdStatus};
-use outbe_common::WorldwideDay as WwdKey;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::time::WorldwideDay as WwdKey;
 
 fn as_big(value: U256) -> num_bigint::BigUint {
     num_bigint::BigUint::from_bytes_be(&value.to_be_bytes::<32>())

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
     CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
@@ -15,6 +14,7 @@ use outbe_offchain_storage::{
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     TributeContract, TributeData, TributeRepositoryReader, TributeRepositoryWriter,
 };

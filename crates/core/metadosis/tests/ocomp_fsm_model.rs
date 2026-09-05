@@ -1,11 +1,11 @@
 // OCOMP-TEST-ID: OCM-FSM-001
 
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_metadosis::model::{
     transition_rules, DayPhase, JobFsmCommand, JobFsmState, JobFsmTransitionKind,
     ReadyAttemptSnapshot, RequestEffectMode,
 };
+use outbe_primitives::time::WorldwideDay;
 
 const WWD: WorldwideDay = WorldwideDay::new(20_260_723);
 const REQUEST_HEIGHT: u64 = 40;

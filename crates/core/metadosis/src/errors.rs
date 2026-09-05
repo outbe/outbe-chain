@@ -1,9 +1,9 @@
 use alloy_primitives::{Bytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::abi::{
     OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_RESULT_VOTE_REJECTED_SELECTOR,
 };
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

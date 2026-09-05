@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::state::OcompJobStatus;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,

@@ -71,19 +71,19 @@ abstract contract Routes is BaseRoute {
         revert UnknownRoute(label);
     }
 
-    function deployRoutes(address createX, string memory salt) public {
+    function deployRoutes(address factory, string memory salt) public {
         Route[] memory list = routes();
         for (uint256 i = 0; i < list.length; i++) {
-            (address token, address tokenBridge) = deployRoute(createX, salt, list[i]);
+            (address token, address tokenBridge) = deployRoute(factory, salt, list[i]);
             _logRoute(list[i].spec.tokenLabel, token, tokenBridge);
         }
     }
 
-    function deployRoute(address createX, string memory salt, Route memory route)
+    function deployRoute(address factory, string memory salt, Route memory route)
         public
         returns (address token, address tokenBridge)
     {
-        (token, tokenBridge) = _deployRoute(createX, salt, route.spec, route.initCode);
+        (token, tokenBridge) = _deployRoute(factory, salt, route.spec, route.initCode);
 
         // Bootstrap the mock on first deploy. Keyed on `totalSupply` rather than on "was just deployed", so a re-run
         // does not mint twice. USDT and USDC share the mock surface, so one cast covers both.

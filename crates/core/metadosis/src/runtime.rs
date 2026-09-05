@@ -1,5 +1,5 @@
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_primitives::time::WorldwideDay;
 #[cfg(test)]
 use outbe_primitives::time::{
     date_key_to_utc_timestamp as primitives_date_key_to_timestamp,

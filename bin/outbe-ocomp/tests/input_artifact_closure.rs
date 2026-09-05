@@ -3,7 +3,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas},
@@ -27,6 +26,7 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     ListKind, OrderedListLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 
 #[test]
 fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {

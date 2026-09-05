@@ -12,10 +12,10 @@ use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 use crate::{
     errors::vote_rejection_code::LIFECYCLE_INACTIVE, ocomp::vote::dispatch_public_result_vote,
 };
-use outbe_common::WorldwideDay as WwdKey;
 use outbe_compressed_entities::RetirementOutcome;
 use outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::time::WorldwideDay as WwdKey;
 
 const REJECT_CALL_MODE_CODE: u16 = 3;
 
