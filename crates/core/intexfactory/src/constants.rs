@@ -103,3 +103,8 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
+
+/// Deadline-day buckets one expiry sweep may open per block. Each costs a tree
+/// descent plus its own bookkeeping, so a long backlog of days spreads over blocks
+/// the same way a long bucket does.
+pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;

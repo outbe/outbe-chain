@@ -631,3 +631,43 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
         );
     });
 }
+
+#[test]
+fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        let now = ISSUED_AT as u64;
+        let far = WorldwideDay::new(20260101);
+        let near = WorldwideDay::new(20260102);
+
+        // Called first, due last - the reverse of the order the sweep must use.
+        f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[sid(1)])
+            .unwrap();
+        f.push_called_group(REFERENCE_ISO, near, now + DAY, &[sid(2)])
+            .unwrap();
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, now + 2 * DAY, CHAIN_ID),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        let near_day = IntexFactoryContract::deadline_day(now + DAY);
+        let far_day = IntexFactoryContract::deadline_day(now + 10 * DAY);
+        assert_eq!(
+            f.expiry_bucket_live.read(&near_day).unwrap(),
+            0,
+            "the group whose window closed leaves its bucket"
+        );
+        assert_eq!(
+            f.expiry_bucket_live.read(&far_day).unwrap(),
+            1,
+            "the one still inside its window stays"
+        );
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            Some(far_day),
+            "only the day still waiting is left in the tree"
+        );
+    });
+}
