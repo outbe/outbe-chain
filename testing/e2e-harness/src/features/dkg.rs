@@ -54,19 +54,14 @@ fn short_grace_setup(world: &mut World) {
 #[when("a staked joiner freezes a 4-to-5 reshare target")]
 fn freeze_target(world: &mut World) {
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    world
-        .rpc
-        .wait_block(joiner_port, 20, 40)
-        .expect("joining node sync to height 20");
     let key = world.validators.joiner().evm_key().expect("joiner key");
     world.rpc.stake(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));

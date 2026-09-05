@@ -754,20 +754,11 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
     };
     let primary = world.validators.primary_port();
     let index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(index);
 
     world
         .localnet
-        .launch_joiner(index, &[])
+        .launch_caught_up_joiner(index, &[])
         .expect("launch registered joiner");
-    let caught_up = world
-        .rpc
-        .wait_block(joiner_port, 20, 40)
-        .expect("registered joiner RPC must catch up before activation");
-    assert!(
-        caught_up >= 20,
-        "registered joiner did not catch up before activation"
-    );
     world.rpc.stake(&key, 1_000).expect("stake joiner");
     assert_eq!(
         world

@@ -770,7 +770,7 @@ fn native_mesh_snapshot(world: &World, node_ids: &[String]) -> Option<Vec<Vec<St
         let connected = world
             .localnet
             .radicle_connected_session_node_ids(index)
-            .ok()?
+            .unwrap_or_else(|error| panic!("observe validator-{index} native sessions: {error:#}"))
             .into_iter()
             .collect::<BTreeSet<_>>();
         let rpc_connected = world

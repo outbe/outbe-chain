@@ -78,7 +78,6 @@ fn wait_for_dkg_retry_snapshot(keys_dir: impl AsRef<Path>, validator: usize, fil
 fn joiner_active_persisted_share(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     let wwd = world.state.wwd.clone().expect("wwd");
 
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
@@ -94,12 +93,8 @@ fn joiner_active_persisted_share(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner (keys-dir)");
-    world
-        .rpc
-        .wait_block(joiner_port, 20, 40)
-        .expect("joining node sync to height 20 before restart");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
@@ -286,7 +281,6 @@ fn resumes_without_new_ceremony(world: &mut World) {
 fn joiner_completes_dkg_before_activation(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -294,12 +288,8 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 20, 40).is_some(),
-        "joiner never cold-synced"
-    );
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -431,7 +421,6 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
 fn restart_joiner_during_dkg(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -439,9 +428,8 @@ fn restart_joiner_during_dkg(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -609,7 +597,6 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
 fn restart_registered_joiner_before_staking(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
@@ -617,9 +604,8 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     let keys = world.localnet.keys_dir(idx);
     world
         .localnet
-        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .launch_caught_up_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -746,16 +732,14 @@ fn registered_restart_then_join_activates(world: &mut World) {
 fn restart_active_validator_during_reshare(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     world
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");

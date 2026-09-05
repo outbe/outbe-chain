@@ -14,7 +14,7 @@ use eyre::{bail, Result, WrapErr};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
-use crate::internal::proc::{self, args, attach_log, wait_tcp, SealSpec};
+use crate::internal::proc::{self, args, attach_log, SealSpec};
 
 use super::{Localnet, StartOpts};
 
@@ -753,6 +753,10 @@ impl Localnet {
         chain_id_hex: &str,
         dkg_seed: Option<String>,
     ) -> Result<()> {
+        ensure!(
+            !self.enclaves.contains_key(&i),
+            "enclave slot {i} is already owned"
+        );
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
         let port = self.cfg.tee_port(i);
@@ -768,34 +772,33 @@ impl Localnet {
             chain_id_hex: chain_id_hex.to_string(),
         });
 
-        let guard = proc::spawn_enclave(proc::EnclaveSpec {
-            name: self.cfg.tee_container(i),
-            tee_port: port,
-            enclave_bin,
-            signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
-            network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
-                .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
-            dev_network_binding: self.dev_network_binding_hex()?,
-            launch: self.enclave_launch()?,
-            sudo: self.cfg.sudo,
-            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
-            remote_attestation: match self.cfg.tee_mode {
-                crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
-                crate::env::TeeMode::SgxNoAttest
-                | crate::env::TeeMode::GramineDirect
-                | crate::env::TeeMode::Mock
-                | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+        let guard = proc::spawn_enclave_ready(
+            proc::EnclaveSpec {
+                name: self.cfg.tee_container(i),
+                tee_port: port,
+                enclave_bin,
+                signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+                network_descriptor: (self.cfg.tee_mode == crate::env::TeeMode::Real)
+                    .then(|| self.cfg.dir.join("network-descriptor-v1.bin")),
+                dev_network_binding: self.dev_network_binding_hex()?,
+                launch: self.enclave_launch()?,
+                sudo: self.cfg.sudo,
+                pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+                remote_attestation: match self.cfg.tee_mode {
+                    crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
+                    crate::env::TeeMode::SgxNoAttest
+                    | crate::env::TeeMode::GramineDirect
+                    | crate::env::TeeMode::Mock
+                    | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
+                },
+                dkg_seed,
+                seal,
+                log_path: vd.join("enclave.log"),
+                debug: self.cfg.debug,
             },
-            dkg_seed,
-            seal,
-            log_path: vd.join("enclave.log"),
-            debug: self.cfg.debug,
-        })?;
+            self.enclave_startup_deadline(20),
+        )?;
         self.enclaves.insert(i, guard);
-        if !wait_tcp(port, 200) {
-            self.enclaves.remove(&i);
-            bail!("enclave socket 127.0.0.1:{port} never came up for validator-{i}");
-        }
         Ok(())
     }
 

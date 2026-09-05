@@ -114,11 +114,13 @@ impl ScenarioWatchdog {
 }
 
 impl WatchdogHandle {
-    fn arm(&self, scenario: String, timeout: Duration) {
+    fn arm(&self, scenario: String, timeout: Duration) -> Instant {
         let (state, wake) = &*self.shared;
         let mut state = state.lock().expect("lock E2E watchdog");
-        state.active = Some((scenario, Instant::now() + timeout));
+        let deadline = Instant::now() + timeout;
+        state.active = Some((scenario, deadline));
         wake.notify_all();
+        deadline
     }
 
     fn disarm(&self) {
@@ -304,12 +306,13 @@ pub async fn run() {
         // partial scenario. Environment-ineligible scenarios are filtered out
         // before execution and therefore never reach this writer policy.
         .fail_on_skipped()
-        .before(move |feature, _rule, scenario, _world| {
+        .before(move |feature, _rule, scenario, world| {
             hook_counters.started.fetch_add(1, Ordering::Relaxed);
-            before_watchdog.arm(
+            let deadline = before_watchdog.arm(
                 format!("{} :: {}", feature.name, scenario.name),
                 scenario_timeout,
             );
+            world.localnet.set_scenario_deadline(deadline);
             // Only reachable for unmet scenarios in `--all` mode (the filter
             // excludes them otherwise); panic so they count as failures.
             let reason = if env_hook.all {
@@ -353,7 +356,10 @@ pub async fn run() {
                     world.state.expected_dkg_reveal.as_deref(),
                     world.state.ocomp_full_node_mismatch_job_id,
                     world.state.expected_tee_lease_guard_shutdown_validator,
-                    world.state.expected_tee_lease_guard_shutdown_full_node,
+                    world
+                        .state
+                        .expected_tee_lease_guard_shutdown_full_node
+                        .as_ref(),
                 );
                 let audit = match audit {
                     Ok(audit) => audit,
@@ -387,9 +393,6 @@ pub async fn run() {
                             panic!("OCOMP capacity resource evidence failed: {error:#}");
                         }));
                 }
-                if let Err(error) = audit.ensure_clean() {
-                    panic!("E2E log-safety audit failed: {error:#}");
-                }
                 if let Err(error) = evidence::write_scenario(evidence::ScenarioEvidence {
                     env: &env_evidence,
                     feature,
@@ -404,10 +407,14 @@ pub async fn run() {
                     ocomp_public: &ocomp_public,
                     price_oracle: &price_oracle,
                     radicle: &world.state.radicle,
+                    tee_lease: &world.state.tee_lease,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }
                 after_counters.evidence.fetch_add(1, Ordering::Relaxed);
+                if let Err(error) = audit.ensure_clean() {
+                    panic!("E2E log-safety audit failed: {error:#}");
+                }
             }
             after_counters.finished.fetch_add(1, Ordering::Relaxed);
             after_watchdog.disarm();

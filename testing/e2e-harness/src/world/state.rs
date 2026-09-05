@@ -6,6 +6,34 @@
 
 use serde::Serialize;
 
+/// Immutable public observations captured by steps, before after-hook teardown.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TeeLeaseEvidenceV1 {
+    pub observations: Vec<serde_json::Value>,
+    pub full_node_shutdown: Option<TeeLeaseShutdownV1>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TeeLeaseLogIntervalV1 {
+    pub path: std::path::PathBuf,
+    pub device: u64,
+    pub inode: u64,
+    pub start: u64,
+    pub end: u64,
+    pub content: String,
+}
+
+/// Constructed only after observing the original owned child exit, before replacement.
+#[derive(Clone, Debug, Serialize)]
+pub struct TeeLeaseShutdownV1 {
+    pub slot: usize,
+    pub pid: u32,
+    pub deadline: u64,
+    pub exit_code: Option<i32>,
+    pub exit_signal: Option<i32>,
+    pub sinks: Vec<TeeLeaseLogIntervalV1>,
+}
+
 /// Pending-pool fixture identity; secret bytes stay in a private scenario file.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingValidatorPoolFixture {
@@ -229,6 +257,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    pub tee_lease: TeeLeaseEvidenceV1,
     /// Public-only Radicle operations and replication evidence.
     pub radicle: RadicleScenarioEvidenceV1,
     /// Proposal id under test (always 1 in the update flow).
@@ -253,9 +282,8 @@ pub struct FixtureState {
     /// trailers causally bound to that guard are accepted by the log audit.
     pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
     /// The same manual-lease scenario deliberately fail-stops this role-neutral
-    /// FullNode. Its execution-engine path emits one exact guarded fatal trailer
-    /// bundle, distinct from the validator's graceful shutdown profile.
-    pub expected_tee_lease_guard_shutdown_full_node: Option<usize>,
+    /// FullNode. Acceptance requires the owned exit and exact bounded sink records.
+    pub expected_tee_lease_guard_shutdown_full_node: Option<TeeLeaseShutdownV1>,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -493,6 +521,7 @@ impl Default for FixtureState {
     fn default() -> Self {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
+            tee_lease: TeeLeaseEvidenceV1::default(),
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),

@@ -53,7 +53,7 @@ fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn derive_validator_recovery_follower_args(
+pub(super) fn derive_validator_recovery_follower_args(
     original: &[String],
     certified_upstream: &str,
 ) -> Result<Vec<String>> {
@@ -101,6 +101,127 @@ fn derive_validator_recovery_follower_args(
 }
 
 impl Localnet {
+    /// Positive-start barrier for the selected upstream, not a substitute for
+    /// the node's own authenticated admission. The owner is stopped while its
+    /// exact durable anchor is loaded; polling never reopens the owner journal.
+    pub(super) fn wait_selected_upstream_admission(
+        &self,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        use crate::world::rpc::Rpc;
+        use alloy_primitives::B256;
+        use alloy_signer_local::PrivateKeySigner;
+        use outbe_primitives::tee_attestation_v1::TeePolicyV1;
+        use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+
+        if !self.cfg.tee_mode.passes_sgx_devices() {
+            return Ok(());
+        }
+        let node_dir = self.cfg.validator_dir(index);
+        ensure!(
+            !self
+                .validators
+                .values()
+                .chain(self.followers.values())
+                .any(|child| child.owns_node_data_dir(&node_dir.join("data"))),
+            "cannot load admission anchor while its node is still owned"
+        );
+        let anchor = outbe_tee::load_finalized_join_admission_anchor(&node_dir.join("data"))?
+            .ok_or_else(|| eyre!("positive FullNode startup has no finalized admission anchor"))?;
+        let secret = fs::read_to_string(node_dir.join("reth-p2p-secret.hex"))?;
+        let signer: PrivateKeySigner = secret
+            .trim()
+            .parse()
+            .map_err(|_| eyre!("invalid provisioned FullNode P2P signer"))?;
+        let public = signer.credential().verifying_key().to_encoded_point(true);
+        let public = public.as_bytes();
+        let selector = ITeeRegistryV1::nodeHostEnclaveBindingCall {
+            rethP2pPrefix: public[0],
+            rethP2pX: B256::from_slice(&public[1..]),
+        };
+        let rpc = Rpc::new(self.cfg.clone());
+        let port = self.cfg.http_port(upstream_slot);
+        let url = format!("http://127.0.0.1:{port}");
+        let deadline = std::time::Instant::now() + Duration::from_secs(240);
+        loop {
+            let observation = rpc.finalized_result(port);
+            if let Ok(height) = observation.as_ref() {
+                if *height >= anchor.finalized_height {
+                    ensure!(
+                        rpc.checkpoint_at(port, 0)?.block_hash == anchor.genesis_hash,
+                        "selected upstream has a different genesis"
+                    );
+                    let historical = rpc.checkpoint_at(port, anchor.finalized_height)?;
+                    ensure!(
+                        historical.block_hash == anchor.finalized_hash
+                            && historical.state_root == anchor.finalized_state_root,
+                        "selected upstream has a different finalized admission checkpoint"
+                    );
+                    let address = outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
+                    let admitted =
+                        eth::read_call_at_result(&url, address, &selector, anchor.finalized_height)
+                            .map_err(eyre::Report::msg)?;
+                    ensure!(
+                        admitted.exists
+                            && admitted.nodeIdHash == anchor.node_id_hash
+                            && admitted.enclaveId == anchor.enclave_id
+                            && admitted.intentHash == anchor.intent_hash,
+                        "selected upstream lacks the exact historical admission binding"
+                    );
+
+                    // Pin all current reads to this finalized height. Renewal
+                    // may change the nonce/deadline; identity must still match.
+                    let current = eth::read_call_at_result(&url, address, &selector, *height)
+                        .map_err(eyre::Report::msg)?;
+                    let canonical = eth::read_call_at_result(
+                        &url,
+                        address,
+                        &ITeeRegistryV1::activePolicyV1Call {},
+                        *height,
+                    )
+                    .map_err(eyre::Report::msg)?;
+                    let policy = TeePolicyV1::decode_canonical(&canonical)
+                        .map_err(|error| eyre!("invalid finalized TEE policy: {error}"))?;
+                    ensure!(
+                        policy.chain_id == anchor.chain_id
+                            && policy.genesis_hash == anchor.genesis_hash,
+                        "selected upstream TEE policy belongs to another network"
+                    );
+                    let block = eth::raw_json_result(
+                        &url,
+                        "eth_getBlockByNumber",
+                        serde_json::json!([format!("0x{height:x}"), false]),
+                    )?;
+                    let timestamp = block
+                        .get("timestamp")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            eyre!("selected upstream finalized block has no timestamp")
+                        })?;
+                    let timestamp = u64::from_str_radix(timestamp.trim_start_matches("0x"), 16)?;
+                    ensure!(
+                        current.exists
+                            && current.nodeIdHash == anchor.node_id_hash
+                            && current.enclaveId == anchor.enclave_id,
+                        "selected upstream current admission has a different identity"
+                    );
+                    ensure!(
+                        current.validUntil > timestamp,
+                        "selected upstream TEE lease is expired"
+                    );
+                    return Ok(());
+                }
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "selected upstream {upstream_slot} did not reach admission h{}: {observation:?}",
+                anchor.finalized_height
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// Provision a production full-node enclave with its persistent Reth and
     /// EVM identities. The global EVM key owns both the Registry association
     /// and the transaction envelope.
@@ -183,6 +304,7 @@ impl Localnet {
         index: usize,
         upstream_slot: usize,
     ) -> Result<()> {
+        self.wait_selected_upstream_admission(index, upstream_slot)?;
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
         // File-based flag: the key must never appear in argv (`ps` leak).
@@ -307,7 +429,7 @@ impl Localnet {
         Ok(())
     }
 
-    fn launch_certified_follower_with_args(
+    pub(super) fn launch_certified_follower_with_args(
         &mut self,
         name: &str,
         index: usize,

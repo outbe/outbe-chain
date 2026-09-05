@@ -833,7 +833,7 @@ async fn wait_for_advancing_heights(
     timeout: Duration,
 ) -> Result<Vec<u64>> {
     let deadline = Instant::now() + timeout;
-    let mut baseline = None;
+    let mut baseline: Option<Vec<u64>> = None;
     loop {
         localnet.ensure_committee_alive()?;
         if let Some(heights) = observe_heights(ports) {

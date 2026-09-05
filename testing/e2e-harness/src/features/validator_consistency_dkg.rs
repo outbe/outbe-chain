@@ -129,7 +129,6 @@ fn short_valid_dkg_schedule(world: &mut World) {
 fn confirm_joiner_after_freeze(world: &mut World) {
     let primary = world.validators.primary_port();
     let joiner_index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(joiner_index);
 
     world
         .localnet
@@ -137,12 +136,8 @@ fn confirm_joiner_after_freeze(world: &mut World) {
         .expect("provision post-freeze joiner");
     world
         .localnet
-        .launch_joiner(joiner_index, &[])
+        .launch_caught_up_joiner(joiner_index, &[])
         .expect("launch post-freeze joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 15, 50).is_some(),
-        "joiner did not synchronize before staking"
-    );
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let address = world.rpc.address_of(&key).expect("joiner address");
@@ -531,7 +526,6 @@ fn confirmed_pending_joiner(world: &mut World) {
     boot_profiled_localnet(world, None);
     let primary = world.validators.primary_port();
     let joiner_index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(joiner_index);
 
     world
         .localnet
@@ -539,12 +533,8 @@ fn confirmed_pending_joiner(world: &mut World) {
         .expect("provision readiness-reset joiner");
     world
         .localnet
-        .launch_joiner(joiner_index, &[])
+        .launch_caught_up_joiner(joiner_index, &[])
         .expect("launch readiness-reset joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 15, 50).is_some(),
-        "joiner did not synchronize"
-    );
 
     // Avoid racing the transition under test with an already-frozen target.
     let _ = wait_for_safe_pre_freeze_window(world);

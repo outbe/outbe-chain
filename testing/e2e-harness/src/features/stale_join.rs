@@ -15,7 +15,6 @@ use crate::world::World;
 #[when("a staked joiner has not confirmed readiness")]
 fn staked_joiner_unconfirmed(world: &mut World) {
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     let primary = world.validators.primary_port();
 
     world
@@ -24,12 +23,8 @@ fn staked_joiner_unconfirmed(world: &mut World) {
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    world
-        .rpc
-        .wait_block(joiner_port, 20, 40)
-        .expect("unconfirmed joiner sync to height 20");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");

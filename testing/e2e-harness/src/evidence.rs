@@ -13,7 +13,9 @@ use crate::ocomp_evidence::{hash_file, publish_manifest, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
 use crate::world::price_oracle::PriceOracleEvidenceV1;
-use crate::world::state::{OcompPublicScenarioEvidenceV1, RadicleScenarioEvidenceV1};
+use crate::world::state::{
+    OcompPublicScenarioEvidenceV1, RadicleScenarioEvidenceV1, TeeLeaseEvidenceV1,
+};
 
 pub(crate) struct ScenarioEvidence<'a> {
     pub env: &'a Environment,
@@ -29,6 +31,7 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub ocomp_public: &'a OcompPublicScenarioEvidenceV1,
     pub price_oracle: &'a PriceOracleEvidenceV1,
     pub radicle: &'a RadicleScenarioEvidenceV1,
+    pub tee_lease: &'a TeeLeaseEvidenceV1,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -283,7 +286,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "feature": input.feature.name,
         "scenario": input.scenario.name,
         "scenario_id": input.scenario_id,
-        "result": event_name(input.event),
+        "result": if input.audit.is_clean() { event_name(input.event) } else { "failed" },
         "duration_ms": input.elapsed.as_millis(),
         "environment": {
             "validators": input.env.validators,
@@ -295,6 +298,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "scenario_data_dir": input.scenario_dir,
         "metadosis_p0": metadosis_p0,
         "log_audit": input.audit.json(),
+        "tee_lease": input.tee_lease,
         "ocomp": {
             "exact_binaries": exact_ocomp_binaries,
             "topology": input.ocomp,

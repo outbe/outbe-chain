@@ -147,6 +147,7 @@ pub struct Localnet {
     validator_recovery_original_argv: HashMap<usize, Vec<String>>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
+    scenario_deadline: Option<std::time::Instant>,
 }
 
 impl Localnet {
@@ -164,7 +165,30 @@ impl Localnet {
             validator_argv: HashMap::new(),
             validator_recovery_original_argv: HashMap::new(),
             start_opts: StartOpts::default(),
+            scenario_deadline: None,
         }
+    }
+
+    pub(crate) fn set_scenario_deadline(&mut self, deadline: std::time::Instant) {
+        self.scenario_deadline = Some(deadline);
+    }
+
+    fn enclave_startup_deadline(&self, nonhardware_seconds: u64) -> std::time::Instant {
+        let now = std::time::Instant::now();
+        let seconds = if self.cfg.tee_mode.passes_sgx_devices() {
+            crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS
+        } else {
+            nonhardware_seconds
+        };
+        let deadline = now + std::time::Duration::from_secs(seconds);
+        // Leave the existing watchdog time for diagnostics and owned teardown.
+        self.scenario_deadline.map_or(deadline, |outer| {
+            deadline.min(
+                outer
+                    .checked_sub(std::time::Duration::from_secs(20))
+                    .unwrap_or(now),
+            )
+        })
     }
 
     fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
@@ -328,7 +352,7 @@ impl Localnet {
             "--authrpc.port",
             self.cfg.authrpc_port(i),
             "--ipcpath",
-            data.join("reth.ipc").display(),
+            crate::internal::config::node_ipc_path(node_dir).display(),
             "--engine.persistence-threshold",
             0,
             "--engine.cross-block-cache-size",
@@ -387,6 +411,7 @@ impl Localnet {
         node_dir: &Path,
         mut cmd: Command,
     ) -> Result<ChildGuard> {
+        crate::internal::config::validate_node_ipc_path(node_dir)?;
         let node_args = cmd
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -601,6 +626,43 @@ mod tests {
     use crate::env::Environment;
     use std::ffi::OsStr;
 
+    #[test]
+    fn node_ipc_preflight_rejects_dynamic_node_before_spawning() {
+        let env = Environment::default();
+        let localnet = Localnet::new(Config::resolve(&env));
+        let node_dir = PathBuf::from("/tmp").join("long-node-directory-".repeat(10));
+        let error = localnet
+            .spawn_node(
+                "unstarted-follower",
+                15,
+                &node_dir,
+                Command::new("/nonexistent/e2e-node"),
+            )
+            .expect_err("invalid IPC path must precede executable lookup");
+        assert!(error.to_string().contains("invalid node IPC socket path"));
+        assert!(error.to_string().contains(&node_dir.display().to_string()));
+    }
+
+    #[test]
+    fn node_ipc_preflight_rejects_bootstrap_before_files_or_subprocesses() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let env = Environment {
+            data_dir: directory.path().join("long-scenario-directory-".repeat(6)),
+            seed: directory.path().join("nonexistent-seed.json"),
+            chain_bin: directory.path().join("nonexistent-node"),
+            ..Environment::default()
+        };
+        let localnet = Localnet::new(Config::resolve(&env));
+        let error = localnet
+            .bootstrap_with_profile(4, &BootstrapProfile::default())
+            .expect_err("path validation must precede seed reads and bootstrap");
+        assert!(error.to_string().contains("invalid node IPC socket path"));
+        assert!(
+            !env.data_dir.exists(),
+            "failed preflight must not create scenario state"
+        );
+    }
+
     fn configured_timeout(mode: crate::env::TeeMode) -> Option<String> {
         let mut cmd = Command::new("outbe-chain");
         extend_real_sgx_process_environment(mode, &mut cmd);
@@ -629,6 +691,42 @@ mod tests {
             Localnet::joiner_full_node_name(4),
             "the FullNode process label must not select its durable Mongo projection"
         );
+    }
+
+    #[test]
+    fn enclave_startup_budget_is_profile_aware_and_never_extends_scenario() {
+        use crate::env::TeeMode;
+        use std::time::{Duration, Instant};
+        for mode in [
+            TeeMode::Real,
+            TeeMode::SgxNoAttest,
+            TeeMode::GramineDirect,
+            TeeMode::Mock,
+            TeeMode::MockNative,
+        ] {
+            let env = Environment {
+                tee_mode: mode,
+                ..Environment::default()
+            };
+            let mut localnet = Localnet::new(Config::resolve(&env));
+            for seconds in [10, 20] {
+                let before = Instant::now();
+                let deadline = localnet.enclave_startup_deadline(seconds);
+                let budget = if mode.passes_sgx_devices() {
+                    crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS
+                } else {
+                    seconds
+                };
+                assert!(deadline >= before + Duration::from_secs(budget));
+                assert!(deadline <= Instant::now() + Duration::from_secs(budget));
+            }
+            let outer = Instant::now() + Duration::from_secs(21);
+            localnet.set_scenario_deadline(outer);
+            assert_eq!(
+                localnet.enclave_startup_deadline(20),
+                outer - Duration::from_secs(20)
+            );
+        }
     }
 
     #[test]

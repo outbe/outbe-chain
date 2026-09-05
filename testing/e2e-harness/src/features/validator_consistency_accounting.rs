@@ -283,14 +283,10 @@ fn exiting_validator_with_residue(world: &mut World) {
         .expect("stage retained joiner OCOMP validator key");
     world
         .localnet
-        .launch_joiner(index, &[])
+        .launch_caught_up_joiner(index, &[])
         .expect("launch retained joiner");
     let port = world.validators.primary_port();
     let address = format!("{:#x}", identity.address());
-    world
-        .rpc
-        .wait_block(world.validators.http_port(index), 5, 40)
-        .expect("joiner sync");
     world
         .rpc
         .stake(identity.evm_key(), 1000)

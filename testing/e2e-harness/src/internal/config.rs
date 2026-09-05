@@ -13,10 +13,30 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use eyre::{Result, WrapErr as _};
 use sha2::{Digest as _, Sha256};
 
 use crate::env::{Environment, TeeMode};
 use crate::internal::ports::{Ports, Service};
+
+/// The exact pathname passed to reth, without relocating persistent node data.
+pub(crate) fn node_ipc_path(node_dir: &Path) -> PathBuf {
+    node_dir.join("data/reth.ipc")
+}
+
+/// Validate the platform's socket-address representation without binding a socket.
+pub(crate) fn validate_node_ipc_path(node_dir: &Path) -> Result<()> {
+    let path = node_ipc_path(node_dir);
+    std::os::unix::net::SocketAddr::from_pathname(&path).wrap_err_with(|| {
+        format!(
+            "invalid node IPC socket path {} ({} bytes); choose a shorter --data-dir; \
+                 the expanded path includes run, scenario and node directories",
+            path.display(),
+            path.as_os_str().as_bytes().len(),
+        )
+    })?;
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
@@ -84,6 +104,14 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    /// Reject unusable paths before allocating scenario services or bootstrap state.
+    pub fn validate_committee_ipc_paths(&self, validators: usize) -> Result<()> {
+        for index in 0..validators {
+            validate_node_ipc_path(&self.validator_dir(index))?;
+        }
+        Ok(())
+    }
+
     /// Run-level config: `dir` is the run dir itself. Used by the SIGINT teardown
     /// sweep and the end-of-run wipe, both of which act on the whole run.
     pub fn resolve(env: &Environment) -> Self {
@@ -310,6 +338,37 @@ fn path_with_foundry() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_ipc_preflight_preserves_valid_paths() {
+        let node = Path::new("/tmp/e2e/run-1/scenario-1/validator-15");
+        validate_node_ipc_path(node).expect("valid dynamic follower path");
+        assert_eq!(node_ipc_path(node), node.join("data/reth.ipc"));
+    }
+
+    #[test]
+    fn node_ipc_preflight_rejects_expanded_long_paths_and_reports_the_exact_path() {
+        let env = Environment {
+            data_dir: PathBuf::from(
+                "/tmp/e2e-full-features-bb384e97.gP5n4Y/governance/run-1788583332-2183308",
+            ),
+            ..Environment::default()
+        };
+        let cfg = Config::for_scenario(&env, 1);
+        let error = cfg
+            .validate_committee_ipc_paths(4)
+            .expect_err("old failing run path");
+        assert!(format!("{error:#}")
+            .contains(&node_ipc_path(&cfg.validator_dir(0)).display().to_string()));
+        assert!(error.to_string().contains("shorter --data-dir"));
+    }
+
+    #[test]
+    fn node_ipc_preflight_uses_bytes_and_rejects_nul() {
+        let multibyte = PathBuf::from("/tmp").join("界".repeat(40));
+        assert!(validate_node_ipc_path(&multibyte).is_err());
+        assert!(validate_node_ipc_path(Path::new("/tmp/invalid\0path")).is_err());
+    }
 
     #[test]
     fn dir_tag_is_docker_safe() {

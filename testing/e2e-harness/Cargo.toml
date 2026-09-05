@@ -77,6 +77,9 @@ outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true
+outbe-radicle.workspace = true
+# Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.
+radicle = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
