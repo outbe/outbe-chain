@@ -11,6 +11,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     }
 
     let mut gem = GemContract::new(storage.clone());
+    let params_profile = crate::config::read_from(&gem)?;
     let gem_id = GemContract::generate_gem_id(
         params.owner,
         params.promis_load_minor,
@@ -34,14 +35,14 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         floor_price_minor: params.floor_price_minor,
         call_price_minor: params.call_price_minor,
         call_rate: params.call_rate,
-        call_window: params.call_window,
-        call_threshold: params.call_threshold,
+        call_window: params_profile.call_window,
+        call_threshold: params_profile.call_threshold,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         state: params.initial_state as u8,
         issued_at: params.issued_at,
         called_at: 0,
-        call_notice_period: crate::constants::CALL_NOTICE_PERIOD,
+        call_notice_period: params_profile.call_notice_period,
         qualified_at,
         settled_at,
     };

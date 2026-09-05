@@ -9,6 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::api;
+use crate::config::GemParams;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{GemAddParams, GemContract, GemState};
 
@@ -31,8 +32,6 @@ fn sample_params(owner: Address) -> GemAddParams {
         floor_price_minor: U256::from(540_000u64),
         call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
-        call_window: 28 * 86_400,
-        call_threshold: 21 * 86_400,
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -1013,5 +1012,58 @@ fn call_skips_below_threshold() {
             api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Qualified as u8
         );
+    });
+}
+
+#[test]
+fn config_defaults_to_prod_when_unset() {
+    with_storage(|storage| {
+        // No genesis profile selected -> selector reads 0 -> prod bundle.
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
+        assert_eq!(GemParams::PROD.call_window, 28 * 24 * 3600);
+        assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
+    });
+}
+
+#[test]
+fn config_unknown_selector_errors() {
+    with_storage(|storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(99u8)
+            .unwrap();
+        assert!(crate::config::read(storage).is_err());
+    });
+}
+
+/// Pin the selector slot index: the seeder writes a raw slot, and `gem_items`
+/// spans a 17-slot record, so the attribute order is not the slot.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    with_storage(|storage| {
+        assert_eq!(
+            GemContract::new(storage.clone()).config_profile.slot(),
+            U256::from(42)
+        );
+    });
+}
+
+#[test]
+fn config_dev_profile_terms_a_new_gem() {
+    with_storage(|storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_DEV)
+            .unwrap();
+
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+
+        // A gem snapshots its call terms at issuance, so the dev bundle has to
+        // reach the record; the prod one must not.
+        let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.call_window, GemParams::DEV.call_window);
+        assert_eq!(item.call_threshold, GemParams::DEV.call_threshold);
+        assert_eq!(item.call_notice_period, GemParams::DEV.call_notice_period);
+        assert!(item.call_window < GemParams::PROD.call_window);
     });
 }

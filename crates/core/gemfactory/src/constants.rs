@@ -10,9 +10,5 @@ pub const CALL_RATE: u64 = 128;
 /// (64 => 0.64x).
 pub const SRA_RATE: u64 = 64;
 
-/// GemPosition validity period: a parked Intex expires this long after
-/// `parked_at`; no new gems may be issued afterward. 1 year.
-pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
-
 /// Positions the daily sweep may retire before it gives out.
 pub const MAX_POSITION_EXPIRIES_PER_RUN: u32 = 256;

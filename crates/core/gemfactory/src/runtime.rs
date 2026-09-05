@@ -12,7 +12,7 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
-use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
+use crate::constants::{CALL_RATE, FLOOR_RATE, SRA_RATE};
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
@@ -63,8 +63,6 @@ pub fn issue_gem(
         floor_price_minor: floor_price,
         call_price_minor: call_price,
         call_rate: CALL_RATE as u16,
-        call_window: outbe_gem::CALL_WINDOW,
-        call_threshold: outbe_gem::CALL_THRESHOLD,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -147,6 +145,7 @@ pub fn issue_gem_position(
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
         parked_at,
+        expires_at: parked_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
     })?;
 
     factory.push_live_position(position_id)?;
@@ -210,7 +209,7 @@ pub fn issue_merchant_gem(
     }
 
     let now = storage.timestamp()?.to::<u64>();
-    if now >= record.parked_at + POSITION_VALIDITY_SECONDS {
+    if now >= record.expires_at {
         return Err(GemFactoryError::PositionExpired.into());
     }
     let remaining = record
@@ -235,8 +234,6 @@ pub fn issue_merchant_gem(
             floor_price_minor: floor_price,
             call_price_minor: call_price,
             call_rate: CALL_RATE as u16,
-            call_window: outbe_gem::CALL_WINDOW,
-            call_threshold: outbe_gem::CALL_THRESHOLD,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             initial_state: GemState::Issued,
@@ -508,6 +505,7 @@ pub fn position_data(
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
         parkedAt: record.parked_at,
+        expiresAt: record.expires_at,
     })
 }
 

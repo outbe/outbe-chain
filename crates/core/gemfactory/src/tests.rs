@@ -12,7 +12,7 @@ use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-use crate::constants::POSITION_VALIDITY_SECONDS;
+const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
 use crate::expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
@@ -773,6 +773,7 @@ fn a_position_reports_its_full_terms() {
         assert_eq!(data.issuanceCurrency, 840);
         assert_eq!(data.referenceCurrency, 840);
         assert_eq!(data.parkedAt, T_NOW);
+        assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
         assert_eq!(data.remainingCapacity, parked_capacity(six_decimal_u128()));
     });
 }
@@ -1237,6 +1238,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 issuance_currency: 840,
                 reference_currency: 840,
                 parked_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
+                expires_at: T_NOW - 1,
             })
             .unwrap();
 
