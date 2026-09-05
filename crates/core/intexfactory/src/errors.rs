@@ -77,9 +77,6 @@ pub enum IntexFactoryError {
         covered: u128,
         required: alloy_primitives::U256,
     },
-
-    #[error("settlement cost {cost} exceeds the maximum a PayNote can cover")]
-    SettlementCostTooLarge { cost: alloy_primitives::U256 },
 }
 
 impl From<IntexFactoryError> for PrecompileError {

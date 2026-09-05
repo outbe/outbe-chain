@@ -834,9 +834,9 @@ pub fn settle(
 /// Discharges the settlement cost by spending one PayNote.
 ///
 /// The proof is the payment: `consume` books its nullifier before returning, so
-/// the note cannot be spent twice, and running inside the caller's checkpoint
-/// means a later failure un-books it. The claim comes from the proof, so both
-/// the asset and the amount are checked against what the series expects.
+/// the note cannot be spent twice, and a later failure reverts the frame, which
+/// un-books it. The claim comes from the proof, so both the asset and the amount
+/// are checked against what the series expects.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
