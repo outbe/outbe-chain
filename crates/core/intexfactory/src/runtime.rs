@@ -743,13 +743,8 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settle: `settler` is the caller. Gating reads Intex; the NFT move goes via
-/// storage.call.
-///
-/// This path moves no value. The cost's underlying assets already reached the
-/// reserve vault when the note was deposited through `IPayNote.deposit`. What
-/// happens here is the proof obligation: `paynote_proof` must name `settler` as
-/// its spender, carry a token the series accepts, and cover the cost.
+/// Settle: `settler` is the caller. The cost is discharged by spending a PayNote,
+/// so no tokens move here; the NFT move goes via storage.call.
 pub fn settle(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -798,8 +793,7 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    // The proof is the payment. It is consumed last, after the cheap gating, so
-    // a doomed settle never pays for verification.
+    // Last, so a doomed settle never pays for proof verification.
     discharge_cost(storage, &series, amount, settler, paynote_proof)?;
 
     // Burn Issued from holder, issue Settled to the settler.
@@ -832,11 +826,6 @@ pub fn settle(
 }
 
 /// Discharges the settlement cost by spending one PayNote.
-///
-/// The proof is the payment: `consume` books its nullifier before returning, so
-/// the note cannot be spent twice, and a later failure reverts the frame, which
-/// un-books it. The claim comes from the proof, so both the asset and the amount
-/// are checked against what the series expects.
 fn discharge_cost(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -846,9 +835,7 @@ fn discharge_cost(
 ) -> Result<()> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // PayNote notes are bearer instruments: the proof names its own spender and
-    // anyone can relay it. Binding that spender to the settler is what stops an
-    // observer from lifting a broadcast proof to settle their own position.
+    // Notes are bearer: anyone can relay a proof, so bind its spender to the settler.
     if claim.spender != settler {
         return Err(IntexFactoryError::PayNoteSpenderMismatch {
             expected: settler,

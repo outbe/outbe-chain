@@ -325,8 +325,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("quote settling the reward Gem")
     .payableUnits;
-    // The cost is paid by burning a note, so the asset reaches the reserve vault
-    // here rather than at settle time. Deposit before the drain: it is an
+    // The vault is credited here, not at settle time. Before the drain: this is an
     // ordinary transaction and pays its own gas.
     let paynote_proof = paynote::deposit_and_prove(
         world,

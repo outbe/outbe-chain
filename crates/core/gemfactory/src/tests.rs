@@ -139,12 +139,10 @@ fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R
     StorageHandle::enter(&mut storage, |handle| f(&handle))
 }
 
-/// Note amount seeded for settlement tests: far above every cost they produce,
-/// so coverage is never the thing under test unless a test makes it so.
+/// Far above every cost these tests produce, so coverage is never what fails.
 const NOTE_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000;
 
-/// Seeds the PayNote pool with one note over `asset` and returns a spend proof
-/// for it - the payment `settle_gem` now takes.
+/// Seeds the pool with one note over `asset` and proves a spend of it.
 fn note_proof(
     provider: &mut HashMapStorageProvider,
     asset: Address,
@@ -157,8 +155,7 @@ fn note_proof(
     fixture.proof
 }
 
-/// [`with_storage`] plus a funded note, for the settlement paths that reach the
-/// proof.
+/// [`with_storage`] plus a funded note.
 fn with_storage_paying<R>(
     rate: Option<U256>,
     asset: Address,

@@ -275,10 +275,7 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// This path moves no value. The cost's underlying assets already reached the
-/// reserve vault when the note was deposited through `IPayNote.deposit`. What
-/// happens here is the proof obligation: `paynote_proof` must name `caller` as
-/// its spender, carry an asset the gem accepts, and cover the cost.
+/// The cost is discharged by spending a PayNote, so no tokens move here.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -303,14 +300,10 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The proof is the payment, and it is consumed last so a doomed settle never
-    // pays for verification. The payer picks the rail by the asset their note
-    // carries.
+    // Last, so a doomed settle never pays for proof verification.
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // PayNote notes are bearer instruments: the proof names its own spender and
-    // anyone can relay it. Binding that spender to the caller is what stops an
-    // observer from lifting a broadcast proof to settle their own gem.
+    // Notes are bearer: anyone can relay a proof, so bind its spender to the caller.
     if claim.spender != caller {
         return Err(GemFactoryError::PayNoteSpenderMismatch {
             expected: caller,

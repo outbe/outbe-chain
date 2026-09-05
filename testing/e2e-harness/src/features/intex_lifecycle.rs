@@ -356,9 +356,7 @@ fn settle_part(world: &mut World) {
     }
 }
 
-/// Deposits a note covering `units` at `per_unit` and proves a spend of it. One
-/// note per settle: a nullifier is booked once, so notes cannot be reused across
-/// series.
+/// One note per settle: a nullifier is booked once, so notes never carry over.
 fn settlement_note(
     world: &World,
     holder: alloy_primitives::Address,

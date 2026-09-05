@@ -244,9 +244,8 @@ pub fn quote_cost(url: &str, series: FixedBytes<14>, payment_token: Address) -> 
     .map(|quote| quote.payableUnits)
 }
 
-/// Settle `amount` units of `series` held by the caller, paying by spending the
-/// note `paynote_proof` proves. The proof carries the asset, so this takes no
-/// payment token.
+/// Settle `amount` units of `series` held by the caller. The proof carries the
+/// asset, so this takes no payment token.
 pub fn settle(
     url: &str,
     holder_key: &str,
