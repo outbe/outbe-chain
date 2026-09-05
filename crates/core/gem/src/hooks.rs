@@ -84,7 +84,13 @@ pub(crate) fn qualify_with_rate(
     budget: u32,
 ) -> Result<u32> {
     let now = ctx.block.timestamp;
-    let r_bin = GemContract::price_to_bin(rate)?;
+    let r_bin = match GemContract::price_to_bin(rate) {
+        Ok(bin) => bin,
+        Err(error) => {
+            tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "qualify scan: rate out of range, skipping currency");
+            return Ok(0);
+        }
+    };
     let mut gem = GemContract::new(ctx.storage.clone());
 
     let mut inspected: u32 = 0;
@@ -121,7 +127,12 @@ pub(crate) fn qualify_with_rate(
 
         for gem_id in bin_gems {
             inspected = inspected.saturating_add(1);
-            gem.qualify(gem_id, now, iso_code, rate)?;
+            if let Err(error) = ctx
+                .storage
+                .with_checkpoint(|| gem.qualify(gem_id, now, iso_code, rate))
+            {
+                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "qualify scan: skipping gem");
+            }
         }
 
         cursor = match next.checked_add(1) {
@@ -217,7 +228,13 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
             continue;
         };
-        let ceiling = GemContract::price_to_bin(high)?;
+        let ceiling = match GemContract::price_to_bin(high) {
+            Ok(bin) => bin,
+            Err(error) => {
+                tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "call scan: window price out of range, skipping currency");
+                continue;
+            }
+        };
         let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, &mut budget)?;
         called = called.saturating_add(calls);
         if !finished && !resumed {
