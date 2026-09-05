@@ -1,9 +1,13 @@
 @ocomp @tee @price-oracle @min-validators-4 @offchain-storage-e2e
-Feature: Off-chain storage backend through the complete OCOMP path
-  Run this scenario independently with RocksDB and MongoDB. The same public
+Feature: RocksDB storage through the complete OCOMP path
+  Run this scenario with durable RocksDB storage. The same public
   Tribute and OCOMP contracts must hold before and after process restart.
 
-  Scenario: A storage backend supports Tribute, OCOMP, FullNode proofs, and durable restart
+  # E2E uses RocksDB only. The removed external MongoDB service-pause test has
+  # no equivalent here: disk I/O failure and full-disk faults are not exercised
+  # by process restart and are separate operational fault coverage.
+
+  Scenario: RocksDB supports Tribute, OCOMP, FullNode proofs, and durable restart
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder

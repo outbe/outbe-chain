@@ -321,7 +321,7 @@ fn compressed_tribute_parity(world: &mut World) {
                     assert_eq!(
                         body_bytes.as_ref(),
                         projected.stored_body,
-                        "RPC body must equal Mongo bytes"
+                        "RPC body must equal RocksDB bytes"
                     );
                     verified = true;
                     break;

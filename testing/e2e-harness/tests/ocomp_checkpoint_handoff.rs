@@ -4,11 +4,9 @@ use alloy_consensus::Header;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use eyre::Result;
-use mongodb::sync::Client;
-use outbe_e2e_harness::mongo_fixture::ManagedMongoReplicaSet;
 use outbe_node::projection::{ocomp_projection_contains, OcompProjectionContainment};
 use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
-use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
+use outbe_offchain_storage::RocksDbStorage;
 use outbe_primitives::{chain::DEVNET_CHAIN_ID, projection::ProjectionCheckpoint};
 use reth_chainspec::ChainInfo;
 use reth_ethereum::Block;
@@ -17,17 +15,10 @@ use reth_provider::{
 };
 
 #[test]
-fn checkpoint_handoff_uses_real_mongodb_for_behind_exact_and_ahead() -> Result<()> {
-    let mongo = ManagedMongoReplicaSet::start("ocomp-checkpoint-handoff", false)?;
-    let uri = mongo.uri().to_owned();
-    let database = format!("outbe_ocomp_checkpoint_handoff_{}", std::process::id());
-    let client = Client::with_uri_str(&uri)?;
-    client.database(&database).drop().run()?;
-
-    let storage = Arc::new(MongoStorage::connect(MongoStorageConfig {
-        uri,
-        database: database.clone(),
-    })?);
+fn checkpoint_handoff_uses_real_rocksdb_for_behind_exact_and_ahead() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("projection");
+    let storage = Arc::new(RocksDbStorage::open(&path)?);
     let projection_config = ProjectionConfig {
         chain_id: DEVNET_CHAIN_ID,
         genesis_hash: B256::repeat_byte(0x11),
@@ -56,6 +47,13 @@ fn checkpoint_handoff_uses_real_mongodb_for_behind_exact_and_ahead() -> Result<(
         .checkpoint
         .expect("block 1 projection has a durable checkpoint");
     assert_eq!(
+        behind,
+        ProjectionCheckpoint {
+            block_number: 1,
+            block_hash: block_1
+        }
+    );
+    assert_eq!(
         ocomp_projection_contains(behind, required, &canonical)?,
         OcompProjectionContainment::Behind {
             checkpoint: behind,
@@ -72,6 +70,7 @@ fn checkpoint_handoff_uses_real_mongodb_for_behind_exact_and_ahead() -> Result<(
         .state()
         .checkpoint
         .expect("block 2 projection has a durable checkpoint");
+    assert_eq!(exact, required);
     assert_eq!(
         ocomp_projection_contains(exact, required, &canonical)?,
         OcompProjectionContainment::Contains {
@@ -86,12 +85,21 @@ fn checkpoint_handoff_uses_real_mongodb_for_behind_exact_and_ahead() -> Result<(
         receipts: Vec::new(),
     })?;
     drop(projector);
+    drop(storage);
 
+    let storage = Arc::new(RocksDbStorage::open(&path)?);
     let reopened = OffchainDataProjection::open(projection_config, storage.clone(), storage)?;
     let ahead = reopened
         .state()
         .checkpoint
         .expect("reopened projection retains the durable block 3 checkpoint");
+    assert_eq!(
+        ahead,
+        ProjectionCheckpoint {
+            block_number: 3,
+            block_hash: block_3
+        }
+    );
     assert_eq!(
         ocomp_projection_contains(ahead, required, &canonical)?,
         OcompProjectionContainment::Contains {
@@ -101,7 +109,6 @@ fn checkpoint_handoff_uses_real_mongodb_for_behind_exact_and_ahead() -> Result<(
     );
 
     drop(reopened);
-    client.database(&database).drop().run()?;
     Ok(())
 }
 

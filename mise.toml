@@ -33,7 +33,7 @@ VALIDATORS         = "4"
 # value through the reproducible-build container args.
 SOURCE_DATE_EPOCH  = "0"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
-# The persistent Rust harness owns the MongoDB replica set, mock enclaves, and
+# The persistent Rust harness owns RocksDB storage, mock enclaves, and
 # validator processes for the complete localnet-start -> localnet-stop lifetime.
 
 # --- Build ------------------------------------------------------------ #
@@ -283,26 +283,24 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock --repo . --jobs 8 --output target/e2e-artifacts/mock.json
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock --repo . --jobs 4 --output target/e2e-artifacts/mock.json
 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --tee mock --validators 4 --all "$@"
 """
 
 [tasks.e2e-offchain-storage]
-description = "Run the separate Linux OCOMP storage E2E matrix: RocksDB and MongoDB"
+description = "Run the separate Linux RocksDB OCOMP storage E2E"
 run = """
 set -eu
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane gramine-direct --repo . --jobs 8 --output target/e2e-artifacts/gramine-direct.json
-for backend in rocksdb mongodb; do
-  target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/gramine-direct.json --tee gramine-direct --validators 4 --projection-backend "$backend" --tags @offchain-storage-e2e "$@"
-done
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 4 --output target/e2e-artifacts/sgx-no-attest.json
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --tags @offchain-storage-e2e "$@"
 """
 
 [tasks.e2e-offchain-storage-native]
 description = "Run RocksDB OCOMP storage E2E with the native mock enclave, without Docker or SGX"
 run = """
 set -eu
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock-native --repo . --jobs 8 --output target/e2e-artifacts/mock-native.json
-target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock-native.json --tee mock-native --no-sudo --validators 4 --projection-backend rocksdb --tags @offchain-storage-native-e2e "$@"
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock-native --repo . --jobs 4 --output target/e2e-artifacts/mock-native.json
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock-native.json --tee mock-native --no-sudo --validators 4 --tags @offchain-storage-native-e2e "$@"
 """
 
 # --- Off-chain Computation PoC --------------------------------------- #
@@ -353,28 +351,28 @@ run = 'cargo xtask ocomp closure "$@"'
 [tasks.e2e-sgx]
 description = "Run the testnet Rust/Cucumber suite on SGX hardware without DCAP"
 run = """
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 8 --output target/e2e-artifacts/sgx-no-attest.json
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 4 --output target/e2e-artifacts/sgx-no-attest.json
 OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --all "$@"
 """
 
 [tasks.e2e-dcap]
 description = "Run the dedicated DcapRequired onboarding scenario on real SGX hardware"
 run = """
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane dcap --repo . --jobs 8 --output target/e2e-artifacts/dcap.json
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane dcap --repo . --jobs 4 --output target/e2e-artifacts/dcap.json
 OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/dcap.json --tee real --sudo --validators 4 --all --tags @real-sgx "$@"
 """
 
 [tasks.e2e-gramine-direct]
 description = "Run scenarios that require the production enclave under gramine-direct"
 run = """
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane gramine-direct --repo . --jobs 8 --output target/e2e-artifacts/gramine-direct.json
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane gramine-direct --repo . --jobs 4 --output target/e2e-artifacts/gramine-direct.json
 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/gramine-direct.json --tee gramine-direct --validators 4 --all --tags @gramine-direct "$@"
 """
 
 [tasks.e2e-radicle-sgx]
 description = "Run the Radicle scenario with existing OCOMP integration and SGX-no-attest"
 run = """
-cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane radicle-sgx --repo . --jobs 8 --output target/e2e-artifacts/radicle-sgx.json
+cargo run --locked --release -j 4 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane radicle-sgx --repo . --jobs 4 --output target/e2e-artifacts/radicle-sgx.json
 OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/radicle-sgx.json --tee sgx-no-attest --sudo --validators 4 --all --tags @radicle "$@"
 """
 

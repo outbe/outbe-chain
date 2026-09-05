@@ -6765,50 +6765,6 @@ fn snapshot_exporter_recovers_prepared_only_crash(world: &mut World) {
         .expect("SnapshotExporter exact-replays a prepared-only export");
 }
 
-#[when("the managed projection MongoDB is paused")]
-fn pause_projection_mongodb(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.projection_outage_finalized_before = Some(
-        world
-            .rpc
-            .finalized(primary)
-            .expect("finalized height before projection outage"),
-    );
-    world
-        .projection
-        .pause_managed()
-        .expect("pause scenario-owned projection MongoDB");
-}
-
-#[then("consensus finality advances before and after projection MongoDB resumes")]
-fn finality_survives_projection_mongodb_outage(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let before = world
-        .state
-        .projection_outage_finalized_before
-        .expect("finalized height captured before projection outage");
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
-        "consensus finality did not advance while projection MongoDB was paused"
-    );
-    let during = world
-        .rpc
-        .finalized(primary)
-        .expect("finality during outage");
-    world
-        .projection
-        .resume_managed()
-        .expect("resume scenario-owned projection MongoDB");
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, during.saturating_add(2), 60),
-        "consensus finality did not continue after projection MongoDB resumed"
-    );
-}
-
 #[then("each OCOMP domain owns one authenticated production worker")]
 fn four_domains_own_authenticated_workers(world: &mut World) {
     let records = world.ocomp.process_records();

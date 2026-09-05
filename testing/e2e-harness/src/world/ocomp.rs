@@ -2134,7 +2134,7 @@ impl OcompTopology {
             .env("OCOMP_REGISTRY_GENERATION", "1");
         let validator_index = usize::from(validator_index);
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
-        configure_snapshot_exporter_projection(&mut command, &self.cfg, validator_index);
+        configure_snapshot_exporter_projection(&mut command, &self.cfg, validator_index)?;
         if self.cfg.debug {
             eprintln!(
                 "[ocomp] launch validator-{validator_index} {role_name}: {}",
@@ -2187,7 +2187,7 @@ impl OcompTopology {
                 installed_protocol_bundle_hashes(&domain_root, identity.protocol_bundle_hash)?,
             );
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
-        configure_snapshot_exporter_projection(&mut command, &self.cfg, index);
+        configure_snapshot_exporter_projection(&mut command, &self.cfg, index)?;
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
         ChildGuard::spawn(
             format!("full-node-{validator_index} OCOMP {role_name}"),
@@ -2714,7 +2714,7 @@ impl OcompTopology {
         self.tribute_correlation.record_public_tribute(evidence)
     }
 
-    /// Record one independently verified validator Mongo/CE source package.
+    /// Record one independently verified validator RocksDB/CE source package.
     pub fn observe_validator_source(
         &mut self,
         evidence: ValidatorSourceCorrelationV1,
@@ -2968,11 +2968,13 @@ fn configure_snapshot_exporter_projection(
     command: &mut Command,
     cfg: &Config,
     validator_index: usize,
-) {
+) -> Result<()> {
+    crate::world::projection::rocksdb_config(cfg, validator_index)?;
     command.env(
         "OUTBE_OCOMP_STORAGE_CONFIG",
         cfg.projection_storage_config(validator_index),
     );
+    Ok(())
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4269,7 +4271,9 @@ mod tests {
         let validator_index = 2;
         let mut command = Command::new("outbe-ocomp");
 
-        configure_snapshot_exporter_projection(&mut command, &topology.cfg, validator_index);
+        crate::world::projection::ensure_node_config(&topology.cfg, validator_index).unwrap();
+        configure_snapshot_exporter_projection(&mut command, &topology.cfg, validator_index)
+            .unwrap();
 
         let environment = command
             .get_envs()

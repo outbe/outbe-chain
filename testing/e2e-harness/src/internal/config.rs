@@ -7,8 +7,6 @@
 //! the explicit Metadosis P0 lane separately records its removed env input.)
 
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
 };
@@ -69,11 +67,6 @@ pub(crate) struct Config {
     pub bin_mock: PathBuf,
     /// Genesis seed file (`--seed`).
     pub seed: PathBuf,
-    /// Transaction-capable MongoDB URI (`--projection-mongodb-uri`).
-    pub projection_mongodb_uri: String,
-    pub projection_backend: crate::env::ProjectionBackend,
-    /// Stable unique logical-database prefix for this harness run.
-    pub projection_database_prefix: String,
     /// Primary RPC url (validator-0).
     pub rpc0: String,
     /// `PATH` with `~/.foundry/bin` appended so `cast` resolves (lib.sh:20).
@@ -118,7 +111,6 @@ impl Config {
     pub fn resolve(env: &Environment) -> Self {
         let run_tag = dir_tag(&env.data_dir);
         let radicle_runtime_root = short_radicle_runtime_root(&env.data_dir);
-        let projection_database_prefix = format!("outbe_e2e_{:016x}", stable_hash(&run_tag));
         Self {
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
@@ -142,9 +134,6 @@ impl Config {
             bin_enclave: env.enclave_bin.clone(),
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),
-            projection_mongodb_uri: env.projection_mongodb_uri.clone(),
-            projection_backend: env.projection_backend,
-            projection_database_prefix,
             rpc0: format!("http://127.0.0.1:{}", env.ports.port(Service::Http, 0)),
             path: path_with_foundry(),
             validators: env.validators,
@@ -289,26 +278,11 @@ impl Config {
     pub fn projection_storage_config(&self, i: usize) -> PathBuf {
         self.validator_dir(i).join("offchain-storage.toml")
     }
-
-    /// Exact projection database assigned to validator `i`.
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub fn validator_projection_database(&self, i: usize) -> String {
-        format!(
-            "{}_scenario_{}_validator-{i}",
-            self.projection_database_prefix, self.scenario
-        )
-    }
 }
 
 fn short_radicle_runtime_root(run_dir: &Path) -> PathBuf {
     let digest = Sha256::digest(run_dir.as_os_str().as_bytes());
     PathBuf::from("/tmp").join(format!("outbe-e2e-rad-{}", hex::encode(&digest[..16])))
-}
-
-fn stable_hash(value: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// A stable, docker-name-safe slug derived from the data dir, used to scope this

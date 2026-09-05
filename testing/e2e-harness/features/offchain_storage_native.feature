@@ -1,4 +1,4 @@
-@ocomp @tee @price-oracle @min-validators-4 @offchain-storage-native-e2e
+@ocomp @tee @mock-native @price-oracle @min-validators-4 @offchain-storage-native-e2e
 Feature: Off-chain storage through Lysis with the native mock enclave
   Four validators exercise the real storage and OCOMP processes. Enclave
   emulation does not cover SGX or the separately tested fifth-node onboarding.

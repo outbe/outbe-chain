@@ -58,13 +58,6 @@ Feature: Off-chain computation and Metadosis
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
 
-  @mongodb @ocomp-projection-outage
-  Scenario: A managed MongoDB outage does not halt consensus finality
-    Given a fresh four-validator Metadosis capacity localnet at FORMING
-    Then the fresh capacity day is created in FORMING by finalized block 1
-    When the managed projection MongoDB is paused
-    Then consensus finality advances before and after projection MongoDB resumes
-
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
     Given a fresh four-validator OCOMP public capacity localnet

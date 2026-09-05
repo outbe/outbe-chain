@@ -8437,7 +8437,6 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "libc",
- "mongodb",
  "multibase",
  "outbe-chain-constants",
  "outbe-common",
