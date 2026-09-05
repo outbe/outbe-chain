@@ -301,6 +301,34 @@ impl Localnet {
             .ok_or_else(|| eyre::eyre!("validator-{validator_index} is not running"))
     }
 
+    /// Observe both owned children, propagating wait errors instead of treating
+    /// an unobservable process as live.
+    pub(crate) fn live_validator_and_enclave_pids(&mut self, index: usize) -> Result<(u32, u32)> {
+        let node = self
+            .validators
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned node"))?;
+        eyre::ensure!(
+            node.exit_status()?.is_none(),
+            "validator-{index} node exited"
+        );
+        let node_pid = node.pid();
+        Ok((node_pid, self.live_enclave_pid(index)?))
+    }
+
+    /// The owned foreground enclave launcher must remain observable and live.
+    pub(crate) fn live_enclave_pid(&mut self, index: usize) -> Result<u32> {
+        let enclave = self
+            .enclaves
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned enclave"))?;
+        eyre::ensure!(
+            enclave.exit_status()?.is_none(),
+            "validator-{index} enclave exited"
+        );
+        Ok(enclave.pid())
+    }
+
     /// Co-located hardware enclaves have an E2E-only startup allowance. The
     /// node's production/testnet default remains unchanged and must be chosen
     /// for the deployment topology by its operator.

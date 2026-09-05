@@ -6,6 +6,82 @@
 
 use serde::Serialize;
 
+/// Original owned committee incarnations; contains no signing material.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeNode {
+    pub index: usize,
+    pub port: u16,
+    pub node_pid: u32,
+    pub enclave_pid: u32,
+}
+
+/// Punitive accounting surfaces read at one exact finalized block.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeAccounting {
+    pub stake: alloy_primitives::U256,
+    pub mirrored_stake: alloy_primitives::U256,
+    pub total_staked: alloy_primitives::U256,
+    pub staking_balance: alloy_primitives::U256,
+    pub status: u8,
+    pub slash_count: u64,
+    pub felony_count: u64,
+    pub unbonding_head: alloy_primitives::U256,
+    pub slash_config: [alloy_primitives::U256; 2],
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct DowntimeObservation {
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub state_root: alloy_primitives::B256,
+    pub accounts: Vec<(u16, DowntimeAccounting)>,
+}
+
+/// Decoded canonical public event identity, retained across the no-repeat wait.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeFelonyEvent {
+    pub validator: alloy_primitives::Address,
+    pub miss_count: u64,
+    pub felony_count: u64,
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub transaction_hash: alloy_primitives::B256,
+    pub log_index: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DowntimeState {
+    pub victim: alloy_primitives::Address,
+    pub victim_index: usize,
+    pub nodes: Vec<DowntimeNode>,
+    pub percent: u64,
+    pub threshold: u64,
+    pub before: DowntimeObservation,
+    pub fault_target: Option<u64>,
+    pub penalty: Option<DowntimeObservation>,
+    pub event: Option<DowntimeFelonyEvent>,
+}
+
+/// Owned replacement processes and their launch-scoped observations.
+#[derive(Debug)]
+pub(crate) struct RestartIncarnation {
+    pub node_pid: u32,
+    pub enclave_pid: u32,
+    pub node_log: crate::internal::launch_log::LaunchLog,
+    pub enclave_log: crate::internal::launch_log::LaunchLog,
+}
+
+/// Public DKG identity retained across the completed-but-pending crash point.
+#[derive(Debug)]
+pub(crate) struct PendingDkgRestartState {
+    pub checkpoint: crate::internal::pending_dkg::PendingDkgCheckpoint,
+    pub keys_dir: std::path::PathBuf,
+    pub consensus_public_key: Vec<u8>,
+    pub before: crate::world::rpc::FinalizedCheckpoint,
+    pub original_pids: (u32, u32),
+    pub replacement: Option<RestartIncarnation>,
+}
+
 /// Immutable public observations captured by steps, before after-hook teardown.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct TeeLeaseEvidenceV1 {
@@ -258,6 +334,11 @@ pub struct OcompPublicScenarioEvidenceV1 {
 #[derive(Debug)]
 pub struct FixtureState {
     pub tee_lease: TeeLeaseEvidenceV1,
+    /// Public restart measurements saved before process teardown.
+    pub restart_observations: Vec<serde_json::Value>,
+    pub(crate) pending_dkg_restart: Option<PendingDkgRestartState>,
+    pub(crate) committee_restart: Vec<RestartIncarnation>,
+    pub(crate) downtime: Option<DowntimeState>,
     /// Public-only Radicle operations and replication evidence.
     pub radicle: RadicleScenarioEvidenceV1,
     /// Proposal id under test (always 1 in the update flow).
@@ -522,6 +603,10 @@ impl Default for FixtureState {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
+            restart_observations: Vec::new(),
+            pending_dkg_restart: None,
+            committee_restart: Vec::new(),
+            downtime: None,
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),

@@ -8,10 +8,15 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use cucumber::{given, then, when};
+use eyre::{ensure, eyre, Result};
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
+use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
+use serde_json::json;
 
 use crate::features::common::boot_localnet;
-use crate::world::rpc::Rpc;
+use crate::internal::{addresses, eth, launch_log::LaunchLog, pending_dkg::PendingDkgCheckpoint};
+use crate::world::rpc::{FinalizedCheckpoint, Rpc, TxOutcome};
+use crate::world::state::{PendingDkgRestartState, RestartIncarnation};
 use crate::world::World;
 
 /// Put the freeze boundary inside the bounded restart scenario while leaving
@@ -147,18 +152,82 @@ fn node_killed_and_restarted(world: &mut World) {
 /// redelivery path.
 #[when("the entire committee and its enclaves are stopped and restarted")]
 fn committee_and_enclaves_restarted(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.marker_height = world.rpc.head(primary);
-    world.state.marker_count = Some(
-        world
-            .localnet
-            .log_count(0, "running DKG ceremony")
-            .expect("read required owned process log"),
+    let ports = world.validators.committee_ports();
+    let height = ports
+        .iter()
+        .map(|&port| {
+            world
+                .rpc
+                .finalized_result(port)
+                .expect("pre-restart finality")
+        })
+        .min()
+        .expect("nonempty committee");
+    let before = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 1)
+        .expect("common pre-restart finalized hash/root");
+    let original_pids: Vec<_> = (0..world.validators.size())
+        .map(|index| {
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("both original committee processes must be owned and live")
+        })
+        .collect();
+    assert!(
+        world.state.committee_restart.is_empty(),
+        "committee restart already armed"
     );
+    world.state.marker_height = Some(before.height);
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "committee_before_restart",
+        "checkpoint": committee_checkpoint_json(before),
+        "original_pids": original_pids,
+    }));
+    let mut logs = Vec::new();
     world
         .localnet
-        .restart_committee_and_enclaves()
+        .restart_committee_and_enclaves_observed(|stopped| {
+            // Old processes have been reaped; no replacement has started yet.
+            for index in 0..original_pids.len() {
+                let dir = stopped.scenario_dir().join(format!("validator-{index}"));
+                logs.push((
+                    crate::internal::launch_log::LaunchLog::arm(&dir.join("node.log"))?,
+                    crate::internal::launch_log::LaunchLog::arm(&dir.join("enclave.log"))?,
+                ));
+            }
+            Ok(())
+        })
         .expect("restart committee and enclaves");
+    for (index, (node_log, enclave_log)) in logs.into_iter().enumerate() {
+        let (node_pid, enclave_pid) = world
+            .localnet
+            .live_validator_and_enclave_pids(index)
+            .expect("both replacement committee processes must be owned and live");
+        world.state.restart_observations.push(serde_json::json!({
+            "phase": "committee_replacement",
+            "validator": index,
+            "node_pid": node_pid,
+            "enclave_pid": enclave_pid,
+            "node_log_start": node_log.start_offset(),
+            "enclave_log_start": enclave_log.start_offset(),
+        }));
+        assert_ne!(node_pid, original_pids[index].0, "node was not replaced");
+        assert_ne!(
+            enclave_pid, original_pids[index].1,
+            "enclave was not replaced"
+        );
+        world
+            .state
+            .committee_restart
+            .push(crate::world::state::RestartIncarnation {
+                node_pid,
+                enclave_pid,
+                node_log,
+                enclave_log,
+            });
+    }
 }
 
 /// Every enclave must use its restart fast-path, every validator must advance,
@@ -166,56 +235,261 @@ fn committee_and_enclaves_restarted(world: &mut World) {
 #[then("all validators recover sealed TEE state and resume finalization")]
 fn committee_recovers_sealed_tee_state(world: &mut World) {
     let before = world.state.marker_height.expect("pre-restart height");
-    let target = before + 2;
-    let mut ports = vec![world.validators.primary_port()];
-    ports.extend(world.validators.peer_ports());
-    for port in ports {
-        let height = world
-            .rpc
-            .wait_block(port, target, 60)
-            .unwrap_or_else(|| panic!("validator RPC {port} did not reach target {target}"));
-        assert!(
-            height >= target,
-            "validator RPC {port} did not advance after full restart ({height} < {target})"
+    let ports = world.validators.committee_ports();
+    committee_assert_live(world);
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("fresh target from every restarted validator")
+        .max(before.checked_add(2).expect("restart height overflow"));
+    let progressed = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("restarted committee must advance on one finalized hash/root");
+    committee_assert_live(world);
+    let before_checkpoint = world
+        .state
+        .restart_observations
+        .iter()
+        .rev()
+        .find(|observation| observation["phase"] == "committee_before_restart")
+        .expect("retained pre-restart checkpoint")["checkpoint"]
+        .clone();
+    for &port in &ports {
+        assert_eq!(
+            committee_checkpoint_json(
+                world
+                    .rpc
+                    .checkpoint_at(port, before)
+                    .expect("pre-restart finalized block must remain canonical")
+            ),
+            before_checkpoint,
+            "validator RPC {port} changed the pre-restart finalized hash/root"
         );
     }
-
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "committee_restarted_finality",
+        "target": target,
+        "checkpoint": committee_checkpoint_json(progressed),
+    }));
     for index in 0..world.validators.size() {
-        assert!(
-            world.localnet.enclave_log_has(
-                index,
-                "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
-            ).expect("read restarted validator enclave log"),
+        let incarnation = &mut world.state.committee_restart[index];
+        let enclave_log = incarnation
+            .enclave_log
+            .read()
+            .expect("replacement enclave log identity");
+        let unsealed: Vec<_> = enclave_log.lines().filter(|line| {
+            *line == "outbe-tee-enclave: unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
+        }).collect();
+        world.state.restart_observations.push(serde_json::json!({
+            "phase": "committee_unsealed",
+            "validator": index,
+            "enclave_pid": incarnation.enclave_pid,
+            "records": unsealed,
+        }));
+        assert_eq!(
+            unsealed.len(),
+            1,
             "validator-{index} enclave did not recover its sealed offer key"
         );
     }
-    assert_eq!(
-        world
-            .localnet
-            .log_count(0, "running DKG ceremony")
-            .expect("read required owned process log"),
-        world.state.marker_count.expect("pre-restart DKG count"),
-        "full restart unexpectedly triggered a new DKG ceremony"
-    );
-
     let wwd = world.state.wwd.clone().expect("wwd");
     let key = world.validators.get(0).evm_key().expect("validator-0 key");
     let primary = world.validators.primary_port();
-    assert!(
-        world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
-        "post-committee-restart offer did not land (supply != 1)"
-    );
-    // The offer above went through every restarted enclave - its per-request
-    // telemetry line proves the post-restart enclave served the decrypt.
-    for index in 0..world.validators.size() {
-        assert!(
-            world
-                .localnet
-                .enclave_log_has(index, "req=process_tribute_offer_batch")
-                .expect("read required owned process log"),
-            "validator-{index} restarted enclave log lacks the offer telemetry line"
+    let supply_before = committee_supply_at(world, primary, progressed);
+    for &port in &ports {
+        assert_eq!(
+            committee_supply_at(world, port, progressed),
+            supply_before,
+            "pre-offer finalized supply parity"
         );
     }
+    let expected_supply = supply_before
+        .checked_add(alloy_primitives::U256::from(1))
+        .expect("Tribute supply overflow");
+    // Retain an exact prefix of the existing launch capture. The suffix must
+    // come from these same processes after this checkpoint, not earlier replay.
+    let offer_prefixes: Vec<_> = world
+        .state
+        .committee_restart
+        .iter_mut()
+        .map(|incarnation| {
+            incarnation
+                .enclave_log
+                .read()
+                .expect("checkpoint replacement enclave log before the new offer")
+        })
+        .collect();
+    committee_assert_live(world);
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "committee_before_new_offer",
+        "checkpoint": committee_checkpoint_json(progressed),
+        "supply": supply_before.to_string(),
+        "expected_supply": expected_supply.to_string(),
+        "enclave_log_starts": world.state.committee_restart.iter().zip(&offer_prefixes)
+            .map(|(incarnation, prefix)| incarnation.enclave_log.start_offset()
+                .checked_add(u64::try_from(prefix.len()).expect("log length fits u64"))
+                .expect("offer log offset overflow")).collect::<Vec<_>>(),
+    }));
+    // This helper submits a real offer before polling, even if supply is already visible.
+    let transaction_hash = world
+        .rpc
+        .offer_until_supply_hash(&key, &wwd, primary, &expected_supply.to_string(), 5)
+        .expect("new post-restart Tribute offer must be submitted and included");
+    let receipt = crate::internal::eth::receipt_json(&world.rpc.url(primary), &transaction_hash)
+        .expect("new Tribute transaction receipt must be observable");
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "committee_new_offer_receipt",
+        "transaction_hash": transaction_hash,
+        "receipt": receipt,
+    }));
+    let outcome = crate::world::rpc::TxOutcome {
+        transaction_hash,
+        success: receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x1"),
+        receipt,
+    };
+    assert!(outcome.success, "new Tribute offer reverted");
+    assert!(
+        outcome.block_number().expect("Tribute receipt height") > progressed.height,
+        "Tribute receipt predates post-restart observation"
+    );
+    let finalized = world.rpc.finalize_outcome(&outcome, &ports, 60).expect(
+        "new successful Tribute receipt must be canonical and finalized on every validator",
+    );
+    committee_assert_live(world);
+    for &port in &ports {
+        assert_eq!(
+            committee_supply_at(world, port, finalized),
+            expected_supply,
+            "new finalized Tribute must increase supply by exactly one"
+        );
+    }
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "committee_new_offer_finalized",
+        "transaction_hash": outcome.transaction_hash,
+        "checkpoint": committee_checkpoint_json(finalized),
+        "supply_before": supply_before.to_string(),
+        "supply_after": expected_supply.to_string(),
+    }));
+    for (index, prefix) in offer_prefixes.iter().enumerate() {
+        let incarnation = &mut world.state.committee_restart[index];
+        incarnation
+            .node_log
+            .seal()
+            .expect("seal replacement node observation");
+        incarnation
+            .enclave_log
+            .seal()
+            .expect("seal replacement enclave observation");
+        let enclave_log = incarnation
+            .enclave_log
+            .read()
+            .expect("replacement enclave log identity");
+        let offer_log = enclave_log
+            .strip_prefix(prefix.as_str())
+            .expect("pre-offer launch log prefix changed");
+        let decrypted: Vec<_> = offer_log
+            .lines()
+            .filter(|line| {
+                line.starts_with("outbe-tee-enclave: req=process_tribute_offer_batch ")
+                    && line
+                        .split_ascii_whitespace()
+                        .filter(|field| field.starts_with("outcome="))
+                        .eq(std::iter::once("outcome=ok"))
+            })
+            .collect();
+        let node_log = incarnation
+            .node_log
+            .read()
+            .expect("replacement node log identity");
+        let ceremonies: Vec<_> = node_log
+            .lines()
+            .filter(|line| line.contains("running DKG ceremony"))
+            .collect();
+        world.state.restart_observations.push(serde_json::json!({
+            "phase": "committee_restart_served_new_offer",
+            "validator": index,
+            "node_pid": incarnation.node_pid,
+            "enclave_pid": incarnation.enclave_pid,
+            "decrypt_records": decrypted,
+            "new_ceremony_records": ceremonies,
+        }));
+        assert!(
+            !decrypted.is_empty(),
+            "validator-{index} lacks a successful new-offer decrypt"
+        );
+        assert!(
+            ceremonies.is_empty(),
+            "validator-{index} restart triggered a fresh DKG ceremony"
+        );
+    }
+    committee_assert_live(world);
+}
+
+fn committee_assert_live(world: &mut World) {
+    assert_eq!(
+        world.state.committee_restart.len(),
+        world.validators.size(),
+        "every committee replacement must be observed"
+    );
+    for index in 0..world.validators.size() {
+        let observed = world
+            .localnet
+            .live_validator_and_enclave_pids(index)
+            .expect("committee replacement processes must remain owned and live");
+        let expected = &world.state.committee_restart[index];
+        assert_eq!(
+            observed,
+            (expected.node_pid, expected.enclave_pid),
+            "validator-{index} changed process incarnation during restart proof"
+        );
+    }
+}
+
+fn committee_checkpoint_json(
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+) -> serde_json::Value {
+    serde_json::json!({
+        "height": checkpoint.height,
+        "block_hash": format!("{:#x}", checkpoint.block_hash),
+        "state_root": format!("{:#x}", checkpoint.state_root),
+    })
+}
+
+fn committee_supply_at(
+    world: &World,
+    port: u16,
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+) -> alloy_primitives::U256 {
+    assert!(
+        world
+            .rpc
+            .finalized_result(port)
+            .expect("supply observation finality")
+            >= checkpoint.height
+    );
+    assert_eq!(
+        world
+            .rpc
+            .checkpoint_at(port, checkpoint.height)
+            .expect("supply checkpoint"),
+        checkpoint
+    );
+    let supply = crate::internal::eth::read_call_at_result(
+        &world.rpc.url(port),
+        crate::internal::addresses::TRIBUTE_ADDR,
+        &crate::internal::eth::ITribute::totalSupplyCall {},
+        checkpoint.height,
+    )
+    .expect("read Tribute supply at exact finalized checkpoint");
+    assert_eq!(
+        world
+            .rpc
+            .checkpoint_at(port, checkpoint.height)
+            .expect("recheck supply checkpoint"),
+        checkpoint
+    );
+    supply
 }
 
 /// The restarted node catches up and resumes signing WITHOUT a fresh ceremony
@@ -279,7 +553,6 @@ fn resumes_without_new_ceremony(world: &mut World) {
 /// recovery checkpoint and a real block interval before activation.
 #[when("a joiner completes DKG and waits below the activation boundary")]
 fn joiner_completes_dkg_before_activation(world: &mut World) {
-    let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     world
         .localnet
@@ -294,15 +567,25 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
     world.state.joiner_addr = Some(addr.clone());
-    world.rpc.stake(&key, 1000).expect("stake joiner");
-    world.rpc.confirm_ready(&key).expect("confirm joiner ready");
+    let mut ports = world.validators.committee_ports();
+    ports.push(world.validators.http_port(idx));
+    let stake = world.rpc.stake(&key, 1000).expect("stake joiner");
+    pending_finalize_transaction(&world.rpc, &stake, &ports)
+        .expect("joiner stake must be canonically finalized");
+    let ready = world.rpc.confirm_ready(&key).expect("confirm joiner ready");
+    let admission = pending_finalize_transaction(&world.rpc, &ready, &ports)
+        .expect("joiner readiness must be canonically finalized");
 
     let mut observed = false;
     for _ in 0..90 {
-        if world
+        world
             .localnet
-            .log_has(idx, "persisted completed DKG state before activation")
-            .expect("read required owned process log")
+            .live_validator_and_enclave_pids(idx)
+            .expect("owned joiner and enclave must remain alive before the crash point");
+        if Path::new(&keys)
+            .join("dkg_pending_boundary.bin")
+            .try_exists()
+            .expect("observe installed pending DKG snapshot")
         {
             observed = true;
             break;
@@ -310,27 +593,119 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
         sleep(Duration::from_secs(2));
     }
     assert!(observed, "joiner never reached durable pending DKG state");
-    assert_eq!(
-        world.rpc.validator_status(primary, &addr),
-        Some(1),
-        "joiner must remain PENDING before activation"
-    );
-    assert!(
-        !world
-            .rpc
-            .is_participant(primary, &addr)
-            .expect("observe consensus participation"),
-        "joiner participated before the activation boundary"
-    );
-    assert!(
-        world.localnet.has_share_file(idx),
-        "completed DKG material was not persisted before restart"
-    );
-    world.state.marker_height = world.rpc.head(primary);
-    world.state.marker_count = world
+    let public_key = world
+        .localnet
+        .consensus_public_key(idx)
+        .expect("read provisioned consensus public key");
+    let public_key = hex::decode(public_key.trim().trim_start_matches("0x"))
+        .expect("decode consensus public key");
+    let checkpoint = PendingDkgCheckpoint::observe(Path::new(&keys), &public_key)
+        .expect("pending triplet must match the installed boundary and this joiner");
+    let before = world
         .rpc
-        .epoch_on(primary)
-        .and_then(|epoch| usize::try_from(epoch).ok());
+        .wait_finalized_checkpoint(
+            &ports,
+            admission.height.max(checkpoint.completed_at_height),
+            60,
+        )
+        .expect("all nodes must share a finalized pre-restart checkpoint");
+    assert!(
+        before.height < checkpoint.artifact.planned_activation_height,
+        "missed completed-but-pending crash point: activation boundary already reached"
+    );
+    let old_epoch = checkpoint
+        .artifact
+        .epoch
+        .checked_sub(1)
+        .expect("incoming DKG epoch");
+    for &port in &ports {
+        pending_assert_membership(&world.rpc, port, &addr, before.height, 1, false, old_epoch)
+            .expect("joiner must remain PENDING at the common finalized checkpoint");
+    }
+    let original_pids = world
+        .localnet
+        .live_validator_and_enclave_pids(idx)
+        .expect("capture owned live node and enclave before restart");
+    world.state.restart_observations.push(json!({
+        "phase": "completed_pending", "slot": idx, "height": before.height,
+        "block_hash": before.block_hash, "state_root": before.state_root,
+        "stake_tx": stake, "ready_tx": ready, "node_pid": original_pids.0,
+        "enclave_pid": original_pids.1, "epoch": checkpoint.artifact.epoch,
+        "dkg_cycle": checkpoint.artifact.dkg_cycle,
+        "completed_at_height": checkpoint.completed_at_height,
+        "planned_activation_height": checkpoint.artifact.planned_activation_height,
+        "target_set_hash": checkpoint.artifact.target_set_hash,
+        "outcome_hash": alloy_primitives::keccak256(&checkpoint.artifact.outcome)
+    }));
+    world.state.pending_dkg_restart = Some(PendingDkgRestartState {
+        checkpoint,
+        keys_dir: keys.into(),
+        consensus_public_key: public_key,
+        before,
+        original_pids,
+        replacement: None,
+    });
+}
+
+fn pending_finalize_transaction(
+    rpc: &Rpc,
+    hash: &str,
+    ports: &[u16],
+) -> Result<FinalizedCheckpoint> {
+    let port = *ports.first().ok_or_else(|| eyre!("missing receipt RPC"))?;
+    let receipt = eth::raw_json_result(&rpc.url(port), "eth_getTransactionReceipt", json!([hash]))?;
+    rpc.finalize_outcome(
+        &TxOutcome {
+            transaction_hash: hash.to_owned(),
+            success: true,
+            receipt,
+        },
+        ports,
+        60,
+    )
+}
+
+fn pending_assert_membership(
+    rpc: &Rpc,
+    port: u16,
+    addr: &str,
+    height: u64,
+    status: u8,
+    participant: bool,
+    epoch: u64,
+) -> Result<()> {
+    let record = rpc.validator_record_at(port, addr, height).ok_or_else(|| {
+        eyre!("cannot observe validator record at finalized h{height} on RPC {port}")
+    })?;
+    ensure!(
+        record.status == status,
+        "unexpected validator status at finalized h{height}"
+    );
+    let actual = eth::read_call_at_result(
+        &rpc.url(port),
+        addresses::VS_ADDR,
+        &eth::IValidatorSet::isConsensusParticipantCall {
+            addr: addr.parse()?,
+        },
+        height,
+    )
+    .map_err(|error| eyre!(error))?;
+    ensure!(
+        actual == participant,
+        "unexpected participation at finalized h{height}"
+    );
+    let actual = eth::read_call_at_result(
+        &rpc.url(port),
+        addresses::VS_ADDR,
+        &eth::IValidatorSet::getEpochNumberCall {},
+        height,
+    )
+    .map_err(|error| eyre!(error))?;
+    ensure!(
+        u64::try_from(actual)? == epoch,
+        "unexpected epoch at finalized h{height}"
+    );
+    Ok(())
 }
 
 /// Restart both halves of the joining validator while the finalized DKG result
@@ -340,22 +715,107 @@ fn restart_joiner_before_activation(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     let addr = world.state.joiner_addr.clone().expect("joiner address");
-    assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
-    assert!(!world
+    let mut state = world
+        .state
+        .pending_dkg_restart
+        .take()
+        .expect("pending DKG checkpoint");
+    let height = world
         .rpc
-        .is_participant(primary, &addr)
-        .expect("observe consensus participation"));
+        .finalized_result(primary)
+        .expect("pre-stop finalized height");
+    assert!(
+        height >= state.before.height
+            && height < state.checkpoint.artifact.planned_activation_height,
+        "completed-but-pending restart window was missed"
+    );
+    pending_assert_membership(
+        &world.rpc,
+        primary,
+        &addr,
+        height,
+        1,
+        false,
+        state
+            .checkpoint
+            .artifact
+            .epoch
+            .checked_sub(1)
+            .expect("incoming epoch"),
+    )
+    .expect("finalized state must still be pending immediately before stop");
+    assert_eq!(
+        world
+            .localnet
+            .live_validator_and_enclave_pids(idx)
+            .expect("owned original processes"),
+        state.original_pids,
+        "joiner incarnation changed before the intended fault"
+    );
 
     world.localnet.stop_joiner(idx).expect("stop joiner");
+    assert_eq!(
+        PendingDkgCheckpoint::observe(&state.keys_dir, &state.consensus_public_key)
+            .expect("pending checkpoint survives node stop"),
+        state.checkpoint,
+        "a different ceremony was persisted before restart"
+    );
+    let dir = world
+        .localnet
+        .scenario_dir()
+        .join(format!("validator-{idx}"));
+    let node_log = LaunchLog::arm(&dir.join("node.log")).expect("arm replacement node log");
+    let mut enclave_log = None;
+    let mut stopped_height = None;
+    let rpc = &world.rpc;
     world
         .localnet
-        .restart_joiner_enclave(idx)
+        .restart_joiner_enclave_observed(idx, |_| {
+            let observed = rpc.finalized_result(primary)?;
+            ensure!(
+                observed < state.checkpoint.artifact.planned_activation_height,
+                "completed-but-pending fault window was crossed before both launchers stopped"
+            );
+            stopped_height = Some(observed);
+            enclave_log = Some(LaunchLog::arm(&dir.join("enclave.log"))?);
+            Ok(())
+        })
         .expect("restart joiner enclave");
+    let enclave_log = enclave_log.expect("replacement enclave interval armed after teardown");
     let keys = world.localnet.keys_dir(idx);
+    assert_eq!(
+        Path::new(&keys),
+        state.keys_dir,
+        "restart must preserve keys directory"
+    );
     world
         .localnet
         .launch_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("restart joiner node");
+    let (node_pid, enclave_pid) = world
+        .localnet
+        .live_validator_and_enclave_pids(idx)
+        .expect("replacement node and enclave must be alive");
+    assert_ne!(node_pid, state.original_pids.0, "node was not restarted");
+    assert_ne!(
+        enclave_pid, state.original_pids.1,
+        "enclave was not restarted"
+    );
+    world
+        .state
+        .restart_observations
+        .push(json!({"phase": "pending_restart",
+        "slot": idx, "node_pid": node_pid, "enclave_pid": enclave_pid,
+        "pre_stop_finalized_height": height, "node_log_start": node_log.start_offset(),
+        "stopped_finalized_height": stopped_height.expect("observed stop checkpoint"),
+        "enclave_log_start": enclave_log.start_offset()}));
+    state.replacement = Some(RestartIncarnation {
+        node_pid,
+        enclave_pid,
+        node_log,
+        enclave_log,
+    });
+    world.state.pending_dkg_restart = Some(state);
 }
 
 /// Startup must restore the pending boundary/material, activate at the planned
@@ -366,53 +826,225 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
     let addr = world.state.joiner_addr.clone().expect("joiner address");
-    let old_epoch = world.state.marker_count.expect("pre-restart epoch");
-
-    assert!(
-        world
-            .rpc
-            .wait_participant(primary, &addr, 60)
-            .expect("wait for observable consensus participation"),
-        "restarted joiner never activated from pending DKG"
-    );
-    assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
-    assert_eq!(world.rpc.active_count(primary), Some(5));
-    let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
-    assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
-    assert!(
-        world
-            .localnet
-            .log_has(idx, "recovered durable pending DKG boundary snapshot",)
-            .expect("read required owned process log"),
-        "restart did not use durable pending DKG recovery"
-    );
-    assert!(
-        world
-            .localnet
-            .enclave_log_has(idx, "unsealed offer key + group signature")
-            .expect("read required owned process log"),
-        "joiner enclave did not recover sealed state"
-    );
-
-    let target = world
-        .rpc
-        .head(primary)
-        .expect("primary head after pending-DKG recovery")
-        + 3;
+    let mut state = world
+        .state
+        .pending_dkg_restart
+        .take()
+        .expect("pending DKG checkpoint");
+    let replacement = state.replacement.as_mut().expect("replacement processes");
+    let expected_pids = (replacement.node_pid, replacement.enclave_pid);
+    let expected_epoch = state.checkpoint.artifact.epoch;
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
-    for port in ports {
-        assert!(
-            world.rpc.wait_block(port, target, 60).is_some(),
-            "RPC {port} did not continue after pending-DKG recovery"
+    let mut next_height = state
+        .before
+        .height
+        .checked_add(1)
+        .expect("boundary scan start");
+    let mut activation = None;
+    let mut promoted_at = None;
+    let mut promotion_error = None;
+    for _ in 0..60 {
+        assert_eq!(
+            world
+                .localnet
+                .live_validator_and_enclave_pids(idx)
+                .expect("owned replacement liveness"),
+            expected_pids,
+            "replacement identity changed during recovery"
         );
-        assert_eq!(world.rpc.active_count(port), Some(5));
-        assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
+        let finalized = world
+            .rpc
+            .finalized_result(primary)
+            .expect("observe finalized boundary head");
+        while activation.is_none() && next_height <= finalized {
+            if let Some(artifact) = pending_boundary_at(&world.rpc, primary, next_height)
+                .expect("decode canonical finalized boundary")
+            {
+                assert_eq!(
+                    artifact, state.checkpoint.artifact,
+                    "finalized a different boundary instead of the recovered pending DKG"
+                );
+                activation = Some(next_height);
+                break;
+            }
+            next_height = next_height.checked_add(1).expect("boundary scan height");
+        }
+        if let Some(height) = activation {
+            let local_height = world
+                .rpc
+                .finalized_result(joiner_port)
+                .expect("replacement finalized height during promotion");
+            if local_height >= height {
+                assert_eq!(
+                    world
+                        .rpc
+                        .checkpoint_at(joiner_port, height)
+                        .expect("replacement boundary checkpoint"),
+                    world
+                        .rpc
+                        .checkpoint_at(primary, height)
+                        .expect("canonical boundary checkpoint")
+                );
+                match state
+                    .checkpoint
+                    .verify_active(&state.keys_dir, &state.consensus_public_key)
+                {
+                    Ok(()) => {
+                        promoted_at = Some(local_height);
+                        break;
+                    }
+                    Err(error) => promotion_error = Some(error.to_string()),
+                }
+            }
+        }
+        sleep(Duration::from_secs(10));
     }
+    let activation =
+        activation.expect("restarted joiner never finalized its exact pending DKG boundary");
+    let promoted_at = promoted_at.unwrap_or_else(|| panic!(
+        "matching active material/pending retirement not observed within recovery allowance: {promotion_error:?}"));
+    world
+        .state
+        .restart_observations
+        .push(json!({"phase": "pending_promoted",
+        "slot": idx, "activation_height": activation, "observed_finalized_height": promoted_at,
+        "epoch": expected_epoch, "dkg_cycle": state.checkpoint.artifact.dkg_cycle,
+        "outcome_hash": alloy_primitives::keccak256(&state.checkpoint.artifact.outcome)}));
     assert!(
-        lockstep_ok(&world.rpc, primary, joiner_port),
-        "recovered joiner did not sign in lockstep"
+        activation >= state.checkpoint.artifact.planned_activation_height,
+        "boundary activated before its planned height"
     );
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, activation, 60)
+        .expect("all five nodes must finalize the recovered boundary");
+    let boundary = world
+        .rpc
+        .checkpoint_at(primary, activation)
+        .expect("activation checkpoint");
+    for &port in &ports {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, activation)
+                .expect("peer activation checkpoint"),
+            boundary
+        );
+        pending_assert_membership(&world.rpc, port, &addr, activation, 2, true, expected_epoch)
+            .expect("finalized activation must have exactly the incoming epoch and ACTIVE joiner");
+        let active = eth::read_call_at_result(
+            &world.rpc.url(port),
+            addresses::VS_ADDR,
+            &eth::IValidatorSet::activeValidatorCountCall {},
+            activation,
+        )
+        .expect("read active count at exact finalized activation");
+        assert_eq!(
+            u64::from(active),
+            5,
+            "finalized activation must have all five validators"
+        );
+    }
+    let node_log = replacement
+        .node_log
+        .read()
+        .expect("read only replacement node log");
+    assert!(
+        node_log.contains("recovered durable pending DKG boundary snapshot"),
+        "replacement did not recover the installed pending snapshot"
+    );
+    assert!(
+        node_log
+            .contains("restored future DKG handoff; current-epoch channels will be acquired first"),
+        "replacement missed pre-activation recovery and only restored an already active boundary"
+    );
+    assert!(
+        !node_log.contains("running DKG ceremony"),
+        "replacement ran fresh genesis bootstrap instead of recovering completed pending DKG"
+    );
+    let enclave_log = replacement
+        .enclave_log
+        .read()
+        .expect("read only replacement enclave log");
+    assert!(
+        enclave_log.contains("unsealed offer key + group signature"),
+        "replacement enclave did not unseal the same sealed state"
+    );
+    // Promotion/retirement was observed before waiting for slow peers. A later
+    // legitimate DKG cycle may now write its own pending files.
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("fresh post-activation finality anchor");
+    let after = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("five nodes must make new exact finalized hash/root progress after activation");
+    // Later legitimate rotations do not invalidate this exact pinned activation.
+    // What must never recur is this SAME completed ceremony's boundary.
+    for height in activation.checked_add(1).expect("post-activation height")..=after.height {
+        if let Some(artifact) = pending_boundary_at(&world.rpc, primary, height)
+            .expect("observe post-recovery finalized boundaries")
+        {
+            assert!(
+                artifact.epoch != expected_epoch
+                    || artifact.dkg_cycle != state.checkpoint.artifact.dkg_cycle,
+                "the recovered completed ceremony activated more than once"
+            );
+        }
+    }
+    assert_eq!(
+        world
+            .localnet
+            .live_validator_and_enclave_pids(idx)
+            .expect("replacement final liveness"),
+        expected_pids
+    );
+    world
+        .state
+        .restart_observations
+        .push(json!({"phase": "pending_activated",
+        "slot": idx, "epoch": expected_epoch, "activation_height": activation,
+        "activation_hash": boundary.block_hash, "activation_state_root": boundary.state_root,
+        "progress_height": after.height, "progress_hash": after.block_hash,
+        "progress_state_root": after.state_root, "node_pid": replacement.node_pid,
+        "enclave_pid": replacement.enclave_pid, "pending_material_retired": true}));
+    world.state.pending_dkg_restart = Some(state);
+}
+
+fn pending_boundary_at(
+    rpc: &Rpc,
+    port: u16,
+    height: u64,
+) -> Result<Option<outbe_primitives::consensus::DkgBoundaryArtifact>> {
+    let checkpoint = rpc.checkpoint_at(port, height)?;
+    let block = eth::raw_json_result(
+        &rpc.url(port),
+        "eth_getBlockByNumber",
+        json!([format!("0x{height:x}"), false]),
+    )?;
+    let hash: alloy_primitives::B256 = serde_json::from_value(
+        block
+            .get("hash")
+            .cloned()
+            .ok_or_else(|| eyre!("finalized block omitted hash"))?,
+    )?;
+    ensure!(
+        hash == checkpoint.block_hash,
+        "canonical block changed during boundary observation"
+    );
+    let encoded = block
+        .get("extraData")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre!("finalized block omitted extraData"))?;
+    let bytes = hex::decode(encoded.trim_start_matches("0x"))?;
+    let artifacts = decode_outbe_block_artifacts(&bytes)
+        .map_err(|error| eyre!("invalid finalized block artifacts: {error}"))?;
+    Ok(match artifacts.consensus_header_artifact {
+        Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) => Some(artifact),
+        _ => None,
+    })
 }
 
 /// Catch the first observable freeze of a 4->5 target and immediately restart

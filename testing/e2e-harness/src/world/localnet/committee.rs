@@ -335,8 +335,24 @@ impl Localnet {
     /// preserving validator datadirs and sealed enclave state. This models an
     /// operator-level localnet stop/start rather than a single node restart.
     pub fn restart_committee_and_enclaves(&mut self) -> Result<()> {
+        self.restart_committee_and_enclaves_observed(|_| Ok(()))
+    }
+
+    /// Arm restart observations after owned launchers exit and cleanup runs,
+    /// before any replacement can append to the same logs.
+    pub(crate) fn restart_committee_and_enclaves_observed(
+        &mut self,
+        before_launch: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        for validator in self.validators.values_mut() {
+            validator.stop_and_reap()?;
+        }
+        for enclave in self.enclaves.values_mut() {
+            enclave.stop_and_reap()?;
+        }
         self.validators.clear();
         self.enclaves.clear();
+        before_launch(self)?;
         let opts = self.start_opts.clone();
         self.start(&opts)
     }
@@ -502,6 +518,25 @@ impl Localnet {
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
+    }
+
+    /// Fault only the previously observed owned validator, leaving its enclave up.
+    pub(crate) fn kill_validator_owned(
+        &mut self,
+        index: usize,
+        expected_pid: u32,
+    ) -> Result<std::process::ExitStatus> {
+        let child = self
+            .validators
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned fault target"))?;
+        ensure!(
+            child.pid() == expected_pid,
+            "validator-{index} fault target incarnation changed"
+        );
+        let status = child.fault_and_reap()?;
+        self.validators.remove(&index);
+        Ok(status)
     }
 
     /// Rebuild one validator's derived CE database from its preserved canonical

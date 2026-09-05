@@ -709,7 +709,20 @@ impl Localnet {
     /// On hardware SGX this exercises EGETKEY unsealing rather than provisioning
     /// fresh join material.
     pub fn restart_joiner_enclave(&mut self, index: usize) -> Result<()> {
+        self.restart_joiner_enclave_observed(index, |_| Ok(()))
+    }
+
+    /// Observe the boundary between the old owned enclave and its replacement.
+    pub(crate) fn restart_joiner_enclave_observed(
+        &mut self,
+        index: usize,
+        before_launch: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        if let Some(enclave) = self.enclaves.get_mut(&index) {
+            enclave.stop_and_reap()?;
+        }
         self.enclaves.remove(&index);
+        before_launch(self)?;
         self.start_node_enclave(index)
     }
 
@@ -1097,6 +1110,9 @@ impl Localnet {
     /// Stop the joiner node (drop its owned handle -> kill + reap). Port of
     /// `e2e_stop_joiner`.
     pub fn stop_joiner(&mut self, index: usize) -> Result<()> {
+        if let Some(node) = self.validators.get_mut(&index) {
+            node.stop_and_reap()?;
+        }
         self.validators.remove(&index);
         Ok(())
     }

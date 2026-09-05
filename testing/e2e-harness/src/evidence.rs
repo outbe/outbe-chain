@@ -32,6 +32,7 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub price_oracle: &'a PriceOracleEvidenceV1,
     pub radicle: &'a RadicleScenarioEvidenceV1,
     pub tee_lease: &'a TeeLeaseEvidenceV1,
+    pub restart_observations: &'a [serde_json::Value],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -299,6 +300,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "metadosis_p0": metadosis_p0,
         "log_audit": input.audit.json(),
         "tee_lease": input.tee_lease,
+        "restart": input.restart_observations,
         "ocomp": {
             "exact_binaries": exact_ocomp_binaries,
             "topology": input.ocomp,

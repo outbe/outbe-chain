@@ -408,6 +408,7 @@ pub async fn run() {
                     price_oracle: &price_oracle,
                     radicle: &world.state.radicle,
                     tee_lease: &world.state.tee_lease,
+                    restart_observations: &world.state.restart_observations,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }
