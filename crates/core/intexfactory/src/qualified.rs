@@ -20,7 +20,7 @@ use outbe_intex::IntexState;
 
 use crate::constants::{
     MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
-    NOTIFY_CHUNK_LIMIT, ORIGIN_ROUTER_ADDRESS,
+    NOTIFY_CHUNK_LIMIT, NOTIFY_MESSAGE_LIMIT, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -301,8 +301,9 @@ pub(crate) fn enqueue_notice(
 }
 
 /// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
-/// entries per firing. This is where every outbound mark leaves from - the scans
-/// that queue them run in a block hook, which cannot call contracts.
+/// entries and [`NOTIFY_MESSAGE_LIMIT`] router calls per firing. This is where
+/// every outbound mark leaves from - the scans that queue them run in a block
+/// hook, which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let factory = IntexFactoryContract::new(storage.clone());
@@ -313,16 +314,19 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     }
     let stop = tail.min(head.saturating_add(NOTIFY_CHUNK_LIMIT));
     let mut index = head;
-    while index < stop {
+    let mut messages: u32 = 0;
+    while index < stop && messages < NOTIFY_MESSAGE_LIMIT {
         let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
         let consumed = if kind == NOTICE_CALLED {
-            drain_called_run(&factory, &storage, index, stop, entry)?
+            drain_called_run(&factory, &storage, index, stop, entry, &mut messages)?
         } else {
             factory.notify_at.clear(&index)?;
             factory.notify_kind.clear(&index)?;
             // Best-effort: a notice that cannot be sent is dropped, never left to wedge the drain.
-            if let Err(error) = storage.with_checkpoint(|| send_notice(&storage, kind, entry)) {
+            if let Err(error) =
+                storage.with_checkpoint(|| send_notice(&storage, kind, entry, &mut messages))
+            {
                 tracing::warn!(target: "outbe::intexfactory", kind, error = ?error, "notice: dropping");
             }
             1
@@ -346,6 +350,7 @@ fn drain_called_run(
     at: u32,
     stop: u32,
     first: U256,
+    messages: &mut u32,
 ) -> Result<u32> {
     let (first_id, called_at) = unpack_called_notice(first);
     // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
@@ -380,6 +385,7 @@ fn drain_called_run(
         factory.notify_at.clear(&slot)?;
         factory.notify_kind.clear(&slot)?;
     }
+    *messages = messages.saturating_add(router_calls(run.len()));
     // Best-effort, like the Qualified branch: a batch that cannot be sent is dropped, never left to
     // wedge the drain and with it the whole cycle trigger.
     if let Err(error) = storage
@@ -399,7 +405,12 @@ fn drain_called_run(
 
 /// Send one Qualified notice. Called entries never reach here - the drain routes them through
 /// [`drain_called_run`] so a whole group leaves as one message.
-fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
+fn send_notice(
+    storage: &StorageHandle<'_>,
+    kind: u8,
+    entry: U256,
+    messages: &mut u32,
+) -> Result<()> {
     // Only the Qualified shape is readable here; anything else is a scoped key this cannot decode,
     // and narrowing it would panic rather than revert.
     if kind != NOTICE_QUALIFIED {
@@ -417,7 +428,14 @@ fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()>
     if members.is_empty() {
         return Ok(());
     }
+    *messages = messages.saturating_add(router_calls(members.len()));
     notify_qualified(storage, worldwide_day, &members)
+}
+
+/// Router calls a batch of this many series costs: the wire caps a mark at
+/// [`MAX_SERIES_PER_MARK`], and each call fans out to the day's target chains.
+fn router_calls(series: usize) -> u32 {
+    series.div_ceil(MAX_SERIES_PER_MARK) as u32
 }
 
 /// One message per group, split only where the wire's cap forces it.

@@ -59,10 +59,15 @@ pub(crate) const MAX_CALL_WINDOW_DAYS: u32 = 366;
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
-/// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
-/// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
-/// the origin's stamp, so a backlog spends the holder's notice window rather than deferring it.
-pub const NOTIFY_CHUNK_LIMIT: u32 = 32;
+/// Queue entries drained per `intex_notify` firing. A day of calls enqueues one entry per series and
+/// can run to tens of thousands, while the call deadline runs from the origin's stamp - so a backlog
+/// spends the holder's notice window rather than deferring it, and the drain has to keep up.
+pub const NOTIFY_CHUNK_LIMIT: u32 = 256;
+
+/// Router calls one firing may make. This is the cost that matters: entries coalesce into marks of
+/// [`MAX_SERIES_PER_MARK`], each fanning out to the day's target chains, so bounding entries alone
+/// bounds nothing. Paired with the poll period it sets the drain's daily capacity.
+pub const NOTIFY_MESSAGE_LIMIT: u32 = 32;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
