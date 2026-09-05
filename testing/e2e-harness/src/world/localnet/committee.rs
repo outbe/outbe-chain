@@ -612,6 +612,10 @@ impl Localnet {
         {
             return Ok(());
         }
+        // The NodeHost API owns only its private child, while this parent is
+        // normally created by launch_validator after cohort preparation.
+        fs::create_dir_all(&data)
+            .wrap_err_with(|| format!("create founder node data directory {}", data.display()))?;
         let started = std::time::Instant::now();
         let secret = fs::read_to_string(directory.join("reth-p2p-secret.hex"))
             .wrap_err("read founder's provisioned Reth P2P signer")?;
@@ -913,6 +917,49 @@ mod owned_committee_tests {
                 mutation == 0
             );
         }
+    }
+
+    #[test]
+    fn founder_preparation_creates_node_datadir_before_authenticated_initialization() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        let cfg = Config::resolve(&env);
+        let data = cfg.validator_dir(0).join("data");
+        assert!(!data.exists());
+        let localnet = Localnet::new(cfg);
+        let error = localnet.prepare_fresh_founder_node_host(0).unwrap_err();
+        assert!(format!("{error:#}").contains("read founder's provisioned Reth P2P signer"));
+        assert!(
+            data.is_dir(),
+            "the NodeHost API owns only its private child; the harness must create the node datadir first"
+        );
+        assert!(
+            !data
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .exists(),
+            "missing credentials must not initialize NodeHost state"
+        );
+    }
+
+    #[test]
+    fn founder_preparation_rejects_a_file_instead_of_node_datadir_without_overwriting_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        let cfg = Config::resolve(&env);
+        std::fs::create_dir_all(cfg.validator_dir(0)).unwrap();
+        let data = cfg.validator_dir(0).join("data");
+        std::fs::write(&data, b"not a directory").unwrap();
+        let localnet = Localnet::new(cfg);
+        assert!(localnet.prepare_fresh_founder_node_host(0).is_err());
+        assert_eq!(std::fs::read(data).unwrap(), b"not a directory");
     }
 
     #[test]
