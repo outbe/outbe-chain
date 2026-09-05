@@ -37,7 +37,6 @@ ocomp-integration = [
     "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
-    "dep:reth-ethereum",
     "dep:reth-provider",
 ]
 # Real MongoDB tests spawn Docker. Keep them out of workspace-wide unit and
@@ -100,7 +99,7 @@ outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
 rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
-reth-ethereum = { workspace = true, optional = true }
+reth-ethereum.workspace = true
 reth-primitives-traits = { workspace = true, optional = true }
 reth-provider = { workspace = true, features = ["test-utils"], optional = true }
 reth-storage-api = { workspace = true, optional = true }
