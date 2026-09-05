@@ -2769,26 +2769,23 @@ impl OcompTopology {
         self.restart_snapshot_exporter_inner(validator_index, EXPORTER_RESTART_ATTEMPTS)
     }
 
-    /// Keep all workers live through exact export verification, then fault the
-    /// whole owned cohort before doing any serial wait or further RPC work.
+    /// Fault the complete baseline cohort without waiting for a job or export.
+    /// The caller captures cut heads immediately afterwards and binds them to
+    /// the canonical job's exclusive pre-open boundary once it is available.
     #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn stop_workers_after_exports(
+    pub(crate) fn stop_worker_cohort(
         &mut self,
-        record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
-        checkpoint: crate::world::rpc::FinalizedCheckpoint,
-        bundle: &ProtocolBundleV1,
         evidence: &mut crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
-        timeout: Duration,
     ) -> Result<()> {
-        use crate::internal::ocomp_worker_outage::{
-            observe_export, terminate_cohort, WorkerStopEvidence,
-        };
+        use crate::internal::ocomp_worker_outage::{terminate_cohort, WorkerStopEvidence};
         eyre::ensure!(
             self.domains.len() == 4 && self.faults.len() + 4 <= OCOMP_MAX_FAULT_RECORDS,
-            "post-export fault requires the complete four-validator cohort"
+            "worker fault requires the complete four-validator cohort"
         );
         eyre::ensure!(
-            evidence.exports.is_empty() && evidence.stops.is_empty(),
+            evidence.exports.is_empty()
+                && evidence.stops.is_empty()
+                && evidence.cut_heads.is_empty(),
             "worker fault cannot be replayed"
         );
         for (index, domain) in self.domains.iter_mut().enumerate() {
@@ -2799,7 +2796,7 @@ impl OcompTopology {
                 .ok_or_else(|| eyre::eyre!("missing baseline worker"))?;
             eyre::ensure!(
                 worker.guard.exit_status()?.is_none(),
-                "worker exited before export observation"
+                "worker exited before cohort fault"
             );
             evidence.stops.push(WorkerStopEvidence {
                 validator_index: u8::try_from(index)?,
@@ -2812,44 +2809,6 @@ impl OcompTopology {
                 exit_signal: None,
                 wait_error: None,
             });
-        }
-        let deadline = Instant::now() + timeout;
-        loop {
-            self.ensure_validator_roles_alive()?;
-            for validator_index in self.validator_indices()? {
-                let worker = self
-                    .domain_mut(validator_index)?
-                    .workers
-                    .get_mut(&0)
-                    .unwrap();
-                eyre::ensure!(
-                    worker.guard.exit_status()?.is_none(),
-                    "worker exited before four verified exports"
-                );
-                if !evidence
-                    .exports
-                    .iter()
-                    .any(|item| item.validator_index == validator_index)
-                {
-                    if let Some(export) = observe_export(
-                        self.domain_root(validator_index)?,
-                        validator_index,
-                        record,
-                        checkpoint,
-                        bundle,
-                    )? {
-                        evidence.exports.push(export);
-                    }
-                }
-            }
-            if evidence.exports.len() == 4 {
-                break;
-            }
-            eyre::ensure!(
-                Instant::now() < deadline,
-                "four exact exports did not become available"
-            );
-            sleep(Duration::from_millis(100));
         }
         let mut workers = self
             .domains
@@ -2876,6 +2835,125 @@ impl OcompTopology {
             }
         }
         outcome
+    }
+
+    /// Validate the exact stopped incarnations, not merely an empty worker map.
+    /// Call through expiry/retention and immediately before the intended restart.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn ensure_worker_cohort_stopped(
+        &self,
+        evidence: &crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
+    ) -> Result<()> {
+        let inventory = self
+            .domains
+            .iter()
+            .map(|domain| domain.workers.len())
+            .collect::<Vec<_>>();
+        crate::internal::ocomp_worker_outage::require_stopped_cohort(&evidence.stops, &inventory)?;
+        for stopped in &evidence.stops {
+            let latest = self
+                .records
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.validator_index == Some(stopped.validator_index)
+                        && record.role == OcompProcessRole::Worker
+                })
+                .ok_or_else(|| eyre::eyre!("stopped worker lacks owned process history"))?;
+            eyre::ensure!(
+                latest.pid == stopped.pid
+                    && latest.worker_ordinal == Some(stopped.worker_ordinal)
+                    && latest.stopped_at_millis == stopped.reaped_at_millis,
+                "validator-{} worker incarnation changed after cohort fault",
+                stopped.validator_index
+            );
+            eyre::ensure!(
+                self.faults.iter().any(|record| {
+                    record.fault
+                        == (OcompProcessFault::StopWorker {
+                            validator_index: stopped.validator_index,
+                            worker_ordinal: stopped.worker_ordinal,
+                        })
+                        && record.applied_at_millis == stopped.signal_at_millis
+                }),
+                "stopped worker lacks its owned cohort fault record"
+            );
+        }
+        Ok(())
+    }
+
+    /// Observe real exports only after the owned cohort has been fully reaped.
+    /// Workers stay absent; nodes and exporters continue the ordinary public path.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn wait_for_exports_while_workers_stopped(
+        &mut self,
+        record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
+        checkpoint: crate::world::rpc::FinalizedCheckpoint,
+        bundle: &ProtocolBundleV1,
+        evidence: &mut crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
+        timeout: Duration,
+        mut ensure_network_alive: impl FnMut() -> Result<()>,
+    ) -> Result<()> {
+        use crate::internal::ocomp_worker_outage::{observe_export, require_pre_open_cut};
+        self.ensure_worker_cohort_stopped(evidence)?;
+        eyre::ensure!(
+            evidence.exports.is_empty(),
+            "export observation cannot be replayed"
+        );
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("worker outage job lacks canonical finality binding"))?;
+        require_pre_open_cut(&evidence.cut_heads, finalized.open_height)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "four exact exports did not become available while workers were stopped"
+            );
+            ensure_network_alive()?;
+            self.ensure_worker_cohort_stopped(evidence)?;
+            self.ensure_validator_roles_alive()?;
+            for validator_index in self.validator_indices()? {
+                if !evidence
+                    .exports
+                    .iter()
+                    .any(|item| item.validator_index == validator_index)
+                {
+                    if let Some(export) = observe_export(
+                        self.domain_root(validator_index)?,
+                        validator_index,
+                        record,
+                        checkpoint,
+                        bundle,
+                    )? {
+                        evidence.exports.push(export);
+                    }
+                }
+            }
+            // Recheck ownership and typed exporter liveness after filesystem reads,
+            // including on the successful iteration. An intentional exporter fault
+            // from another scenario must not make missing exporters acceptable here.
+            self.ensure_worker_cohort_stopped(evidence)?;
+            for domain in &mut self.domains {
+                let exporter = domain.snapshot_exporter.as_mut().ok_or_else(|| {
+                    eyre::eyre!("worker outage requires every live snapshot exporter")
+                })?;
+                eyre::ensure!(
+                    exporter.guard.exit_status()?.is_none(),
+                    "snapshot exporter exited during worker outage"
+                );
+            }
+            ensure_network_alive()?;
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "worker outage export observation exceeded its budget"
+            );
+            if evidence.exports.len() == 4 {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(100));
+        }
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -4685,6 +4763,68 @@ mod tests {
 
     fn topology() -> TestTopology {
         topology_with_validators(Environment::default().validators)
+    }
+
+    fn stopped_outage_fixture() -> (
+        TestTopology,
+        crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
+    ) {
+        use crate::internal::ocomp_worker_outage::{WorkerOutageEvidence, WorkerStopEvidence};
+        let mut topology = topology_with_validators(4);
+        let mut evidence = WorkerOutageEvidence::default();
+        for index in 0..4 {
+            let pid = 100 + u32::from(index);
+            topology.records.push(OcompProcessRecordV1 {
+                validator_index: Some(index),
+                role: OcompProcessRole::Worker,
+                worker_ordinal: Some(0),
+                pid,
+                started_at_millis: 1,
+                stopped_at_millis: Some(20),
+            });
+            topology.faults.push(OcompFaultRecordV1 {
+                fault: OcompProcessFault::StopWorker {
+                    validator_index: index,
+                    worker_ordinal: 0,
+                },
+                applied_at_millis: 10,
+            });
+            evidence.stops.push(WorkerStopEvidence {
+                validator_index: index,
+                worker_ordinal: 0,
+                pid,
+                signal_at_millis: 10,
+                signal_error: None,
+                reaped_at_millis: Some(20),
+                exit_code: None,
+                exit_signal: Some(9),
+                wait_error: None,
+            });
+        }
+        (topology, evidence)
+    }
+
+    #[test]
+    fn worker_outage_stop_evidence_must_match_actual_retained_ownership() {
+        let (mut topology, mut evidence) = stopped_outage_fixture();
+        topology.ensure_worker_cohort_stopped(&evidence).unwrap();
+        evidence.stops[0].pid += 10;
+        assert!(topology.ensure_worker_cohort_stopped(&evidence).is_err());
+        evidence.stops[0].pid -= 10;
+        topology.faults.pop();
+        assert!(topology.ensure_worker_cohort_stopped(&evidence).is_err());
+    }
+
+    #[test]
+    fn worker_outage_rejects_reintroduced_worker_even_if_it_was_stopped_again() {
+        let (mut topology, evidence) = stopped_outage_fixture();
+        topology.ensure_worker_cohort_stopped(&evidence).unwrap();
+        let mut replacement = topology.records[0].clone();
+        replacement.pid += 10;
+        replacement.started_at_millis = 30;
+        replacement.stopped_at_millis = Some(40);
+        topology.records.push(replacement);
+        assert!(topology.ensure_worker_cohort_stopped(&evidence).is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]

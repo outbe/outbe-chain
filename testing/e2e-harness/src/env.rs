@@ -754,7 +754,7 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn worker_outage_fault_is_after_public_input_and_includes_independent_recovery() {
+    fn worker_outage_precedes_independent_exports_and_includes_independent_recovery() {
         let feature = Feature::parse_path(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
             cucumber::gherkin::GherkinEnv::default(),
@@ -769,7 +769,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(scenario.steps.len(), 10);
-        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens");
+        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent");
         assert_eq!(
             scenario.steps[9].value,
             "the independent OCOMP job completes on every validator"

@@ -199,7 +199,7 @@ Feature: Off-chain computation and Metadosis
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
-    When all four OCOMP workers stop after exact exports of the public JobIntent before voting opens
+    When all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent
     Then the exported zero-vote job expires at its exclusive deadline and finality continues
     When all stopped OCOMP workers restart after canonical expiry
     Then the expired job remains terminal with no successor after process recovery

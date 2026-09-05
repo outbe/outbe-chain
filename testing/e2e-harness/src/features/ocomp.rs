@@ -5672,52 +5672,37 @@ fn stop_all_exporters_before_job(world: &mut World) {
 }
 
 #[when(
-    "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens"
+    "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent"
 )]
-fn stop_workers_after_public_exports(world: &mut World) {
+fn stop_workers_before_independent_public_exports(world: &mut World) {
     use crate::internal::ocomp_worker_outage::{require_pre_open_cut, WorkerOutageEvidence};
     world
         .ocomp
         .ensure_baseline_runtime_ready(1)
         .expect("all four workers live and connected before observing the job");
-    capture_ocomp_finality_before_fault(world, "post-export worker fault");
-    // Keep request/export observation and the complete fault cut contiguous.
-    // Balance probes and other unrelated RPCs must not consume this window.
-    metadosis_creates_finalized_job_intent(world);
-    let request = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("finalized zero-vote JobIntent");
-    let primary = world.validators.primary_port();
-    let record = world
-        .rpc
-        .ocomp_job_record_at_on(primary, request.intent_id, request.finality_recorded_height)
-        .expect("canonical bound job for exact export verification");
-    assert_eq!(record.finalized.as_ref().unwrap().job_id, request.job_id);
-    let checkpoint = world
-        .rpc
-        .checkpoint_at(primary, request.request_height)
-        .expect("canonical request checkpoint");
-    assert_eq!(checkpoint.block_hash, request.request_block_hash);
-    let bundle = world
-        .ocomp
-        .canonical_fork_install()
-        .expect("canonical OCOMP bundle")
-        .protocol_bundle;
+    let ports = world.validators.committee_ports();
+    let current_finalized = ports
+        .iter()
+        .map(|&port| world.rpc.finalized_result(port))
+        .collect::<eyre::Result<Vec<_>>>()
+        .expect("read current finalized heights before worker outage")
+        .into_iter()
+        .min()
+        .expect("four-validator committee");
+    world.state.ocomp_finality_before_fault = Some(
+        world
+            .rpc
+            .wait_finalized_checkpoint(&ports, current_finalized, 60)
+            .expect("current common finalized checkpoint before worker outage")
+            .height,
+    );
     world.state.ocomp_worker_outage = Some(WorkerOutageEvidence::default());
     world
         .ocomp
-        .stop_workers_after_exports(
-            &record,
-            checkpoint,
-            &bundle,
-            world.state.ocomp_worker_outage.as_mut().unwrap(),
-            Duration::from_secs(120),
-        )
-        .unwrap_or_else(|error| {
-            panic!("exact exports followed by complete owned worker fault: {error:#}")
-        });
+        .stop_worker_cohort(world.state.ocomp_worker_outage.as_mut().unwrap())
+        .expect("stop and reap all four owned workers before observing exports");
+    // Capture the cut immediately after reaping. Later export publication cannot
+    // move this boundary; its independence from workers is the property tested.
     let heads = world
         .validators
         .committee_ports()
@@ -5735,16 +5720,51 @@ fn stop_workers_after_public_exports(world: &mut World) {
         })
         .collect::<Vec<_>>();
     world.state.ocomp_worker_outage.as_mut().unwrap().cut_heads = heads.clone();
+    metadosis_creates_finalized_job_intent(world);
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("finalized zero-vote JobIntent");
     require_pre_open_cut(&heads, request.open_height)
-        .expect("all four workers must exit after export but before any compute can start");
+        .expect("all four workers must exit before voting opens");
+    let primary = world.validators.primary_port();
+    let record = world
+        .rpc
+        .ocomp_job_record_at_on(primary, request.intent_id, request.finality_recorded_height)
+        .expect("canonical bound job for exact export verification");
+    assert_eq!(record.finalized.as_ref().unwrap().job_id, request.job_id);
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(primary, request.request_height)
+        .expect("canonical request checkpoint");
+    assert_eq!(checkpoint.block_hash, request.request_block_hash);
+    let bundle = world
+        .ocomp
+        .canonical_fork_install()
+        .expect("canonical OCOMP bundle")
+        .protocol_bundle;
+    let opening_checkpoint =
+        wait_for_common_finalized_checkpoint(world, request.open_height, "worker outage opening");
+    assert_eq!(opening_checkpoint.height, request.open_height);
+    world
+        .ocomp
+        .wait_for_exports_while_workers_stopped(
+            &record,
+            checkpoint,
+            &bundle,
+            world.state.ocomp_worker_outage.as_mut().unwrap(),
+            Duration::from_secs(120),
+            || world.localnet.ensure_committee_alive(),
+        )
+        .unwrap_or_else(|error| {
+            panic!("exact exports while the complete worker cohort remains stopped: {error:#}")
+        });
     for port in world.validators.committee_ports() {
-        let height = world
-            .rpc
-            .finalized_result(port)
-            .expect("post-fault finalized height");
+        // Accountability is created at open, not at the earlier worker cut.
         let accountability = world
             .rpc
-            .ocomp_vote_accountability_at_on(port, request.job_id, height)
+            .ocomp_vote_accountability_at_on(port, request.job_id, opening_checkpoint.height)
             .expect("canonical post-fault accountability");
         assert!(accountability.slot_validator_indexes.is_empty());
         assert!(accountability.quorum_result_digest.is_none());
@@ -6865,6 +6885,16 @@ fn unexported_zero_vote_job_expires_without_halt(world: &mut World) {
 #[then("the exported zero-vote job expires at its exclusive deadline and finality continues")]
 fn exported_zero_vote_job_expires_without_halt(world: &mut World) {
     assert_job_expires_without_nod(world, &[], 0, 0b1111, true, "zero-vote exported");
+    world
+        .ocomp
+        .ensure_worker_cohort_stopped(
+            world
+                .state
+                .ocomp_worker_outage
+                .as_ref()
+                .expect("owned worker outage evidence"),
+        )
+        .expect("the same worker cohort remains stopped through expiry and retention release");
 }
 
 fn assert_job_expires_without_nod(
@@ -7150,6 +7180,16 @@ fn all_exporters_restart_after_expiry(world: &mut World) {
 
 #[when("all stopped OCOMP workers restart after canonical expiry")]
 fn all_workers_restart_after_expiry(world: &mut World) {
+    world
+        .ocomp
+        .ensure_worker_cohort_stopped(
+            world
+                .state
+                .ocomp_worker_outage
+                .as_ref()
+                .expect("owned worker outage evidence"),
+        )
+        .expect("no worker incarnation restarted before the explicit recovery step");
     for validator_index in 0..4 {
         world
             .ocomp
