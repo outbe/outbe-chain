@@ -133,6 +133,9 @@ pub(crate) fn apply_fresh_request_budget_effect(
         green,
     )?;
     let receipt = expected_receipt(&request, split, request.pending_nonce)?;
+    receipt
+        .validate_semantics()
+        .map_err(protocol_error_to_revert)?;
     // The request only credits what Lysis left of the day's own emission. The draw and the brief
     // wait for the Lysis deadline: a day whose Lysis never completes must not open an auction.
     if !split.carry_over_credit.is_zero() {
@@ -142,17 +145,18 @@ pub(crate) fn apply_fresh_request_budget_effect(
             return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
         }
     }
-    receipt
-        .validate_semantics()
-        .map_err(protocol_error_to_revert)?;
     Ok(receipt)
 }
 
 /// Draw the day's auction base from the accumulator and brief Desis with it.
 ///
 /// Called once Lysis has closed, so the accumulator already holds what Lysis returned and a day
-/// whose Lysis never completed never opens an auction. The amount was frozen on the request
-/// receipt; between the request and here only credits can land, so the draw always covers it.
+/// whose Lysis never completed never opens an auction.
+///
+/// The amount was frozen on the request receipt, because the brief hash covers it. An activation
+/// delayed past a later day's own draw can therefore find the accumulator short; the draw then
+/// fails the activation rather than briefing less than the receipt promises, and the day's whole
+/// emission returns to the accumulator.
 pub(crate) fn apply_auction_brief(
     storage: StorageHandle<'_>,
     receipt: &RequestBudgetSplitReceiptV1,
