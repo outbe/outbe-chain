@@ -12,7 +12,7 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN,
+    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN,
     MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
@@ -233,7 +233,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             gem.call_scan_cursor.write(&iso_code, 0)?;
             continue;
         }
-        let index = window_for(&oracle, &mut windows, iso_code, pinned_day)?;
+        let index = window_for(&gem, &oracle, &mut windows, iso_code, pinned_day)?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
@@ -367,6 +367,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// never register a breach, but it must still reach `forfeit`, so this is a
 /// skip of the call check rather than a skip of the gem.
 fn window_for(
+    gem: &GemContract<'_>,
     oracle: &OracleContract<'_>,
     cache: &mut Vec<(u16, VwapWindow)>,
     iso_code: u16,
@@ -378,8 +379,10 @@ fn window_for(
     let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     let mut window = Vec::new();
     if pair_index != 0 {
-        // CALL_WINDOW is stored in seconds; the daily scan needs the day count.
-        let window_days = CALL_WINDOW / 86_400;
+        // Widest window ever issued here, not the constant: a gem keeps the window it
+        // was issued with, and `trigger_call` takes its own days out of this span.
+        let widest = gem.max_call_window.read(&iso_code)?.max(CALL_WINDOW);
+        let window_days = (widest / 86_400).min(MAX_CALL_WINDOW_DAYS);
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

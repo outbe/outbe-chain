@@ -587,3 +587,47 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
         "a currency the registry no longer carries restarts at the head"
     );
 }
+
+#[test]
+fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        let live_window = 28 * 24 * 3600;
+        let live_threshold = 21 * 24 * 3600;
+
+        assert_eq!(
+            f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
+                .unwrap(),
+            (28, 21),
+            "nothing issued yet, so the live profile is the whole range"
+        );
+
+        f.widen_call_terms(REFERENCE_ISO, 40 * 24 * 3600, 10 * 24 * 3600)
+            .unwrap();
+        assert_eq!(
+            f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
+                .unwrap(),
+            (40, 10),
+            "a series issued on wider terms widens the range in both directions"
+        );
+
+        f.widen_call_terms(REFERENCE_ISO, live_window, live_threshold)
+            .unwrap();
+        assert_eq!(
+            f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
+                .unwrap(),
+            (40, 10),
+            "issuing on the narrow profile again does not shrink the range"
+        );
+
+        f.widen_call_terms(REFERENCE_ISO, u32::MAX, live_threshold)
+            .unwrap();
+        assert_eq!(
+            f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
+                .unwrap()
+                .0,
+            crate::constants::MAX_CALL_WINDOW_DAYS,
+            "a corrupt window is capped, not read whole"
+        );
+    });
+}

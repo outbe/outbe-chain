@@ -194,6 +194,12 @@ pub struct GemContract {
     /// against the prices it opened with. 0 = none in flight; a date key is never 0.
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Widest call window ever issued in a currency. The scan collects that many
+    /// days so a gem whose record outruns the current constant still sees its own
+    /// window; it only ever grows, which keeps the collected span a safe upper bound.
+    #[attribute(order = 26)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl GemContract<'_> {

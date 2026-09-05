@@ -20,6 +20,11 @@ pub const MAX_GEM_FORFEITS_PER_RUN: u32 = 256;
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 
+/// Ceiling on the days one call scan reads per currency. The collected span widens
+/// with the windows ever issued, so a corrupt record must not turn into an unbounded
+/// oracle read; the Oracle backfills no further than a year anyway.
+pub(crate) const MAX_CALL_WINDOW_DAYS: u32 = 366;
+
 /// Breach threshold in seconds (21 days): a gem force-calls when the coen VWAP
 /// breaches its Call Price on 21 of the window's 28 days. The daily scan
 /// divides by 86400 to get the day count.

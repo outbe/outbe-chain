@@ -1035,3 +1035,28 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
         "a currency the registry no longer carries restarts at the head"
     );
 }
+
+#[test]
+fn a_wider_window_than_the_constant_widens_the_span_the_scan_collects() {
+    with_storage(|s| {
+        let gem = GemContract::new(s.clone());
+        let iso = sample_params(ALICE).reference_currency;
+        assert_eq!(gem.max_call_window.read(&iso).unwrap(), 0);
+
+        let mut wide = sample_params(ALICE);
+        wide.call_window = 40 * 86_400;
+        crate::api::add_gem(s, wide).unwrap();
+        assert_eq!(
+            gem.max_call_window.read(&iso).unwrap(),
+            40 * 86_400,
+            "the span follows the widest window ever issued"
+        );
+
+        crate::api::add_gem(s, sample_params(BOB)).unwrap();
+        assert_eq!(
+            gem.max_call_window.read(&iso).unwrap(),
+            40 * 86_400,
+            "issuing on the narrow constant again does not shrink it"
+        );
+    });
+}

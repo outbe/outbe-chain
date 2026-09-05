@@ -128,15 +128,18 @@ fn call_currency(
 ) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read(&factory)?;
-    let secs_per_day = SECONDS_PER_DAY as u32;
+    // Widest terms ever issued here, not the live profile: a series keeps the terms
+    // it was issued with, and a narrowed profile must not hide it from the search.
+    let (window_days, threshold_days) =
+        factory.scan_call_terms(iso_code, params.call_window, params.call_threshold)?;
 
     let mut vwaps = DayVwaps::new(pair_index);
     let Some(window) = call_window(
         oracle,
         &mut vwaps,
         last_closed_day,
-        params.call_window / secs_per_day,
-        params.call_threshold / secs_per_day,
+        window_days,
+        threshold_days,
     )?
     else {
         // Too few priced days for any trigger to be breached often enough.

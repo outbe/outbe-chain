@@ -10,9 +10,9 @@ use outbe_primitives::math::{
 };
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use crate::constants::{BIN_STEP_BP, MAX_SERIES_ACTIONS_PER_BLOCK};
+use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS, MAX_SERIES_ACTIONS_PER_BLOCK};
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -136,6 +136,49 @@ impl IntexFactoryContract<'_> {
             worldwide_day,
             members: self.unqualified_group_members(reference_currency, worldwide_day)?,
         })
+    }
+
+    /// Record the terms a newly issued series carries, widening the currency's
+    /// stored pair. Both bounds only move outwards, so the range they define can
+    /// never exclude a series that a narrower live profile would have covered.
+    pub(crate) fn widen_call_terms(
+        &mut self,
+        reference_currency: u16,
+        call_window: u32,
+        call_threshold: u32,
+    ) -> Result<()> {
+        if call_window > self.max_call_window.read(&reference_currency)? {
+            self.max_call_window
+                .write(&reference_currency, call_window)?;
+        }
+        let min = self.min_call_threshold.read(&reference_currency)?;
+        if min == 0 || call_threshold < min {
+            self.min_call_threshold
+                .write(&reference_currency, call_threshold)?;
+        }
+        Ok(())
+    }
+
+    /// Window and threshold, in days, the call scan must search to cover every
+    /// live series: the widest of the stored pair and the live profile, capped so
+    /// a corrupt record cannot turn into an unbounded oracle read.
+    pub(crate) fn scan_call_terms(
+        &self,
+        reference_currency: u16,
+        live_window: u32,
+        live_threshold: u32,
+    ) -> Result<(u32, u32)> {
+        let secs_per_day = SECONDS_PER_DAY as u32;
+        let stored_window = self.max_call_window.read(&reference_currency)?;
+        let days = (stored_window.max(live_window) / secs_per_day).min(MAX_CALL_WINDOW_DAYS);
+
+        let stored_threshold = self.min_call_threshold.read(&reference_currency)?;
+        let threshold = if stored_threshold == 0 {
+            live_threshold
+        } else {
+            stored_threshold.min(live_threshold)
+        };
+        Ok((days, threshold / secs_per_day))
     }
 
     // --- qualified-series bin index (by call_price_minor) ---

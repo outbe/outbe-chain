@@ -118,6 +118,11 @@ impl GemContract<'_> {
             self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
+        if item.call_window > self.max_call_window.read(&item.reference_currency)? {
+            self.max_call_window
+                .write(&item.reference_currency, item.call_window)?;
+        }
+
         Ok(())
     }
 

@@ -151,6 +151,15 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // Widest call terms ever issued in a currency, so the scan's search range covers
+    // series carrying terms the live profile no longer names. Both only ever move
+    // outwards, which keeps the range a safe over-approximation.
+    #[attribute(order = 34)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    /// 0 = nothing issued yet in this currency.
+    #[attribute(order = 35)]
+    pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl IntexFactoryContract<'_> {

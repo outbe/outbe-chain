@@ -49,6 +49,11 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
+/// Ceiling on the days one call scan reads per currency. The search range widens
+/// with the terms ever issued, so a corrupt record must not turn into an unbounded
+/// oracle read; the Oracle backfills no further than a year anyway.
+pub(crate) const MAX_CALL_WINDOW_DAYS: u32 = 366;
+
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
 /// series with its index move and notice. Budgeted apart because they differ in cost.
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
