@@ -245,71 +245,6 @@ fn fifth_full_node_exact_finality(world: &mut World) {
     );
 }
 
-#[when("the follower loses its only upstream while the committee advances")]
-fn lose_upstream(world: &mut World) {
-    let follower = world.validators.http_port(FOLLOWER1_SLOT);
-    let surviving_validator = world.validators.http_port(1);
-    let follower_before = world
-        .rpc
-        .finalized(follower)
-        .expect("follower finalized height");
-    let committee_before = world
-        .rpc
-        .finalized(surviving_validator)
-        .expect("committee finalized height");
-    world.state.marker_height = Some(follower_before);
-    world
-        .localnet
-        .kill_validator(0)
-        .expect("kill follower upstream");
-    assert!(
-        world
-            .rpc
-            .wait_block(surviving_validator, committee_before.saturating_add(5), 60)
-            .is_some(),
-        "remaining 3-of-4 committee did not advance after upstream loss"
-    );
-}
-
-#[then("the disconnected follower makes no unverified finalized progress")]
-fn follower_stalls_safely(world: &mut World) {
-    let follower = world.validators.http_port(FOLLOWER1_SLOT);
-    let before = world.state.marker_height.expect("captured follower height");
-    let after = world
-        .rpc
-        .finalized(follower)
-        .expect("follower RPC remains readable");
-    assert!(
-        after <= before.saturating_add(1),
-        "disconnected follower advanced from {before} to {after} without its upstream"
-    );
-}
-
-#[when("the follower switches to a healthy upstream and restarts from its durable datadir")]
-fn switch_upstream_and_restart_follower(world: &mut World) {
-    world
-        .localnet
-        .restart()
-        .expect("restore validator-0 upstream");
-    let primary = world.validators.primary_port();
-    let target = world
-        .rpc
-        .finalized(world.validators.http_port(1))
-        .expect("surviving committee finalized height");
-    assert!(
-        world.rpc.wait_block(primary, target, 60).is_some(),
-        "restored upstream did not catch up"
-    );
-    world
-        .localnet
-        .stop_follower("follower")
-        .expect("stop follower during catch-up");
-    world
-        .localnet
-        .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 1)
-        .expect("restart follower from durable datadir against healthy upstream");
-}
-
 #[when("the follower restarts from its durable datadir against the same upstream")]
 fn restart_follower_same_upstream(world: &mut World) {
     world
@@ -354,54 +289,6 @@ fn chained_lockstep(world: &mut World) {
         wait_lockstep(&world.rpc, primary, f2, 30),
         "follower2 (chained off follower1) did not reach lockstep"
     );
-}
-
-#[then("the canonical reshare handoff is authenticated by both followers")]
-fn chained_followers_authenticate_preannounce(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let through = world
-        .rpc
-        .finalized_result(primary)
-        .expect("read finalized height for committee handoff evidence");
-    let handoff = world
-        .rpc
-        .latest_finalized_committee_handoff(primary, through)
-        .expect("find exact finalized CommitteePreAnnounce and boundary pair");
-    let terminal_height = handoff.boundary_height.saturating_add(2);
-    let expected_preannounce = world
-        .rpc
-        .checkpoint_at(primary, handoff.preannounce_height)
-        .expect("primary pre-announce checkpoint");
-    let expected_boundary = world
-        .rpc
-        .checkpoint_at(primary, handoff.boundary_height)
-        .expect("primary boundary checkpoint");
-    for (name, port) in [
-        ("follower", world.validators.http_port(FOLLOWER1_SLOT)),
-        ("follower2", world.validators.http_port(FOLLOWER2_SLOT)),
-    ] {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, terminal_height, 90),
-            "{name} did not finalize beyond authenticated epoch {} handoff",
-            handoff.epoch
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, handoff.preannounce_height)
-                .unwrap_or_else(|error| panic!("read {name} pre-announce checkpoint: {error:#}")),
-            expected_preannounce,
-            "{name} imported a different CommitteePreAnnounce carrier"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, handoff.boundary_height)
-                .unwrap_or_else(|error| panic!("read {name} boundary checkpoint: {error:#}")),
-            expected_boundary,
-            "{name} imported a different successor boundary"
-        );
-    }
 }
 
 /// S3 - kill validator-3 mid-epoch and restart it.

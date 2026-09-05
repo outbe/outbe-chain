@@ -390,6 +390,19 @@ impl Localnet {
             .is_some_and(|guard| !guard.exited())
     }
 
+    /// Exact owned live process, with observation errors preserved.
+    pub(crate) fn live_follower_pid(&mut self, name: &str) -> Result<u32> {
+        let child = self
+            .followers
+            .get_mut(name)
+            .ok_or_else(|| eyre!("missing owned follower {name}"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "owned follower {name} exited"
+        );
+        Ok(child.pid())
+    }
+
     pub fn validator_radicle_sidecar_running(&mut self, index: usize) -> bool {
         self.radicle_sidecars
             .get_mut(&index)

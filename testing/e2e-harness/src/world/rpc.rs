@@ -31,7 +31,7 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocompregistry::precompile::IOcompRegistry;
-use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
+use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
@@ -403,15 +403,6 @@ pub struct FinalizedCheckpoint {
     pub height: u64,
     pub block_hash: B256,
     pub state_root: B256,
-}
-
-/// Exact finalized carrier pair that authenticates one successor committee.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommitteeHandoffEvidence {
-    pub preannounce_height: u64,
-    pub boundary_height: u64,
-    pub epoch: u64,
-    pub outcome_hash: B256,
 }
 
 impl TxOutcome {
@@ -951,69 +942,6 @@ impl Rpc {
         })
     }
 
-    /// Find the latest finalized `CommitteePreAnnounce -> BoundaryOutcome`
-    /// pair and prove that both carriers bind byte-identical DKG outcome bytes.
-    pub fn latest_finalized_committee_handoff(
-        &self,
-        port: u16,
-        through_height: u64,
-    ) -> Result<CommitteeHandoffEvidence> {
-        let finalized = self.finalized_result(port)?;
-        ensure!(
-            finalized >= through_height,
-            "RPC port {port} has only finalized h{finalized}, below requested handoff scan h{through_height}"
-        );
-        let mut announced = BTreeMap::<u64, (u64, Bytes)>::new();
-        let mut latest = None;
-        for height in 1..=through_height {
-            let (_, _, extra_data) = eth::block_commitment_result(&self.url(port), height)
-                .wrap_err_with(|| format!("read handoff carrier h{height} from RPC port {port}"))?;
-            let artifacts = decode_outbe_block_artifacts(&extra_data)
-                .map_err(|error| eyre!("decode handoff carrier h{height}: {error}"))?;
-            match artifacts.consensus_header_artifact {
-                Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }) => {
-                    if let Some((prior_height, prior_outcome)) = announced.get(&epoch) {
-                        ensure!(
-                            prior_outcome == &outcome,
-                            "conflicting CommitteePreAnnounce outcomes for epoch {epoch} at h{prior_height} and h{height}"
-                        );
-                    } else {
-                        announced.insert(epoch, (height, outcome));
-                    }
-                }
-                Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => {
-                    if let Some((preannounce_height, announced_outcome)) =
-                        announced.get(&boundary.epoch)
-                    {
-                        ensure!(
-                            *preannounce_height < height,
-                            "epoch {} pre-announce is not before its boundary",
-                            boundary.epoch
-                        );
-                        ensure!(
-                            announced_outcome == &boundary.outcome,
-                            "epoch {} boundary outcome differs from finalized pre-announce",
-                            boundary.epoch
-                        );
-                        latest = Some(CommitteeHandoffEvidence {
-                            preannounce_height: *preannounce_height,
-                            boundary_height: height,
-                            epoch: boundary.epoch,
-                            outcome_hash: keccak256(announced_outcome),
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-        latest.ok_or_else(|| {
-            eyre!(
-                "no finalized CommitteePreAnnounce/BoundaryOutcome pair through h{through_height} on RPC port {port}"
-            )
-        })
-    }
-
-    /// Bind a successful receipt to one canonical block finalized by every expected node.
     pub fn finalize_outcome(
         &self,
         outcome: &TxOutcome,

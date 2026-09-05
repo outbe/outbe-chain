@@ -266,6 +266,7 @@ pub struct FixtureState {
     pub wwd: Option<String>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
     pub marker_height: Option<u64>,
+    pub(crate) chained_handoff: Option<crate::internal::certified_handoff::PinnedHandoff>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
     /// Hash of a transaction that cannot be mined, submitted to observe pool
@@ -509,6 +510,7 @@ impl Default for FixtureState {
             promoted_validator_pid: None,
             wwd: None,
             marker_height: None,
+            chained_handoff: None,
             marker_count: None,
             stuck_tx_hash: None,
             stuck_tx_sender: None,

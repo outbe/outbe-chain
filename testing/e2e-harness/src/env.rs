@@ -661,6 +661,27 @@ mod tests {
     }
 
     #[test]
+    fn chained_followers_keep_all_twelve_live_handoff_and_restart_steps() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/fullnode.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = feature.scenarios.iter().find(|scenario| scenario.name == "Chained FullNodes stop on upstream loss and recover through a healthy upstream").unwrap();
+        assert_eq!(scenario.steps.len(), 12);
+        assert_eq!(unmet(&feature, scenario, &env), None);
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[test]
     fn active_pending_validator_restart_is_selected_with_all_eight_registered_steps() {
         let env = Environment {
             tee_mode: TeeMode::SgxNoAttest,

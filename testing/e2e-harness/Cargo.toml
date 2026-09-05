@@ -11,7 +11,6 @@ ocomp-finality-fixture = [
     "dep:alloy-consensus",
     "dep:alloy-rlp",
     "dep:alloy-trie",
-    "dep:commonware-consensus",
     "dep:k256",
     "dep:outbe-common",
     "dep:outbe-fidelity",
@@ -128,7 +127,7 @@ ark-ff.workspace = true
 # the harness plays the L2 network signing `zkMerkleRoot` with a registered key.
 bytes.workspace = true
 commonware-codec.workspace = true
-commonware-consensus = { workspace = true, optional = true }
+commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 blst.workspace = true
@@ -138,6 +137,9 @@ rustix.workspace = true
 
 # The e2e runner is a binary: the CLI defines the environment (validators, TEE
 # mode, sudo); Gherkin tags define each scenario's requirements.
+[dev-dependencies]
+commonware-parallel.workspace = true
+
 [[bin]]
 name = "outbe-e2e"
 path = "src/main.rs"

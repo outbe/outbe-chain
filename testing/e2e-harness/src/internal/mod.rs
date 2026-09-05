@@ -3,6 +3,7 @@
 //! Nothing here is part of the public handle API.
 
 pub(crate) mod addresses;
+pub(crate) mod certified_handoff;
 pub(crate) mod config;
 pub(crate) mod eth;
 pub(crate) mod parse;

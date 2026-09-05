@@ -8435,6 +8435,7 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
+ "commonware-parallel",
  "commonware-utils",
  "cucumber",
  "eyre",

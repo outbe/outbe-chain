@@ -23,6 +23,7 @@ pub mod dcap_onboarding;
 pub mod dkg;
 pub mod downtime;
 pub mod follower;
+mod follower_handoff;
 pub mod l2_zk_gate;
 pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
