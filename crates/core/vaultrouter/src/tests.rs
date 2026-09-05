@@ -6,8 +6,11 @@
 //! empty returndata (matching the convention in `outbe_credisfactory::tests`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 
+use outbe_oracle::api::AddressPair;
+use outbe_oracle::schema::OracleContract;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 
@@ -17,7 +20,7 @@ use crate::precompile::{dispatch, dispatch_crosschain};
 use crate::runtime;
 use crate::schema::VaultRouterContract;
 use crate::sol_ext::IReferenceCurrency;
-use crate::sol_ext::IVaultV2;
+use crate::sol_ext::{IVaultV2, IERC20};
 
 const CHAIN_ID: u64 = 1;
 const USD_ISO_CODE: u16 = 840;
@@ -53,9 +56,54 @@ fn remote_router() -> Address {
     address!("0x000000000000000000000000000000000000b517")
 }
 
+fn cca() -> Address {
+    address!("0x000000000000000000000000000000000000cca1")
+}
+fn vault_from() -> Address {
+    address!("0x000000000000000000000000000000000000af01")
+}
+fn vault_to() -> Address {
+    address!("0x000000000000000000000000000000000000af02")
+}
+fn asset_from() -> Address {
+    address!("0x000000000000000000000000000000000000a5f1")
+}
+fn asset_to() -> Address {
+    address!("0x000000000000000000000000000000000000a5f2")
+}
+
+const EUR_ISO_CODE: u16 = 978;
+
 /// ABI encoding of a single `uint256`/`address` return: the 32-byte big-endian word.
 fn word(value: U256) -> Bytes {
     Bytes::from(value.to_be_bytes::<32>().to_vec())
+}
+
+/// ABI encoding of a single `address` return.
+fn word_addr(value: Address) -> Bytes {
+    word(U256::from_be_bytes(value.into_word().0))
+}
+
+/// Publishes a `COEN/iso_code` rate directly through the Oracle's own storage
+/// schema (a Rust cross-module read, not an EVM sub-call - `OracleContract` is
+/// bound to `ORACLE_ADDRESS` in this same provider). `timestamp` must be
+/// non-zero and within `FX_RATE_MAX_AGE_SECONDS` of the provider's clock for
+/// `fresh_currency_cross_rate` to accept it.
+fn write_oracle_rate(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    pair_id: u32,
+    rate: U256,
+    timestamp: u64,
+) {
+    let oracle = OracleContract::new(storage.clone());
+    let pair = AddressPair::new_coen_to(iso_code);
+    oracle.pair_to_index.write(&pair, pair_id).unwrap();
+    oracle.exchange_rate.write(&pair_id, rate).unwrap();
+    oracle
+        .exchange_rate_timestamp
+        .write(&pair_id, timestamp)
+        .unwrap();
 }
 
 fn set_owner(storage: &StorageHandle<'_>, who: Address) {
@@ -1030,4 +1078,1040 @@ fn reference_currency_assets_dispatch() {
             vec![asset()]
         );
     });
+}
+
+// --- rebalance ----------------------------------------------------------------
+
+/// Registers `vault` for `asset` directly through the schema, matching the
+/// `deposit`/`withdraw` tests' convention of bypassing `add_vault` (and its own
+/// `vault.owner()`/`isoCode()` sub-calls) when the test only cares about the
+/// registry membership `rebalance` actually reads.
+fn register_vault(storage: &StorageHandle<'_>, asset: Address, vault: Address) {
+    VaultRouterContract::new(storage.clone())
+        .asset_vault_set(asset)
+        .insert(vault)
+        .unwrap();
+}
+
+#[test]
+fn rebalance_rejects_same_vault() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_from(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("same vault"), "{err}");
+    });
+}
+
+#[test]
+fn rebalance_rejects_zero_amount() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::ZERO,
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid rebalance amount"),
+            "{err}"
+        );
+    });
+}
+
+#[test]
+fn rebalance_rejects_an_unregistered_source_vault() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        // Only the destination vault is registered.
+        register_vault(&storage, asset_to(), vault_to());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not registered"), "{err}");
+    });
+}
+
+#[test]
+fn rebalance_rejects_an_unregistered_destination_vault() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        // Only the source vault is registered.
+        register_vault(&storage, asset_from(), vault_from());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not registered"), "{err}");
+    });
+}
+
+/// `rebalance` gates registration on `asset_vault_set`, not
+/// `vault_reference_currencies` - which `remove_vault` (see `runtime.rs`)
+/// documents as unset for vaults registered before the ISO index existed.
+/// This pins that the rebalance path does not regress that upgrade path.
+#[test]
+fn rebalance_accepts_a_vault_whose_reference_currency_index_is_unset() {
+    let shares = U256::from(50u64);
+    let amount = U256::from(10u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        let contract = VaultRouterContract::new(storage.clone());
+        assert_eq!(
+            contract
+                .vault_reference_currencies
+                .read(&vault_from())
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            contract
+                .vault_reference_currencies
+                .read(&vault_to())
+                .unwrap(),
+            0
+        );
+
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(amount_to, amount);
+    });
+}
+
+#[test]
+fn rebalance_rejects_insufficient_source_shares() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(U256::from(100u64)),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(50u64)),
+    );
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("insufficient shares"), "{err}");
+    });
+}
+
+#[test]
+fn rebalance_rejects_when_the_required_input_exceeds_max() {
+    let amount = U256::from(10u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        // Same asset prices 1:1, so `amount_to == amount`; a max one wei below
+        // that must be rejected before any vault is touched.
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            amount - U256::from(1),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("exceeds max"), "{err}");
+    });
+}
+
+/// Same asset short-circuits at 1:1 with no oracle read and no decimal
+/// scaling - the identity path `rebalance_amount_to` takes before touching
+/// `erc20_decimals`/`asset_iso_code` at all.
+#[test]
+fn rebalance_prices_an_identical_asset_pair_one_to_one() {
+    let shares = U256::from(100u64);
+    let amount = U256::from(10u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(amount_to, amount);
+    });
+}
+
+/// Two different assets that happen to share a currency: the oracle short
+/// circuits internally (`from_iso == to_iso`) so no rate needs to be
+/// published - proven here by never seeding the Oracle contract at all.
+#[test]
+fn rebalance_prices_a_same_currency_pair_one_to_one() {
+    let shares = U256::from(100u64);
+    let amount = U256::from(10u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        // No oracle pair registered for USD anywhere - if the implementation
+        // read one despite the equal ISO codes this would revert instead.
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(amount_to, amount);
+    });
+}
+
+#[test]
+fn rebalance_prices_a_cross_currency_pair_from_the_oracle() {
+    const RATE_TIMESTAMP: u64 = 1_700_000_000;
+    const USD_PAIR_ID: u32 = 1;
+    const EUR_PAIR_ID: u32 = 2;
+    let shares = U256::from(1_000u64);
+    let amount = U256::from(10u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(RATE_TIMESTAMP));
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(EUR_ISO_CODE)),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        // 1 COEN = 1 USD, 1 COEN = 2 EUR: 10 USD converts to 20 EUR.
+        write_oracle_rate(
+            &storage,
+            USD_ISO_CODE,
+            USD_PAIR_ID,
+            U256::from(1_000_000u64),
+            RATE_TIMESTAMP,
+        );
+        write_oracle_rate(
+            &storage,
+            EUR_ISO_CODE,
+            EUR_PAIR_ID,
+            U256::from(2_000_000u64),
+            RATE_TIMESTAMP,
+        );
+
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(amount_to, U256::from(20u64));
+    });
+}
+
+#[test]
+fn rebalance_scales_across_asset_decimals() {
+    let shares = U256::from(1u128 << 60);
+
+    // Scaling up: 6 decimals -> 18 decimals is an exact multiply.
+    {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.stub_sub_call_at_selector(
+            vault_from(),
+            IVaultV2::assetCall::SELECTOR,
+            word_addr(asset_from()),
+        );
+        storage.stub_sub_call_at_selector(
+            vault_to(),
+            IVaultV2::assetCall::SELECTOR,
+            word_addr(asset_to()),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_from(),
+            IERC20::decimalsCall::SELECTOR,
+            word(U256::from(6u8)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_to(),
+            IERC20::decimalsCall::SELECTOR,
+            word(U256::from(18u8)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_from(),
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            word(U256::from(USD_ISO_CODE)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_to(),
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            word(U256::from(USD_ISO_CODE)),
+        );
+        storage.stub_sub_call_at(vault_from(), word(shares));
+        storage.stub_sub_call_at(vault_to(), word(shares));
+        storage.enable_sub_call_stub();
+
+        StorageHandle::enter(&mut storage, |storage| {
+            register_vault(&storage, asset_from(), vault_from());
+            register_vault(&storage, asset_to(), vault_to());
+
+            let amount_to = runtime::rebalance(
+                storage.clone(),
+                cca(),
+                vault_from(),
+                vault_to(),
+                U256::from(10u64),
+                U256::MAX,
+            )
+            .unwrap();
+            assert_eq!(
+                amount_to,
+                U256::from(10u64) * U256::from(10u64).pow(U256::from(12u64))
+            );
+        });
+    }
+
+    // Scaling down: 18 decimals -> 6 decimals rounds up.
+    {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.stub_sub_call_at_selector(
+            vault_from(),
+            IVaultV2::assetCall::SELECTOR,
+            word_addr(asset_from()),
+        );
+        storage.stub_sub_call_at_selector(
+            vault_to(),
+            IVaultV2::assetCall::SELECTOR,
+            word_addr(asset_to()),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_from(),
+            IERC20::decimalsCall::SELECTOR,
+            word(U256::from(18u8)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_to(),
+            IERC20::decimalsCall::SELECTOR,
+            word(U256::from(6u8)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_from(),
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            word(U256::from(USD_ISO_CODE)),
+        );
+        storage.stub_sub_call_at_selector(
+            asset_to(),
+            IReferenceCurrency::isoCodeCall::SELECTOR,
+            word(U256::from(USD_ISO_CODE)),
+        );
+        storage.stub_sub_call_at(vault_from(), word(shares));
+        storage.stub_sub_call_at(vault_to(), word(shares));
+        storage.enable_sub_call_stub();
+
+        StorageHandle::enter(&mut storage, |storage| {
+            register_vault(&storage, asset_from(), vault_from());
+            register_vault(&storage, asset_to(), vault_to());
+
+            // 10^13 wei of an 18-decimal asset is 0.00001; ceil-scaled to 6
+            // decimals that is 10 minor units, not 9 (10^13 / 10^12 = 10 exactly
+            // here, so bump by one wei to force the rounding to bite).
+            let amount = U256::from(10u64).pow(U256::from(13u64)) + U256::from(1);
+            let amount_to = runtime::rebalance(
+                storage.clone(),
+                cca(),
+                vault_from(),
+                vault_to(),
+                amount,
+                U256::MAX,
+            )
+            .unwrap();
+            assert_eq!(amount_to, U256::from(11u64));
+        });
+    }
+}
+
+#[test]
+fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(19u8)),
+    );
+    // Both decimals are read before either is checked, so the destination's must
+    // resolve too even though this test only cares about the source's bound.
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported asset decimals"),
+            "{err}"
+        );
+    });
+}
+
+/// The pull (receive) is the first external call `rebalance` makes; if the
+/// caller has not approved the destination asset, nothing downstream ever
+/// runs.
+#[test]
+fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at(vault_from(), word(U256::from(100u64)));
+    // `asset_to()::transferFromCall` is deliberately left unstubbed, and the
+    // global stub is off, so the pull fails closed.
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+/// If the destination deposit fails, the source vault's withdraw and the
+/// payout transfer - both coded after it - never run.
+#[test]
+fn rebalance_rolls_back_when_the_destination_deposit_fails() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at(vault_from(), word(U256::from(100u64)));
+    storage.stub_sub_call_at(asset_from(), word(U256::from(1u64)));
+    // `vault_to()::depositCall` is deliberately left unstubbed.
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+/// If the source withdraw fails after the destination deposit already
+/// succeeded, the payout transfer - coded after it - never runs, and no
+/// event is emitted for the half-completed swap.
+#[test]
+fn rebalance_rolls_back_when_the_source_withdraw_fails() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(U256::from(10u64)),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(100u64)),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::depositCall::SELECTOR,
+        word(U256::from(10u64)),
+    );
+    storage.stub_sub_call_at(asset_from(), word(U256::from(1u64)));
+    // `vault_from()::withdrawCall` is deliberately left unstubbed.
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+/// `outbe_cca::api::is_active` is a stub that answers `Active` for every
+/// address (see its own doc comment) - so today `rebalance` rejects no
+/// caller on CCA standing alone. This pins that the gate is wired (the seam
+/// the real registry drops into), not that it currently restricts anyone.
+#[test]
+fn rebalance_succeeds_for_a_stranger_because_the_cca_registry_is_a_stub() {
+    let shares = U256::from(100u64);
+    let amount = U256::from(10u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_from(), vault_to());
+
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            stranger(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(amount_to, amount);
+    });
+}
+
+#[test]
+fn preview_rebalance_matches_what_rebalance_pulls() {
+    const RATE_TIMESTAMP: u64 = 1_700_000_000;
+    const USD_PAIR_ID: u32 = 1;
+    const EUR_PAIR_ID: u32 = 2;
+    let shares = U256::from(1_000u64);
+    let amount = U256::from(10u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(RATE_TIMESTAMP));
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(EUR_ISO_CODE)),
+    );
+    storage.stub_sub_call_at(vault_from(), word(shares));
+    storage.stub_sub_call_at(vault_to(), word(shares));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+        write_oracle_rate(
+            &storage,
+            USD_ISO_CODE,
+            USD_PAIR_ID,
+            U256::from(1_000_000u64),
+            RATE_TIMESTAMP,
+        );
+        write_oracle_rate(
+            &storage,
+            EUR_ISO_CODE,
+            EUR_PAIR_ID,
+            U256::from(2_000_000u64),
+            RATE_TIMESTAMP,
+        );
+
+        let (preview_from, preview_to, preview_amount) =
+            runtime::preview_rebalance(&storage, vault_from(), vault_to(), amount).unwrap();
+        assert_eq!(preview_from, asset_from());
+        assert_eq!(preview_to, asset_to());
+
+        let amount_to = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+        assert_eq!(preview_amount, amount_to);
+    });
+}
+
+#[test]
+fn rebalance_selectors_reject_native_value() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let call = IVaultRouter::rebalanceCall {
+            vaultFrom: vault_from(),
+            vaultTo: vault_to(),
+            assetsAmount: U256::from(10),
+            maxAmountTo: U256::MAX,
+        };
+        let err = dispatch(storage.clone(), &call.abi_encode(), cca(), U256::from(1)).unwrap_err();
+        assert!(err.to_string().contains("non-payable"), "{err}");
+
+        let preview = IVaultRouter::previewRebalanceCall {
+            vaultFrom: vault_from(),
+            vaultTo: vault_to(),
+            assetsAmount: U256::from(10),
+        };
+        let err =
+            dispatch(storage.clone(), &preview.abi_encode(), cca(), U256::from(1)).unwrap_err();
+        assert!(err.to_string().contains("non-payable"), "{err}");
+    });
+}
+
+/// The happy path emits exactly one `LiquidityRebalanced` carrying both legs:
+/// what left `vault_from` and what the caller supplied into `vault_to`. The
+/// rollback tests below assert the absence of this event, so its presence and
+/// contents need pinning too, or "no event" would pass vacuously.
+#[test]
+fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
+    const RATE_TIMESTAMP: u64 = 1_700_000_000;
+    const USD_PAIR_ID: u32 = 1;
+    const EUR_PAIR_ID: u32 = 2;
+    let burned = U256::from(7u64);
+    let minted = U256::from(9u64);
+    let amount = U256::from(10u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(RATE_TIMESTAMP));
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(EUR_ISO_CODE)),
+    );
+    // Distinct share counts per vault, so the event cannot pass by echoing one
+    // number into both share fields.
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(burned),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(1_000u64)),
+    );
+    storage.stub_sub_call_at_selector(vault_from(), IVaultV2::withdrawCall::SELECTOR, word(burned));
+    storage.stub_sub_call_at_selector(vault_to(), IVaultV2::depositCall::SELECTOR, word(minted));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+        // 1 COEN = 1 USD, 1 COEN = 2 EUR: 10 USD is 20 EUR.
+        write_oracle_rate(
+            &storage,
+            USD_ISO_CODE,
+            USD_PAIR_ID,
+            U256::from(1_000_000u64),
+            RATE_TIMESTAMP,
+        );
+        write_oracle_rate(
+            &storage,
+            EUR_ISO_CODE,
+            EUR_PAIR_ID,
+            U256::from(2_000_000u64),
+            RATE_TIMESTAMP,
+        );
+
+        runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            amount,
+            U256::MAX,
+        )
+        .unwrap();
+    });
+
+    let events = storage.get_events(VAULT_ROUTER_ADDRESS);
+    assert_eq!(events.len(), 1, "exactly one rebalance event");
+    let decoded = IVaultRouter::LiquidityRebalanced::decode_log_data(&events[0]).unwrap();
+    assert_eq!(decoded.cca, cca());
+    assert_eq!(decoded.vaultFrom, vault_from());
+    assert_eq!(decoded.vaultTo, vault_to());
+    assert_eq!(decoded.assetsWithdrawn, amount);
+    assert_eq!(decoded.burnedShares, burned);
+    assert_eq!(decoded.assetsDeposited, U256::from(20u64));
+    assert_eq!(decoded.mintedShares, minted);
+}
+
+/// An asset whose live `isoCode()` has fallen to zero is not a currency, so it
+/// cannot be par to another zero-coded asset. Without the guard the oracle's
+/// `from_iso == to_iso` short circuit would price two unrelated assets 1:1.
+#[test]
+fn rebalance_rejects_an_asset_reporting_no_reference_currency() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(
+        vault_from(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_from()),
+    );
+    storage.stub_sub_call_at_selector(
+        vault_to(),
+        IVaultV2::assetCall::SELECTOR,
+        word_addr(asset_to()),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(6u8)),
+    );
+    // Both assets report "no currency": the pair must be refused, not treated
+    // as a matching pair of currencies.
+    storage.stub_sub_call_at_selector(
+        asset_from(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.stub_sub_call_at_selector(
+        asset_to(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        register_vault(&storage, asset_from(), vault_from());
+        register_vault(&storage, asset_to(), vault_to());
+
+        let err = runtime::rebalance(
+            storage.clone(),
+            cca(),
+            vault_from(),
+            vault_to(),
+            U256::from(10),
+            U256::MAX,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid reference currency"),
+            "{err}"
+        );
+    });
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }

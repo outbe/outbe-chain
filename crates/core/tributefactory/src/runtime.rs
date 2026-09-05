@@ -4,7 +4,7 @@ use outbe_compressed_entities::{
     derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::stablecoin::iso_4217_alpha;
+use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tee::protocol::{
@@ -91,18 +91,8 @@ impl TributeFactoryContract<'_> {
             signature,
         } = input;
 
-        if iso_4217_alpha(tribute_currency).is_none() {
-            return Err(TributeFactoryError::InvalidCurrency {
-                currency: tribute_currency,
-            }
-            .into());
-        }
-        if iso_4217_alpha(reference_currency).is_none() {
-            return Err(TributeFactoryError::InvalidCurrency {
-                currency: tribute_currency,
-            }
-            .into());
-        }
+        validate_currency_code(tribute_currency)?;
+        validate_currency_code(reference_currency)?;
 
         // When the caller is a registered L2 operator with ZK verification
         // enabled, the offer must carry a valid BLS MinSig signature over
