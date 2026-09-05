@@ -12,8 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN,
-    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
+    MAX_GEM_FORFEITS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -29,6 +29,9 @@ impl BlockLifecycle for GemLifecycle {
         // A call sweep the daily trigger could not finish in one go carries on
         // here, block by block, rather than waiting a day for the next trigger.
         run_call_slice(ctx)?;
+        // Expiry is time-driven, so it runs every block too: a day of calls all
+        // mature together, and a daily pass would take months to work them off.
+        sweep_expired(ctx)?;
         Ok(())
     }
 
@@ -164,7 +167,6 @@ type VwapWindow = Vec<(u32, Option<U256>)>;
 /// Cycle daily-trigger entry: run the Called scan, discarding the count.
 pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     scan_and_call(ctx)?;
-    sweep_expired(ctx)?;
     Ok(())
 }
 
@@ -322,41 +324,75 @@ pub(crate) fn call_currency(
 
 /// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut gem = GemContract::new(ctx.storage.clone());
-    let head = gem.called_head.read()?;
-    let tail = gem.called_tail.read()?;
-    if head >= tail {
-        return Ok(0);
-    }
-
     let now = ctx.block.timestamp;
-    let mut budget = MAX_GEM_FORFEITS_PER_RUN;
+    let mut budget = MAX_GEM_FORFEITS_PER_BLOCK;
+    let mut buckets = MAX_EXPIRY_BUCKETS_PER_BLOCK;
     let mut burned: u32 = 0;
-    // Slots, not just actions: an entry the sweep cannot retire pins the head, and
-    // the run of emptied slots behind it would otherwise grow without bound.
-    for index in head..tail.min(head.saturating_add(MAX_GEM_FORFEITS_PER_RUN)) {
-        if budget == 0 {
+
+    while budget > 0 && buckets > 0 {
+        let mut gem = GemContract::new(ctx.storage.clone());
+        // Always from the bottom: the tree makes restarting free, and a gem can
+        // land in a day the cursor has already passed.
+        let Some(day) = gem.first_expiry_day()? else {
             break;
-        }
-        let Some(gem_id) = gem.called_queue_slot(index)? else {
-            continue;
         };
-        if now <= gem.called_deadline.read(&gem_id)? {
+        if now <= gem.expiry_bucket_min.read(&day)? {
             break;
         }
-        budget -= 1;
-        match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
-            Ok(true) => burned = burned.saturating_add(1),
-            // Due and still not burning: the entry no longer matches its gem.
-            Ok(false) => {
-                tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
+        buckets -= 1;
+
+        let len = gem.expiry_bucket_len.read(&day)?;
+        let resume = (gem.expiry_sweep_day.read()? == day)
+            .then(|| gem.expiry_cursor.read())
+            .transpose()?
+            .unwrap_or(0);
+
+        let mut earliest = u64::MAX;
+        let mut slot = resume;
+        while slot < len {
+            if budget == 0 {
+                break;
             }
-            Err(error) => {
-                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem")
+            let Some(gem_id) = gem.expiry_slot(day, slot)? else {
+                slot += 1;
+                continue;
+            };
+            let deadline = gem.called_deadline.read(&gem_id)?;
+            if now <= deadline {
+                earliest = earliest.min(deadline);
+                slot += 1;
+                continue;
             }
+            budget -= 1;
+            match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
+                Ok(true) => burned = burned.saturating_add(1),
+                // Due and still not burning: the entry no longer matches its gem.
+                // Out of the bucket either way, so it cannot hold the day back.
+                Ok(false) => {
+                    tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
+                    gem.release_expiry_slot(day, slot, gem_id)?;
+                }
+                Err(error) => {
+                    tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: quarantining gem");
+                    gem.release_expiry_slot(day, slot, gem_id)?;
+                }
+            }
+            slot += 1;
+        }
+
+        if slot < len {
+            gem.expiry_sweep_day.write(day)?;
+            gem.expiry_cursor.write(slot)?;
+            break;
+        }
+        gem.expiry_sweep_day.write(0)?;
+        gem.expiry_cursor.write(0)?;
+        // Everything left in the day is still waiting, so nothing here is due until
+        // the earliest of them; without this the tree would hand it back every block.
+        if gem.expiry_bucket_live.read(&day)? != 0 {
+            gem.expiry_bucket_min.write(&day, earliest)?;
         }
     }
-    gem.compact_called_queue()?;
     Ok(burned)
 }
 

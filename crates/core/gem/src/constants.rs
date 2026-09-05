@@ -14,7 +14,7 @@ pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
 
 /// Gems the daily expiry sweep may forfeit before it gives out.
-pub const MAX_GEM_FORFEITS_PER_RUN: u32 = 256;
+pub const MAX_GEM_FORFEITS_PER_BLOCK: u32 = 256;
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
@@ -33,3 +33,8 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
 /// the holder must settle. Once elapsed the gem is forfeit-burned.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
+
+/// Deadline-day buckets one expiry sweep may open per block. Each costs a tree
+/// descent plus its own bookkeeping, so a long backlog of days spreads over blocks
+/// the same way a long bucket does.
+pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
