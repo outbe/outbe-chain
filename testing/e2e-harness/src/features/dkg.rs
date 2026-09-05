@@ -22,6 +22,8 @@ use crate::world::rpc::{FinalizedCheckpoint, TxOutcome};
 use crate::world::state::RestartIncarnation;
 use crate::world::World;
 
+mod expiry;
+
 const FOLLOWER_SLOT: usize = 14;
 
 /// Public facts only: never retain the boundary's encoded DKG output in evidence.
@@ -730,66 +732,12 @@ fn lose_quorum_permanently(world: &mut World) {
 /// target never partially activates, and progress stops only after VRF expiry.
 #[then("the old committee finalizes without partial activation until VRF expiry")]
 fn old_committee_reaches_expiry_without_partial_activation(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let kill_height = world.state.marker_height.expect("kill height");
-    let mut highest = kill_height;
-    let mut saw_active_four = false;
-    let mut expiry = None;
-
-    for _ in 0..120 {
-        if let Some(height) = world.rpc.finalized(primary) {
-            highest = highest.max(height);
-        }
-        if let Some(active) = world.rpc.active_count(primary) {
-            assert_eq!(active, 4, "frozen 4-to-5 target partially activated");
-            saw_active_four = true;
-        }
-        if expiry.is_none() {
-            expiry = world
-                .rpc
-                .consensus_status_field(primary, "vrfExpiryHeight")
-                .and_then(|value| value.trim_matches('"').parse::<u64>().ok());
-        }
-        if (0..3).all(|index| {
-            world
-                .localnet
-                .log_has(index, "frozen DKG target missed VRF expiry")
-                .expect("read required owned process log")
-        }) {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-    }
-
-    let expiry = expiry.expect("VRF expiry was never published while RPC was live");
-    assert!(saw_active_four, "never observed the old active set");
-    assert!(
-        highest > kill_height + 6,
-        "old committee did not continue finalizing before expiry"
-    );
-    assert!(
-        highest >= expiry,
-        "committee stopped before the published VRF expiry ({highest} < {expiry})"
-    );
-    world.state.vrf_expiry_height = Some(expiry);
+    expiry::observe(world).expect("complete owned DKG expiry ceiling proof");
 }
 
 #[then("the surviving validators exit with the frozen-target expiry error")]
 fn surviving_validators_fail_closed(world: &mut World) {
-    let expiry = world.state.vrf_expiry_height.expect("VRF expiry height");
-    for index in 0..3 {
-        assert!(
-            world
-                .localnet
-                .log_has(index, "frozen DKG target missed VRF expiry")
-                .expect("read required owned process log"),
-            "validator-{index} lacks frozen-target expiry evidence (deadline {expiry})"
-        );
-        assert!(
-            world.localnet.validator_exited(index),
-            "validator-{index} remained running after frozen-target expiry"
-        );
-    }
+    expiry::assert_retained(world).expect("retained exact survivor expiry exits");
 }
 
 /// The old committee keeps finalizing through the stalled reshare and the join
