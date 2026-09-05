@@ -301,6 +301,13 @@ impl Localnet {
             .ok_or_else(|| eyre::eyre!("validator-{validator_index} is not running"))
     }
 
+    /// Exact owned validator-role nodes, including admitted joiners, not FullNodes.
+    pub(crate) fn owned_validator_indices(&self) -> Vec<usize> {
+        let mut indices = self.validators.keys().copied().collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices
+    }
+
     /// Observe both owned children, propagating wait errors instead of treating
     /// an unobservable process as live.
     pub(crate) fn live_validator_and_enclave_pids(&mut self, index: usize) -> Result<(u32, u32)> {

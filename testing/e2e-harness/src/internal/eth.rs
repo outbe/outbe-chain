@@ -121,6 +121,7 @@ fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 
 // Solidity sources so the harness exercises the same selectors the node
 // dispatches.
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IGovernance.sol");
 sol!("../../contracts/precompiles/src/IL2Registry.sol");

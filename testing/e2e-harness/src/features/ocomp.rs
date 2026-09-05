@@ -11,8 +11,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolEvent;
 use cucumber::{given, then, when};
+use eyre::{ensure, eyre};
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_node::ocomp::retention::{inspect_retention_journal, PinReleaseReason, PinStateV1};
 use outbe_ocomp_protocol::{
@@ -1438,113 +1440,765 @@ fn full_node_job_a_result_matches_quorum(world: &mut World) {
     assert_eq!(accountability.quorum_result_digest, Some(local_digest));
 }
 
-#[then("both deadlines record validator 3 missing and keep the chain live after jailing it")]
-fn dynamic_deadlines_jail_only_the_active_missing_validator(world: &mut World) {
-    const JAILED: u64 = 6;
-    const JAILED_VALIDATOR_INDEX: usize = 3;
-
+#[then("both deadlines record validator 3 missing with one soft penalty and all five validators stay live")]
+fn dynamic_deadlines_preserve_active_membership_with_one_soft_penalty(world: &mut World) {
+    // The full 43,200-block recovery/possible-jail acceptance is a separate lane.
+    assert_eq!(world.validators.size(), 4, "four founders plus one joiner");
+    let ports = dynamic_deadline_ports(
+        world.validators.committee_ports(),
+        world.validators.http_port(world.validators.joiner_index()),
+    )
+    .expect("five distinct expected observers");
+    let members: Vec<Address> = (0..5)
+        .map(|index| {
+            let key = world
+                .validators
+                .get(index)
+                .evm_key()
+                .expect("validator identity");
+            eth::address_of(&key).expect("derive public validator identity")
+        })
+        .collect();
+    let victim = members[3];
+    let owned: Vec<_> = (0..5)
+        .map(|index| {
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("every expected validator and enclave must be owned and live")
+        })
+        .collect();
     let requests = world.state.ocomp_dynamic_job_requests.clone();
     assert_eq!(requests.len(), 2, "job A and job B requests");
     let expected_slots = world.state.ocomp_dynamic_vote_slots.clone();
     assert_eq!(expected_slots.len(), 2, "job A and job B voting slots");
-    let last_deadline = requests
-        .iter()
-        .map(|request| request.deadline_height)
-        .max()
-        .expect("dynamic job deadlines");
-    let primary = world.validators.primary_port();
+    let deadlines = [requests[0].deadline_height, requests[1].deadline_height];
+    let recovery = deadlines[0]
+        .checked_add(DYNAMIC_OCOMP_RECOVERY_BLOCKS)
+        .expect("recovery height overflow");
     assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, last_deadline.saturating_add(1), 900),
-        "chain did not remain live past both dynamic OCOMP deadlines"
+        deadlines[0] > 0 && deadlines[0] < deadlines[1] && deadlines[1] < recovery,
+        "two ordered deadlines must lie in one recovery window"
     );
-    let live_ports = dynamic_live_ports_after_jail(
-        world.validators.committee_ports(),
-        JAILED_VALIDATOR_INDEX,
-        world.validators.http_port(world.validators.joiner_index()),
-    );
-
-    for (ordinal, request) in requests.iter().enumerate() {
-        let record = dynamic_job_record(world, request);
-        let job_id = record
-            .finalized
-            .as_ref()
-            .expect("dynamic finalized intent")
-            .job_id;
-        let observed = live_ports
-            .iter()
-            .copied()
-            .map(|port| {
-                world
-                    .rpc
-                    .finalized_ocomp_vote_accountability_on(port, job_id)
-            })
-            .collect::<Vec<_>>();
-        let first = observed[0]
-            .clone()
-            .expect("closed dynamic accountability on primary");
-        assert!(
-            observed
-                .iter()
-                .all(|candidate| candidate.as_ref() == Some(&first)),
-            "nodes disagree on closed job {} accountability",
-            ordinal + 1
-        );
-        assert_eq!(first.closed_height, Some(request.deadline_height));
-        let missing_indexes = (0..first.member_count)
-            .filter(|index| !expected_slots[ordinal].contains(index))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            missing_indexes.len(),
-            1,
-            "exactly validator-3 must be absent from job {} accountability",
-            ordinal + 1
-        );
-        assert_eq!(
-            first.missing_bitmap,
-            Some(singleton_participant_bitmap(
-                first.member_count,
-                missing_indexes[0],
-            ))
-        );
-        assert_eq!(first.slot_validator_indexes, expected_slots[ordinal]);
-    }
-
-    let validator_three = world.validators.get(3);
-    let validator_three_key = validator_three
-        .evm_key()
-        .expect("validator-3 EVM key for status lookup");
-    let validator_three_address = eth::address_of(&validator_three_key)
-        .expect("derive validator-3 address")
-        .to_string();
-    for port in live_ports {
-        assert_eq!(
-            world.rpc.validator_status(port, &validator_three_address),
-            Some(JAILED),
-            "validator-3 is not deterministically JAILED on port {port}"
-        );
-        assert!(
+    let primary = world.validators.primary_port();
+    let baseline_height = world
+        .rpc
+        .finalized_result(primary)
+        .expect("finalized completed quorums");
+    let records: Vec<_> = requests
+        .iter()
+        .map(|request| {
             world
                 .rpc
-                .finalized(port)
-                .is_some_and(|height| height > last_deadline),
-            "later deadline stopped finality on port {port}"
+                .ocomp_job_record_at_on(primary, request.intent_id, baseline_height)
+                .expect("pinned dynamic job identity")
+        })
+        .collect();
+    let job_ids: [B256; 2] = std::array::from_fn(|ordinal| {
+        records[ordinal]
+            .finalized
+            .as_ref()
+            .expect("finalized dynamic intent")
+            .job_id
+    });
+    assert_ne!(job_ids[0], job_ids[1], "two different dynamic jobs");
+    let baselines: Vec<_> = job_ids
+        .iter()
+        .map(|&job_id| {
+            world
+                .rpc
+                .ocomp_vote_accountability_at_on(primary, job_id, baseline_height)
+                .expect("retain completed quorum before the deadline wait")
+        })
+        .collect();
+    for ordinal in 0..2 {
+        assert_eq!(baselines[ordinal].job_id, job_ids[ordinal]);
+        assert_eq!(
+            baselines[ordinal].result_validator_set_epoch,
+            records[ordinal].intent.result_validator_set_epoch
+        );
+        assert_eq!(
+            baselines[ordinal].result_committee_set_hash,
+            records[ordinal].intent.result_committee_set_hash
+        );
+        assert_eq!(
+            baselines[ordinal].result_ocomp_binding_hash,
+            records[ordinal].intent.result_ocomp_binding_hash
+        );
+    }
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("all-five fresh target")
+        .max(
+            deadlines[1]
+                .checked_add(1)
+                .expect("deadline height overflow"),
+        );
+    assert!(
+        target < recovery,
+        "fresh target already crossed the separate recovery gate"
+    );
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "ocomp_dynamic_deadlines_armed", "ports": ports, "members": members,
+        "owned_pids": owned, "baseline_height": baseline_height, "baselines": baselines,
+        "job_ids": job_ids, "deadlines": deadlines, "target": target,
+    }));
+    // Preserve the original 900 x 2s allowance, now requiring every expected peer.
+    let wait_deadline = Instant::now() + Duration::from_secs(900 * 2);
+    let final_checkpoint = loop {
+        dynamic_deadline_assert_live(world, &owned);
+        let observations: Vec<_> = ports
+            .iter()
+            .map(|&port| world.rpc.finalized_result(port))
+            .collect();
+        assert!(
+            observations.iter().all(|height| match height {
+                Ok(height) => *height < recovery,
+                Err(_) => true, // transient RPC failure still cannot satisfy the barrier below
+            }),
+            "an observer crossed the separate recovery gate"
+        );
+        if observations
+            .iter()
+            .all(|height| height.as_ref().is_ok_and(|height| *height >= target))
+        {
+            let height = observations
+                .iter()
+                .map(|height| *height.as_ref().expect("all finalities present"))
+                .min()
+                .expect("five finalities");
+            assert!(
+                height < recovery,
+                "dynamic deadline proof crossed the separate recovery gate"
+            );
+            break dynamic_deadline_checkpoint(world, &ports, height)
+                .expect("all-five common finalized hash/root");
+        }
+        assert!(
+            Instant::now() < wait_deadline,
+            "all five validators did not finalize dynamic deadlines: {observations:?}"
+        );
+        sleep(Duration::from_secs(2));
+    };
+    let checkpoints = deadlines.map(|height| {
+        dynamic_deadline_checkpoint(world, &ports, height).expect("canonical closing block")
+    });
+    let heights = [
+        deadlines[0] - 1,
+        deadlines[0],
+        deadlines[1] - 1,
+        deadlines[1],
+        final_checkpoint.height,
+    ];
+    let states: Vec<_> = heights
+        .iter()
+        .map(|&height| {
+            let checkpoint = dynamic_deadline_checkpoint(world, &ports, height)
+                .expect("pinned accounting checkpoint");
+            let observed: Vec<_> = ports
+                .iter()
+                .map(|&port| {
+                    dynamic_deadline_account(world, port, victim, height)
+                        .expect("pinned soft-penalty accounting")
+                })
+                .collect();
+            world.state.restart_observations.push(serde_json::json!({
+                "phase": "ocomp_dynamic_deadline_accounting", "height": height,
+                "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
+                "ports": ports, "accounts": observed,
+            }));
+            assert!(
+                observed.iter().all(|account| account == &observed[0]),
+                "all-five accounting disagreement"
+            );
+            assert_eq!(
+                dynamic_deadline_checkpoint(world, &ports, height).unwrap(),
+                checkpoint
+            );
+            observed[0].clone()
+        })
+        .collect();
+    let states: [DynamicDeadlineAccount; 5] = states
+        .try_into()
+        .expect("five pinned accounting observations");
+    let mut agreed_events = None;
+    for &port in &ports {
+        let logs = eth::raw_json_result(
+            &world.rpc.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": crate::internal::addresses::WWD_ADDR,
+                "fromBlock": format!("0x{:x}", requests[0].request_height),
+                "toBlock": format!("0x{:x}", final_checkpoint.height),
+                "topics": [eth::IMetadosis::OcompVoteMissed::SIGNATURE_HASH],
+            }]),
+        )
+        .expect("finalized canonical OcompVoteMissed events");
+        world.state.restart_observations.push(serde_json::json!({
+            "phase": "ocomp_dynamic_deadline_events", "port": port, "logs": logs,
+            "through_height": final_checkpoint.height,
+        }));
+        let events = dynamic_deadline_decode_events(&logs, victim, job_ids, checkpoints)
+            .expect("exact first/repeat OCOMP event identities");
+        for event in &events {
+            let receipt = eth::raw_json_result(
+                &world.rpc.url(port),
+                "eth_getTransactionReceipt",
+                serde_json::json!([event.transaction_hash]),
+            )
+            .expect("canonical OcompLifecycleBegin receipt RPC");
+            world.state.restart_observations.push(serde_json::json!({
+                "phase": "ocomp_dynamic_deadline_receipt", "port": port,
+                "event": event, "receipt": receipt,
+            }));
+            dynamic_deadline_validate_receipt(&receipt, event)
+                .expect("successful canonical system receipt contains the exact miss event");
+        }
+        dynamic_deadline_validate_penalties(
+            &states,
+            &events,
+            &members,
+            deadlines,
+            final_checkpoint.height,
+        )
+        .expect("one bonded-only slash, fixed recovery window, and unchanged ACTIVE membership");
+        if let Some(ref expected) = agreed_events {
+            assert_eq!(&events, expected, "all-five event disagreement");
+        } else {
+            agreed_events = Some(events);
+        }
+    }
+    for (ordinal, request) in requests.iter().enumerate() {
+        let mut agreed = None;
+        for &port in &ports {
+            let closed = world
+                .rpc
+                .ocomp_vote_accountability_at_on(port, job_ids[ordinal], request.deadline_height)
+                .expect("accountability at exact closing block");
+            dynamic_deadline_validate_accountability(
+                &closed,
+                &baselines[ordinal],
+                &expected_slots[ordinal],
+                request.deadline_height,
+                [(4, 3), (5, 4)][ordinal],
+            )
+            .expect("pinned historical quorum and exact singleton missing bitmap");
+            let record = world
+                .rpc
+                .ocomp_job_record_at_on(port, request.intent_id, final_checkpoint.height)
+                .expect("finalized dynamic job remains available");
+            assert_eq!(
+                record, records[ordinal],
+                "closing mutated the completed job/result/binding"
+            );
+            assert_eq!(
+                world
+                    .rpc
+                    .ocomp_vote_accountability_at_on(
+                        port,
+                        job_ids[ordinal],
+                        final_checkpoint.height
+                    )
+                    .expect("post-deadline accountability"),
+                closed,
+                "closed accountability changed later"
+            );
+            if let Some(ref first) = agreed {
+                assert_eq!(
+                    &closed, first,
+                    "all-five closed accountability disagreement"
+                );
+            } else {
+                agreed = Some(closed);
+            }
+        }
+        world.state.restart_observations.push(serde_json::json!({
+            "phase": "ocomp_dynamic_deadline_accountability", "job_id": job_ids[ordinal],
+            "accountability": agreed, "ports": ports,
+        }));
+    }
+    dynamic_deadline_assert_live(world, &owned);
+    assert_eq!(
+        dynamic_deadline_checkpoint(world, &ports, final_checkpoint.height).unwrap(),
+        final_checkpoint
+    );
+    dynamic_deadline_assert_live(world, &owned);
+    world.state.restart_observations.push(serde_json::json!({
+        "phase": "ocomp_dynamic_deadlines_verified", "ports": ports, "owned_pids": owned,
+        "height": final_checkpoint.height, "block_hash": final_checkpoint.block_hash,
+        "state_root": final_checkpoint.state_root, "recovery_deadline": recovery,
+    }));
+}
+
+// Canonical policy: crates/system/validatorset/src/runtime.rs. Not a test override.
+const DYNAMIC_OCOMP_RECOVERY_BLOCKS: u64 = 43_200;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct DynamicDeadlineAccount {
+    bonded: U256,
+    mirrored: U256,
+    total_staked: U256,
+    staking_balance: U256,
+    status: u8,
+    ordinary_slash_count: u64,
+    ocomp_miss_count: u64,
+    ocomp_recovery_deadline: u64,
+    active: Vec<Address>,
+    participants: Vec<Address>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct DynamicDeadlineMiss {
+    validator: Address,
+    job_id: B256,
+    miss_count: u64,
+    slashed_bonded: U256,
+    recovery_deadline: u64,
+    first_in_window: bool,
+    height: u64,
+    block_hash: B256,
+    transaction_hash: B256,
+    log_index: u64,
+}
+
+fn dynamic_deadline_ports(mut founders: Vec<u16>, joiner: u16) -> eyre::Result<Vec<u16>> {
+    ensure!(founders.len() == 4, "four expected founder observers");
+    founders.push(joiner);
+    ensure!(
+        founders
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == 5,
+        "five distinct observers including validator 3 and the joiner"
+    );
+    Ok(founders)
+}
+
+fn dynamic_deadline_assert_live(world: &mut World, owned: &[(u32, u32)]) {
+    assert_eq!(owned.len(), 5, "five expected owned process pairs");
+    for (index, expected) in owned.iter().enumerate() {
+        assert_eq!(
+            world
+                .localnet
+                .live_validator_and_enclave_pids(index)
+                .expect("dynamic deadline observer exited or is unobservable"),
+            *expected,
+            "dynamic deadline observer changed incarnation"
         );
     }
 }
 
-fn dynamic_live_ports_after_jail(
-    committee_ports: Vec<u16>,
-    jailed_validator_index: usize,
-    joiner_port: u16,
-) -> Vec<u16> {
-    committee_ports
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, port)| (index != jailed_validator_index).then_some(port))
-        .chain(std::iter::once(joiner_port))
-        .collect()
+fn dynamic_deadline_checkpoint(
+    world: &World,
+    ports: &[u16],
+    height: u64,
+) -> eyre::Result<crate::world::rpc::FinalizedCheckpoint> {
+    let observed = ports
+        .iter()
+        .map(|&port| {
+            Ok((
+                port,
+                world.rpc.finalized_result(port)?,
+                world.rpc.checkpoint_at(port, height)?,
+            ))
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    dynamic_deadline_validate_checkpoints(ports, height, &observed)
+}
+
+fn dynamic_deadline_validate_checkpoints(
+    ports: &[u16],
+    height: u64,
+    observed: &[(u16, u64, crate::world::rpc::FinalizedCheckpoint)],
+) -> eyre::Result<crate::world::rpc::FinalizedCheckpoint> {
+    ensure!(
+        ports.len() == 5
+            && ports
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                == 5,
+        "five distinct expected finalized observers required"
+    );
+    ensure!(
+        observed.len() == ports.len(),
+        "a finalized observer is missing"
+    );
+    let expected = observed[0].2;
+    ensure!(expected.height == height, "wrong pinned checkpoint height");
+    for (&port, &(actual_port, finalized, checkpoint)) in ports.iter().zip(observed) {
+        ensure!(port == actual_port, "wrong finalized observer identity");
+        ensure!(finalized >= height, "observer has not finalized h{height}");
+        ensure!(
+            checkpoint == expected,
+            "finalized hash/root mismatch at h{height}"
+        );
+    }
+    Ok(expected)
+}
+
+fn dynamic_deadline_account(
+    world: &World,
+    port: u16,
+    victim: Address,
+    height: u64,
+) -> eyre::Result<DynamicDeadlineAccount> {
+    use crate::internal::addresses::{STK_ADDR, VS_ADDR};
+    let url = world.rpc.url(port);
+    let record = eth::read_call_at_result(
+        &url,
+        VS_ADDR,
+        &eth::IValidatorSet::validatorByAddressCall { addr: victim },
+        height,
+    )
+    .map_err(|e| eyre!(e))?;
+    ensure!(
+        record.validatorAddress == victim,
+        "wrong validator accounting identity"
+    );
+    let mut active = eth::read_call_at_result(
+        &url,
+        VS_ADDR,
+        &eth::IValidatorSet::getActiveValidatorsCall {},
+        height,
+    )
+    .map_err(|e| eyre!(e))?;
+    let mut participants = eth::read_call_at_result(
+        &url,
+        VS_ADDR,
+        &eth::IValidatorSet::getActiveConsensusSetCall {},
+        height,
+    )
+    .map_err(|e| eyre!(e))?;
+    active.sort_unstable();
+    participants.sort_unstable();
+    let recovery_word = |base: u64| -> eyre::Result<u64> {
+        // ValidatorSet schema slots 61/62 use this same production mapping helper.
+        let slot = outbe_primitives::storage::StorageKey::mapping_slot(&victim, U256::from(base));
+        let value = eth::raw_json_result(
+            &url,
+            "eth_getStorageAt",
+            serde_json::json!([VS_ADDR, format!("0x{slot:x}"), format!("0x{height:x}")]),
+        )?;
+        dynamic_deadline_storage_u64(&value)
+    };
+    Ok(DynamicDeadlineAccount {
+        bonded: eth::read_call_at_result(
+            &url,
+            STK_ADDR,
+            &eth::IStaking::getStakeCall { validator: victim },
+            height,
+        )
+        .map_err(|e| eyre!(e))?,
+        mirrored: record.stake,
+        total_staked: eth::read_call_at_result(
+            &url,
+            STK_ADDR,
+            &eth::IStaking::getTotalStakedCall {},
+            height,
+        )
+        .map_err(|e| eyre!(e))?,
+        staking_balance: serde_json::from_value(
+            eth::raw_json_result(
+                &url,
+                "eth_getBalance",
+                serde_json::json!([STK_ADDR, format!("0x{height:x}")]),
+            )
+            .map_err(|e| eyre!(e))?,
+        )?,
+        status: record.status,
+        ordinary_slash_count: record.slashCount,
+        ocomp_miss_count: recovery_word(61)?,
+        ocomp_recovery_deadline: recovery_word(62)?,
+        active,
+        participants,
+    })
+}
+
+fn dynamic_deadline_storage_u64(value: &serde_json::Value) -> eyre::Result<u64> {
+    // eth_getStorageAt returns a complete 32-byte word, not an optional counter.
+    let word: B256 = serde_json::from_value(value.clone())?;
+    Ok(U256::from_be_bytes(word.0).try_into()?)
+}
+
+fn dynamic_deadline_decode_events(
+    logs: &serde_json::Value,
+    victim: Address,
+    jobs: [B256; 2],
+    checkpoints: [crate::world::rpc::FinalizedCheckpoint; 2],
+) -> eyre::Result<[DynamicDeadlineMiss; 2]> {
+    let rows = logs
+        .as_array()
+        .ok_or_else(|| eyre!("miss events are not an array"))?;
+    ensure!(
+        rows.len() == 2,
+        "exactly two canonical OcompVoteMissed events required"
+    );
+    let quantity = |value: &serde_json::Value| -> eyre::Result<u64> {
+        let word: U256 = serde_json::from_value(value.clone())?;
+        Ok(word.try_into()?)
+    };
+    let mut events = Vec::new();
+    for row in rows {
+        let source: Address = serde_json::from_value(row["address"].clone())?;
+        ensure!(
+            source == crate::internal::addresses::WWD_ADDR,
+            "wrong OCOMP event emitter"
+        );
+        ensure!(
+            row["removed"].as_bool() == Some(false),
+            "removed or unqualified OCOMP event"
+        );
+        let topics: Vec<B256> = serde_json::from_value(row["topics"].clone())?;
+        let data: Bytes = serde_json::from_value(row["data"].clone())?;
+        ensure!(
+            topics.len() == 3 && data.len() == 128,
+            "malformed OcompVoteMissed shape"
+        );
+        let event = eth::IMetadosis::OcompVoteMissed::decode_raw_log_validate(
+            topics.iter().copied(),
+            &data,
+        )?;
+        let canonical = event.encode_log_data();
+        ensure!(
+            canonical.topics() == topics.as_slice() && canonical.data == data,
+            "noncanonical OcompVoteMissed ABI encoding"
+        );
+        events.push(DynamicDeadlineMiss {
+            validator: event.validator,
+            job_id: event.jobId,
+            miss_count: event.missCount,
+            slashed_bonded: event.slashedBonded,
+            recovery_deadline: event.recoveryDeadline,
+            first_in_window: event.firstInWindow,
+            height: quantity(&row["blockNumber"])?,
+            block_hash: serde_json::from_value(row["blockHash"].clone())?,
+            transaction_hash: serde_json::from_value(row["transactionHash"].clone())?,
+            log_index: quantity(&row["logIndex"])?,
+        });
+    }
+    events.sort_by_key(|event| (event.height, event.log_index));
+    for (ordinal, event) in events.iter().enumerate() {
+        ensure!(
+            event.validator == victim && event.job_id == jobs[ordinal],
+            "wrong missing validator/job identity"
+        );
+        ensure!(
+            event.height == checkpoints[ordinal].height
+                && event.block_hash == checkpoints[ordinal].block_hash,
+            "miss event is not in the exact canonical closing block"
+        );
+    }
+    events
+        .try_into()
+        .map_err(|_| eyre!("two miss events required"))
+}
+
+fn dynamic_deadline_validate_receipt(
+    receipt: &serde_json::Value,
+    event: &DynamicDeadlineMiss,
+) -> eyre::Result<()> {
+    let quantity = |value: &serde_json::Value| -> eyre::Result<u64> {
+        let word: U256 = serde_json::from_value(value.clone())?;
+        Ok(word.try_into()?)
+    };
+    let hash = |value: &serde_json::Value| -> eyre::Result<B256> {
+        Ok(serde_json::from_value(value.clone())?)
+    };
+    ensure!(
+        quantity(&receipt["status"])? == 1
+            && quantity(&receipt["blockNumber"])? == event.height
+            && hash(&receipt["blockHash"])? == event.block_hash
+            && hash(&receipt["transactionHash"])? == event.transaction_hash
+            && event.transaction_hash != B256::ZERO,
+        "missing, reverted, or foreign OCOMP system receipt"
+    );
+    let expected = eth::IMetadosis::OcompVoteMissed {
+        validator: event.validator,
+        jobId: event.job_id,
+        missCount: event.miss_count,
+        slashedBonded: event.slashed_bonded,
+        recoveryDeadline: event.recovery_deadline,
+        firstInWindow: event.first_in_window,
+    }
+    .encode_log_data();
+    let rows = receipt["logs"]
+        .as_array()
+        .ok_or_else(|| eyre!("receipt has no logs"))?;
+    let mut matched = 0;
+    for row in rows {
+        if quantity(&row["logIndex"])? != event.log_index {
+            continue;
+        }
+        matched += 1;
+        let address: Address = serde_json::from_value(row["address"].clone())?;
+        let topics: Vec<B256> = serde_json::from_value(row["topics"].clone())?;
+        let data: Bytes = serde_json::from_value(row["data"].clone())?;
+        ensure!(
+            address == crate::internal::addresses::WWD_ADDR
+                && topics.as_slice() == expected.topics()
+                && data == expected.data
+                && row["removed"].as_bool() == Some(false)
+                && quantity(&row["blockNumber"])? == event.height
+                && hash(&row["blockHash"])? == event.block_hash
+                && hash(&row["transactionHash"])? == event.transaction_hash,
+            "receipt does not contain the exact canonical OcompVoteMissed log"
+        );
+    }
+    ensure!(matched == 1, "receipt must include the exact miss log once");
+    Ok(())
+}
+
+fn dynamic_deadline_validate_penalties(
+    states: &[DynamicDeadlineAccount; 5],
+    events: &[DynamicDeadlineMiss; 2],
+    members: &[Address],
+    deadlines: [u64; 2],
+    final_height: u64,
+) -> eyre::Result<()> {
+    ensure!(members.len() == 5, "five expected identities required");
+    let mut sorted_members = members.to_vec();
+    sorted_members.sort_unstable();
+    ensure!(
+        sorted_members.windows(2).all(|pair| pair[0] != pair[1]),
+        "duplicate expected validator identity"
+    );
+    let recovery = deadlines[0]
+        .checked_add(DYNAMIC_OCOMP_RECOVERY_BLOCKS)
+        .ok_or_else(|| eyre!("recovery deadline overflow"))?;
+    ensure!(
+        deadlines[0] > 0
+            && deadlines[0] < deadlines[1]
+            && deadlines[1] < final_height
+            && final_height < recovery,
+        "observations must pass both deadlines but precede recovery expiry"
+    );
+    let miss_counts = [0, 1, 1, 2, 2];
+    let recovery_deadlines = [0, recovery, recovery, recovery, recovery];
+    for (ordinal, state) in states.iter().enumerate() {
+        ensure!(
+            state.ocomp_miss_count == miss_counts[ordinal]
+                && state.ocomp_recovery_deadline == recovery_deadlines[ordinal],
+            "durable OCOMP miss count or fixed recovery deadline is incorrect"
+        );
+        ensure!(
+            state.status == 2
+                && state.active == sorted_members
+                && state.participants == sorted_members,
+            "soft penalty must preserve all five ACTIVE consensus participants"
+        );
+        ensure!(
+            state.bonded == state.mirrored,
+            "bonded/mirrored stake mismatch"
+        );
+    }
+    let slash = states[0].bonded / U256::from(10);
+    ensure!(
+        !slash.is_zero(),
+        "funded fixture must exercise a positive first-miss slash"
+    );
+    for (ordinal, event) in events.iter().enumerate() {
+        ensure!(
+            event.validator == members[3] && event.height == deadlines[ordinal],
+            "wrong miss identity/height"
+        );
+        ensure!(
+            event.miss_count == (ordinal + 1) as u64 && event.first_in_window == (ordinal == 0),
+            "wrong first/repeat miss count or flag"
+        );
+        ensure!(
+            event.recovery_deadline == recovery,
+            "OCOMP recovery deadline moved"
+        );
+        ensure!(
+            event.slashed_bonded == if ordinal == 0 { slash } else { U256::ZERO },
+            "OCOMP must slash bonded stake exactly once"
+        );
+    }
+    let mut expected = states[0].clone();
+    expected.bonded = expected
+        .bonded
+        .checked_sub(slash)
+        .ok_or_else(|| eyre!("bonded slash underflow"))?;
+    expected.mirrored = expected.bonded;
+    expected.total_staked = expected
+        .total_staked
+        .checked_sub(slash)
+        .ok_or_else(|| eyre!("total stake underflow"))?;
+    expected.staking_balance = expected
+        .staking_balance
+        .checked_sub(slash)
+        .ok_or_else(|| eyre!("staking balance underflow"))?;
+    for (ordinal, state) in states.iter().enumerate().skip(1) {
+        expected.ocomp_miss_count = miss_counts[ordinal];
+        expected.ocomp_recovery_deadline = recovery_deadlines[ordinal];
+        ensure!(state == &expected,
+            "first/repeat/post-deadline accounting changed beyond one bonded-only slash (including ordinary slash count)");
+    }
+    Ok(())
+}
+
+fn dynamic_deadline_validate_accountability(
+    closed: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    baseline: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    slots: &[u16],
+    deadline: u64,
+    membership: (u16, u16),
+) -> eyre::Result<()> {
+    ensure!(
+        (closed.member_count, closed.quorum_threshold) == membership
+            && (baseline.member_count, baseline.quorum_threshold) == membership,
+        "historical membership/quorum changed"
+    );
+    ensure!(
+        closed.job_id == baseline.job_id
+            && closed.result_validator_set_epoch == baseline.result_validator_set_epoch
+            && closed.result_committee_set_hash == baseline.result_committee_set_hash
+            && closed.result_ocomp_binding_hash == baseline.result_ocomp_binding_hash,
+        "historical job/binding changed"
+    );
+    ensure!(
+        baseline.quorum_result_digest.is_some()
+            && closed.quorum_result_digest == baseline.quorum_result_digest
+            && closed.quorum_height == baseline.quorum_height
+            && closed.quorum_signer_bitmap == baseline.quorum_signer_bitmap,
+        "completed quorum/result changed at close"
+    );
+    ensure!(
+        closed.slot_validator_indexes == slots
+            && baseline.slot_validator_indexes == slots
+            && closed.slot_first_signatures == baseline.slot_first_signatures,
+        "accepted votes changed at close"
+    );
+    ensure!(
+        slots.len() == usize::from(membership.1)
+            && slots.windows(2).all(|pair| pair[0] < pair[1])
+            && slots.iter().all(|index| *index < membership.0),
+        "invalid pinned quorum slots"
+    );
+    ensure!(
+        closed.closed_height == Some(deadline),
+        "wrong accountability closing height"
+    );
+    let missing: Vec<_> = (0..closed.member_count)
+        .filter(|index| !slots.contains(index))
+        .collect();
+    ensure!(
+        missing.len() == 1,
+        "exactly one historical participant must be missing"
+    );
+    ensure!(
+        closed.missing_bitmap
+            == Some(singleton_participant_bitmap(
+                closed.member_count,
+                missing[0]
+            )),
+        "wrong missing bitmap"
+    );
+    Ok(())
 }
 
 #[then("the fresh capacity day is created in FORMING by finalized block 1")]
@@ -6557,14 +7211,21 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 mod tests {
     use super::{
         bounded_completion_decision, completed_accountability_is_preserved,
-        dynamic_live_ports_after_jail, dynamic_oracle_refresh_timestamp,
-        dynamic_pre_restart_vote_baseline_ready, first_protocol_cycle_at_or_after_interval,
-        joiner_restart_is_in_safe_early_epoch_window, monotonic_progress_decision,
-        post_restart_convergence_target, public_vote_set_matches, retention_journal_root,
-        BoundedCompletionDecision, ProgressWaitDecision, PublicVoteSetExpectation,
-        RestartBarrierDecision, RestartBarrierState, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        dynamic_deadline_decode_events, dynamic_deadline_ports, dynamic_deadline_storage_u64,
+        dynamic_deadline_validate_accountability, dynamic_deadline_validate_checkpoints,
+        dynamic_deadline_validate_penalties, dynamic_deadline_validate_receipt,
+        dynamic_oracle_refresh_timestamp, dynamic_pre_restart_vote_baseline_ready,
+        first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
+        monotonic_progress_decision, post_restart_convergence_target, public_vote_set_matches,
+        retention_journal_root, singleton_participant_bitmap, BoundedCompletionDecision,
+        DynamicDeadlineAccount, DynamicDeadlineMiss, ProgressWaitDecision,
+        PublicVoteSetExpectation, RestartBarrierDecision, RestartBarrierState,
+        DYNAMIC_OCOMP_RECOVERY_BLOCKS, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+    use crate::internal::eth;
     use crate::world::rpc::OcompPublicVoteAccountabilityV1;
+    use alloy_primitives::{Address, Bytes, B256, U256};
+    use alloy_sol_types::SolEvent;
 
     fn completed_accountability() -> OcompPublicVoteAccountabilityV1 {
         OcompPublicVoteAccountabilityV1 {
@@ -6823,11 +7484,556 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_deadline_checks_only_nodes_that_can_advance_after_jail() {
+    fn dynamic_deadline_requires_all_five_distinct_observers() {
         assert_eq!(
-            dynamic_live_ports_after_jail(vec![10, 11, 12, 13], 3, 14),
-            vec![10, 11, 12, 14]
+            dynamic_deadline_ports(vec![10, 11, 12, 13], 14).unwrap(),
+            vec![10, 11, 12, 13, 14]
         );
+        assert!(dynamic_deadline_ports(vec![10, 11, 12], 14).is_err());
+        assert!(dynamic_deadline_ports(vec![10, 11, 12, 13], 13).is_err());
+        assert!(dynamic_deadline_ports(vec![10, 10, 12, 13], 14).is_err());
+    }
+
+    fn dynamic_deadline_fixture() -> (
+        Vec<Address>,
+        [DynamicDeadlineAccount; 5],
+        [DynamicDeadlineMiss; 2],
+        [crate::world::rpc::FinalizedCheckpoint; 2],
+        serde_json::Value,
+    ) {
+        let members: Vec<_> = (1..=5).map(Address::repeat_byte).collect();
+        // Canonical native units, with a remainder to exercise floor(bonded/10).
+        let bonded =
+            U256::from(100_000_u64) * U256::from(1_000_000_000_000_000_000_u64) + U256::from(9);
+        let before = DynamicDeadlineAccount {
+            bonded,
+            mirrored: bonded,
+            total_staked: bonded * U256::from(5),
+            staking_balance: bonded * U256::from(5),
+            status: 2,
+            ordinary_slash_count: 7,
+            ocomp_miss_count: 0,
+            ocomp_recovery_deadline: 0,
+            active: members.clone(),
+            participants: members.clone(),
+        };
+        let slash = bonded / U256::from(10);
+        let mut after = before.clone();
+        after.bonded -= slash;
+        after.mirrored -= slash;
+        after.total_staked -= slash;
+        after.staking_balance -= slash;
+        let mut states = [before, after.clone(), after.clone(), after.clone(), after];
+        for (ordinal, state) in states.iter_mut().enumerate().skip(1) {
+            state.ocomp_miss_count = [0, 1, 1, 2, 2][ordinal];
+            state.ocomp_recovery_deadline = 1000 + DYNAMIC_OCOMP_RECOVERY_BLOCKS;
+        }
+        let checkpoints = [1000, 1200].map(|height| crate::world::rpc::FinalizedCheckpoint {
+            height,
+            block_hash: B256::repeat_byte(if height == 1000 { 10 } else { 12 }),
+            state_root: B256::repeat_byte(if height == 1000 { 20 } else { 22 }),
+        });
+        let jobs = [B256::repeat_byte(1), B256::repeat_byte(2)];
+        let logs = serde_json::Value::Array(
+            (0..2)
+                .map(|ordinal| {
+                    let event = eth::IMetadosis::OcompVoteMissed {
+                        validator: members[3],
+                        jobId: jobs[ordinal],
+                        missCount: (ordinal + 1) as u64,
+                        slashedBonded: if ordinal == 0 { slash } else { U256::ZERO },
+                        recoveryDeadline: 1000 + DYNAMIC_OCOMP_RECOVERY_BLOCKS,
+                        firstInWindow: ordinal == 0,
+                    };
+                    let data = event.encode_log_data();
+                    serde_json::json!({
+                        "address": crate::internal::addresses::WWD_ADDR,
+                        "topics": data.topics(), "data": data.data, "removed": false,
+                        "blockNumber": format!("0x{:x}", checkpoints[ordinal].height),
+                        "blockHash": checkpoints[ordinal].block_hash,
+                        "transactionHash": B256::repeat_byte(ordinal as u8 + 30), "logIndex": "0x0",
+                    })
+                })
+                .collect(),
+        );
+        let events = dynamic_deadline_decode_events(&logs, members[3], jobs, checkpoints).unwrap();
+        (members, states, events, checkpoints, logs)
+    }
+
+    #[test]
+    fn dynamic_deadlines_prove_one_real_unit_slash_and_an_unchanged_repeat_window() {
+        let (members, states, events, _, _) = dynamic_deadline_fixture();
+        dynamic_deadline_validate_penalties(&states, &events, &members, [1000, 1200], 1201)
+            .unwrap();
+        assert_eq!(
+            events[0].slashed_bonded,
+            U256::from(10_000_u64) * U256::from(1_000_000_000_000_000_000_u64)
+        );
+        assert_eq!(
+            states[1].ordinary_slash_count, 7,
+            "OCOMP miss count is not ordinary slashCount"
+        );
+        assert_eq!(events[1].miss_count, 2);
+        assert_eq!(events[1].slashed_bonded, U256::ZERO);
+        assert_eq!(events[0].recovery_deadline, 44_200);
+        assert_eq!(events[1].recovery_deadline, 44_200);
+    }
+
+    #[test]
+    fn dynamic_deadline_storage_requires_a_complete_u64_word() {
+        for expected in [0, 1, 2, 44_200, u64::MAX] {
+            let word = B256::from(U256::from(expected).to_be_bytes::<32>());
+            assert_eq!(
+                dynamic_deadline_storage_u64(&serde_json::json!(word)).unwrap(),
+                expected
+            );
+        }
+        for wrong in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!("0x"),
+            serde_json::json!("0x01"),
+            serde_json::json!("not-hex"),
+            serde_json::json!(1),
+            serde_json::json!(B256::from(
+                (U256::from(u64::MAX) + U256::from(1)).to_be_bytes::<32>()
+            )),
+        ] {
+            assert!(
+                dynamic_deadline_storage_u64(&wrong).is_err(),
+                "accepted {wrong}"
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_deadlines_reject_incomplete_durable_recovery_transitions() {
+        let (members, states, events, _, _) = dynamic_deadline_fixture();
+        for ordinal in 0..5 {
+            for deadline_defect in [false, true] {
+                let mut wrong = states.clone();
+                if deadline_defect {
+                    wrong[ordinal].ocomp_recovery_deadline ^= 1;
+                } else {
+                    wrong[ordinal].ocomp_miss_count ^= 1;
+                }
+                assert!(
+                    dynamic_deadline_validate_penalties(
+                        &wrong,
+                        &events,
+                        &members,
+                        [1000, 1200],
+                        1201,
+                    )
+                    .is_err(),
+                    "accepted durable point {ordinal}, deadline={deadline_defect}"
+                );
+            }
+        }
+        let mut lost_window = states.clone();
+        lost_window[4].ocomp_recovery_deadline = 0;
+        assert!(dynamic_deadline_validate_penalties(
+            &lost_window,
+            &events,
+            &members,
+            [1000, 1200],
+            1201,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn dynamic_deadlines_require_successful_exact_system_receipts() {
+        let (_, _, events, _, logs) = dynamic_deadline_fixture();
+        for (ordinal, event) in events.iter().enumerate() {
+            let receipt = serde_json::json!({
+                "status": "0x1", "blockNumber": format!("0x{:x}", event.height),
+                "blockHash": event.block_hash, "transactionHash": event.transaction_hash,
+                "logs": [logs[ordinal]],
+            });
+            dynamic_deadline_validate_receipt(&receipt, event).unwrap();
+            for (field, value) in [
+                ("status", serde_json::json!("0x0")),
+                ("status", serde_json::Value::Null),
+                ("status", serde_json::json!("0x10000000000000000")),
+                ("blockNumber", serde_json::json!("0x0")),
+                ("blockHash", serde_json::json!(B256::repeat_byte(99))),
+                ("transactionHash", serde_json::json!(B256::repeat_byte(99))),
+                ("transactionHash", serde_json::Value::Null),
+                ("logs", serde_json::json!([])),
+                ("logs", serde_json::Value::Null),
+                ("logs", serde_json::json!([logs[ordinal], logs[ordinal]])),
+            ] {
+                let mut wrong = receipt.clone();
+                wrong[field] = value;
+                assert!(
+                    dynamic_deadline_validate_receipt(&wrong, event).is_err(),
+                    "accepted receipt defect {field}"
+                );
+            }
+            for (field, value) in [
+                (
+                    "address",
+                    serde_json::json!(crate::internal::addresses::VS_ADDR),
+                ),
+                ("topics", serde_json::json!([])),
+                ("data", serde_json::json!("0x00")),
+                ("removed", serde_json::json!(true)),
+                ("removed", serde_json::Value::Null),
+                ("logIndex", serde_json::json!("0x1")),
+                ("logIndex", serde_json::Value::Null),
+                ("blockNumber", serde_json::json!("0x0")),
+                ("blockHash", serde_json::json!(B256::repeat_byte(99))),
+                ("transactionHash", serde_json::json!(B256::repeat_byte(99))),
+            ] {
+                let mut wrong = receipt.clone();
+                wrong["logs"][0][field] = value;
+                assert!(
+                    dynamic_deadline_validate_receipt(&wrong, event).is_err(),
+                    "accepted receipt log defect {field}"
+                );
+            }
+            let mut noncanonical = receipt.clone();
+            let mut data = serde_json::from_value::<Bytes>(noncanonical["logs"][0]["data"].clone())
+                .unwrap()
+                .to_vec();
+            data[127] = 2;
+            noncanonical["logs"][0]["data"] = serde_json::json!(Bytes::from(data));
+            assert!(dynamic_deadline_validate_receipt(&noncanonical, event).is_err());
+            assert!(dynamic_deadline_validate_receipt(&serde_json::Value::Null, event).is_err());
+        }
+    }
+
+    #[test]
+    fn dynamic_deadlines_reject_wrong_event_source_identity_or_canonical_point() {
+        let (members, _, events, checkpoints, logs) = dynamic_deadline_fixture();
+        let jobs = events.clone().map(|event| event.job_id);
+        let replacements = [
+            (
+                "address",
+                serde_json::json!(crate::internal::addresses::VS_ADDR),
+            ),
+            ("removed", serde_json::json!(true)),
+            ("removed", serde_json::Value::Null),
+            ("blockNumber", serde_json::json!("0x3e9")),
+            ("blockHash", serde_json::json!(B256::repeat_byte(99))),
+            ("transactionHash", serde_json::Value::Null),
+            ("logIndex", serde_json::Value::Null),
+            ("data", serde_json::json!("0x00")),
+            ("topics", serde_json::json!([])),
+        ];
+        for (field, value) in replacements {
+            let mut wrong = logs.clone();
+            wrong[0][field] = value;
+            assert!(
+                dynamic_deadline_decode_events(&wrong, members[3], jobs, checkpoints).is_err(),
+                "accepted wrong {field}"
+            );
+        }
+        for topic in 0..3 {
+            let mut wrong = logs.clone();
+            wrong[0]["topics"][topic] = serde_json::json!(B256::repeat_byte(90));
+            assert!(
+                dynamic_deadline_decode_events(&wrong, members[3], jobs, checkpoints).is_err(),
+                "accepted wrong topic {topic}"
+            );
+        }
+        let mut invalid_bool = logs.clone();
+        let mut data: Vec<u8> = serde_json::from_value::<Bytes>(invalid_bool[0]["data"].clone())
+            .unwrap()
+            .to_vec();
+        data[127] = 2;
+        invalid_bool[0]["data"] = serde_json::json!(Bytes::from(data));
+        assert!(
+            dynamic_deadline_decode_events(&invalid_bool, members[3], jobs, checkpoints).is_err()
+        );
+        for rows in [
+            vec![],
+            vec![logs[0].clone()],
+            vec![logs[0].clone(), logs[0].clone()],
+            vec![logs[0].clone(), logs[1].clone(), logs[1].clone()],
+        ] {
+            assert!(dynamic_deadline_decode_events(
+                &serde_json::Value::Array(rows),
+                members[3],
+                jobs,
+                checkpoints
+            )
+            .is_err());
+        }
+        assert!(dynamic_deadline_decode_events(
+            &serde_json::json!({}),
+            members[3],
+            jobs,
+            checkpoints
+        )
+        .is_err());
+        // RPC ordering is not identity: both exact canonical events still agree.
+        let reversed = serde_json::json!([logs[1], logs[0]]);
+        assert_eq!(
+            dynamic_deadline_decode_events(&reversed, members[3], jobs, checkpoints).unwrap(),
+            events
+        );
+    }
+
+    #[test]
+    fn dynamic_deadlines_reject_repeat_slash_count_reset_and_deadline_extension() {
+        let (members, states, events, _, _) = dynamic_deadline_fixture();
+        for ordinal in 0..2 {
+            for defect in 0..6 {
+                let mut wrong = events.clone();
+                match defect {
+                    0 => wrong[ordinal].miss_count += 1,
+                    1 => wrong[ordinal].first_in_window = !wrong[ordinal].first_in_window,
+                    2 => wrong[ordinal].recovery_deadline += 1,
+                    3 => wrong[ordinal].slashed_bonded += U256::from(1),
+                    4 => wrong[ordinal].validator = members[2],
+                    5 => wrong[ordinal].height += 1,
+                    _ => unreachable!(),
+                }
+                assert!(
+                    dynamic_deadline_validate_penalties(
+                        &states,
+                        &wrong,
+                        &members,
+                        [1000, 1200],
+                        1201
+                    )
+                    .is_err(),
+                    "accepted event {ordinal}, defect {defect}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dynamic_deadlines_reject_unrelated_jail_or_any_unaccounted_burn() {
+        let (members, states, events, _, _) = dynamic_deadline_fixture();
+        for point in 0..5 {
+            for defect in 0..8 {
+                let mut wrong = states.clone();
+                match defect {
+                    0 => wrong[point].bonded += U256::from(1),
+                    1 => wrong[point].mirrored += U256::from(1),
+                    2 => wrong[point].total_staked += U256::from(1),
+                    3 => wrong[point].staking_balance += U256::from(1),
+                    4 => wrong[point].ordinary_slash_count += 1,
+                    5 => wrong[point].status = 6,
+                    6 => {
+                        wrong[point].active.remove(3);
+                    }
+                    7 => {
+                        wrong[point].participants.remove(4);
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(
+                    dynamic_deadline_validate_penalties(
+                        &wrong,
+                        &events,
+                        &members,
+                        [1000, 1200],
+                        1201
+                    )
+                    .is_err(),
+                    "accepted accounting point {point}, defect {defect}"
+                );
+            }
+        }
+        let mut duplicate_members = members.clone();
+        duplicate_members[4] = members[3];
+        assert!(dynamic_deadline_validate_penalties(
+            &states,
+            &events,
+            &duplicate_members,
+            [1000, 1200],
+            1201
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn dynamic_deadlines_do_not_claim_the_full_recovery_gate() {
+        let (members, states, events, _, _) = dynamic_deadline_fixture();
+        for (deadlines, height) in [
+            ([1000, 1200], 1200),
+            ([1000, 1200], 44_200),
+            ([1000, 1200], 44_201),
+            ([1000, 1000], 1201),
+            ([0, 1200], 1201),
+            ([u64::MAX - 1, u64::MAX], u64::MAX),
+        ] {
+            assert!(dynamic_deadline_validate_penalties(
+                &states, &events, &members, deadlines, height
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn dynamic_deadlines_use_overflow_safe_floor_slashing_and_reject_underfunding() {
+        let (members, mut states, mut events, _, _) = dynamic_deadline_fixture();
+        for field in 0..2 {
+            let mut wrong = states.clone();
+            if field == 0 {
+                wrong[0].total_staked = U256::ZERO;
+            } else {
+                wrong[0].staking_balance = U256::ZERO;
+            }
+            assert!(dynamic_deadline_validate_penalties(
+                &wrong,
+                &events,
+                &members,
+                [1000, 1200],
+                1201
+            )
+            .is_err());
+        }
+        // Exercise the evaluator's U256 arithmetic without multiplying MAX by 10.
+        states[0].bonded = U256::MAX;
+        states[0].mirrored = U256::MAX;
+        states[0].total_staked = U256::MAX;
+        states[0].staking_balance = U256::MAX;
+        let slash = U256::MAX / U256::from(10);
+        let mut after = states[0].clone();
+        after.bonded -= slash;
+        after.mirrored -= slash;
+        after.total_staked -= slash;
+        after.staking_balance -= slash;
+        for (ordinal, state) in states.iter_mut().enumerate().skip(1) {
+            *state = after.clone();
+            state.ocomp_miss_count = [0, 1, 1, 2, 2][ordinal];
+            state.ocomp_recovery_deadline = 1000 + DYNAMIC_OCOMP_RECOVERY_BLOCKS;
+        }
+        events[0].slashed_bonded = slash;
+        dynamic_deadline_validate_penalties(&states, &events, &members, [1000, 1200], 1201)
+            .unwrap();
+    }
+
+    #[test]
+    fn dynamic_deadlines_require_every_finalized_hash_root_not_a_filtered_subset() {
+        let ports = [10, 11, 12, 13, 14];
+        let checkpoint = crate::world::rpc::FinalizedCheckpoint {
+            height: 1201,
+            block_hash: B256::repeat_byte(7),
+            state_root: B256::repeat_byte(8),
+        };
+        let observed: Vec<_> = ports.iter().map(|&port| (port, 1202, checkpoint)).collect();
+        assert_eq!(
+            dynamic_deadline_validate_checkpoints(&ports, 1201, &observed).unwrap(),
+            checkpoint
+        );
+        for index in 0..5 {
+            for defect in 0..5 {
+                let mut wrong = observed.clone();
+                match defect {
+                    0 => {
+                        wrong.remove(index);
+                    }
+                    1 => wrong[index].0 = 99,
+                    2 => wrong[index].1 = 1200,
+                    3 => wrong[index].2.block_hash = B256::repeat_byte(9),
+                    4 => wrong[index].2.state_root = B256::repeat_byte(9),
+                    _ => unreachable!(),
+                }
+                assert!(dynamic_deadline_validate_checkpoints(&ports, 1201, &wrong).is_err());
+            }
+        }
+        assert!(dynamic_deadline_validate_checkpoints(&ports, 1200, &observed).is_err());
+    }
+
+    fn dynamic_accountability_fixture(
+        members: u16,
+        quorum: u16,
+        missing: u16,
+    ) -> (
+        crate::world::rpc::OcompPublicVoteAccountabilityV1,
+        crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    ) {
+        let slots: Vec<_> = (0..members).filter(|index| *index != missing).collect();
+        let mut timely = vec![0_u8; usize::from(members).div_ceil(8)];
+        for index in &slots {
+            timely[usize::from(index / 8)] |= 1 << (index % 8);
+        }
+        let baseline = crate::world::rpc::OcompPublicVoteAccountabilityV1 {
+            job_id: B256::repeat_byte(1),
+            result_validator_set_epoch: 2,
+            result_committee_set_hash: B256::repeat_byte(2),
+            result_ocomp_binding_hash: B256::repeat_byte(3),
+            member_count: members,
+            quorum_threshold: quorum,
+            slot_first_signatures: slots
+                .iter()
+                .map(|&index| (index, vec![index as u8 + 1; 64]))
+                .collect(),
+            slot_validator_indexes: slots,
+            quorum_result_digest: Some(B256::repeat_byte(4)),
+            quorum_height: Some(900),
+            quorum_signer_bitmap: Some(timely.clone()),
+            closed_height: None,
+            timely_bitmap: None,
+            matching_bitmap: None,
+            divergent_bitmap: None,
+            missing_bitmap: None,
+            equivocation_bitmap: None,
+        };
+        let mut closed = baseline.clone();
+        closed.closed_height = Some(1000);
+        closed.timely_bitmap = Some(timely.clone());
+        closed.matching_bitmap = Some(timely);
+        closed.divergent_bitmap = Some(vec![0]);
+        closed.equivocation_bitmap = Some(vec![0]);
+        closed.missing_bitmap = Some(singleton_participant_bitmap(members, missing));
+        (baseline, closed)
+    }
+
+    #[test]
+    fn dynamic_deadlines_preserve_both_historical_quorums_and_missing_snapshot_indexes() {
+        // Missing snapshot index is not assumed to equal validator directory 3.
+        for (members, quorum, missing) in [(4, 3, 1), (5, 4, 4)] {
+            let (baseline, closed) = dynamic_accountability_fixture(members, quorum, missing);
+            let slots = baseline.slot_validator_indexes.clone();
+            dynamic_deadline_validate_accountability(
+                &closed,
+                &baseline,
+                &slots,
+                1000,
+                (members, quorum),
+            )
+            .unwrap();
+            for defect in 0..13 {
+                let mut wrong = closed.clone();
+                match defect {
+                    0 => wrong.member_count += 1,
+                    1 => wrong.quorum_threshold -= 1,
+                    2 => wrong.job_id = B256::ZERO,
+                    3 => wrong.result_validator_set_epoch += 1,
+                    4 => wrong.result_committee_set_hash = B256::ZERO,
+                    5 => wrong.result_ocomp_binding_hash = B256::ZERO,
+                    6 => wrong.quorum_result_digest = Some(B256::ZERO),
+                    7 => wrong.closed_height = Some(1001),
+                    8 => wrong.missing_bitmap = Some(vec![0]),
+                    9 => wrong.slot_first_signatures[0].1[0] ^= 1,
+                    10 => {
+                        wrong.slot_validator_indexes.pop();
+                    }
+                    11 => wrong.quorum_height = None,
+                    12 => wrong.quorum_signer_bitmap = None,
+                    _ => unreachable!(),
+                }
+                assert!(
+                    dynamic_deadline_validate_accountability(
+                        &wrong,
+                        &baseline,
+                        &slots,
+                        1000,
+                        (members, quorum)
+                    )
+                    .is_err(),
+                    "accepted changed historical accountability {defect}"
+                );
+            }
+        }
     }
 
     #[test]
