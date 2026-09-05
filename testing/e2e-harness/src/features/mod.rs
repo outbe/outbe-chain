@@ -43,6 +43,7 @@ pub mod tee_lease;
 pub mod tee_observability;
 pub mod tribute_projection;
 pub mod txpool_eviction;
+mod txpool_pending;
 pub mod zerofee;
 
 pub mod validator_consistency_accounting;

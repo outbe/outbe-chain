@@ -99,6 +99,8 @@ struct Replies {
     block: Value,
     call: Value,
     pool: Value,
+    balance: Value,
+    nonce: Value,
     error_method: Option<&'static str>,
     transient_finalized_errors: usize,
 }
@@ -140,6 +142,8 @@ impl Replies {
             error_method: None,
             transient_finalized_errors: 0,
             pool: json!({"pending": {}, "queued": {}}),
+            balance: json!("0x100"),
+            nonce: json!("0x3"),
         }
     }
 }
@@ -199,6 +203,20 @@ impl RpcServer {
                     "eth_getBlockByNumber" => &replies.block,
                     "eth_getLogs" => &replies.logs,
                     "txpool_content" => &replies.pool,
+                    "eth_getBalance" | "eth_getTransactionCount" => {
+                        assert_eq!(
+                            request["params"][1],
+                            json!({
+                                "blockHash": replies.block["hash"], "requireCanonical": true
+                            }),
+                            "account context must be pinned to the sampled canonical hash"
+                        );
+                        if method == "eth_getBalance" {
+                            &replies.balance
+                        } else {
+                            &replies.nonce
+                        }
+                    }
                     "eth_call" => {
                         assert_eq!(
                             request["params"][1], "0x68",
@@ -246,6 +264,58 @@ impl Drop for RpcServer {
         if !thread::panicking() {
             result.expect("RPC server did not panic");
         }
+    }
+}
+
+#[test]
+fn pool_account_context_reads_balance_and_nonce_at_the_exact_tip_hash() {
+    let mut replies = Replies::new(&pending_record());
+    replies.block["baseFeePerGas"] = json!("0x7");
+    replies.block["gasLimit"] = json!("0x1c9c380");
+    replies.block["timestamp"] = json!("0x123");
+    let server = RpcServer::start(replies);
+    let sample =
+        eth::pool_account_at_tip(&server.rpc().url(server.port), Address::repeat_byte(4)).unwrap();
+    assert_eq!(sample.number, 100);
+    assert_eq!(sample.timestamp, 0x123);
+    assert_eq!(sample.gas_limit, 30_000_000);
+    assert_eq!(sample.base_fee, 7);
+    assert_eq!(sample.balance, U256::from(256));
+    assert_eq!(sample.nonce, 3);
+}
+
+#[test]
+fn pool_account_context_never_defaults_missing_or_failed_rpc_data() {
+    let mut good = Replies::new(&pending_record());
+    good.block["baseFeePerGas"] = json!("0x7");
+    let mut failures = Vec::new();
+    for method in [
+        "eth_getBlockByNumber",
+        "eth_getBalance",
+        "eth_getTransactionCount",
+    ] {
+        let mut replies = good.clone();
+        replies.error_method = Some(method);
+        failures.push(replies);
+    }
+    let mut replies = good.clone();
+    replies.block = Value::Null;
+    failures.push(replies);
+    let mut replies = good.clone();
+    replies.block["baseFeePerGas"] = Value::Null;
+    failures.push(replies);
+    let mut replies = good.clone();
+    replies.balance = Value::Null;
+    failures.push(replies);
+    let mut replies = good;
+    replies.nonce = json!("not-a-quantity");
+    failures.push(replies);
+    for replies in failures {
+        let server = RpcServer::start(replies);
+        assert!(
+            eth::pool_account_at_tip(&server.rpc().url(server.port), Address::repeat_byte(4))
+                .is_err()
+        );
     }
 }
 

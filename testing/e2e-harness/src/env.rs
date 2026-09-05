@@ -661,6 +661,33 @@ mod tests {
     }
 
     #[test]
+    fn active_pending_validator_restart_is_selected_with_all_eight_registered_steps() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/txpool_eviction.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let selected: Vec<_> = feature
+            .scenarios
+            .iter()
+            .filter(|scenario| has_tag(&feature, scenario, "pending-validator-restart"))
+            .collect();
+        assert_eq!(selected.len(), 1);
+        let scenario = selected[0];
+        assert_eq!(scenario.steps.len(), 8);
+        assert_eq!(unmet(&feature, scenario, &env), None);
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[test]
     fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integration() {
         let env = Environment {
             tee_mode: TeeMode::SgxNoAttest,

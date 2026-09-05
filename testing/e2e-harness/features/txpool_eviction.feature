@@ -24,6 +24,17 @@ Feature: Transaction-pool eviction
     Then the evicted transaction stays absent and the restarted committee finalizes
     And the committee is still producing blocks
 
+  @tee @sgx-no-attest @sudo @pending-validator-restart
+  Scenario: An ACTIVE validator evicts a pending transaction and preserves absence across restart
+    Given a fresh txpool-eviction localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When a funded independent sender submits a block-sized transaction to an ACTIVE validator
+    Then the transaction is pending while an independent transfer finalizes
+    And canonical snapshots evict the exact pending transaction on its ACTIVE owner
+    When the ACTIVE pending-pool owner restarts before any nonce replacement
+    Then the pending transaction remains absent and its nonce is unconsumed on every validator
+    And an explicit same-nonce replacement finalizes and the committee advances two fresh blocks
+
   @tee @sgx-no-attest @sudo @pending-staleness
   Scenario: A non-proposing FullNode evicts an executable transaction after two canonical snapshots
     Given a fresh txpool-eviction localnet with a 6-block voting window

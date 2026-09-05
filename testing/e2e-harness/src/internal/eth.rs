@@ -936,6 +936,19 @@ pub(crate) fn send_value_at_nonce(
     nonce: u64,
 ) -> Result<String> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    send_value_with_gas_at_nonce(url, to, key, value, nonce, 21_000, max_fee)
+}
+
+/// Submit an explicitly gas-budgeted pool fixture without waiting for mining.
+pub(crate) fn send_value_with_gas_at_nonce(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+    nonce: u64,
+    gas_limit: u64,
+    max_fee: u128,
+) -> Result<String> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -947,13 +960,55 @@ pub(crate) fn send_value_at_nonce(
             .to(to)
             .value(value)
             .nonce(nonce)
-            .gas_limit(21_000)
+            .gas_limit(gas_limit)
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         // Deliberately no `get_receipt()`: this transaction is not expected to
         // be mined.
         let pending = provider.send_transaction(tx).await?;
         Ok(format!("{:#x}", *pending.tx_hash()))
+    })
+}
+
+/// Canonical-tip context; account reads use its exact hash, never a later tip.
+#[derive(Clone, Debug)]
+pub(crate) struct PoolAccountAtTip {
+    pub number: u64,
+    pub timestamp: u64,
+    pub gas_limit: u64,
+    pub base_fee: u64,
+    pub balance: U256,
+    pub nonce: u64,
+}
+
+pub(crate) fn pool_account_at_tip(url: &str, address: Address) -> Result<PoolAccountAtTip> {
+    let block: alloy_rpc_types::Block<alloy_rpc_types::Transaction> =
+        serde_json::from_value(raw_json_result(
+            url,
+            "eth_getBlockByNumber",
+            serde_json::json!(["latest", false]),
+        )?)?;
+    let selector = serde_json::json!({"blockHash": block.header.hash, "requireCanonical": true});
+    let balance = serde_json::from_value(raw_json_result(
+        url,
+        "eth_getBalance",
+        serde_json::json!([address, selector]),
+    )?)?;
+    let nonce: alloy_primitives::U64 = serde_json::from_value(raw_json_result(
+        url,
+        "eth_getTransactionCount",
+        serde_json::json!([address, selector]),
+    )?)?;
+    Ok(PoolAccountAtTip {
+        number: block.header.number,
+        timestamp: block.header.timestamp,
+        gas_limit: block.header.gas_limit,
+        base_fee: block
+            .header
+            .base_fee_per_gas
+            .ok_or_else(|| eyre!("canonical tip has no base fee"))?,
+        balance,
+        nonce: nonce.to(),
     })
 }
 

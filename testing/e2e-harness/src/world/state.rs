@@ -6,6 +6,19 @@
 
 use serde::Serialize;
 
+/// Pending-pool fixture identity; secret bytes stay in a private scenario file.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingValidatorPoolFixture {
+    pub key_file: std::path::PathBuf,
+    pub sender: alloy_primitives::Address,
+    pub hash: String,
+    pub nonce: u64,
+    pub gas_limit: u64,
+    pub max_fee: u128,
+    pub admitted_tip_timestamp: u64,
+    pub owner_pid: u32,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RadicleScenarioEvidenceV1 {
     pub genesis_hash: Option<String>,
@@ -263,6 +276,7 @@ pub struct FixtureState {
     /// satisfy the observability contract.
     pub stuck_tx_sender: Option<String>,
     pub stuck_tx_nonce: Option<u64>,
+    pub(crate) pending_validator_pool: Option<PendingValidatorPoolFixture>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -499,6 +513,7 @@ impl Default for FixtureState {
             stuck_tx_hash: None,
             stuck_tx_sender: None,
             stuck_tx_nonce: None,
+            pending_validator_pool: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,
