@@ -529,13 +529,10 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         world.rpc.validator_record(port, &scratch.address),
         Some(before_owner)
     );
-    assert_eq!(
-        world
-            .rpc
-            .is_validator(port, &format!("{:#x}", duplicate_identity.address()))
-            .expect("observe duplicate validator registry membership"),
-        false
-    );
+    assert!(!world
+        .rpc
+        .is_validator(port, &format!("{:#x}", duplicate_identity.address()))
+        .expect("observe duplicate validator registry membership"));
 }
 
 #[then("staking without a new readiness confirmation cannot activate the re-registered validator")]

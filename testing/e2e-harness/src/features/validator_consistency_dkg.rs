@@ -321,12 +321,11 @@ fn no_out_of_schedule_dkg(world: &mut World) {
 #[then("the flag remains set until a matching boundary activates the joiner")]
 fn pending_flag_survives_until_matching_boundary(world: &mut World) {
     for port in world.validators.committee_ports() {
-        assert_eq!(
+        assert!(
             world
                 .rpc
                 .has_pending_set_change(port)
                 .expect("observe pending-set-change signal"),
-            true,
             "RPC {port} cleared pending_set_change before a boundary containing the joiner"
         );
     }
@@ -375,12 +374,11 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
             return;
         }
 
-        assert_eq!(
+        assert!(
             world
                 .rpc
                 .has_pending_set_change(primary)
                 .expect("observe pending-set-change signal"),
-            true,
             "pending_set_change cleared while the confirmed joiner was still omitted"
         );
         let head = world

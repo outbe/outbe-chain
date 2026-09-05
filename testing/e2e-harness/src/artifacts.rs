@@ -80,35 +80,35 @@ impl ArtifactLedger {
     }
 
     fn load(&mut self, env: &Environment) -> Result<&BuildManifestV1> {
-        if self.manifest.is_some() {
-            return Ok(self.manifest.as_ref().expect("manifest is present"));
+        if self.manifest.is_none() {
+            let manifest_path = env.artifact_manifest.as_ref().ok_or_else(|| {
+                eyre::eyre!(
+                    "--artifact-manifest is required; build the lane with outbe-e2e-build first"
+                )
+            })?;
+            let bytes = fs::read(manifest_path)
+                .wrap_err_with(|| format!("read E2E build manifest {}", manifest_path.display()))?;
+            let manifest: BuildManifestV1 = serde_json::from_slice(&bytes).wrap_err_with(|| {
+                format!("decode E2E build manifest {}", manifest_path.display())
+            })?;
+            ensure!(
+                manifest.schema_version == BUILD_MANIFEST_SCHEMA_VERSION,
+                "unsupported E2E build manifest schema {}",
+                manifest.schema_version
+            );
+            ensure!(
+                manifest.lane.accepts(env.tee_mode),
+                "E2E build lane {:?} cannot run TEE profile {}",
+                manifest.lane,
+                env.tee_mode.evidence_name()
+            );
+            ensure!(
+                source_fingerprint(&env.repo)? == manifest.source,
+                "E2E build manifest source differs from the current checkout"
+            );
+            self.manifest = Some(manifest);
         }
-        let manifest_path = env.artifact_manifest.as_ref().ok_or_else(|| {
-            eyre::eyre!(
-                "--artifact-manifest is required; build the lane with outbe-e2e-build first"
-            )
-        })?;
-        let bytes = fs::read(manifest_path)
-            .wrap_err_with(|| format!("read E2E build manifest {}", manifest_path.display()))?;
-        let manifest: BuildManifestV1 = serde_json::from_slice(&bytes)
-            .wrap_err_with(|| format!("decode E2E build manifest {}", manifest_path.display()))?;
-        ensure!(
-            manifest.schema_version == BUILD_MANIFEST_SCHEMA_VERSION,
-            "unsupported E2E build manifest schema {}",
-            manifest.schema_version
-        );
-        ensure!(
-            manifest.lane.accepts(env.tee_mode),
-            "E2E build lane {:?} cannot run TEE profile {}",
-            manifest.lane,
-            env.tee_mode.evidence_name()
-        );
-        ensure!(
-            source_fingerprint(&env.repo)? == manifest.source,
-            "E2E build manifest source differs from the current checkout"
-        );
-        self.manifest = Some(manifest);
-        Ok(self.manifest.as_ref().expect("manifest just inserted"))
+        Ok(self.manifest.as_ref().expect("manifest loaded"))
     }
 
     pub(crate) fn preflight_scenario(
@@ -690,13 +690,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let directory = tempfile::tempdir().expect("temporary artifact set");
-        let mut env = Environment::default();
-        env.repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|path| path.parent())
-            .expect("e2e-harness belongs to the workspace")
-            .canonicalize()
-            .expect("canonical workspace");
+        let mut env = Environment {
+            repo: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(|path| path.parent())
+                .expect("e2e-harness belongs to the workspace")
+                .canonicalize()
+                .expect("canonical workspace"),
+            ..Environment::default()
+        };
         for (path, file_name, bytes) in [
             (&mut env.chain_bin, "chain", b"chain".as_slice()),
             (&mut env.cli_bin, "cli", b"cli".as_slice()),

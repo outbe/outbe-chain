@@ -4013,7 +4013,6 @@ impl Rpc {
     // ---- lifecycle waits -----------------------------------------------------
 
     /// Poll until `addr` is a consensus participant (10s polls, like the shell loops).
-    #[must_use]
     pub fn wait_participant(&self, port: u16, addr: &str, tries: u32) -> Result<bool> {
         let mut last_error = None;
         for _ in 0..tries {
