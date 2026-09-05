@@ -269,10 +269,11 @@ pub const NOTICE_QUALIFIED: u8 = 0;
 /// A notice carrying one Called series, which its group no longer holds.
 pub const NOTICE_CALLED: u8 = 1;
 
-/// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves free,
-/// so the origin's stamp reaches the target instead of its delivery time.
-pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
-    series_id.to_word() | U256::from(called_at)
+/// A Called entry packs its call time and its reference currency into the bytes the
+/// 14-byte `SeriesId` leaves free: the origin's stamp must reach the target instead
+/// of its delivery time, and the currency names the group a failed send belongs to.
+pub fn pack_called_notice(series_id: SeriesId, iso_code: u16, called_at: u32) -> U256 {
+    series_id.to_word() | (U256::from(iso_code) << 32usize) | U256::from(called_at)
 }
 
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries one day and
@@ -281,9 +282,10 @@ pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bo
     ts == called_at && id.worldwide_day() == day
 }
 
-fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
+fn unpack_called_notice(entry: U256) -> (SeriesId, u16, u32) {
     (
         SeriesId::from_word(entry),
+        ((entry >> 32usize) & U256::from(u16::MAX)).to::<u16>(),
         (entry & U256::from(u32::MAX)).to::<u32>(),
     )
 }
@@ -352,7 +354,7 @@ fn drain_called_run(
     first: U256,
     messages: &mut u32,
 ) -> Result<u32> {
-    let (first_id, called_at) = unpack_called_notice(first);
+    let (first_id, iso_code, called_at) = unpack_called_notice(first);
     // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
     // be lost silently. Only an entry written by an older binary carries one; drop it where it shows.
     if called_at == 0 {
@@ -367,17 +369,21 @@ fn drain_called_run(
     }
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
+    let mut groups = vec![iso_code];
 
     let mut index = at.saturating_add(1);
     while index < stop {
         if factory.notify_kind.read(&index)? != NOTICE_CALLED {
             break;
         }
-        let (id, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
+        let (id, iso, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
         if !joins_run(worldwide_day, called_at, id, ts) {
             break;
         }
         run.push(id);
+        if !groups.contains(&iso) {
+            groups.push(iso);
+        }
         index += 1;
     }
 
@@ -397,8 +403,23 @@ fn drain_called_run(
             called_at,
             series = ?run.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
             error = ?error,
-            "called notice: dropping"
+            "called notice: undelivered"
         );
+        // The holders behind this batch cannot learn they were called, so their
+        // groups keep their load until the notice lands or the grace runs out.
+        let mut factory = IntexFactoryContract::new(storage.clone());
+        for iso in groups {
+            factory.mark_notice_undelivered(
+                iso,
+                worldwide_day,
+                storage.timestamp()?.to::<u64>(),
+            )?;
+        }
+    } else {
+        let mut factory = IntexFactoryContract::new(storage.clone());
+        for iso in groups {
+            factory.clear_notice_undelivered(iso, worldwide_day)?;
+        }
     }
     Ok(index - at)
 }

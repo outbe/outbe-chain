@@ -53,7 +53,12 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             };
             let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-            let deadline = factory.called_group_deadline.read(&key)?;
+            let mut deadline = factory.called_group_deadline.read(&key)?;
+            // Holders whose call notice never left cannot settle, so their window
+            // stays open until it does or the grace runs out.
+            if let Some(grace_until) = factory.notice_grace_until(iso_code, worldwide_day)? {
+                deadline = deadline.max(grace_until);
+            }
             // Strictly after, like `settle`: a block hook runs before the block's
             // transactions, so `>=` would count a unit still legally settleable.
             if now <= deadline {

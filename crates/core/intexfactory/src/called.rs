@@ -401,7 +401,7 @@ pub(crate) fn try_call_group(
         crate::qualified::enqueue_notice(
             factory,
             crate::qualified::NOTICE_CALLED,
-            crate::qualified::pack_called_notice(series_id, called_at),
+            crate::qualified::pack_called_notice(series_id, group.iso_code, called_at),
         )?;
     }
 

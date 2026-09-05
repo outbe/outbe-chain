@@ -12,7 +12,7 @@ use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS};
+use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS, NOTICE_GRACE_PERIOD};
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -286,6 +286,45 @@ impl IntexFactoryContract<'_> {
             self.expiry_bucket_min.write(&day, deadline)?;
         }
         Ok(())
+    }
+
+    /// Record that a group's call notice could not be sent, keeping the first
+    /// failure's time: the grace runs from when holders stopped being reachable.
+    pub(crate) fn mark_notice_undelivered(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        now: u64,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        if self.notice_undelivered_at.read(&key)? == 0 {
+            self.notice_undelivered_at.write(&key, now)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_notice_undelivered(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        if self.notice_undelivered_at.read(&key)? != 0 {
+            self.notice_undelivered_at.clear(&key)?;
+        }
+        Ok(())
+    }
+
+    /// When a group may be forfeited despite its notice never leaving, or `None`
+    /// while the notice is out.
+    pub(crate) fn notice_grace_until(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<u64>> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let since = self.notice_undelivered_at.read(&key)?;
+        Ok((since != 0).then(|| since.saturating_add(u64::from(NOTICE_GRACE_PERIOD))))
     }
 
     /// Day since the epoch a deadline falls in. Plain UTC, like the call scan's

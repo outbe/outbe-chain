@@ -671,3 +671,37 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         );
     });
 }
+
+#[test]
+fn a_group_whose_notice_never_left_keeps_its_window_until_the_grace_runs_out() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        let now = ISSUED_AT as u64;
+        let day = WorldwideDay::new(20260101);
+
+        f.push_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
+            .unwrap();
+        f.mark_notice_undelivered(REFERENCE_ISO, day, now).unwrap();
+        let bucket = IntexFactoryContract::deadline_day(now + DAY);
+
+        let sweep = |at: u64| {
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        };
+
+        sweep(now + 2 * DAY);
+        assert_eq!(
+            f.expiry_bucket_live.read(&bucket).unwrap(),
+            1,
+            "holders who were never told still hold their window"
+        );
+
+        sweep(now + u64::from(crate::constants::NOTICE_GRACE_PERIOD) + 2 * DAY);
+        assert_eq!(
+            f.expiry_bucket_live.read(&bucket).unwrap(),
+            0,
+            "a route nobody repaired does not strand the load forever"
+        );
+    });
+}

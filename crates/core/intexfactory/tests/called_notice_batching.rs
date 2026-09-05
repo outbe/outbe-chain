@@ -41,7 +41,7 @@ fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
     push(
         handle,
         NOTICE_CALLED,
-        pack_called_notice(series(index), called_at),
+        pack_called_notice(series(index), 840, called_at),
     );
 }
 

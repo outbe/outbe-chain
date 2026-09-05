@@ -182,6 +182,13 @@ pub struct IntexFactoryContract {
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 41)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// `scoped(iso, day)` -> when its call notice first failed to leave. Holders who
+    /// were never told cannot settle, so the group is not forfeited while this
+    /// stands; the grace bounds it so a permanently broken route cannot strand the
+    /// load. 0 = the notice is out.
+    #[attribute(order = 42)]
+    pub notice_undelivered_at: outbe_primitives::storage::dsl::Map<u64, u64>,
 }
 
 impl IntexFactoryContract<'_> {

@@ -108,3 +108,8 @@ pub const MAX_SERIES_PER_MARK: usize = 8;
 /// descent plus its own bookkeeping, so a long backlog of days spreads over blocks
 /// the same way a long bucket does.
 pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
+
+/// How long a called group waits when its notice could not be sent. A holder who
+/// was never told cannot settle, so the window is held open while the route is
+/// repaired - and bounded, so a route nobody repairs cannot strand the load.
+pub const NOTICE_GRACE_PERIOD: u32 = CALL_NOTICE_PERIOD;
