@@ -833,34 +833,83 @@ impl Rpc {
 
     /// Whether the node at `port` still holds `tx_hash` in either sub-pool.
     pub fn txpool_has(&self, port: u16, tx_hash: &str) -> Result<bool> {
-        let content =
-            eth::raw_json_result(&self.url(port), "txpool_content", serde_json::json!([]))
-                .wrap_err_with(|| format!("read txpool_content from RPC port {port}"))?;
-        let needle = tx_hash.to_ascii_lowercase();
-        // `txpool_content` is {pending|queued: {sender: {nonce: tx}}}; the hash
-        // lives inside each tx object, so a serialized-contains check is both
-        // sufficient and immune to field-layout changes.
-        let text = serde_json::to_string(&content).wrap_err("serialize txpool_content response")?;
-        Ok(text.to_ascii_lowercase().contains(&needle))
+        Ok(self.txpool_location(port, tx_hash)?.is_some())
     }
 
     /// Exact sub-pool containing `tx_hash`, preserving transport/decode errors.
     pub fn txpool_location(&self, port: u16, tx_hash: &str) -> Result<Option<&'static str>> {
+        let needle: B256 = tx_hash
+            .parse()
+            .wrap_err("parse requested transaction hash")?;
         let content =
             eth::raw_json_result(&self.url(port), "txpool_content", serde_json::json!([]))
                 .wrap_err_with(|| format!("read txpool_content from RPC port {port}"))?;
-        let needle = tx_hash.to_ascii_lowercase();
+        let mut found = None;
+        let mut seen = BTreeMap::new();
+        let mut positions = BTreeMap::new();
         for kind in ["pending", "queued"] {
             let section = content
                 .get(kind)
-                .ok_or_else(|| eyre!("txpool_content omitted {kind} on RPC port {port}"))?;
-            let encoded = serde_json::to_string(section)
-                .wrap_err_with(|| format!("serialize txpool {kind} response"))?;
-            if encoded.to_ascii_lowercase().contains(&needle) {
-                return Ok(Some(kind));
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| {
+                    eyre!("txpool_content omitted or malformed {kind} on RPC port {port}")
+                })?;
+            for (sender, nonces) in section {
+                let sender: Address = sender.parse().wrap_err("parse txpool sender")?;
+                let nonces = nonces.as_object().ok_or_else(|| {
+                    eyre!("txpool {kind} sender {sender} has malformed nonce map")
+                })?;
+                for (nonce_key, transaction) in nonces {
+                    let nonce: u64 = nonce_key
+                        .parse()
+                        .wrap_err("parse txpool decimal nonce key")?;
+                    ensure!(
+                        nonce.to_string() == *nonce_key,
+                        "txpool nonce key is not canonical decimal: {nonce_key}"
+                    );
+                    let hash: B256 = serde_json::from_value(
+                        transaction.get("hash").cloned().unwrap_or_default(),
+                    )
+                    .wrap_err("parse txpool transaction hash")?;
+                    let from: Address = serde_json::from_value(
+                        transaction.get("from").cloned().unwrap_or_default(),
+                    )
+                    .wrap_err("parse txpool transaction sender")?;
+                    let encoded_nonce = transaction
+                        .get("nonce")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|value| value.strip_prefix("0x"))
+                        .ok_or_else(|| {
+                            eyre!("txpool transaction {hash} omitted or malformed nonce")
+                        })?;
+                    let transaction_nonce = u64::from_str_radix(encoded_nonce, 16)
+                        .wrap_err("parse txpool transaction nonce")?;
+                    ensure!(
+                        !encoded_nonce.is_empty()
+                            && encoded_nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            && (encoded_nonce == "0" || !encoded_nonce.starts_with('0')),
+                        "txpool transaction {hash} has noncanonical nonce quantity"
+                    );
+                    ensure!(
+                        from == sender && transaction_nonce == nonce,
+                        "txpool transaction {hash} contradicts sender/nonce map entry"
+                    );
+                    ensure!(
+                        seen.insert(hash, kind).is_none(),
+                        "txpool returned duplicate transaction {hash}"
+                    );
+                    ensure!(
+                        positions.insert((sender, nonce), hash).is_none(),
+                        "txpool returned conflicting transactions for sender {sender} nonce {nonce}"
+                    );
+                    if hash == needle {
+                        found = Some(kind);
+                    }
+                }
             }
         }
-        Ok(None)
+        // Validate both complete sub-pools even after finding the requested hash.
+        Ok(found)
     }
 
     /// Chain identity reported by the node at `port`.
@@ -971,6 +1020,35 @@ impl Rpc {
         ports: &[u16],
         tries: u32,
     ) -> Result<FinalizedCheckpoint> {
+        let receipt_success = match outcome
+            .receipt
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("0x1") => true,
+            Some("0x0") => false,
+            _ => return Err(eyre!("mined receipt omitted or malformed status")),
+        };
+        ensure!(
+            outcome.success == receipt_success,
+            "transaction outcome contradicts mined receipt status"
+        );
+        let transaction_hash: B256 = outcome
+            .transaction_hash
+            .parse()
+            .wrap_err("parse transaction outcome hash")?;
+        let receipt_transaction_hash: B256 = serde_json::from_value(
+            outcome
+                .receipt
+                .get("transactionHash")
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .wrap_err("parse mined receipt transactionHash")?;
+        ensure!(
+            transaction_hash == receipt_transaction_hash,
+            "transaction outcome contradicts mined receipt transactionHash"
+        );
         ensure!(
             outcome.success,
             "cannot finalize a reverted transaction outcome"

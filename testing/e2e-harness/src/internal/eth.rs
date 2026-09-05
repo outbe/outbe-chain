@@ -27,7 +27,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
-use eyre::{eyre, Result};
+use eyre::{ensure, eyre, Result};
 use tokio::runtime::Runtime;
 
 /// Explicit limit used by negative-path calls.
@@ -450,6 +450,11 @@ pub(crate) fn block_commitment_result(url: &str, height: u64) -> Result<(B256, B
             .await
             .map_err(|error| eyre!("read canonical block {height}: {error}"))?
             .ok_or_else(|| eyre!("canonical block {height} is unavailable"))?;
+        ensure!(
+            block.header.number == height,
+            "canonical block query for {height} returned height {}",
+            block.header.number
+        );
         Ok((
             block.header.hash,
             block.header.state_root,

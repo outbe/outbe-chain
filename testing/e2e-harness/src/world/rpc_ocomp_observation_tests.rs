@@ -1,4 +1,4 @@
-//! Exercise the public observer across the HTTP/ABI/canonical-record boundary.
+//! Exercise public observations across the HTTP/ABI/canonical-record boundary.
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpListener;
 use std::sync::{
@@ -92,11 +92,13 @@ fn pending_record() -> OcompJobRecordV1 {
     }
 }
 
+#[derive(Clone)]
 struct Replies {
     head: Value,
     logs: Value,
     block: Value,
     call: Value,
+    pool: Value,
     error_method: Option<&'static str>,
 }
 
@@ -135,6 +137,7 @@ impl Replies {
                 hex::encode(Bytes::from(record.encode_canonical(&limits).unwrap()).abi_encode())
             )),
             error_method: None,
+            pool: json!({"pending": {}, "queued": {}}),
         }
     }
 }
@@ -192,6 +195,7 @@ impl RpcServer {
                     "eth_getBlockByNumber" if request["params"][0] == "finalized" => &replies.head,
                     "eth_getBlockByNumber" => &replies.block,
                     "eth_getLogs" => &replies.logs,
+                    "txpool_content" => &replies.pool,
                     "eth_call" => {
                         assert_eq!(
                             request["params"][1], "0x68",
@@ -469,4 +473,220 @@ fn pending_and_bound_requests_validate_all_event_and_header_bindings() {
             "{error:#}"
         );
     }
+}
+
+#[test]
+fn pr4_malformed_pool_cannot_certify_transaction_absence() {
+    let hash = B256::repeat_byte(12).to_string();
+    let sender = Address::repeat_byte(11).to_string();
+    for pool in [
+        Value::Null,
+        json!({"pending": {}, "queued": null}),
+        json!({"pending": {}, "queued": []}),
+        json!({"pending": {}}),
+        json!({"pending": {&sender: null}, "queued": {}}),
+        json!({"pending": {&sender: {"0": null}}, "queued": {}}),
+    ] {
+        let mut replies = Replies::new(&pending_record());
+        replies.pool = pool.clone();
+        let server = RpcServer::start(replies);
+        assert!(
+            server.rpc().txpool_has(server.port, &hash).is_err(),
+            "{pool}"
+        );
+        assert!(
+            server.rpc().txpool_location(server.port, &hash).is_err(),
+            "{pool}"
+        );
+    }
+}
+
+fn pool_transaction(hash: B256, sender: Address) -> Value {
+    json!({"hash": hash, "from": sender, "nonce": "0x0", "input": "0x"})
+}
+
+#[test]
+fn pr4_pool_lookup_uses_exact_hash_and_validates_both_complete_sections() {
+    let hash = B256::repeat_byte(12);
+    let sender = Address::repeat_byte(11);
+    let mut replies = Replies::new(&pending_record());
+    let empty = RpcServer::start(replies.clone());
+    assert!(!empty
+        .rpc()
+        .txpool_has(empty.port, &hash.to_string())
+        .unwrap());
+    for kind in ["pending", "queued"] {
+        replies.pool = json!({"pending": {}, "queued": {}});
+        replies.pool[kind] = json!({sender.to_string(): {"0": pool_transaction(hash, sender)}});
+        let server = RpcServer::start(replies.clone());
+        assert_eq!(
+            server
+                .rpc()
+                .txpool_location(server.port, &hash.to_string())
+                .unwrap(),
+            Some(kind)
+        );
+        assert!(server
+            .rpc()
+            .txpool_has(server.port, &hash.to_string())
+            .unwrap());
+    }
+
+    let mut transaction = pool_transaction(B256::repeat_byte(13), sender);
+    transaction["input"] = json!(hash);
+    replies.pool = json!({"pending": {sender.to_string(): {"0": transaction}}, "queued": {}});
+    let server = RpcServer::start(replies.clone());
+    assert!(!server
+        .rpc()
+        .txpool_has(server.port, &hash.to_string())
+        .unwrap());
+
+    let valid = pool_transaction(hash, sender);
+    for invalid in [
+        Value::Null,
+        json!({sender.to_string(): {"0": valid.clone()}}),
+    ] {
+        replies.pool =
+            json!({"pending": {sender.to_string(): {"0": valid.clone()}}, "queued": invalid});
+        let server = RpcServer::start(replies.clone());
+        assert!(server
+            .rpc()
+            .txpool_location(server.port, &hash.to_string())
+            .is_err());
+    }
+}
+
+#[test]
+fn pr4_pool_lookup_rejects_inconsistent_entries_even_for_an_absent_hash() {
+    let sender = Address::repeat_byte(11);
+    let hash = B256::repeat_byte(12);
+    for mutation in 0..5 {
+        let mut transaction = pool_transaction(hash, sender);
+        match mutation {
+            0 => transaction["from"] = json!(Address::repeat_byte(10)),
+            1 => transaction["nonce"] = json!("0x1"),
+            2 => transaction["hash"] = json!("0x1234"),
+            3 => transaction["nonce"] = json!("invalid"),
+            4 => transaction["from"] = Value::Null,
+            _ => unreachable!(),
+        }
+        let mut replies = Replies::new(&pending_record());
+        replies.pool = json!({"pending": {sender.to_string(): {"0": transaction}}, "queued": {}});
+        let server = RpcServer::start(replies);
+        assert!(
+            server
+                .rpc()
+                .txpool_has(server.port, &B256::repeat_byte(99).to_string())
+                .is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
+fn pr4_pool_rpc_failure_is_not_transaction_absence() {
+    let mut replies = Replies::new(&pending_record());
+    replies.error_method = Some("txpool_content");
+    let server = RpcServer::start(replies);
+    assert!(server
+        .rpc()
+        .txpool_has(server.port, &B256::repeat_byte(12).to_string())
+        .is_err());
+}
+
+#[test]
+fn pr4_pool_rejects_conflicting_hashes_at_the_same_sender_nonce() {
+    let sender = Address::repeat_byte(11);
+    let mut replies = Replies::new(&pending_record());
+    replies.pool = json!({
+        "pending": {sender.to_string(): {"0": pool_transaction(B256::repeat_byte(12), sender)}},
+        "queued": {sender.to_string(): {"0": pool_transaction(B256::repeat_byte(13), sender)}}
+    });
+    let server = RpcServer::start(replies);
+    assert!(server
+        .rpc()
+        .txpool_has(server.port, &B256::repeat_byte(99).to_string())
+        .is_err());
+}
+
+#[test]
+fn pr4_pool_rejects_noncanonical_nonce_encodings() {
+    let sender = Address::repeat_byte(11);
+    for (key, encoded) in [("0", "0x+0"), ("0", "0x00"), ("+0", "0x0"), ("00", "0x0")] {
+        let mut transaction = pool_transaction(B256::repeat_byte(12), sender);
+        transaction["nonce"] = json!(encoded);
+        let mut replies = Replies::new(&pending_record());
+        replies.pool = json!({"pending": {sender.to_string(): {key: transaction}}, "queued": {}});
+        let server = RpcServer::start(replies);
+        assert!(
+            server
+                .rpc()
+                .txpool_has(server.port, &B256::repeat_byte(99).to_string())
+                .is_err(),
+            "{key}/{encoded}"
+        );
+    }
+}
+
+#[test]
+fn pr4_checkpoint_rejects_a_response_for_another_height() {
+    let server = RpcServer::start(Replies::new(&pending_record()));
+    assert!(server.rpc().checkpoint_at(server.port, 100).is_ok());
+    assert!(server.rpc().checkpoint_at(server.port, 101).is_err());
+}
+
+fn receipt_outcome() -> TxOutcome {
+    TxOutcome {
+        transaction_hash: B256::repeat_byte(72).to_string(),
+        success: true,
+        receipt: json!({
+            "transactionHash": B256::repeat_byte(72), "status": "0x1",
+            "blockNumber": "0x64", "blockHash": B256::repeat_byte(70)
+        }),
+    }
+}
+
+#[test]
+fn pr4_finalized_receipt_cannot_contradict_its_claimed_status_or_transaction() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    let server = RpcServer::start(replies);
+    let rpc = server.rpc();
+    let valid = receipt_outcome();
+    assert!(rpc.finalize_outcome(&valid, &[server.port], 1).is_ok());
+    for mutation in 0..8 {
+        let mut outcome = valid.clone();
+        match mutation {
+            0 => outcome.receipt["status"] = json!("0x0"),
+            1 => outcome.receipt["transactionHash"] = json!(B256::repeat_byte(73)),
+            2 => outcome.receipt["status"] = Value::Null,
+            3 => outcome.receipt["status"] = json!("0x2"),
+            4 => outcome.receipt["transactionHash"] = Value::Null,
+            5 => outcome.success = false,
+            6 => outcome.receipt["blockHash"] = json!(B256::repeat_byte(74)),
+            7 => outcome.receipt["blockNumber"] = json!("0x63"),
+            _ => unreachable!(),
+        }
+        assert!(
+            rpc.finalize_outcome(&outcome, &[server.port], 1).is_err(),
+            "receipt contradiction {mutation} was accepted"
+        );
+    }
+}
+
+#[test]
+fn pr4_receipt_requires_matching_checkpoint_on_every_node() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    let first = RpcServer::start(replies.clone());
+    let second = RpcServer::start(replies.clone());
+    let rpc = first.rpc();
+    assert!(rpc
+        .finalize_outcome(&receipt_outcome(), &[first.port, second.port], 1)
+        .is_ok());
+    replies.block["stateRoot"] = json!(B256::repeat_byte(75));
+    let divergent = RpcServer::start(replies);
+    assert!(rpc
+        .finalize_outcome(&receipt_outcome(), &[first.port, divergent.port], 1)
+        .is_err());
 }
