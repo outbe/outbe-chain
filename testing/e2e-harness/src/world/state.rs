@@ -337,9 +337,9 @@ pub struct FixtureState {
     pub ocomp_nod_materialization: Option<crate::world::rpc::NodMaterializationObservationV1>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
-    /// Exact primary/owner/day Mongo documents before a duplicate offer.
+    /// Exact primary/owner/day logical records before a duplicate offer.
     pub tribute_projection_before_duplicate:
-        Option<crate::world::mongodb::TributeProjectionSnapshot>,
+        Option<crate::world::projection::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
     /// Finalized height immediately before the managed projection database is

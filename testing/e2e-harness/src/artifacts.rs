@@ -19,6 +19,7 @@ const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
 #[serde(rename_all = "kebab-case")]
 pub enum BuildLane {
     Mock,
+    MockNative,
     SgxNoAttest,
     Dcap,
     GramineDirect,
@@ -30,6 +31,7 @@ impl BuildLane {
         matches!(
             (self, tee),
             (Self::Mock, TeeMode::Mock)
+                | (Self::MockNative, TeeMode::MockNative)
                 | (Self::SgxNoAttest | Self::RadicleSgx, TeeMode::SgxNoAttest)
                 | (Self::Dcap, TeeMode::Real)
                 | (Self::GramineDirect, TeeMode::GramineDirect)
@@ -288,7 +290,7 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
         "outbe-tee-enclave",
     ]);
     match lane {
-        BuildLane::Mock => enclave.extend(strings(&[
+        BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
             "--features",
             "mock",
             "--bin",
@@ -367,7 +369,7 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
         ),
     ];
     artifacts.push(match lane {
-        BuildLane::Mock => artifact(
+        BuildLane::Mock | BuildLane::MockNative => artifact(
             "outbe_tee_enclave_mock",
             release.join("outbe-tee-enclave-mock"),
             true,
@@ -622,6 +624,9 @@ mod tests {
         assert!(!BuildLane::Dcap.accepts(TeeMode::SgxNoAttest));
         assert!(!BuildLane::SgxNoAttest.accepts(TeeMode::Real));
         assert!(!BuildLane::Mock.accepts(TeeMode::MockNative));
+        assert!(BuildLane::MockNative.accepts(TeeMode::MockNative));
+        assert!(!BuildLane::MockNative.accepts(TeeMode::GramineDirect));
+        assert!(!BuildLane::MockNative.accepts(TeeMode::Real));
     }
 
     #[test]

@@ -8161,6 +8161,7 @@ dependencies = [
  "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
+ "outbe-offchain-storage",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
@@ -9166,7 +9167,11 @@ dependencies = [
  "hex",
  "mongodb",
  "parking_lot",
+ "rocksdb",
+ "serde",
+ "tempfile",
  "thiserror 2.0.18",
+ "toml 0.8.23",
 ]
 
 [[package]]

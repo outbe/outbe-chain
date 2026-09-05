@@ -1875,9 +1875,7 @@ fn run_node() -> eyre::Result<()> {
         let projection_config = OffchainDataProjectionConfig {
             chain_id: builder.config().chain.chain().id(),
             genesis_hash: builder.config().chain.genesis_hash(),
-            start_block: offchain_data.start_block,
-            mongodb_uri: offchain_data.mongodb_uri,
-            mongodb_database: offchain_data.mongodb_database,
+            storage: outbe_offchain_storage::StorageConfig::load(offchain_data.storage_config)?,
         };
         let projection_retention_selector = Arc::clone(&retention_selector);
         let prepared_projection = tokio::task::spawn_blocking(move || {

@@ -1168,7 +1168,7 @@ mod tests {
 
     #[test]
     fn enclave_readiness_preserves_early_exit_before_cleanup() {
-        for binary in ["/bin/true", "/bin/false"] {
+        for binary in ["/usr/bin/true", "/usr/bin/false"] {
             let root = tempfile::tempdir().unwrap();
             let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let port = listener.local_addr().unwrap().port();

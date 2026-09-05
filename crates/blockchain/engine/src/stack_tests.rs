@@ -3368,9 +3368,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
-        projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
-        projection_mongodb_database: Some("outbe_projection".to_owned()),
-        projection_start_block: 1,
+        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
     };
 
     let address = validate_validator_evm_signer(
@@ -4910,9 +4908,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
-        projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
-        projection_mongodb_database: Some("outbe_projection".to_owned()),
-        projection_start_block: 1,
+        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
     };
 
     let address = super::validate_validator_evm_signer(
@@ -5499,9 +5495,7 @@ mod restart_recovery {
             radicle_status_address: None,
             upstream: None,
             upstream_nocertify: false,
-            projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
-            projection_mongodb_database: Some("outbe_projection".to_owned()),
-            projection_start_block: 1,
+            projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
         };
         let signer_address = validate_validator_evm_signer(
             &args,
