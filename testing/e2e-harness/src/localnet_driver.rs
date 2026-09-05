@@ -25,11 +25,11 @@ use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::localnet::StartOpts;
-use crate::world::mongodb::MongoDb;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::ocomp::{
     OcompLaunchIdentityV1, OcompProcessRole, OcompRuntimeCountsV1, OcompTopology,
 };
+use crate::world::projection::ProjectionFixture;
 
 #[cfg(not(feature = "ocomp-integration"))]
 struct OcompRuntimeCountsV1 {
@@ -235,6 +235,7 @@ impl LocalnetCli {
                     .unwrap_or_else(|| self.repo.join("scripts/seed-testnet-lowstake.json")),
             ),
             projection_mongodb_uri: "auto".to_owned(),
+            projection_backend: crate::env::ProjectionBackend::RocksDb,
         };
         let mut env = Environment::from_cli(&cli);
         if let Some(starts) = persisted_blocks {
@@ -671,7 +672,7 @@ async fn serve_with_ocomp(cli: &LocalnetCli) -> Result<()> {
         rpc_ports == receipt.rpc_ports,
         "serve RPC layout differs from bootstrap"
     );
-    let _mongo = MongoDb::connect_or_start(&mut config)?;
+    let _projection = ProjectionFixture::connect_or_start(&mut config)?;
     let mut localnet = Localnet::new(config.clone());
     let mut ocomp = OcompTopology::new(config);
     let ocomp_identity = ocomp.prepare_bootstrapped_runtime()?;
@@ -868,7 +869,7 @@ fn cleanup_run_scoped(cli: &LocalnetCli) -> Result<()> {
     let config = Config::resolve(&env);
     let mut localnet = Localnet::new(config);
     localnet.teardown()?;
-    MongoDb::teardown_managed_for_run(&env);
+    ProjectionFixture::teardown_managed_for_run(&env);
     Ok(())
 }
 

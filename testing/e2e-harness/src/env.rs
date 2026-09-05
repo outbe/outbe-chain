@@ -236,10 +236,24 @@ pub struct EnvCli {
     #[arg(long)]
     pub seed: Option<PathBuf>,
 
-    /// Transaction-capable MongoDB URI shared by the harness. When omitted, the
-    /// harness owns a temporary `mongo:7.0` single-node replica-set container.
+    /// Backend for generated offchain-storage.toml files.
+    #[arg(long, value_enum, default_value = "rocksdb")]
+    pub projection_backend: ProjectionBackend,
+
+    /// MongoDB fixture URI, used only with --projection-backend mongodb.
+    /// `auto` starts a temporary single-node replica set.
     #[arg(long, default_value = "auto")]
     pub projection_mongodb_uri: String,
+}
+
+/// Backend used when generating each scenario's storage TOML.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+pub enum ProjectionBackend {
+    #[default]
+    #[value(name = "rocksdb")]
+    RocksDb,
+    #[value(name = "mongodb")]
+    MongoDb,
 }
 
 /// The resolved environment: every knob and path the harness needs, sourced
@@ -275,6 +289,7 @@ pub struct Environment {
     pub mock_bin: PathBuf,
     pub seed: PathBuf,
     pub projection_mongodb_uri: String,
+    pub projection_backend: ProjectionBackend,
 }
 
 impl Environment {
@@ -338,6 +353,7 @@ impl Environment {
                 .clone()
                 .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
             projection_mongodb_uri: cli.projection_mongodb_uri.clone(),
+            projection_backend: cli.projection_backend,
             repo,
         }
     }
@@ -382,6 +398,7 @@ impl Default for Environment {
             mock_bin: None,
             seed: None,
             projection_mongodb_uri: "auto".to_owned(),
+            projection_backend: ProjectionBackend::RocksDb,
         })
     }
 }
@@ -466,6 +483,14 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 /// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
 /// so the Given text stays purely descriptive - nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
+    if has_tag(feature, scenario, "mongodb") && env.projection_backend != ProjectionBackend::MongoDb
+    {
+        return Some("needs --projection-backend mongodb".to_owned());
+    }
+    if has_tag(feature, scenario, "rocksdb") && env.projection_backend != ProjectionBackend::RocksDb
+    {
+        return Some("needs --projection-backend rocksdb".to_owned());
+    }
     if let Some(n) = exact_validators(feature, scenario) {
         if env.validators != n {
             return Some(format!(
@@ -560,8 +585,11 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
         return Decision::Skip("not implemented (@todo)".to_string());
     }
     let requirement = unmet(feature, scenario, env);
-    let profile_mismatch = (has_tag(feature, scenario, "real-sgx")
-        && !matches!(env.tee_mode, TeeMode::Real))
+    let profile_mismatch = (has_tag(feature, scenario, "mongodb")
+        && env.projection_backend != ProjectionBackend::MongoDb)
+        || (has_tag(feature, scenario, "rocksdb")
+            && env.projection_backend != ProjectionBackend::RocksDb)
+        || (has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real))
         || (has_tag(feature, scenario, "sgx-no-attest")
             && !env.tee_mode.satisfies_sgx_no_attest_requirement())
         || (has_tag(feature, scenario, "gramine-direct")
@@ -594,6 +622,57 @@ fn has_tag(feature: &Feature, scenario: &Scenario, tag: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn offchain_storage_network_scenario_is_registered_for_both_backends() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = &feature.scenarios[0];
+        for backend in [ProjectionBackend::RocksDb, ProjectionBackend::MongoDb] {
+            for tee_mode in [TeeMode::GramineDirect, TeeMode::MockNative] {
+                let env = Environment {
+                    projection_backend: backend,
+                    tee_mode,
+                    validators: 4,
+                    sudo: true,
+                    ..Environment::default()
+                };
+                assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+            }
+        }
+        assert_registered_steps(&feature, scenario);
+    }
+
+    #[test]
+    fn mongodb_fault_scenario_is_ineligible_in_rocksdb_lane_even_with_all() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = feature
+            .scenarios
+            .iter()
+            .find(|scenario| scenario.tags.iter().any(|tag| tag == "mongodb"))
+            .unwrap();
+        let mut env = Environment {
+            all: true,
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            ..Environment::default()
+        };
+        assert!(matches!(
+            decide(&feature, scenario, &env),
+            Decision::Skip(_)
+        ));
+        env.projection_backend = ProjectionBackend::MongoDb;
+        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+    }
 
     #[test]
     fn settlement_scenarios_declare_their_integration_build_requirement() {

@@ -157,24 +157,14 @@ fn settlement_quote_dispatch() {
 #[test]
 fn settle_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(
-            runtime::settle(&s, sid(7), holder(), holder(), U256::ZERO, payment_token()).is_err()
-        );
+        assert!(runtime::settle(&s, sid(7), holder(), holder(), U256::ZERO, &[]).is_err());
     });
 }
 
 #[test]
 fn settle_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::settle(
-            &s,
-            sid(7),
-            holder(),
-            holder(),
-            U256::from(1),
-            payment_token()
-        )
-        .is_err());
+        assert!(runtime::settle(&s, sid(7), holder(), holder(), U256::from(1), &[]).is_err());
     });
 }
 
@@ -183,15 +173,7 @@ fn settle_rejects_wrong_state_issued() {
     with_factory(|s| {
         // Born Issued; settlement is only valid in Qualified/Called.
         runtime::issue(&s, sample(7)).unwrap();
-        let err = runtime::settle(
-            &s,
-            sid(7),
-            holder(),
-            holder(),
-            U256::from(1),
-            payment_token(),
-        )
-        .unwrap_err();
+        let err = runtime::settle(&s, sid(7), holder(), holder(), U256::from(1), &[]).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("settleable"));
     });
 }
@@ -215,15 +197,7 @@ fn settle_rejects_expired_deadline() {
         runtime::issue(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
         outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
-        let err = runtime::settle(
-            &s,
-            sid(7),
-            holder(),
-            holder(),
-            U256::from(1),
-            payment_token(),
-        )
-        .unwrap_err();
+        let err = runtime::settle(&s, sid(7), holder(), holder(), U256::from(1), &[]).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("deadline"));
     });
 }

@@ -9,7 +9,13 @@ publish.workspace = true
 hex.workspace = true
 mongodb.workspace = true
 parking_lot.workspace = true
+rocksdb.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

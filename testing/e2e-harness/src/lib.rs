@@ -52,7 +52,7 @@ use crate::artifacts::ArtifactLedger;
 use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
 use crate::world::localnet::Localnet;
-use crate::world::mongodb::MongoDb;
+use crate::world::projection::ProjectionFixture;
 use crate::world::World;
 
 #[derive(Default)]
@@ -223,7 +223,7 @@ fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
     if let Err(error) = Localnet::new(Config::resolve(env)).teardown() {
         eprintln!("outbe-e2e: Radicle runtime cleanup failed during shutdown: {error:#}");
     }
-    MongoDb::teardown_managed_for_run(env);
+    ProjectionFixture::teardown_managed_for_run(env);
     std::process::exit(code);
 }
 

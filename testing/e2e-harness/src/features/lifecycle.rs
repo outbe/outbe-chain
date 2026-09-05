@@ -934,10 +934,10 @@ fn offer_processed_and_projected(world: &mut World) {
             state.supply == U256::ONE,
             "initial offer executed more than once"
         );
-        world.mongodb.wait_for_tribute_projection(&tx, 60)?;
+        world.projection.wait_for_tribute_projection(&tx, 60)?;
         Ok(())
     })()
-    .expect("finalized initial Tribute and Mongo projection on every founder");
+    .expect("finalized initial Tribute and storage projection on every founder");
 }
 
 #[when("a full node joins and syncs to the committee tip")]
@@ -1165,7 +1165,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
             .tribute_tx_hash
             .clone()
             .ok_or_else(|| eyre!("in-flight offer did not land"))?;
-        world.mongodb.wait_for_tribute_projection(&tx, 120)?;
+        world.projection.wait_for_tribute_projection(&tx, 120)?;
         let confirm = world
             .state
             .restart_observations
@@ -1213,7 +1213,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
         );
         exact_members(&state.active, &members(world, 5)?)?;
         world
-            .mongodb
+            .projection
             .wait_for_tribute_projection_on_nodes(&tx, 60, 5)?;
         Ok(())
     })()
@@ -1368,7 +1368,7 @@ fn exits_and_demotes(world: &mut World) {
             "post-exit offer executed more than once"
         );
         world
-            .mongodb
+            .projection
             .wait_for_tribute_projection_on_nodes(&tx, 60, 5)?;
         Ok(())
     })()

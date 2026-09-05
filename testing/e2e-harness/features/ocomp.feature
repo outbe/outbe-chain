@@ -44,8 +44,6 @@ Feature: Off-chain computation and Metadosis
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
     When validator 0 SnapshotExporter restarts from a prepared-only crash state
-    And the managed projection MongoDB is paused
-    Then consensus finality advances before and after projection MongoDB resumes
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
     When a late follower replays the finalized OCOMP request and quorum blocks
@@ -59,6 +57,13 @@ Feature: Off-chain computation and Metadosis
     Then every validator observes the same nonzero WAA and SRA AgentReward
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
+
+  @mongodb @ocomp-projection-outage
+  Scenario: A managed MongoDB outage does not halt consensus finality
+    Given a fresh four-validator Metadosis capacity localnet at FORMING
+    Then the fresh capacity day is created in FORMING by finalized block 1
+    When the managed projection MongoDB is paused
+    Then consensus finality advances before and after projection MongoDB resumes
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches

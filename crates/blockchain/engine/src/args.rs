@@ -42,26 +42,10 @@ impl TeeSessionMode {
     }
 }
 
-/// Complete required configuration for finalized offchain-data projection into MongoDB.
-#[derive(Clone, Eq, PartialEq)]
+/// Path to the shared offchain-storage TOML, loaded by the node at startup.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OffchainDataArgs {
-    /// MongoDB connection string.
-    pub mongodb_uri: String,
-    /// Logical database exclusively owned by this node's projector.
-    pub mongodb_database: String,
-    /// First block projected when the managed database has no checkpoint.
-    pub start_block: u64,
-}
-
-impl fmt::Debug for OffchainDataArgs {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OffchainDataArgs")
-            .field("mongodb_uri", &"<redacted>")
-            .field("mongodb_database", &self.mongodb_database)
-            .field("start_block", &self.start_block)
-            .finish()
-    }
+    pub storage_config: PathBuf,
 }
 
 /// CLI arguments for the Outbe consensus layer.
@@ -255,25 +239,9 @@ pub struct ConsensusArgs {
     )]
     pub upstream_nocertify: bool,
 
-    /// MongoDB URI for the required finalized offchain-data projection.
-    #[arg(
-        long = "projection.mongodb-uri",
-        env = "OUTBE_PROJECTION_MONGODB_URI",
-        value_name = "URI"
-    )]
-    pub projection_mongodb_uri: Option<String>,
-
-    /// Logical MongoDB database exclusively owned by this node's projector.
-    #[arg(
-        long = "projection.mongodb-database",
-        env = "OUTBE_PROJECTION_MONGODB_DATABASE",
-        value_name = "DATABASE"
-    )]
-    pub projection_mongodb_database: Option<String>,
-
-    /// First block to project into a new managed database.
-    #[arg(long = "projection.start-block", default_value_t = 1)]
-    pub projection_start_block: u64,
+    /// Shared offchain-storage TOML for this node and its snapshot exporter.
+    #[arg(long = "projection.storage-config", value_name = "PATH")]
+    pub projection_storage_config: Option<PathBuf>,
 }
 
 impl fmt::Debug for ConsensusArgs {
@@ -304,13 +272,9 @@ impl fmt::Debug for ConsensusArgs {
             .field("upstream_configured", &self.upstream.is_some())
             .field(
                 "offchain_data_configured",
-                &self.projection_mongodb_uri.is_some(),
+                &self.projection_storage_config.is_some(),
             )
-            .field(
-                "projection_mongodb_database",
-                &self.projection_mongodb_database,
-            )
-            .field("projection_start_block", &self.projection_start_block)
+            .field("projection_storage_config", &self.projection_storage_config)
             .finish_non_exhaustive()
     }
 }
@@ -396,32 +360,17 @@ impl ConsensusArgs {
         Ok(())
     }
 
-    /// Returns the complete required projection configuration.
+    /// Returns the required configuration path. The node loads the document once at startup.
     pub fn offchain_data(&self) -> eyre::Result<OffchainDataArgs> {
-        match (
-            self.projection_mongodb_uri.as_ref(),
-            self.projection_mongodb_database.as_ref(),
-        ) {
-            (None, None) => Err(eyre::eyre!(
-                "MongoDB projection is required; provide --projection.mongodb-uri and --projection.mongodb-database"
-            )),
-            (Some(uri), Some(database)) => {
-                if uri.trim().is_empty() {
-                    eyre::bail!("--projection.mongodb-uri must not be empty");
-                }
-                if database.trim().is_empty() {
-                    eyre::bail!("--projection.mongodb-database must not be empty");
-                }
-                Ok(OffchainDataArgs {
-                    mongodb_uri: uri.clone(),
-                    mongodb_database: database.clone(),
-                    start_block: self.projection_start_block,
-                })
-            }
-            _ => Err(eyre::eyre!(
-                "--projection.mongodb-uri and --projection.mongodb-database must be provided together"
-            )),
+        let path = self.projection_storage_config.as_ref().ok_or_else(|| {
+            eyre::eyre!("offchain storage is required; provide --projection.storage-config")
+        })?;
+        if path.as_os_str().is_empty() {
+            eyre::bail!("--projection.storage-config must not be empty");
         }
+        Ok(OffchainDataArgs {
+            storage_config: path.clone(),
+        })
     }
 
     /// Effective validator EVM-key path.
@@ -515,9 +464,7 @@ mod tests {
             txpool_pending_staleness_secs: 600,
             upstream: None,
             upstream_nocertify: false,
-            projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
-            projection_mongodb_database: Some("outbe_projection".to_owned()),
-            projection_start_block: 1,
+            projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
             radicle_control_socket: None,
             radicle_status_address: None,
         }
@@ -562,49 +509,49 @@ mod tests {
     }
 
     #[test]
-    fn validator_and_full_node_require_complete_mongo_configuration() {
+    fn validator_and_full_node_require_storage_configuration_path() {
         for is_validator in [false, true] {
             let mut args = default_args();
             args.is_validator = is_validator;
-            args.projection_mongodb_uri = None;
-            args.projection_mongodb_database = None;
-            let error = args.validate().unwrap_err().to_string();
-            assert!(error.contains("required"), "error: {error}");
-
-            args.projection_mongodb_uri = Some("mongodb://localhost:27017".to_owned());
-            let error = args.validate().unwrap_err().to_string();
-            assert!(
-                error.contains("must be provided together"),
-                "error: {error}"
+            args.projection_storage_config = None;
+            assert!(args
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("required"));
+            args.projection_storage_config = Some("".into());
+            assert!(args
+                .offchain_data()
+                .unwrap_err()
+                .to_string()
+                .contains("empty"));
+            args.projection_storage_config = Some("/node/offchain-storage.toml".into());
+            assert_eq!(
+                args.offchain_data().unwrap().storage_config,
+                std::path::Path::new("/node/offchain-storage.toml")
             );
         }
-
-        let mut args = default_args();
-        args.projection_mongodb_uri = Some("mongodb://localhost:27017".to_owned());
-
-        args.projection_mongodb_database = Some("outbe_projection".to_owned());
-        args.projection_start_block = 42;
-        let config = args.offchain_data().unwrap();
-        assert_eq!(config.mongodb_uri, "mongodb://localhost:27017");
-        assert_eq!(config.mongodb_database, "outbe_projection");
-        assert_eq!(config.start_block, 42);
     }
 
     #[test]
-    fn cli_parses_projection_configuration() {
+    fn cli_parses_only_file_based_projection_configuration() {
         let cli = TestConsensusCli::try_parse_from([
             "test",
-            "--projection.mongodb-uri",
-            "mongodb://mongo:27017/?replicaSet=rs0",
-            "--projection.mongodb-database",
-            "outbe_projection",
-            "--projection.start-block",
-            "17",
+            "--projection.storage-config",
+            "/node/offchain-storage.toml",
         ])
         .unwrap();
-        let config = cli.consensus.offchain_data().unwrap();
-        assert_eq!(config.start_block, 17);
-        assert_eq!(config.mongodb_database, "outbe_projection");
+        assert_eq!(
+            cli.consensus.offchain_data().unwrap().storage_config,
+            std::path::Path::new("/node/offchain-storage.toml")
+        );
+        for (flag, value) in [
+            ("--projection.mongodb-uri", "mongodb://mongo:27017"),
+            ("--projection.mongodb-database", "projection"),
+            ("--projection.start-block", "1"),
+        ] {
+            assert!(TestConsensusCli::try_parse_from(["test", flag, value]).is_err());
+        }
     }
 
     #[test]
@@ -625,27 +572,11 @@ mod tests {
     }
 
     #[test]
-    fn projection_defaults_to_first_executable_block() {
-        let cli = TestConsensusCli::try_parse_from([
-            "test",
-            "--projection.mongodb-uri",
-            "mongodb://mongo:27017/?replicaSet=rs0",
-            "--projection.mongodb-database",
-            "outbe_projection",
-        ])
-        .unwrap();
-
-        assert_eq!(cli.consensus.offchain_data().unwrap().start_block, 1);
-    }
-
-    #[test]
     fn debug_output_redacts_operator_secrets() {
         let mut args = default_args();
         args.bls_passphrase = Some("bls-secret-value".to_owned());
         args.upstream = Some("https://user:upstream-secret@example.test".to_owned());
-        args.projection_mongodb_uri =
-            Some("mongodb://user:mongo-secret@localhost:27017".to_owned());
-        args.projection_mongodb_database = Some("outbe_projection".to_owned());
+        args.projection_storage_config = Some("/node/offchain-storage.toml".into());
 
         let args_debug = format!("{args:?}");
         let config_debug = format!("{:?}", args.offchain_data().unwrap());
@@ -655,7 +586,7 @@ mod tests {
             assert!(!config_debug.contains(secret));
         }
         assert!(args_debug.contains("offchain_data_configured: true"));
-        assert!(config_debug.contains("mongodb_uri: \"<redacted>\""));
+        assert!(config_debug.contains("storage_config"));
     }
 
     #[test]
