@@ -596,6 +596,146 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn settlement_scenarios_declare_their_integration_build_requirement() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/settlement.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse settlement feature");
+        assert_eq!(feature.scenarios.len(), 2);
+        assert!(
+            feature.tags.iter().any(|tag| tag == "ocomp"),
+            "settlement step registration requires the OCOMP integration build"
+        );
+        let mut env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            ..Environment::default()
+        };
+        for scenario in &feature.scenarios {
+            if cfg!(feature = "ocomp-integration") {
+                assert_eq!(unmet(&feature, scenario, &env), None);
+                assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+            } else {
+                assert!(unmet(&feature, scenario, &env)
+                    .expect("missing build requirement")
+                    .contains("built without --features ocomp-integration"));
+                assert!(matches!(
+                    decide(&feature, scenario, &env),
+                    Decision::Skip(_)
+                ));
+            }
+            env.all = true;
+            assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+            assert_eq!(
+                unmet(&feature, scenario, &env).is_some(),
+                !cfg!(feature = "ocomp-integration"),
+                "--all must expose missing capabilities to the failing before hook"
+            );
+            env.all = false;
+        }
+    }
+
+    fn assert_registered_steps(feature: &Feature, scenario: &Scenario) {
+        use cucumber::World as _;
+
+        let steps = crate::world::World::collection();
+        for step in feature
+            .background
+            .iter()
+            .flat_map(|background| &background.steps)
+            .chain(&scenario.steps)
+        {
+            assert!(
+                steps
+                    .find(step)
+                    .unwrap_or_else(|error| panic!("ambiguous step in {}: {error}", scenario.name))
+                    .is_some(),
+                "unregistered {:?} step in {}: {}",
+                step.ty,
+                scenario.name,
+                step.value
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integration() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            ..Environment::default()
+        };
+        let mut checked = Vec::new();
+        for file in ["price_oracle.feature", "zerofee.feature"] {
+            let feature = Feature::parse_path(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("features")
+                    .join(file),
+                cucumber::gherkin::GherkinEnv::default(),
+            )
+            .expect("parse ordinary feeder-dependent fixture");
+            for scenario in &feature.scenarios {
+                if has_tag(&feature, scenario, "price-oracle")
+                    || has_tag(&feature, scenario, "pfs-007-12")
+                {
+                    assert_eq!(unmet(&feature, scenario, &env), None);
+                    assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+                    assert!(!has_tag(&feature, scenario, "ocomp"));
+                    assert_registered_steps(&feature, scenario);
+                    checked.push(scenario.name.clone());
+                }
+            }
+        }
+        assert_eq!(
+            checked,
+            [
+                "Per-pair quorum survives a sub-quorum cross intersection",
+                "Exhausted quota resets lazily across the worldwide-day boundary",
+            ]
+        );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
+        let env = Environment {
+            tee_mode: TeeMode::SgxNoAttest,
+            validators: 4,
+            sudo: true,
+            all: true,
+            ..Environment::default()
+        };
+        let mut checked = Vec::new();
+        for file in ["settlement.feature", "ocomp.feature"] {
+            let feature = Feature::parse_path(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("features")
+                    .join(file),
+                cucumber::gherkin::GherkinEnv::default(),
+            )
+            .expect("parse settlement integration fixture");
+            for scenario in &feature.scenarios {
+                if has_tag(&feature, scenario, "settlement")
+                    || has_tag(&feature, scenario, "nod-settlement")
+                {
+                    assert_eq!(unmet(&feature, scenario, &env), None);
+                    assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+                    assert_registered_steps(&feature, scenario);
+                    checked.push(scenario.name.clone());
+                }
+            }
+        }
+        assert_eq!(checked, [
+            "A zero-balance validator redeems its reward Gem through ZeroFee",
+            "A stale Oracle rate defers validator Gem delivery and later recovers",
+            "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
+        ]);
+    }
+
+    #[test]
     fn gramine_direct_uses_the_production_enclave_without_sgx_passthrough() {
         let mode = TeeMode::GramineDirect;
         assert!(mode.enabled());

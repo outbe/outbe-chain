@@ -70,6 +70,7 @@ fn canonical_next_block_fee_cap(url: &str, priority_fee: u128) -> Result<u128> {
     next_block_fee_cap(base_fee, priority_fee)
 }
 
+#[cfg(feature = "ocomp-integration")]
 fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     let block = raw_json_result(
         url,
@@ -90,6 +91,7 @@ fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     Ok(next_block_base_fee(base_fee, gas_used, gas_limit))
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 {
     let target = gas_limit / 2;
     let next = if target == 0 || gas_used == target {
@@ -150,6 +152,7 @@ sol!("../../contracts/precompiles/src/IAgentReward.sol");
 /// `claimReward` pool selector for the WAA (wallet) pool.
 pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) const SRA_POOL: u8 = 1;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
@@ -1050,6 +1053,7 @@ pub(crate) fn install_delegation_with_overrides(
 /// [`install_delegation_with_overrides`] only applies when the authority is
 /// also the transaction sender and its transaction nonce is incremented
 /// before the authorization tuple is processed.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn install_delegation_for_authority(
     url: &str,
     payer_key: &str,

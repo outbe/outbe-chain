@@ -440,6 +440,7 @@ pub struct OcompTopology {
 /// Exact external OCOMP process inventory quiesced around a node clock restart.
 /// Embedded Supervisors remain node-owned; this plan records only the roles the
 /// harness must recreate after every node has crossed the common finality gate.
+#[cfg(any(test, feature = "ocomp-integration"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OcompNodeFacingResumePlan {
     snapshot_exporters: Vec<u8>,
@@ -474,6 +475,7 @@ impl OcompTopology {
     /// Stop every currently attached node-facing OCOMP process without
     /// recording a protocol fault, returning the exact inventory to restore.
     /// Deliberately absent workers therefore remain absent after the restart.
+    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn suspend_node_facing_roles(&mut self) -> Result<OcompNodeFacingResumePlan> {
         let mut snapshot_exporters = Vec::new();
         let mut workers = Vec::new();
