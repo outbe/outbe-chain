@@ -681,6 +681,31 @@ mod tests {
         assert_registered_steps(&feature, scenario);
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn worker_outage_fault_is_after_public_input_and_includes_independent_recovery() {
+        let feature = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .unwrap();
+        let scenario = feature
+            .scenarios
+            .iter()
+            .find(|scenario| {
+                scenario.name
+                    == "Complete worker outage preserves exports and cannot halt consensus"
+            })
+            .unwrap();
+        assert_eq!(scenario.steps.len(), 10);
+        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens");
+        assert_eq!(
+            scenario.steps[9].value,
+            "the independent OCOMP job completes on every validator"
+        );
+        assert_registered_steps(&feature, scenario);
+    }
+
     #[test]
     fn active_pending_validator_restart_is_selected_with_all_eight_registered_steps() {
         let env = Environment {

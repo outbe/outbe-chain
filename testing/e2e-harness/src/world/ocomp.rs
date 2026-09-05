@@ -2390,38 +2390,113 @@ impl OcompTopology {
         self.restart_snapshot_exporter_inner(validator_index, EXPORTER_RESTART_ATTEMPTS)
     }
 
-    /// Wait until every validator has durably committed the export for the
-    /// exact finalized job. Workers are intentionally irrelevant here: the
-    /// job-id-scoped `receipt.ref` is the SnapshotExporter's commit marker.
+    /// Keep all workers live through exact export verification, then fault the
+    /// whole owned cohort before doing any serial wait or further RPC work.
     #[cfg(feature = "ocomp-integration")]
-    pub fn wait_for_committed_exports(&mut self, job_id: B256, timeout: Duration) -> Result<()> {
+    pub(crate) fn stop_workers_after_exports(
+        &mut self,
+        record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
+        checkpoint: crate::world::rpc::FinalizedCheckpoint,
+        bundle: &ProtocolBundleV1,
+        evidence: &mut crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
+        timeout: Duration,
+    ) -> Result<()> {
+        use crate::internal::ocomp_worker_outage::{
+            observe_export, terminate_cohort, WorkerStopEvidence,
+        };
+        eyre::ensure!(
+            self.domains.len() == 4 && self.faults.len() + 4 <= OCOMP_MAX_FAULT_RECORDS,
+            "post-export fault requires the complete four-validator cohort"
+        );
+        eyre::ensure!(
+            evidence.exports.is_empty() && evidence.stops.is_empty(),
+            "worker fault cannot be replayed"
+        );
+        for (index, domain) in self.domains.iter_mut().enumerate() {
+            eyre::ensure!(domain.workers.len() == 1, "unexpected worker inventory");
+            let worker = domain
+                .workers
+                .get_mut(&0)
+                .ok_or_else(|| eyre::eyre!("missing baseline worker"))?;
+            eyre::ensure!(
+                worker.guard.exit_status()?.is_none(),
+                "worker exited before export observation"
+            );
+            evidence.stops.push(WorkerStopEvidence {
+                validator_index: u8::try_from(index)?,
+                worker_ordinal: 0,
+                pid: worker.guard.pid(),
+                signal_at_millis: 0,
+                signal_error: None,
+                reaped_at_millis: None,
+                exit_code: None,
+                exit_signal: None,
+                wait_error: None,
+            });
+        }
         let deadline = Instant::now() + timeout;
         loop {
             self.ensure_validator_roles_alive()?;
-            let mut pending = Vec::new();
             for validator_index in self.validator_indices()? {
-                let receipt_root = self
-                    .domain_root(validator_index)?
-                    .join("exporter-v1")
-                    .join("receipts")
-                    .join(hex::encode(job_id));
-                let prepared = fs::read(receipt_root.join("prepared.ref"));
-                let committed = fs::read(receipt_root.join("receipt.ref"));
-                if !matches!(prepared, Ok(ref bytes) if !bytes.is_empty())
-                    || !matches!(committed, Ok(ref bytes) if !bytes.is_empty())
+                let worker = self
+                    .domain_mut(validator_index)?
+                    .workers
+                    .get_mut(&0)
+                    .unwrap();
+                eyre::ensure!(
+                    worker.guard.exit_status()?.is_none(),
+                    "worker exited before four verified exports"
+                );
+                if !evidence
+                    .exports
+                    .iter()
+                    .any(|item| item.validator_index == validator_index)
                 {
-                    pending.push(validator_index);
+                    if let Some(export) = observe_export(
+                        self.domain_root(validator_index)?,
+                        validator_index,
+                        record,
+                        checkpoint,
+                        bundle,
+                    )? {
+                        evidence.exports.push(export);
+                    }
                 }
             }
-            if pending.is_empty() {
-                return Ok(());
+            if evidence.exports.len() == 4 {
+                break;
             }
             eyre::ensure!(
                 Instant::now() < deadline,
-                "SnapshotExporters did not durably commit job {job_id:#x} for validators {pending:?}"
+                "four exact exports did not become available"
             );
             sleep(Duration::from_millis(100));
         }
+        let mut workers = self
+            .domains
+            .iter_mut()
+            .map(|domain| &mut domain.workers.get_mut(&0).unwrap().guard)
+            .collect::<Vec<_>>();
+        let outcome = terminate_cohort(&mut workers, &mut evidence.stops);
+        drop(workers);
+        for stopped in &evidence.stops {
+            if let Some(reaped_at) = stopped.reaped_at_millis {
+                let process = self
+                    .domain_mut(stopped.validator_index)?
+                    .workers
+                    .remove(&0)
+                    .unwrap();
+                self.records[process.record_index].stopped_at_millis = Some(reaped_at);
+                self.faults.push(OcompFaultRecordV1 {
+                    fault: OcompProcessFault::StopWorker {
+                        validator_index: stopped.validator_index,
+                        worker_ordinal: 0,
+                    },
+                    applied_at_millis: stopped.signal_at_millis,
+                });
+            }
+        }
+        outcome
     }
 
     #[cfg(feature = "ocomp-integration")]

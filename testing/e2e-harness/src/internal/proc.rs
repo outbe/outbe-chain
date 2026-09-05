@@ -136,6 +136,35 @@ impl ChildGuard {
         self.child.id()
     }
 
+    /// Abrupt fault of this owned live child, without waiting for its peers.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn signal_fault(&mut self) -> Result<()> {
+        if self.exit_status()?.is_some() {
+            bail!(
+                "owned child {} exited before the requested fault",
+                self.label
+            );
+        }
+        self.child
+            .kill()
+            .wrap_err_with(|| format!("SIGKILL owned child {}", self.label))
+    }
+
+    /// Observe a previously signalled fault without discarding wait errors.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn reap_fault(&mut self, timeout: Duration) -> Result<ExitStatus> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.exit_status()? {
+                return Ok(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                bail!("owned child {} did not exit after fault", self.label);
+            }
+            sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Stop and synchronously reap this owned process. Idempotent after exit.
     ///
     /// SIGTERM first, SIGKILL only if the process will not leave. A node killed

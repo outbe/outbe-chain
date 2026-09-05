@@ -6,6 +6,7 @@ pub(crate) mod addresses;
 pub(crate) mod certified_handoff;
 pub(crate) mod config;
 pub(crate) mod eth;
+pub(crate) mod ocomp_worker_outage;
 pub(crate) mod parse;
 pub(crate) mod ports;
 pub(crate) mod proc;

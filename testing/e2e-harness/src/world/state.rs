@@ -209,6 +209,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub non_quorum_state_unchanged: Option<bool>,
     pub expired_without_nod: Option<bool>,
     pub expired_release_had_export: Option<bool>,
+    pub worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
     pub held_late_vote_hash: Option<alloy_primitives::B256>,
     pub late_vote_reverted: Option<bool>,
     pub late_vote_inclusion_height: Option<u64>,
@@ -338,6 +339,7 @@ pub struct FixtureState {
     /// Whether the released terminal journal record retained an authenticated
     /// export authority. `false` is the canonical no-ACK exporter-outage path.
     pub ocomp_expired_release_had_export: Option<bool>,
+    pub ocomp_worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
     /// The two independently scheduled WWDs and processing timestamps used by
     /// the dynamic-membership overlap scenario.
     pub ocomp_dynamic_worldwide_days: Vec<u32>,
@@ -546,6 +548,7 @@ impl Default for FixtureState {
             ocomp_followup_job_request: None,
             ocomp_followup_completed_finality: None,
             ocomp_expired_release_had_export: None,
+            ocomp_worker_outage: None,
             ocomp_dynamic_worldwide_days: Vec::new(),
             ocomp_dynamic_processing_times: Vec::new(),
             ocomp_dynamic_tribute_tx_hashes: Vec::new(),
@@ -646,6 +649,7 @@ impl FixtureState {
             non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
             expired_without_nod: self.ocomp_expired_without_nod,
             expired_release_had_export: self.ocomp_expired_release_had_export,
+            worker_outage: self.ocomp_worker_outage.clone(),
             held_late_vote_hash: self.ocomp_held_late_vote_hash,
             late_vote_reverted: self.ocomp_late_vote_reverted,
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,

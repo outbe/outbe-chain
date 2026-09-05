@@ -197,17 +197,16 @@ Feature: Off-chain computation and Metadosis
   @ocomp-zero-vote-worker-outage
   # OCOMP-TEST-ID: OCM-PUB-007
   Scenario: Complete worker outage preserves exports and cannot halt consensus
-    Given a fresh four-validator OCOMP short-window public measurement localnet
-    When all four OCOMP workers are stopped before the job
-    And an operator submits one encrypted tribute offer
+    Given a fresh four-validator OCOMP short-window public recovery localnet
+    When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then every validator commits the exact snapshot export while all workers remain stopped
-    And the exported zero-vote job expires at its exclusive deadline and finality continues
+    When all four OCOMP workers stop after exact exports of the public JobIntent before voting opens
+    Then the exported zero-vote job expires at its exclusive deadline and finality continues
     When all stopped OCOMP workers restart after canonical expiry
     Then the expired job remains terminal with no successor after process recovery
+    When one independent next-day Tribute is submitted after OCOMP recovery
+    Then the independent OCOMP job completes on every validator
 
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002

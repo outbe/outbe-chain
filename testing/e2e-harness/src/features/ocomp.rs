@@ -4525,11 +4525,15 @@ fn stop_two_workers_before_job(world: &mut World) {
 }
 
 fn capture_ocomp_finality_before_fault(world: &mut World, action: &str) {
+    let ports = world.validators.committee_ports();
     world.state.ocomp_finality_before_fault = Some(
         world
             .rpc
-            .finalized_result(world.validators.primary_port())
-            .unwrap_or_else(|error| panic!("capture finalized height before {action}: {error:#}")),
+            .wait_finalized_checkpoint(&ports, 1, 60)
+            .unwrap_or_else(|error| {
+                panic!("capture common finalized checkpoint before {action}: {error:#}")
+            })
+            .height,
     );
 }
 
@@ -4548,64 +4552,84 @@ fn stop_all_exporters_before_job(world: &mut World) {
     }
 }
 
-#[when("all four OCOMP workers are stopped before the job")]
-fn stop_all_workers_before_job(world: &mut World) {
-    capture_ocomp_finality_before_fault(world, "stopping all OCOMP workers");
-    for validator_index in 0..4 {
-        world
-            .ocomp
-            .apply_process_fault(OcompProcessFault::StopWorker {
-                validator_index,
-                worker_ordinal: 0,
-            })
-            .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Worker before the job: {error:#}")
-            });
-    }
-}
-
-#[then("every validator commits the exact snapshot export while all workers remain stopped")]
-fn all_exporters_commit_while_workers_stopped(world: &mut World) {
+#[when(
+    "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens"
+)]
+fn stop_workers_after_public_exports(world: &mut World) {
+    use crate::internal::ocomp_worker_outage::{require_pre_open_cut, WorkerOutageEvidence};
+    world
+        .ocomp
+        .ensure_baseline_runtime_ready(1)
+        .expect("all four workers live and connected before observing the job");
+    capture_ocomp_finality_before_fault(world, "post-export worker fault");
+    // Keep request/export observation and the complete fault cut contiguous.
+    // Balance probes and other unrelated RPCs must not consume this window.
+    metadosis_creates_finalized_job_intent(world);
     let request = world
         .state
         .ocomp_job_request
         .clone()
         .expect("finalized zero-vote JobIntent");
     let primary = world.validators.primary_port();
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let job_id = loop {
-        let records = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .finalized_ocomp_job_record_on(port, request.intent_id)
-            })
-            .collect::<Vec<_>>();
-        if records.iter().all(Option::is_some) {
-            let first = records[0].as_ref().expect("checked above");
-            assert!(
-                records
-                    .iter()
-                    .all(|candidate| candidate.as_ref() == Some(first)),
-                "validators expose different zero-vote job records: {records:?}"
-            );
-            if let Some(finalized) = first.finalized.as_ref() {
-                break finalized.job_id;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "zero-vote job did not reach its finalized OCOMP identity on port {primary}"
-        );
-        sleep(Duration::from_millis(250));
-    };
+    let record = world
+        .rpc
+        .ocomp_job_record_at_on(primary, request.intent_id, request.finality_recorded_height)
+        .expect("canonical bound job for exact export verification");
+    assert_eq!(record.finalized.as_ref().unwrap().job_id, request.job_id);
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(primary, request.request_height)
+        .expect("canonical request checkpoint");
+    assert_eq!(checkpoint.block_hash, request.request_block_hash);
+    let bundle = world
+        .ocomp
+        .canonical_fork_install()
+        .expect("canonical OCOMP bundle")
+        .protocol_bundle;
+    world.state.ocomp_worker_outage = Some(WorkerOutageEvidence::default());
     world
         .ocomp
-        .wait_for_committed_exports(job_id, Duration::from_secs(120))
-        .unwrap_or_else(|error| panic!("prove all four exact snapshot exports: {error:#}"));
+        .stop_workers_after_exports(
+            &record,
+            checkpoint,
+            &bundle,
+            world.state.ocomp_worker_outage.as_mut().unwrap(),
+            Duration::from_secs(120),
+        )
+        .unwrap_or_else(|error| {
+            panic!("exact exports followed by complete owned worker fault: {error:#}")
+        });
+    let heads = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            let raw = eth::raw_json_result(
+                &world.rpc.url(port),
+                "eth_blockNumber",
+                serde_json::json!([]),
+            )
+            .expect("successful canonical HEAD after worker reap");
+            serde_json::from_value::<alloy_primitives::U64>(raw)
+                .expect("canonical HEAD number")
+                .to::<u64>()
+        })
+        .collect::<Vec<_>>();
+    world.state.ocomp_worker_outage.as_mut().unwrap().cut_heads = heads.clone();
+    require_pre_open_cut(&heads, request.open_height)
+        .expect("all four workers must exit after export but before any compute can start");
+    for port in world.validators.committee_ports() {
+        let height = world
+            .rpc
+            .finalized_result(port)
+            .expect("post-fault finalized height");
+        let accountability = world
+            .rpc
+            .ocomp_vote_accountability_at_on(port, request.job_id, height)
+            .expect("canonical post-fault accountability");
+        assert!(accountability.slot_validator_indexes.is_empty());
+        assert!(accountability.quorum_result_digest.is_none());
+    }
 }
 
 #[when("validator 3 OCOMP worker is stopped before the job")]
@@ -5530,6 +5554,13 @@ fn assert_job_expires_without_nod(
 
     for port in world.validators.committee_ports() {
         assert_eq!(
+            world
+                .rpc
+                .ocomp_vote_accountability_at_on(port, finalized.job_id, request.deadline_height)
+                .expect("exact closed accountability on every validator"),
+            accountability
+        );
+        assert_eq!(
             world.rpc.nod_certified_generation_exists_on(
                 port,
                 request.worldwide_day,
@@ -5637,6 +5668,42 @@ fn wait_for_released_retention(
                             expect_export,
                             "validator-{validator_index} released {fault_label} job with unexpected export authority"
                         );
+                        if let Some(outage) = &world.state.ocomp_worker_outage {
+                            let saved = outage
+                                .exports
+                                .iter()
+                                .find(|item| item.validator_index as usize == validator_index)
+                                .expect("saved exact export for each faulted validator");
+                            assert_eq!(saved.job_id, job_id);
+                            assert_eq!(source_generation, Some(saved.source_generation));
+                            assert_eq!(
+                                export,
+                                Some(outbe_node::ocomp::retention::ExportAuthorityV1 {
+                                    source_generation: saved.source_generation,
+                                    lease_generation: saved.lease_generation,
+                                    manifest_hash: saved.manifest_hash,
+                                })
+                            );
+                            let retention = world
+                                .ocomp
+                                .canonical_fork_install()
+                                .unwrap()
+                                .request_profile
+                                .capacity_profile
+                                .source_retention_after_terminal_blocks;
+                            let due = world
+                                .state
+                                .ocomp_job_request
+                                .as_ref()
+                                .unwrap()
+                                .deadline_height
+                                .checked_add(retention)
+                                .unwrap();
+                            assert!(
+                                observed_height >= due,
+                                "retention released before its canonical due height"
+                            );
+                        }
                         *observation = format!(
                             "Released(reason={reason:?}, observed_height={observed_height}, export={})",
                             export.is_some()
@@ -5719,8 +5786,8 @@ fn all_workers_restart_after_expiry(world: &mut World) {
     }
     world
         .ocomp
-        .ensure_validator_roles_alive()
-        .expect("all OCOMP roles are live after canonical expiry");
+        .ensure_baseline_runtime_ready(1)
+        .expect("all four workers reconnect to their embedded supervisors after expiry");
 }
 
 #[then("the expired job remains terminal with no successor after process recovery")]

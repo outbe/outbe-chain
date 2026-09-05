@@ -8455,6 +8455,7 @@ dependencies = [
  "outbe-nod",
  "outbe-node",
  "outbe-nodfactory",
+ "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
  "outbe-offchain-data",
