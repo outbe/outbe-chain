@@ -755,12 +755,13 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
                 .request_budget_split_receipt_hash,
             B256::ZERO
         );
+        // The brief waits for the Lysis deadline, so the request leaves Desis untouched.
         assert_eq!(
             DesisContract::new(storage.clone())
                 .auction_stage
                 .read(&prepared.wwd)
                 .unwrap(),
-            AuctionStage::Briefed as u8
+            AuctionStage::None as u8
         );
         assert_eq!(
             DesisContract::new(storage.clone())

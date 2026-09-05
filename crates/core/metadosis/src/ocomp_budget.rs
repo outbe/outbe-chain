@@ -133,41 +133,54 @@ pub(crate) fn apply_fresh_request_budget_effect(
         green,
     )?;
     let receipt = expected_receipt(&request, split, request.pending_nonce)?;
-    // One checkpoint: the credit, the draw and the brief may not survive each other's failure.
-    // Order matters - the day's own leftover is in the accumulator before the auction draws on it.
-    storage.with_checkpoint(|| {
-        if !split.carry_over_credit.is_zero() {
-            let delta = PromisLimitContract::new(storage.clone())
-                .checked_add_carry_over(split.carry_over_credit)?;
-            if delta.credited != split.carry_over_credit {
-                return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
-            }
+    // The request only credits what Lysis left of the day's own emission. The draw and the brief
+    // wait for the Lysis deadline: a day whose Lysis never completes must not open an auction.
+    if !split.carry_over_credit.is_zero() {
+        let delta = PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(split.carry_over_credit)?;
+        if delta.credited != split.carry_over_credit {
+            return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
         }
-        if !split.auction_base.is_zero() {
+    }
+    receipt
+        .validate_semantics()
+        .map_err(protocol_error_to_revert)?;
+    Ok(receipt)
+}
+
+/// Draw the day's auction base from the accumulator and brief Desis with it.
+///
+/// Called once Lysis has closed, so the accumulator already holds what Lysis returned and a day
+/// whose Lysis never completed never opens an auction. The amount was frozen on the request
+/// receipt; between the request and here only credits can land, so the draw always covers it.
+pub(crate) fn apply_auction_brief(
+    storage: StorageHandle<'_>,
+    receipt: &RequestBudgetSplitReceiptV1,
+) -> Result<()> {
+    let green = receipt.day_type == DayType::Green;
+    // One checkpoint: the draw and the brief may not survive each other's failure.
+    storage.with_checkpoint(|| {
+        if !receipt.auction_base.is_zero() {
             let drawn = PromisLimitContract::new(storage.clone())
-                .checked_take_carry_over_up_to(split.auction_base)?;
-            if drawn.taken != split.auction_base {
+                .checked_take_carry_over_up_to(receipt.auction_base)?;
+            if drawn.taken != receipt.auction_base {
                 return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
             }
         }
         let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
             storage.clone(),
-            request.protocol_bundle_hash,
-            request.wwd.into(),
-            split.auction_base,
-            &request.auction_entry_prices,
-            request.logical_anchor,
+            receipt.protocol_bundle_hash,
+            receipt.wwd.into(),
+            receipt.auction_base,
+            &receipt.auction_entry_prices,
+            receipt.logical_anchor,
             green,
         )?;
         if receipt.desis_brief_hash != Some(actual) {
             return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
         }
         Ok(())
-    })?;
-    receipt
-        .validate_semantics()
-        .map_err(protocol_error_to_revert)?;
-    Ok(receipt)
+    })
 }
 
 /// Validate an authoritative receipt for a replay without touching owner

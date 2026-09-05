@@ -62,7 +62,8 @@ fn assert_failed_activation_recovery(fixture: &mut ActivationFixture) {
                 .total_unallocated
                 .read()
                 .unwrap(),
-            U256::from(60)
+            U256::from(100),
+            "a day whose Lysis failed never drew for an auction, so what the request credited stays              beside the returned Lysis budget"
         );
     });
 }

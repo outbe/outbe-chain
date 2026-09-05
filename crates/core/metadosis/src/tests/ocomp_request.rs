@@ -268,12 +268,13 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap(),
             record
         );
+        // The brief waits for the Lysis deadline, so the request leaves Desis untouched.
         assert_eq!(
             DesisContract::new(storage.clone())
                 .auction_stage
                 .read(&wwd)
                 .unwrap(),
-            AuctionStage::Briefed as u8
+            AuctionStage::None as u8
         );
 
         let receipt_before = metadosis
@@ -1698,15 +1699,15 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
                 .pending_supply_promis
                 .read(&wwd)
                 .unwrap(),
-            U256::from(68),
-            "the auction is briefed with the day's own nominal beyond the symbolic share"
+            U256::ZERO,
+            "the auction is not briefed until the Lysis deadline"
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            U256::from(900),
-            "what Lysis left, less what the auction drew, stays in the accumulator"
+            U256::from(968),
+            "the request credits what Lysis left of the day's own emission"
         );
     });
 }
