@@ -101,10 +101,13 @@ impl TriggerHandler {
     }
 }
 
-/// An e2e day is minutes long, so the auction schedule advances on a cadence
-/// that fits there rather than the production half-day one.
+/// Briefs arrive on the hourly protocol cadence, and a brief only becomes a live
+/// auction on this tick: a slower cadence would spend the commit window
+/// `preflight_brief` reserved on waiting for the start.
+///
+/// An e2e day is minutes long, so it advances faster still.
 #[cfg(not(feature = "e2e-test"))]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
@@ -161,7 +164,10 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
             requires_accounting_window: true,
-            coalesces_backlog: false,
+            // A poll, not a calendar slot: the handler reads the block clock and
+            // sweeps every scheduled day, so replaying a missed slot does nothing
+            // the next firing would not already do.
+            coalesces_backlog: true,
             handler: TriggerHandler::AuctionAdvance,
         },
         TriggerSpec {
@@ -279,7 +285,7 @@ mod protocol_parameter_tests {
         assert_eq!(configured[0].period_seconds, 10);
         assert_eq!(configured[0].start_offset_seconds, 0);
         assert_eq!(configured[1].period_seconds, 86_400);
-        assert_eq!(configured[2].period_seconds, 43_200);
+        assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
         assert_eq!(configured[3].period_seconds, 86_400);
         assert!(matches!(

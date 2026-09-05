@@ -1464,6 +1464,11 @@ impl ActivationFixture {
                 crate::reducer::OuterWwdEvent::OcompRequestCommitted,
             )
             .unwrap();
+            // A real request credits what Lysis left of the day's emission before the auction is
+            // sized, so the accumulator holds at least what this receipt says the auction draws.
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .checked_add_carry_over(request_receipt.auction_base)
+                .unwrap();
             contract
                 .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)
                 .unwrap();

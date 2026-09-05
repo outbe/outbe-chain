@@ -57,6 +57,7 @@ fn only_polls_and_calendar_owned_protocol_cycle_coalesce() {
     for spec in ACTIVE_TRIGGERS {
         let is_poll = spec.id == TriggerId::AuctionClearing.as_u32()
             || spec.id == TriggerId::IntexNotify.as_u32()
+            || spec.id == TriggerId::AuctionAdvance.as_u32()
             || spec.id == TriggerId::ProtocolCycle.as_u32();
         assert_eq!(
             spec.coalesces_backlog, is_poll,

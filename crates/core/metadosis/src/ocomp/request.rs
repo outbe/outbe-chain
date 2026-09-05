@@ -19,7 +19,7 @@ use crate::{
     aggregate::WwdDayType,
     commit::plan_outer_transition,
     errors::storage_corruption_message,
-    ocomp_budget::{apply_fresh_request_budget_effect, RequestBudgetEffect, RequestBudgetSplit},
+    ocomp_budget::{apply_fresh_request_budget_effect, RequestBudgetEffect},
     pre_admission::{
         evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionInputs,
     },
@@ -256,7 +256,6 @@ fn build_and_commit_request(
     )?;
     let lysis_budget = calculation.gratis_allocation;
     let nominal_total = sealed_tribute_projection.tribute_nominal_amount;
-    let split = RequestBudgetSplit::derive(day_limit, lysis_budget, nominal_total)?;
     let protocol_day_type = protocol_day_type(metadosis.get_wwd_day_type(wwd)?)?;
     let effect = RequestBudgetEffect {
         protocol_bundle_hash: profile.protocol_bundle_hash,
@@ -332,13 +331,14 @@ fn build_and_commit_request(
         source_availability_policy_id: profile.source_availability_policy_id,
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
             day_type: protocol_day_type,
-            day_limit,
+            // The effective ceiling the day was allowed: its own emission plus what it drew.
+            day_limit: receipt.day_limit,
             previous_vwap,
             current_vwap,
             gratis_demand: calculation.gratis_demand,
             gratis_supply: calculation.gratis_supply,
             lysis_budget,
-            auction_base: split.auction_base,
+            auction_base: receipt.auction_base,
             auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_budget_split_receipt_hash: receipt_hash,
         },

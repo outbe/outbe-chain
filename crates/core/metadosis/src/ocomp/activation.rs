@@ -369,6 +369,8 @@ fn apply_certified_result(
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
+        // Lysis has closed and returned what it did not spend, so the auction can now draw.
+        crate::ocomp_budget::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {
             nod,
             contributor,
