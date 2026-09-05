@@ -5,7 +5,7 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::NOTIFY_CHUNK_LIMIT;
+use outbe_intexfactory::constants::{NOTIFY_CHUNK_LIMIT, NOTIFY_MESSAGE_LIMIT};
 use outbe_intexfactory::qualified::{
     drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
 };
@@ -41,7 +41,7 @@ fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
     push(
         handle,
         NOTICE_CALLED,
-        pack_called_notice(series(index), called_at),
+        pack_called_notice(series(index), 840, called_at),
     );
 }
 
@@ -175,25 +175,30 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        // A qualified entry at 27 leaves the next Called run starting at 28, so it would reach
-        // 35 if nothing stopped it - four entries past this firing's limit of 32.
+        // Each entry carries its own call time, so no two coalesce and every one costs a router
+        // call. A qualified entry at 27 leaves the next Called run starting at 28, so the firing
+        // would reach 40 if nothing stopped it - eight entries past its budget of router calls.
         for index in 0..27 {
-            push_called(&handle, index, CALLED_AT);
+            push_called(&handle, index, CALLED_AT + index);
         }
         push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
         for index in 28..40 {
-            push_called(&handle, index, CALLED_AT);
+            push_called(&handle, index, CALLED_AT + index);
         }
+
+        // The qualified entry resolves to an empty group, so it leaves without a router call:
+        // the firing spends its budget over one more entry than the budget itself.
+        let consumed = NOTIFY_MESSAGE_LIMIT + 1;
 
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (NOTIFY_CHUNK_LIMIT, 40),
+            (consumed, 40),
             "the run stops at the limit"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in NOTIFY_CHUNK_LIMIT..40 {
+        for index in consumed..40 {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

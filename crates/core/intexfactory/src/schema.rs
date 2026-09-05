@@ -132,16 +132,17 @@ pub struct IntexFactoryContract {
     #[attribute(order = 27)]
     pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 
-    // Called groups waiting for their settlement window to close, in call order.
-    // A called group has left the bin index, so the members parked here are the
-    // only way back to its series.
+    // Called groups waiting for their settlement window to close, bucketed by the
+    // UTC day their deadline falls in. A called group has left the bin index, so
+    // the members parked here are the only way back to its series.
+    /// Days since the epoch holding at least one waiting group. Set semantics, so
+    /// a day leaves only once its bucket empties.
     #[attribute(order = 28)]
-    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 29)]
-    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> `scoped(iso, day)`; zero marks a slot already taken.
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 30)]
-    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
     /// the head check costs no record load.
     #[attribute(order = 31)]
@@ -151,6 +152,43 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // Widest call terms ever issued in a currency, so the scan's search range covers
+    // series carrying terms the live profile no longer names. Both only ever move
+    // outwards, which keeps the range a safe over-approximation.
+    #[attribute(order = 34)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    /// 0 = nothing issued yet in this currency.
+    #[attribute(order = 35)]
+    pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Day since the epoch -> slots ever used in its bucket. Retired slots are
+    /// zeroed in place rather than compacted, so a cursor into a bucket stays valid.
+    #[attribute(order = 36)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// Day -> groups still waiting in it. The day leaves the tree when this hits 0.
+    #[attribute(order = 37)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// `keccak256(day_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`; zero marks
+    /// a slot already retired.
+    #[attribute(order = 38)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    /// Day -> earliest deadline still waiting in it, so a bucket nobody is due in
+    /// costs one read to skip.
+    #[attribute(order = 39)]
+    pub expiry_bucket_min: outbe_primitives::storage::dsl::Map<u32, u64>,
+    /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
+    #[attribute(order = 40)]
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 41)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// `scoped(iso, day)` -> when its call notice first failed to leave. Holders who
+    /// were never told cannot settle, so the group is not forfeited while this
+    /// stands; the grace bounds it so a permanently broken route cannot strand the
+    /// load. 0 = the notice is out.
+    #[attribute(order = 42)]
+    pub notice_undelivered_at: outbe_primitives::storage::dsl::Map<u64, u64>,
 }
 
 impl IntexFactoryContract<'_> {

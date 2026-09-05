@@ -175,17 +175,20 @@ pub struct GemContract {
     #[attribute(order = 19)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
-    // --- Called-gem queue, in call order. Calling is driven by price, expiry
-    // only by time, so the two stages keep separate structures.
+    // --- Called gems, bucketed by the UTC day their notice period closes in.
+    // Calling is driven by price, expiry only by time, so the two stages keep
+    // separate structures - and a bucket makes call order irrelevant to expiry.
+    /// Days since the epoch holding at least one called gem. Set semantics, so a
+    /// day leaves only once its bucket empties.
     #[attribute(order = 20)]
-    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
-    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> gem id; zero marks a slot already taken.
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
-    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// Gem id -> `(day << 32) | slot` it waits in; zero means it never queued.
     #[attribute(order = 23)]
-    pub called_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
     #[attribute(order = 24)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
@@ -194,6 +197,32 @@ pub struct GemContract {
     /// against the prices it opened with. 0 = none in flight; a date key is never 0.
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Widest call window ever issued in a currency. The scan collects that many
+    /// days so a gem whose record outruns the current constant still sees its own
+    /// window; it only ever grows, which keeps the collected span a safe upper bound.
+    #[attribute(order = 26)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Day since the epoch -> slots ever used in its bucket. Retired slots are
+    /// zeroed in place rather than compacted, so a cursor into a bucket stays valid.
+    #[attribute(order = 27)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// Day -> gems still waiting in it. The day leaves the tree when this hits 0.
+    #[attribute(order = 28)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// `keccak256(day_be32 ++ slot_be32)` -> gem id; zero marks a slot already retired.
+    #[attribute(order = 29)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Day -> earliest deadline still waiting in it, so a bucket nobody is due in
+    /// costs one read to skip.
+    #[attribute(order = 30)]
+    pub expiry_bucket_min: outbe_primitives::storage::dsl::Map<u32, u64>,
+    /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
+    #[attribute(order = 31)]
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 32)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

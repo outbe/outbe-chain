@@ -8,10 +8,7 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{
-        BIN_STEP_BP, MAX_GEM_FORFEITS_PER_RUN, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME,
-        TOKEN_SYMBOL,
-    },
+    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     schema::{GemContract, GemData, GemState},
 };
@@ -116,6 +113,11 @@ impl GemContract<'_> {
         } else if item.state == GemState::Qualified as u8 {
             // Genesis gems are born Qualified - index them by call price.
             self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
+        }
+
+        if item.call_window > self.max_call_window.read(&item.reference_currency)? {
+            self.max_call_window
+                .write(&item.reference_currency, item.call_window)?;
         }
 
         Ok(())
@@ -268,25 +270,6 @@ impl GemContract<'_> {
         Ok(gems)
     }
 
-    pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<U256>> {
-        let gem_id = self.called_queue_at.read(&index)?;
-        Ok((!gem_id.is_zero()).then_some(gem_id))
-    }
-
-    pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
-        let tail = self.called_tail.read()?;
-        let mut head = self.called_head.read()?;
-        let limit = tail.min(head.saturating_add(MAX_GEM_FORFEITS_PER_RUN));
-        while head < limit && self.called_queue_at.read(&head)?.is_zero() {
-            head = head.saturating_add(1);
-        }
-        if head >= tail {
-            self.called_head.write(0)?;
-            return self.called_tail.write(0);
-        }
-        self.called_head.write(head)
-    }
-
     /// `Qualified -> Called`. Records the call timestamp used to enforce the
     /// notice-period settlement deadline. Qualified gems are not parked in the
     /// unqualified bin index, so there is nothing to clean up here.
@@ -303,22 +286,94 @@ impl GemContract<'_> {
         self.push_called(gem_id, called_at + u64::from(item.call_notice_period))
     }
 
-    fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        let tail = self.called_tail.read()?;
-        self.called_queue_at.write(&tail, gem_id)?;
-        self.called_queue_index.write(&gem_id, tail)?;
+    pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
+        let day = Self::deadline_day(deadline);
+        let slot = self.expiry_bucket_len.read(&day)?;
+        self.expiry_bucket_at
+            .write(&Self::bucket_slot_key(day, slot), gem_id)?;
+        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
+        self.called_bucket_slot
+            .write(&gem_id, Self::packed_slot(day, slot))?;
         self.called_deadline.write(&gem_id, deadline)?;
-        self.called_tail.write(tail.saturating_add(1))
+
+        let live = self.expiry_bucket_live.read(&day)?;
+        self.expiry_bucket_live
+            .write(&day, live.saturating_add(1))?;
+        if live == 0 {
+            self.expiry_bucket_min.write(&day, deadline)?;
+            tree_math::add(&ExpiryDayTree(&*self), day)?;
+        } else if deadline < self.expiry_bucket_min.read(&day)? {
+            self.expiry_bucket_min.write(&day, deadline)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
-        let index = self.called_queue_index.read(&gem_id)?;
-        // A gem that never queued reads index 0; only clear a slot it owns.
-        if self.called_queue_at.read(&index)? == gem_id {
-            self.called_queue_at.clear(&index)?;
+        let packed = self.called_bucket_slot.read(&gem_id)?;
+        self.called_bucket_slot.clear(&gem_id)?;
+        self.called_deadline.clear(&gem_id)?;
+        if packed == 0 {
+            return Ok(());
         }
-        self.called_queue_index.clear(&gem_id)?;
-        self.called_deadline.clear(&gem_id)
+        let (day, slot) = Self::unpack_slot(packed);
+        self.release_expiry_slot(day, slot, gem_id)
+    }
+
+    /// Free one bucket slot, retiring the whole bucket once nothing waits in it.
+    /// The slot is cleared only if it still holds this gem, so a stale index cannot
+    /// evict a live one.
+    pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, gem_id: U256) -> Result<()> {
+        let slot_key = Self::bucket_slot_key(day, slot);
+        if self.expiry_bucket_at.read(&slot_key)? != gem_id {
+            return Ok(());
+        }
+        self.expiry_bucket_at.clear(&slot_key)?;
+
+        let live = self.expiry_bucket_live.read(&day)?.saturating_sub(1);
+        self.expiry_bucket_live.write(&day, live)?;
+        if live == 0 {
+            self.expiry_bucket_len.clear(&day)?;
+            self.expiry_bucket_live.clear(&day)?;
+            self.expiry_bucket_min.clear(&day)?;
+            tree_math::remove(&ExpiryDayTree(&*self), day)?;
+        }
+        Ok(())
+    }
+
+    /// Day since the epoch a deadline falls in. Plain UTC, like the call scan's
+    /// quote window: a deadline is wall-clock time, not a WorldwideDay.
+    pub(crate) const fn deadline_day(deadline: u64) -> u32 {
+        (deadline / 86_400) as u32
+    }
+
+    const fn packed_slot(day: u32, slot: u32) -> u64 {
+        // Slot 0 of day 0 would read as "never queued", and no deadline lands there.
+        ((day as u64) << 32) | slot as u64
+    }
+
+    const fn unpack_slot(packed: u64) -> (u32, u32) {
+        ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
+    }
+
+    /// `keccak256(day_be32 ++ slot_be32)`.
+    pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
+        let mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&day.to_be_bytes());
+        buf[4..8].copy_from_slice(&slot.to_be_bytes());
+        keccak256(buf)
+    }
+
+    /// The bucket slot's gem, or `None` for a slot already retired.
+    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
+        let id = self
+            .expiry_bucket_at
+            .read(&Self::bucket_slot_key(day, slot))?;
+        Ok((!id.is_zero()).then_some(id))
+    }
+
+    /// Earliest day still holding a called gem.
+    pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
+        tree_math::find_first_left_inclusive(&ExpiryDayTree(self), 0)
     }
 
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
@@ -443,6 +498,31 @@ impl GemContract<'_> {
 pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
 /// The qualified (call-price) trie of one reference currency.
+/// Days holding a called gem whose notice period has not closed yet. One tree for
+/// the whole contract: a deadline is wall-clock time, not a currency's.
+pub(crate) struct ExpiryDayTree<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
+
+impl BinTreeStorage for ExpiryDayTree<'_, '_> {
+    fn read_root(&self) -> Result<U256> {
+        self.0.expiry_tree_root.read()
+    }
+    fn write_root(&self, value: U256) -> Result<()> {
+        self.0.expiry_tree_root.write(value)
+    }
+    fn read_mid(&self, key: u32) -> Result<U256> {
+        self.0.expiry_tree_mid.read(&key)
+    }
+    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
+        self.0.expiry_tree_mid.write(&key, value)
+    }
+    fn read_leaf(&self, key: u32) -> Result<U256> {
+        self.0.expiry_tree_leaf.read(&key)
+    }
+    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
+        self.0.expiry_tree_leaf.write(&key, value)
+    }
+}
+
 pub(crate) struct QualifiedBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
 impl BinTreeStorage for QualifiedBins<'_, '_> {

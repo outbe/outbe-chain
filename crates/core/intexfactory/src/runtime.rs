@@ -73,6 +73,11 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         reference_currency: params.reference_currency,
     };
     outbe_intex::api::create_series(storage, record)?;
+    factory.widen_call_terms(
+        params.reference_currency,
+        cfg.call_window,
+        cfg.call_threshold,
+    )?;
 
     // Not sent here: only the caller sees the whole day, and a chain's share of it
     // travels in as few messages as the caps allow.

@@ -833,39 +833,33 @@ fn a_bin_wider_than_the_budget_is_not_left_half_called() {
     });
 }
 
-/// A head the sweep cannot advance must not make every later run a longer walk.
+/// An entry the sweep cannot retire credits nothing - the burn and the credit
+/// share a checkpoint - and leaves its bucket, so the gems behind it still drain.
 #[test]
-fn queue_compaction_walks_at_most_one_run_worth() {
+fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
     with_storage(|storage| {
+        let live = qualified_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        gem.called_tail.write(10_000).unwrap();
-        gem.compact_called_queue().unwrap();
-        assert_eq!(
-            gem.called_head.read().unwrap(),
-            crate::constants::MAX_GEM_FORFEITS_PER_RUN
-        );
-    });
-}
-
-/// An entry the sweep cannot retire keeps its place and credits nothing: the
-/// burn and the credit share a checkpoint, so neither half can happen alone.
-#[test]
-fn an_entry_the_sweep_cannot_retire_is_left_alone() {
-    with_storage(|storage| {
-        let gem = GemContract::new(storage.clone());
         // A slot pointing at a gem that is not there: forfeit errors every run.
         let ghost = U256::from(0xdeadu64);
-        gem.called_queue_at.write(&0, ghost).unwrap();
-        gem.called_queue_index.write(&ghost, 0).unwrap();
-        gem.called_deadline.write(&ghost, T_NOW).unwrap();
-        gem.called_tail.write(1).unwrap();
+        gem.push_called(ghost, T_NOW).unwrap();
+        gem.mark_called(live, T_NOW).unwrap();
+        let day = GemContract::deadline_day(T_NOW);
+        let load = api::get_gem(storage, live)
+            .unwrap()
+            .unwrap()
+            .promis_load_minor;
 
-        let ctx = block_ctx_at(storage, T_NOW + 1);
-        for _ in 0..3 {
-            crate::hooks::run_call_daily(&ctx).unwrap();
-        }
-        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(ghost));
-        assert_eq!(unallocated(storage), U256::ZERO);
+        let ctx = block_ctx_at(storage, T_NOW + 7 * 86_400 + 1);
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+
+        assert_eq!(gem.expiry_slot(day, 0).unwrap(), None, "the ghost is out");
+        assert_eq!(
+            unallocated(storage),
+            load,
+            "and the gem behind it was still forfeited"
+        );
     });
 }
 
@@ -874,17 +868,13 @@ fn an_entry_the_sweep_cannot_retire_is_left_alone() {
 fn a_due_entry_that_cannot_burn_credits_nothing() {
     with_storage(|storage| {
         let gem_id = qualified_gem(storage);
-        let gem = GemContract::new(storage.clone());
-        gem.called_queue_at.write(&0, gem_id).unwrap();
-        gem.called_queue_index.write(&gem_id, 0).unwrap();
-        gem.called_deadline.write(&gem_id, T_NOW).unwrap();
-        gem.called_tail.write(1).unwrap();
+        let mut gem = GemContract::new(storage.clone());
+        gem.push_called(gem_id, T_NOW).unwrap();
 
         let ctx = block_ctx_at(storage, T_NOW + 1);
-        for _ in 0..3 {
-            crate::hooks::run_call_daily(&ctx).unwrap();
-        }
-        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(gem_id));
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+
         assert_eq!(unallocated(storage), U256::ZERO);
     });
 }
@@ -919,7 +909,7 @@ fn a_settled_gem_is_never_forfeited() {
 
         assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert!(gem.called_queue_slot(0).unwrap().is_none());
+        assert_eq!(gem.called_bucket_slot.read(&gem_id).unwrap(), 0);
     });
 }
 
@@ -1012,6 +1002,51 @@ fn call_skips_below_threshold() {
         assert_eq!(
             api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Qualified as u8
+        );
+    });
+}
+
+#[test]
+fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
+    let currencies = [840u16, 978u16];
+    assert_eq!(
+        crate::hooks::currency_position(&currencies, 978),
+        1,
+        "the cursor names a currency, not a slot"
+    );
+    assert_eq!(
+        crate::hooks::currency_position(&currencies[1..], 978),
+        0,
+        "dropping the currency ahead of it does not shift the cursor onto a stranger"
+    );
+    assert_eq!(
+        crate::hooks::currency_position(&currencies, 392),
+        0,
+        "a currency the registry no longer carries restarts at the head"
+    );
+}
+
+#[test]
+fn a_wider_window_than_the_constant_widens_the_span_the_scan_collects() {
+    with_storage(|s| {
+        let gem = GemContract::new(s.clone());
+        let iso = sample_params(ALICE).reference_currency;
+        assert_eq!(gem.max_call_window.read(&iso).unwrap(), 0);
+
+        let mut wide = sample_params(ALICE);
+        wide.call_window = 40 * 86_400;
+        crate::api::add_gem(s, wide).unwrap();
+        assert_eq!(
+            gem.max_call_window.read(&iso).unwrap(),
+            40 * 86_400,
+            "the span follows the widest window ever issued"
+        );
+
+        crate::api::add_gem(s, sample_params(BOB)).unwrap();
+        assert_eq!(
+            gem.max_call_window.read(&iso).unwrap(),
+            40 * 86_400,
+            "issuing on the narrow constant again does not shrink it"
         );
     });
 }

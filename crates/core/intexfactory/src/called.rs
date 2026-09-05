@@ -71,7 +71,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let oracle = OracleContract::new(ctx.storage.clone());
-    let start = factory.call_currency_cursor.read()? as usize % currencies.len();
+    let start =
+        crate::qualified::currency_position(&currencies, factory.call_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
@@ -105,7 +106,9 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         swept &= finished;
     }
-    factory.call_currency_cursor.write(resume_at as u32)?;
+    factory
+        .call_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     if swept {
         // Nothing left to walk: the next daily trigger opens a fresh sweep.
         factory.call_sweep_day.write(0)?;
@@ -125,15 +128,18 @@ fn call_currency(
 ) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read(&factory)?;
-    let secs_per_day = SECONDS_PER_DAY as u32;
+    // Widest terms ever issued here, not the live profile: a series keeps the terms
+    // it was issued with, and a narrowed profile must not hide it from the search.
+    let (window_days, threshold_days) =
+        factory.scan_call_terms(iso_code, params.call_window, params.call_threshold)?;
 
     let mut vwaps = DayVwaps::new(pair_index);
     let Some(window) = call_window(
         oracle,
         &mut vwaps,
         last_closed_day,
-        params.call_window / secs_per_day,
-        params.call_threshold / secs_per_day,
+        window_days,
+        threshold_days,
     )?
     else {
         // Too few priced days for any trigger to be breached often enough.
@@ -395,7 +401,7 @@ pub(crate) fn try_call_group(
         crate::qualified::enqueue_notice(
             factory,
             crate::qualified::NOTICE_CALLED,
-            crate::qualified::pack_called_notice(series_id, called_at),
+            crate::qualified::pack_called_notice(series_id, group.iso_code, called_at),
         )?;
     }
 

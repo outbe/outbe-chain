@@ -498,8 +498,15 @@ mod call_sweep {
                 .qualified_group_members(REFERENCE_ISO, day)
                 .unwrap()
                 .is_empty());
-            assert_eq!(factory.called_queue_at.read(&0).unwrap(), key);
-            assert_eq!(factory.called_tail.read().unwrap(), 1);
+            let bucket = IntexFactoryContract::deadline_day(scan_ts + 7 * DAY);
+            assert_eq!(
+                factory
+                    .expiry_bucket_at
+                    .read(&IntexFactoryContract::bucket_slot_key(bucket, 0))
+                    .unwrap(),
+                key
+            );
+            assert_eq!(factory.expiry_bucket_live.read(&bucket).unwrap(), 1);
             assert_eq!(factory.called_group_count.read(&key).unwrap(), 1);
             assert_eq!(
                 factory.called_group_deadline.read(&key).unwrap(),
@@ -679,10 +686,10 @@ mod call_sweep {
             sweep_at(&s, deadline + 2);
             assert_eq!(unallocated(&s), after_first);
 
-            // The queue drained, so its indices start over rather than climbing.
+            // The bucket emptied, so its day left the tree rather than being handed
+            // back every block.
             let factory = IntexFactoryContract::new(s.clone());
-            assert_eq!(factory.called_head.read().unwrap(), 0);
-            assert_eq!(factory.called_tail.read().unwrap(), 0);
+            assert_eq!(factory.first_expiry_day().unwrap(), None);
         });
     }
 
@@ -1151,7 +1158,7 @@ mod call_sweep {
                     .call_currency_cursor
                     .read()
                     .unwrap(),
-                1,
+                u32::from(SECOND_ISO),
                 "the cursor points at the currency that did not finish"
             );
         });
