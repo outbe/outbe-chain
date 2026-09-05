@@ -78,6 +78,11 @@
             "name": "parkedAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
