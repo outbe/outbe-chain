@@ -124,6 +124,13 @@ pub struct Localnet {
     user_radicle: Option<ChildGuard>,
     /// Owned follower nodes, keyed by name (`follower`, `follower2`).
     followers: HashMap<String, ChildGuard>,
+    follower_startup_probes: HashMap<
+        String,
+        (
+            usize,
+            crate::internal::startup_rejection::StartupRejectionProbe,
+        ),
+    >,
     /// Owned validator-indexed enclave containers (committee + joiner).
     enclaves: HashMap<usize, EnclaveGuard>,
     /// Exact Gramine image used by every enclave in this scenario.
@@ -150,6 +157,7 @@ impl Localnet {
             radicle_sidecars: HashMap::new(),
             user_radicle: None,
             followers: HashMap::new(),
+            follower_startup_probes: HashMap::new(),
             enclaves: HashMap::new(),
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
@@ -434,6 +442,7 @@ impl Localnet {
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
         self.validators.clear();
         self.followers.clear();
+        self.follower_startup_probes.clear();
         self.radicle_sidecars.clear();
         self.user_radicle = None;
         self.enclaves.clear();

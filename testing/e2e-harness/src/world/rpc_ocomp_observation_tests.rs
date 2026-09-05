@@ -100,6 +100,7 @@ struct Replies {
     call: Value,
     pool: Value,
     error_method: Option<&'static str>,
+    transient_finalized_errors: usize,
 }
 
 impl Replies {
@@ -137,6 +138,7 @@ impl Replies {
                 hex::encode(Bytes::from(record.encode_canonical(&limits).unwrap()).abi_encode())
             )),
             error_method: None,
+            transient_finalized_errors: 0,
             pool: json!({"pending": {}, "queued": {}}),
         }
     }
@@ -158,6 +160,7 @@ impl RpcServer {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let thread = thread::spawn(move || {
+            let mut transient_finalized_errors = replies.transient_finalized_errors;
             while !stopped.load(Ordering::Acquire) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(value) => value,
@@ -206,7 +209,13 @@ impl RpcServer {
                     _ => panic!("unexpected RPC method {method}"),
                 };
                 let mut response = json!({"jsonrpc": "2.0", "id": request["id"]});
-                if replies.error_method == Some(method) {
+                let transient_error = method == "eth_getBlockByNumber"
+                    && request["params"][0] == "finalized"
+                    && transient_finalized_errors > 0;
+                if transient_error {
+                    transient_finalized_errors -= 1;
+                }
+                if replies.error_method == Some(method) || transient_error {
                     response["error"] = json!({"code": -32603, "message": "injected RPC failure"});
                 } else {
                     response["result"] = result.clone();
@@ -689,4 +698,44 @@ fn pr4_receipt_requires_matching_checkpoint_on_every_node() {
     assert!(rpc
         .finalize_outcome(&receipt_outcome(), &[first.port, divergent.port], 1)
         .is_err());
+}
+
+#[test]
+fn pr4_fresh_finality_target_includes_the_fastest_peer_and_requires_every_rpc() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    let first = RpcServer::start(replies.clone());
+    replies.head["number"] = json!("0x70");
+    let faster = RpcServer::start(replies.clone());
+    let rpc = first.rpc();
+    assert_eq!(
+        rpc.fresh_finality_target(&[first.port, faster.port])
+            .unwrap(),
+        114
+    );
+    assert_eq!(
+        rpc.fresh_finality_target(&[faster.port, first.port])
+            .unwrap(),
+        114
+    );
+    replies.error_method = Some("eth_getBlockByNumber");
+    let unavailable = RpcServer::start(replies);
+    assert!(rpc
+        .fresh_finality_target(&[first.port, unavailable.port])
+        .is_err());
+    assert!(rpc.fresh_finality_target(&[]).is_err());
+}
+
+#[test]
+fn pr4_recovery_waits_for_rpc_readiness_before_sampling_fresh_finality() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    let ready = RpcServer::start(replies.clone());
+    replies.transient_finalized_errors = 1;
+    let restarting = RpcServer::start(replies);
+    let rpc = ready.rpc();
+    let ports = [ready.port, restarting.port];
+    let checkpoint = rpc.wait_finalized_checkpoint(&ports, 1, 2).unwrap();
+    assert_eq!(checkpoint.height, 100);
+    assert_eq!(rpc.fresh_finality_target(&ports).unwrap(), 102);
 }

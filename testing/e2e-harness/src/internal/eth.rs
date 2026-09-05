@@ -883,6 +883,22 @@ pub(crate) fn send_prepared_calls_outcomes(
 
 /// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
+    let outcome = send_value_outcome(url, to, key, value)?;
+    eyre::ensure!(
+        outcome.success,
+        "plain transfer reverted: {}",
+        outcome.transaction_hash
+    );
+    Ok(outcome.transaction_hash)
+}
+
+/// Preserve the mined receipt so callers can prove success and exact finality.
+pub(crate) fn send_value_outcome(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+) -> Result<MinedCallOutcome> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
@@ -897,8 +913,13 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
+        let transaction_hash = format!("{:#x}", pending.tx_hash());
         let receipt = pending.get_receipt().await?;
-        Ok(format!("{:#x}", receipt.transaction_hash))
+        Ok(MinedCallOutcome {
+            transaction_hash,
+            success: receipt.status(),
+            receipt: serde_json::to_value(receipt)?,
+        })
     })
 }
 

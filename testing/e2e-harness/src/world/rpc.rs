@@ -1082,6 +1082,23 @@ impl Rpc {
         expected.ok_or_else(|| eyre!("finalized outcome had no checkpoint observations"))
     }
 
+    /// Capture a post-event progress target from every expected live node.
+    /// Call only after repair completes: neither an unavailable node nor a
+    /// faster peer may disappear from the anchor used to prove fresh finality.
+    pub fn fresh_finality_target(&self, ports: &[u16]) -> Result<u64> {
+        ensure!(
+            !ports.is_empty(),
+            "fresh finality requires at least one RPC"
+        );
+        let mut maximum = 0;
+        for &port in ports {
+            maximum = maximum.max(self.finalized_result(port)?);
+        }
+        maximum
+            .checked_add(2)
+            .ok_or_else(|| eyre!("post-repair finalized target overflow"))
+    }
+
     /// Wait until every expected node has finalized `min_height`, then require
     /// exact hash/root agreement at one shared finalized height.
     pub fn wait_finalized_checkpoint(

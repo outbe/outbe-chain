@@ -23,6 +23,10 @@ const TXPOOL_FOLLOWER_NAME: &str = "txpool-follower";
 
 #[when("an operator submits a transaction with an unreachable nonce")]
 fn submit_unreachable_nonce_tx(world: &mut World) {
+    world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), 1, 60)
+        .expect("initial exact committee checkpoint before txpool fault");
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let key = world.validators.get(0).evm_key().expect("validator-0 key");
@@ -68,14 +72,17 @@ fn ordinary_transfer_is_mined(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let key = world.validators.get(0).evm_key().expect("validator-0 key");
-    // `send_value` waits for the receipt, so returning at all proves the chain
-    // keeps mining while the unreachable transaction is parked.
-    let hash = eth::send_value(&url, Address::repeat_byte(0x78), &key, U256::from(1u64))
+    let outcome = eth::send_value_outcome(&url, Address::repeat_byte(0x78), &key, U256::from(1u64))
         .expect("ordinary transfer must still be mined");
+    let outcome = crate::world::rpc::TxOutcome::from(outcome);
+    world
+        .rpc
+        .finalize_outcome(&outcome, &world.validators.committee_ports(), 60)
+        .expect("ordinary transfer succeeded in the same finalized block on every validator");
     assert!(
         !world
             .rpc
-            .txpool_has(port, &hash)
+            .txpool_has(port, &outcome.transaction_hash)
             .expect("observe evicted transaction in txpool"),
         "a mined transfer must not remain in the pool"
     );
@@ -142,12 +149,6 @@ fn eviction_was_logged(world: &mut World) {
 
 #[when("the submitting validator restarts after the queued eviction")]
 fn restart_submitting_validator_after_eviction(world: &mut World) {
-    world.state.marker_height = Some(
-        world
-            .rpc
-            .finalized_result(world.validators.primary_port())
-            .expect("capture finality before validator restart"),
-    );
     world
         .localnet
         .restart_validator_preserving_enclave(0)
@@ -161,16 +162,26 @@ fn queued_eviction_survives_restart(world: &mut World) {
         .stuck_tx_hash
         .as_deref()
         .expect("queued transaction hash");
+    let ports = world.validators.committee_ports();
+    // A surviving process is not yet a ready RPC. Keep the bounded catch-up
+    // barrier before sampling the post-repair anchor, never omit a slow node.
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, 1, 60)
+        .expect("all restarted committee RPCs are ready at an exact checkpoint");
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("every expected committee process survived recovery");
     let target = world
-        .state
-        .marker_height
-        .expect("pre-restart finalized height")
-        .saturating_add(2);
-    for port in world.validators.committee_ports() {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, target, 60),
-            "validator on port {port} did not finalize after txpool-owner restart"
-        );
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("read every validator after txpool-owner restart");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("two fresh exact finalized blocks after txpool-owner restart");
+    for port in ports {
         assert_eq!(
             world
                 .rpc

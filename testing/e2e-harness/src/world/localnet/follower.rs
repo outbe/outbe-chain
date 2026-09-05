@@ -2,8 +2,7 @@
 
 use std::fs;
 use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use eyre::{bail, ensure, eyre, Result};
 
@@ -213,6 +212,10 @@ impl Localnet {
         index: usize,
         upstream_slot: usize,
     ) -> Result<()> {
+        ensure!(
+            !self.followers.contains_key(name) && !self.follower_startup_probes.contains_key(name),
+            "negative follower {name} is already owned"
+        );
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
         self.ensure_node_key_material(index)?;
@@ -230,7 +233,14 @@ impl Localnet {
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);
-        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+        let probe = crate::internal::startup_rejection::StartupRejectionProbe::arm(
+            &node_dir.join("node.log"),
+            ([127, 0, 0, 1], self.cfg.http_port(index)).into(),
+        )?;
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())?;
+        self.follower_startup_probes
+            .insert(name.to_owned(), (index, probe));
+        Ok(())
     }
 
     /// Launch a production follower whose execution head advances only from its
@@ -280,34 +290,21 @@ impl Localnet {
         expected: &str,
         timeout: Duration,
     ) -> Result<()> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let exited = self
-                .followers
-                .get_mut(name)
-                .ok_or_else(|| eyre!("negative follower {name} is not owned by the scenario"))?
-                .exited();
-            if exited {
-                let log_path = self.cfg.validator_dir(index).join("node.log");
-                let log = fs::read_to_string(&log_path).map_err(|error| {
-                    eyre!(
-                        "read required negative follower log {}: {error}",
-                        log_path.display()
-                    )
-                })?;
-                ensure!(
-                    log.contains(expected),
-                    "negative follower exited without required guardrail {expected:?}:\n{log}"
-                );
-                self.followers.remove(name);
-                return Ok(());
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "enclave-less follower remained running past its fail-closed startup deadline"
-            );
-            sleep(Duration::from_millis(100));
-        }
+        let (observed_index, probe) = self
+            .follower_startup_probes
+            .remove(name)
+            .ok_or_else(|| eyre!("negative follower {name} has no pre-launch observer"))?;
+        ensure!(
+            observed_index == index,
+            "negative follower observer belongs to a different node"
+        );
+        let child = self
+            .followers
+            .get_mut(name)
+            .ok_or_else(|| eyre!("negative follower {name} is not owned by the scenario"))?;
+        probe.wait(child, expected, timeout)?;
+        self.followers.remove(name);
+        Ok(())
     }
 
     fn launch_certified_follower_with_args(

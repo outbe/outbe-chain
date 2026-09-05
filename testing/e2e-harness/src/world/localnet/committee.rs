@@ -291,8 +291,43 @@ impl Localnet {
     /// Stop and relaunch one committee validator while preserving its running
     /// enclave and persisted node data.
     pub fn restart_validator_preserving_enclave(&mut self, i: usize) -> Result<()> {
-        self.kill_validator(i)?;
-        self.restart_validator(i)?;
+        ensure!(
+            i < self.committee_size(),
+            "restart target is outside the committee"
+        );
+        ensure!(
+            !self.tee_enabled() || self.enclaves.contains_key(&i),
+            "validator-{i} restart must preserve its owned enclave"
+        );
+        let argv = self
+            .validator_argv
+            .get(&i)
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("validator-{i} has no captured launch argv"))?;
+        let child = self
+            .validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} restart requires an owned child"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "validator-{i} exited before restart fault"
+        );
+        // Stop only this owned node. A process-name backstop can kill a node
+        // from another concurrently running scenario using the same slot.
+        child.interrupt();
+        ensure!(child.exit_status()?.is_some(), "validator-{i} did not stop");
+        self.validators.remove(&i);
+        let opts = self.start_opts.clone();
+        self.spawn_validator_with_argv(i, &opts, argv)?;
+        sleep(Duration::from_secs(2));
+        let child = self
+            .validators
+            .get_mut(&i)
+            .ok_or_else(|| eyre::eyre!("validator-{i} restart lost its child"))?;
+        ensure!(
+            child.exit_status()?.is_none(),
+            "validator-{i} exited during restart"
+        );
         Ok(())
     }
 
@@ -557,11 +592,6 @@ impl Localnet {
             self.extend_real_sgx_startup_timeout(&mut a);
         }
 
-        let mut cmd = Command::new(&self.cfg.bin_chain);
-        cmd.env("RUST_MIN_STACK", "16777216");
-        for (name, value) in validator_protocol_environment(opts) {
-            cmd.env(name, value);
-        }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }
@@ -570,10 +600,25 @@ impl Localnet {
         // snapshot verbatim instead of reconstructing a merely equivalent
         // command from mutable harness inputs.
         a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
-        self.validator_argv.insert(i, a.clone());
-        cmd.args(&a);
+        self.spawn_validator_with_argv(i, opts, a)
+    }
+
+    fn spawn_validator_with_argv(
+        &mut self,
+        i: usize,
+        opts: &StartOpts,
+        argv: Vec<String>,
+    ) -> Result<()> {
+        let vd = self.cfg.validator_dir(i);
+        let mut cmd = Command::new(&self.cfg.bin_chain);
+        cmd.env("RUST_MIN_STACK", "16777216");
+        for (name, value) in validator_protocol_environment(opts) {
+            cmd.env(name, value);
+        }
+        cmd.args(&argv);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), i, &vd, cmd)?;
+        self.validator_argv.insert(i, argv);
         self.validators.insert(i, guard);
         Ok(())
     }

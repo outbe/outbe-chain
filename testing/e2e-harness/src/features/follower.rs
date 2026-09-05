@@ -147,13 +147,10 @@ fn production_full_node_follower(world: &mut World) {
 
 #[when("a certified FullNode is launched without its mandatory enclave")]
 fn launch_enclave_less_follower(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.marker_height = Some(
-        world
-            .rpc
-            .finalized_result(primary)
-            .expect("capture finalized checkpoint before enclave-less follower probe"),
-    );
+    world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), 1, 60)
+        .expect("initial exact committee checkpoint before negative follower launch");
     world
         .localnet
         .launch_enclave_less_follower(ENCLAVE_LESS_FOLLOWER, FOLLOWER1_SLOT, 0)
@@ -171,28 +168,19 @@ fn enclave_less_follower_fails_closed(world: &mut World) {
             Duration::from_secs(20),
         )
         .expect("enclave-less follower must fail on the exact production guardrail");
-    assert!(
-        world
-            .rpc
-            .head(world.validators.http_port(FOLLOWER1_SLOT))
-            .is_none(),
-        "enclave-less follower opened its RPC service before failing"
-    );
 }
 
 #[then("the committee finalizes two new blocks after the rejected FullNode startup")]
 fn committee_survives_rejected_follower(world: &mut World) {
+    let ports = world.validators.committee_ports();
     let target = world
-        .state
-        .marker_height
-        .expect("pre-probe finalized height")
-        .saturating_add(2);
-    for port in world.validators.committee_ports() {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, target, 60),
-            "validator on port {port} did not finalize after enclave-less follower rejection"
-        );
-    }
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("read every validator after follower rejection");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("two fresh exact finalized blocks after follower rejection");
 }
 
 #[when("the fifth production FullNode with its own enclave syncs from the committee")]

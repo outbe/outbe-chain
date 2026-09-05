@@ -13,7 +13,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -108,7 +108,6 @@ pub(crate) use args;
 /// An owned child process: killed and reaped on drop.
 #[derive(Debug)]
 pub(crate) struct ChildGuard {
-    #[allow(dead_code)] // retained for Debug / future diagnostics
     label: String,
     child: Child,
 }
@@ -123,6 +122,13 @@ impl ChildGuard {
     /// Whether the child has already exited (non-blocking).
     pub(crate) fn exited(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Observe this exact owned child without discarding status or wait errors.
+    pub(crate) fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
+        self.child
+            .try_wait()
+            .wrap_err_with(|| format!("observe owned child {}", self.label))
     }
 
     /// The OS process id (for `--debug` launch logging).
