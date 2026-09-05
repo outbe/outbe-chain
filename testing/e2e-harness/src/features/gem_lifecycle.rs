@@ -9,7 +9,7 @@ use cucumber::{then, when};
 use outbe_tee::protocol::{Ledger, PromisOp};
 
 use crate::features::settlement::{
-    assert_mined_success, chain_id_b256, find_pow_nonce, fund_and_approve, promis_balance,
+    assert_mined_success, chain_id_b256, find_pow_nonce, promis_balance,
 };
 use crate::internal::{addresses, eth};
 use crate::world::forge::DEPLOYER_KEY;
@@ -311,13 +311,15 @@ fn settle_and_mine(world: &mut World) {
     )
     .expect("quote settling the merchant gem")
     .payableUnits;
-    fund_and_approve(
+    // The cost is discharged by burning a note, so the vault is credited here
+    // rather than at settle time.
+    let paynote_proof = crate::features::paynote::deposit_and_prove(
         world,
-        asset,
+        world.validators.primary_port(),
         DEPLOYER_KEY,
         merchant,
-        addresses::GEM_FACTORY_ADDR,
-        payable,
+        asset,
+        u128::try_from(payable).expect("gem cost fits a PayNote spend amount"),
     );
 
     let settle = eth::send_call_outcome(
@@ -326,7 +328,7 @@ fn settle_and_mine(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
-            asset,
+            payNoteProof: paynote_proof.into(),
         },
         None,
     )
