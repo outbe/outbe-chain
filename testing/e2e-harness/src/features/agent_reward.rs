@@ -477,8 +477,8 @@ fn beneficiaries_hold_reward_gems(world: &mut World) {
             gem.state, ISSUED_GEM_STATE,
             "{pool} Gem should start Issued and qualify later on price"
         );
-        // Claiming converts native COEN down to whole protocol units; the sub-unit
-        // remainder stays behind by design. Use the engine's own conversion.
+        // The claim floors native COEN to whole protocol units, and the total
+        // claimable is the pool's here because each beneficiary has one pool.
         assert_eq!(
             gem.promisLoad,
             native_to_protocol_floor(claimed),
