@@ -1015,3 +1015,23 @@ fn call_skips_below_threshold() {
         );
     });
 }
+
+#[test]
+fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
+    let currencies = [840u16, 978u16];
+    assert_eq!(
+        crate::hooks::currency_position(&currencies, 978),
+        1,
+        "the cursor names a currency, not a slot"
+    );
+    assert_eq!(
+        crate::hooks::currency_position(&currencies[1..], 978),
+        0,
+        "dropping the currency ahead of it does not shift the cursor onto a stranger"
+    );
+    assert_eq!(
+        crate::hooks::currency_position(&currencies, 392),
+        0,
+        "a currency the registry no longer carries restarts at the head"
+    );
+}

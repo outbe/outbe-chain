@@ -553,7 +553,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
                 .qualify_currency_cursor
                 .read()
                 .unwrap(),
-            1,
+            u32::from(EUR_ISO),
             "the next block resumes at the currency that was cut off"
         );
 
@@ -566,4 +566,24 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
             outbe_intex::IntexState::Qualified
         );
     });
+}
+
+#[test]
+fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
+    let currencies = [840u16, 978u16];
+    assert_eq!(
+        crate::qualified::currency_position(&currencies, u32::from(EUR_ISO)),
+        1,
+        "the cursor names a currency, not a slot"
+    );
+    assert_eq!(
+        crate::qualified::currency_position(&currencies[1..], u32::from(EUR_ISO)),
+        0,
+        "dropping the currency ahead of it does not shift the cursor onto a stranger"
+    );
+    assert_eq!(
+        crate::qualified::currency_position(&currencies, 392),
+        0,
+        "a currency the registry no longer carries restarts at the head"
+    );
 }

@@ -59,7 +59,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let factory = IntexFactoryContract::new(ctx.storage.clone());
-    let start = factory.qualify_currency_cursor.read()? as usize % currencies.len();
+    let start = currency_position(&currencies, factory.qualify_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut promoted: u32 = 0;
@@ -77,8 +77,20 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         promoted =
             promoted.saturating_add(qualify_currency(ctx, currencies[at], rate, &mut budget)?);
     }
-    factory.qualify_currency_cursor.write(resume_at as u32)?;
+    factory
+        .qualify_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     Ok(promoted)
+}
+
+/// Index of the currency the cursor names, or the head of the list when the
+/// registry no longer carries it. The cursor stores an ISO code, not a position:
+/// a registry edit must not silently move it onto another currency.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
 }
 
 /// Qualifies one reference currency's groups, drawing on the shared `budget`.

@@ -49,7 +49,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
         return Ok(());
     }
     let gem = GemContract::new(ctx.storage.clone());
-    let start = gem.qualify_currency_cursor.read()? as usize % currencies.len();
+    let start = currency_position(&currencies, gem.qualify_currency_cursor.read()?);
 
     let mut budget = MAX_GEM_QUALIFICATIONS_PER_BLOCK;
     let mut resume_at = start;
@@ -66,8 +66,19 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
         let inspected = qualify_with_rate(ctx, currencies[at], rate, budget)?;
         budget = budget.saturating_sub(inspected);
     }
-    gem.qualify_currency_cursor.write(resume_at as u32)?;
+    gem.qualify_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     Ok(())
+}
+
+/// Index of the currency the cursor names, or the head of the list when the
+/// registry no longer carries it. The cursor stores an ISO code, not a position:
+/// a registry edit must not silently move it onto another currency.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
 }
 
 /// Drains the floor-bins crossed by one currency's `rate`, inspecting at most
@@ -195,7 +206,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let oracle = OracleContract::new(ctx.storage.clone());
-    let start = gem.call_currency_cursor.read()? as usize % currencies.len();
+    let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
@@ -243,7 +254,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         swept &= finished;
     }
-    gem.call_currency_cursor.write(resume_at as u32)?;
+    gem.call_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     if swept {
         // Nothing left to walk: the next daily trigger opens a fresh sweep.
         gem.call_sweep_day.write(0)?;

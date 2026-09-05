@@ -71,7 +71,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let oracle = OracleContract::new(ctx.storage.clone());
-    let start = factory.call_currency_cursor.read()? as usize % currencies.len();
+    let start =
+        crate::qualified::currency_position(&currencies, factory.call_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
@@ -105,7 +106,9 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         swept &= finished;
     }
-    factory.call_currency_cursor.write(resume_at as u32)?;
+    factory
+        .call_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     if swept {
         // Nothing left to walk: the next daily trigger opens a fresh sweep.
         factory.call_sweep_day.write(0)?;

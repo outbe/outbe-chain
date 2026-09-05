@@ -1151,7 +1151,7 @@ mod call_sweep {
                     .call_currency_cursor
                     .read()
                     .unwrap(),
-                1,
+                u32::from(SECOND_ISO),
                 "the cursor points at the currency that did not finish"
             );
         });
