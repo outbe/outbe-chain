@@ -129,7 +129,6 @@ fn short_valid_dkg_schedule(world: &mut World) {
 fn confirm_joiner_after_freeze(world: &mut World) {
     let primary = world.validators.primary_port();
     let joiner_index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(joiner_index);
 
     world
         .localnet
@@ -137,12 +136,8 @@ fn confirm_joiner_after_freeze(world: &mut World) {
         .expect("provision post-freeze joiner");
     world
         .localnet
-        .launch_joiner(joiner_index, &[])
+        .launch_caught_up_joiner(joiner_index, &[])
         .expect("launch post-freeze joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 15, 50).is_some(),
-        "joiner did not synchronize before staking"
-    );
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let address = world.rpc.address_of(&key).expect("joiner address");
@@ -183,12 +178,20 @@ fn confirm_joiner_after_freeze(world: &mut World) {
         selected_activation.expect("no post-freeze readiness interval became available");
 
     for _ in 0..120 {
-        if world.localnet.log_count(0, CEREMONY_LOG) > 0 {
+        if world
+            .localnet
+            .log_count(0, CEREMONY_LOG)
+            .expect("read required owned process log")
+            > 0
+        {
             break;
         }
         sleep(Duration::from_millis(500));
     }
-    let ceremony_count = world.localnet.log_count(0, CEREMONY_LOG);
+    let ceremony_count = world
+        .localnet
+        .log_count(0, CEREMONY_LOG)
+        .expect("read required owned process log");
     assert!(
         ceremony_count > 0,
         "the target freeze was not observed before readiness confirmation"
@@ -208,7 +211,10 @@ fn confirm_joiner_after_freeze(world: &mut World) {
         "post-freeze readiness activated the joiner out of schedule"
     );
     assert!(
-        !world.rpc.is_participant(primary, &address),
+        !world
+            .rpc
+            .is_participant(primary, &address)
+            .expect("observe consensus participation"),
         "post-freeze readiness made the joiner an immediate participant"
     );
 
@@ -220,7 +226,11 @@ fn confirm_joiner_after_freeze(world: &mut World) {
 fn joiner_set_change_is_observable(world: &mut World) {
     let primary = world.validators.primary_port();
     for _ in 0..30 {
-        if world.rpc.has_pending_set_change(primary) == Some(true) {
+        if world
+            .rpc
+            .has_pending_set_change(primary)
+            .expect("observe pending-set-change signal")
+        {
             return;
         }
         sleep(Duration::from_secs(1));
@@ -248,12 +258,18 @@ fn no_out_of_schedule_dkg(world: &mut World) {
             break;
         }
         assert_eq!(
-            world.localnet.log_count(0, CEREMONY_LOG),
+            world
+                .localnet
+                .log_count(0, CEREMONY_LOG)
+                .expect("read required owned process log"),
             ceremony_count,
             "readiness started an immediate extra DKG ceremony"
         );
         assert!(
-            !world.rpc.is_participant(primary, &address),
+            !world
+                .rpc
+                .is_participant(primary, &address)
+                .expect("observe consensus participation"),
             "joiner partially activated at the already-frozen boundary"
         );
         sleep(Duration::from_secs(2));
@@ -263,20 +279,34 @@ fn no_out_of_schedule_dkg(world: &mut World) {
     let pre_freeze_height = next_activation
         .saturating_sub(PREPARE_BLOCKS)
         .saturating_sub(2);
-    while world.rpc.head(primary).unwrap_or_default() < pre_freeze_height {
+    while world
+        .rpc
+        .head(primary)
+        .expect("primary head before next periodic freeze")
+        < pre_freeze_height
+    {
         assert_eq!(
-            world.localnet.log_count(0, CEREMONY_LOG),
+            world
+                .localnet
+                .log_count(0, CEREMONY_LOG)
+                .expect("read required owned process log"),
             ceremony_count,
             "readiness started DKG before the next periodic freeze"
         );
         assert!(
-            !world.rpc.is_participant(primary, &address),
+            !world
+                .rpc
+                .is_participant(primary, &address)
+                .expect("observe consensus participation"),
             "joiner became a participant before the next periodic freeze"
         );
         sleep(Duration::from_secs(2));
     }
     assert_eq!(
-        world.localnet.log_count(0, CEREMONY_LOG),
+        world
+            .localnet
+            .log_count(0, CEREMONY_LOG)
+            .expect("read required owned process log"),
         ceremony_count,
         "an extra ceremony started before the next periodic window"
     );
@@ -286,9 +316,11 @@ fn no_out_of_schedule_dkg(world: &mut World) {
 #[then("the flag remains set until a matching boundary activates the joiner")]
 fn pending_flag_survives_until_matching_boundary(world: &mut World) {
     for port in world.validators.committee_ports() {
-        assert_eq!(
-            world.rpc.has_pending_set_change(port),
-            Some(true),
+        assert!(
+            world
+                .rpc
+                .has_pending_set_change(port)
+                .expect("observe pending-set-change signal"),
             "RPC {port} cleared pending_set_change before a boundary containing the joiner"
         );
     }
@@ -305,7 +337,11 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
     let deadline = scheduled.saturating_add(ACTIVATION_GRACE_BLOCKS);
 
     for _ in 0..180 {
-        if world.rpc.is_participant(primary, &address) {
+        if world
+            .rpc
+            .is_participant(primary, &address)
+            .expect("observe consensus participation")
+        {
             let height = world.rpc.head(primary).expect("activation height");
             assert!(
                 height <= deadline,
@@ -323,19 +359,27 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
                     "RPC {port} did not observe the installed share"
                 );
                 assert!(
-                    world.rpc.is_participant(port, &address),
+                    world
+                        .rpc
+                        .is_participant(port, &address)
+                        .expect("observe consensus participation"),
                     "RPC {port} did not admit the activated joiner"
                 );
             }
             return;
         }
 
-        assert_eq!(
-            world.rpc.has_pending_set_change(primary),
-            Some(true),
+        assert!(
+            world
+                .rpc
+                .has_pending_set_change(primary)
+                .expect("observe pending-set-change signal"),
             "pending_set_change cleared while the confirmed joiner was still omitted"
         );
-        let head = world.rpc.head(primary).unwrap_or_default();
+        let head = world
+            .rpc
+            .head(primary)
+            .expect("primary head during scheduled activation window");
         assert!(
             head <= deadline,
             "joiner missed the scheduled DKG activation window at height {head}"
@@ -369,7 +413,10 @@ fn four_active_validators_with_shares(world: &mut World) {
             "validator-{index} lacks its genesis share"
         );
         assert!(
-            world.rpc.is_participant(primary, &address),
+            world
+                .rpc
+                .is_participant(primary, &address)
+                .expect("observe consensus participation"),
             "validator-{index} is not a consensus participant"
         );
     }
@@ -426,7 +473,10 @@ fn owner_omission_is_rejected_atomically(world: &mut World) {
                 "{validator_name} lost its share on RPC {port}"
             );
             assert!(
-                world.rpc.is_participant(port, &address),
+                world
+                    .rpc
+                    .is_participant(port, &address)
+                    .expect("observe consensus participation"),
                 "{validator_name} stopped participating on RPC {port}"
             );
         }
@@ -476,7 +526,6 @@ fn confirmed_pending_joiner(world: &mut World) {
     boot_profiled_localnet(world, None);
     let primary = world.validators.primary_port();
     let joiner_index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(joiner_index);
 
     world
         .localnet
@@ -484,12 +533,8 @@ fn confirmed_pending_joiner(world: &mut World) {
         .expect("provision readiness-reset joiner");
     world
         .localnet
-        .launch_joiner(joiner_index, &[])
+        .launch_caught_up_joiner(joiner_index, &[])
         .expect("launch readiness-reset joiner");
-    assert!(
-        world.rpc.wait_block(joiner_port, 15, 50).is_some(),
-        "joiner did not synchronize"
-    );
 
     // Avoid racing the transition under test with an already-frozen target.
     let _ = wait_for_safe_pre_freeze_window(world);
@@ -536,7 +581,10 @@ fn pending_joiner_returns_to_registered(world: &mut World) {
         "REGISTERED joiner retained a share"
     );
     assert!(
-        !world.rpc.is_participant(primary, &address),
+        !world
+            .rpc
+            .is_participant(primary, &address)
+            .expect("observe consensus participation"),
         "REGISTERED joiner remained a participant"
     );
 }
@@ -591,7 +639,10 @@ fn restaked_joiner_stays_excluded(world: &mut World) {
         "restaked joiner received a share without reconfirmation"
     );
     assert!(
-        !world.rpc.is_participant(primary, &address),
+        !world
+            .rpc
+            .is_participant(primary, &address)
+            .expect("observe consensus participation"),
         "restaked joiner participates without reconfirmation"
     );
     assert_eq!(

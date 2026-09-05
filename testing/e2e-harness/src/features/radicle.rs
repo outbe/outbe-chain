@@ -210,7 +210,10 @@ fn pending(world: &mut World) {
         .rpc
         .finalized(port)
         .expect("finalized height before pending wait");
-    let after = world.rpc.wait_block_gt(port, before, 30).unwrap_or(before);
+    let after = world
+        .rpc
+        .wait_block_gt(port, before, 30)
+        .expect("consensus progress while repository is pending");
     assert!(
         after > before,
         "consensus did not advance while repository was pending"
@@ -241,7 +244,7 @@ fn available(world: &mut World) {
             world
                 .localnet
                 .radicle_repo_visible(index, &fixture)
-                .unwrap_or(false)
+                .expect("observe repository through validator Radicle process")
         })
     });
 }
@@ -567,10 +570,17 @@ fn joiner_endpoint(world: &mut World) {
     });
     let activation_deadline = planned_activation + RADICLE_DKG_ACTIVATION_GRACE_BLOCKS;
     wait_until("joiner activation within configured grace", 60, || {
-        if world.rpc.is_participant(primary, &address) {
+        if world
+            .rpc
+            .is_participant(primary, &address)
+            .expect("observe consensus participation")
+        {
             return true;
         }
-        let finalized = world.rpc.finalized(primary).unwrap_or_default();
+        let finalized = world
+            .rpc
+            .finalized_result(primary)
+            .expect("observe finalized height while waiting for joiner activation");
         assert!(
             finalized <= activation_deadline,
             "joiner was not active by configured DKG grace deadline {activation_deadline}"
@@ -602,14 +612,14 @@ fn joiner_endpoint(world: &mut World) {
         world
             .localnet
             .radicle_seed_scope_all(index, &world.state.radicle.repo_id.clone().expect("repo"))
-            .unwrap_or(false),
+            .expect("observe activated joiner Seed Scope::All"),
         "activated joiner did not restore Seed Scope::All"
     );
     wait_until("repository data on activated joiner", 180, || {
         world
             .localnet
             .radicle_repo_visible(index, &fixture(world))
-            .unwrap_or(false)
+            .expect("observe repository data on activated joiner")
     });
     world.state.radicle.joiner_activation_finalized_height = world.rpc.finalized(port);
     world.state.radicle.final_native_session_sets =
@@ -686,7 +696,7 @@ fn seed_scope_all(world: &World, repo: &str, count: usize) -> Vec<usize> {
             world
                 .localnet
                 .radicle_seed_scope_all(index, repo)
-                .unwrap_or(false)
+                .expect("observe validator Seed Scope::All")
         })
         .collect()
 }
@@ -760,7 +770,7 @@ fn native_mesh_snapshot(world: &World, node_ids: &[String]) -> Option<Vec<Vec<St
         let connected = world
             .localnet
             .radicle_connected_session_node_ids(index)
-            .ok()?
+            .unwrap_or_else(|error| panic!("observe validator-{index} native sessions: {error:#}"))
             .into_iter()
             .collect::<BTreeSet<_>>();
         let rpc_connected = world
@@ -794,11 +804,11 @@ fn assert_recovered_data_plane(world: &World, index: usize, label: &str) {
             && world
                 .localnet
                 .radicle_seed_scope_all(index, &repo)
-                .unwrap_or(false)
+                .expect("observe restored Seed Scope::All")
             && world
                 .localnet
                 .radicle_repo_visible(index, &fixture(world))
-                .unwrap_or(false)
+                .expect("observe restored repository visibility")
     });
 }
 

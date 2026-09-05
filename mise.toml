@@ -283,11 +283,8 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
-cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
-cargo build --locked --release -p outbe-radicle-sidecar --bin outbe-radicle
-cargo build --release --bin outbe-cli --bin outbe-keygen
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock --repo . --jobs 8 --output target/e2e-artifacts/mock.json
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --tee mock --validators 4 --all "$@"
 """
 
 # --- Off-chain Computation PoC --------------------------------------- #
@@ -336,23 +333,31 @@ run = 'cargo xtask ocomp closure "$@"'
 # uses gramine-direct/mock so it runs on developer machines. This task builds the
 # real enclave binary and makes the harness request gramine-sgx containers.
 [tasks.e2e-sgx]
-description = "Run all Rust/Cucumber e2e features on real SGX hardware"
+description = "Run the testnet Rust/Cucumber suite on SGX hardware without DCAP"
 run = """
-cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
-cargo build --release --bin outbe-cli --bin outbe-keygen
-cargo build --release --bin outbe-tee-enclave --features production-dcap-release
-OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e -- --tee real --validators 4 --all "$@"
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 8 --output target/e2e-artifacts/sgx-no-attest.json
+OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --all "$@"
+"""
+
+[tasks.e2e-dcap]
+description = "Run the dedicated DcapRequired onboarding scenario on real SGX hardware"
+run = """
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane dcap --repo . --jobs 8 --output target/e2e-artifacts/dcap.json
+OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/dcap.json --tee real --sudo --validators 4 --all --tags @real-sgx "$@"
+"""
+
+[tasks.e2e-gramine-direct]
+description = "Run scenarios that require the production enclave under gramine-direct"
+run = """
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane gramine-direct --repo . --jobs 8 --output target/e2e-artifacts/gramine-direct.json
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/gramine-direct.json --tee gramine-direct --validators 4 --all --tags @gramine-direct "$@"
 """
 
 [tasks.e2e-radicle-sgx]
 description = "Run the Radicle scenario with existing OCOMP integration and SGX-no-attest"
 run = """
-cargo build --locked --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
-cargo build --locked --release -p outbe-radicle-sidecar --bin outbe-radicle
-cargo build --locked --release -p outbe-ocomp --bin outbe-ocomp -p outbe-cli --bin outbe-cli -p outbe-keygen --bin outbe-keygen
-cargo build --locked --release -p outbe-tee-enclave --bin outbe-tee-enclave
-cargo build --locked --release --manifest-path ../outbe-heartwood/Cargo.toml --bin rad --bin git-remote-rad
-OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --locked --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e -- --tee sgx-no-attest --sudo --validators 4 --all --tags @radicle "$@"
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane radicle-sgx --repo . --jobs 8 --output target/e2e-artifacts/radicle-sgx.json
+OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/radicle-sgx.json --tee sgx-no-attest --sudo --validators 4 --all --tags @radicle "$@"
 """
 
 # --- SGX / Benchmarks ------------------------------------------------- #

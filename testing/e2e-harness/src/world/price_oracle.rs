@@ -804,6 +804,7 @@ fn sanitize_rpc_endpoint(endpoint: &str) -> String {
     format!("{scheme}://{authority}")
 }
 
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn verify_price_oracle_evidence(
     evidence: &PriceOracleEvidenceV1,
     validator_count: usize,
@@ -947,6 +948,7 @@ pub(crate) fn verify_price_oracle_evidence(
     Ok(())
 }
 
+#[cfg(feature = "ocomp-integration")]
 fn canonical_unsigned_decimal(value: &str) -> bool {
     let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
     !whole.is_empty()

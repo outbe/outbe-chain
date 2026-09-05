@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
     let manifest = InputManifestV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
-        attempt: 3,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 4,
             finalized_block_hash: hash(5),

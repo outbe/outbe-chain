@@ -5,7 +5,7 @@ use outbe_primitives::time::WorldwideDay;
 use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
 use crate::{aggregate::WwdStatus, errors::storage_corruption_message};
 
-use super::state::{JobFsmCommand, JobFsmLimits, JobFsmState};
+use super::state::{JobFsmCommand, JobFsmState};
 
 pub(crate) use super::authority::require_active_ocomp_profile;
 use super::codec::{max_canonical_object_bytes, read_canonical_optional};
@@ -14,7 +14,6 @@ pub(crate) use super::index::ResponseDeadlineKey;
 use super::index::{insert_ready_key, remove_ready_key};
 pub(crate) use super::index::{remove_response_deadline_key, ReadyIndexKey};
 pub use super::profile::{poc_schema_limits, OcompRequestProfile};
-pub(crate) use super::transitions::OcompExpiryDisposition;
 
 impl MetadosisContract<'_> {
     /// Inserts one bounded ordered READY key without scanning active
@@ -23,7 +22,6 @@ impl MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDay,
         next_check_height: u64,
-        limits: JobFsmLimits,
     ) -> Result<()> {
         (|| {
             let status_value =
@@ -36,7 +34,7 @@ impl MetadosisContract<'_> {
             if self.ocomp_fsm_states.get_bytes(&wwd).is_empty()? {
                 let state = JobFsmState::initial_ready(wwd, next_check_height);
                 state
-                    .validate(limits)
+                    .validate()
                     .map_err(|error| storage_corruption_message(error.to_string()))?;
                 let key = ReadyIndexKey::from_projection(state.projection())?;
                 let mut index = self.read_ready_index()?;
@@ -45,7 +43,7 @@ impl MetadosisContract<'_> {
                 return self.write_ready_index(&index);
             }
 
-            let existing = self.ocomp_fsm_state(wwd, &poc_schema_limits(), limits)?;
+            let existing = self.ocomp_fsm_state(wwd, &poc_schema_limits())?;
             let projection = existing.projection();
             if projection.phase != super::state::DayPhase::Ready {
                 return Err(storage_corruption_message(
@@ -74,19 +72,15 @@ impl MetadosisContract<'_> {
         at_height: u64,
         next_check_height: u64,
         schema_limits: &SchemaLimits,
-        fsm_limits: JobFsmLimits,
     ) -> Result<()> {
         (|| {
-            let mut state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
+            let mut state = self.ocomp_fsm_state(wwd, schema_limits)?;
             let old_key = ReadyIndexKey::from_projection(state.projection())?;
             state
-                .apply(
-                    JobFsmCommand::Defer {
-                        at_height,
-                        next_check_height,
-                    },
-                    fsm_limits,
-                )
+                .apply(JobFsmCommand::Defer {
+                    at_height,
+                    next_check_height,
+                })
                 .map_err(|error| storage_corruption_message(error.to_string()))?;
             let new_key = ReadyIndexKey::from_projection(state.projection())?;
             let mut index = self.read_ready_index()?;
@@ -104,13 +98,12 @@ impl MetadosisContract<'_> {
     pub(crate) fn next_ocomp_ready(
         &self,
         schema_limits: &SchemaLimits,
-        fsm_limits: JobFsmLimits,
     ) -> Result<Option<super::state::JobFsmProjection>> {
         let Some(key) = self.read_ready_index()?.first().copied() else {
             return Ok(None);
         };
         let projection = self
-            .ocomp_fsm_state(key.worldwide_day, schema_limits, fsm_limits)?
+            .ocomp_fsm_state(key.worldwide_day, schema_limits)?
             .projection();
         if ReadyIndexKey::from_projection(projection)? != key {
             return Err(storage_corruption_message(

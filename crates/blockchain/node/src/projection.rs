@@ -3,7 +3,10 @@
 //! Canonical-chain notifications are deliberately only drained here. The provider's finalized
 //! block signal is the sole authority that permits projection writes.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::Duration,
+};
 
 #[cfg(test)]
 use std::sync::Mutex;
@@ -147,6 +150,32 @@ pub struct PreparedOffchainDataProjection {
     readiness: ProjectionReadinessHandle,
     runtime_failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     runtime_failure_receiver: tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+    retention_fence: Arc<ProjectionRetentionFence>,
+}
+
+/// Orders retained-input projection commits against OCOMP garbage collection.
+///
+/// Projection holds the shared side from pin selection through the durable
+/// MongoDB commit. The retention worker briefly takes the exclusive side only
+/// while it durably claims a lease for collection; physical deletion happens
+/// after the exclusive guard is released.
+#[derive(Default)]
+pub struct ProjectionRetentionFence {
+    gate: RwLock<()>,
+}
+
+impl ProjectionRetentionFence {
+    fn projection_guard(&self) -> eyre::Result<RwLockReadGuard<'_, ()>> {
+        self.gate
+            .read()
+            .map_err(|_| eyre::eyre!("OCOMP projection/GC fence is poisoned"))
+    }
+
+    pub(crate) fn gc_claim_guard(&self) -> Result<RwLockWriteGuard<'_, ()>, &'static str> {
+        self.gate
+            .write()
+            .map_err(|_| "OCOMP projection/GC fence is poisoned")
+    }
 }
 
 impl PreparedOffchainDataProjection {
@@ -170,6 +199,12 @@ impl PreparedOffchainDataProjection {
         let writer: StorageWriterHandle = self.storage.clone();
         Arc::new(RetainedTributeWriter::new(reader, writer))
     }
+
+    /// Exact process-local fence shared by projection and retained-input GC.
+    #[must_use]
+    pub fn retention_fence(&self) -> Arc<ProjectionRetentionFence> {
+        Arc::clone(&self.retention_fence)
+    }
 }
 
 /// Projection instance whose available canonical checkpoint identity passed startup checks.
@@ -183,6 +218,7 @@ pub struct ReadyOffchainDataProjection {
     writer_lease: MongoWriterLease,
     runtime_failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     runtime_failure_receiver: tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
+    retention_fence: Arc<ProjectionRetentionFence>,
 }
 
 #[derive(Clone)]
@@ -250,6 +286,7 @@ pub struct FinalizedProjectionSink {
     runtime: ProjectionRuntime,
     durable_checkpoint: Option<ProjectionCheckpoint>,
     provider_recovery_floor: Option<ProjectionCheckpoint>,
+    retention_fence: Option<Arc<ProjectionRetentionFence>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -264,7 +301,8 @@ pub enum FinalizedTargetReconciliationV1 {
 impl FinalizedProjectionSink {
     #[must_use]
     pub fn new(ready: ReadyOffchainDataProjection) -> Self {
-        Self::from_runtime(ProjectionRuntime::new(ready))
+        let retention_fence = Arc::clone(&ready.retention_fence);
+        Self::from_runtime_with_retention_fence(ProjectionRuntime::new(ready), retention_fence)
     }
 
     #[must_use]
@@ -415,6 +453,11 @@ impl FinalizedProjectionSink {
             }
         }
 
+        let retention_fence = self.retention_fence.clone();
+        let _retention_guard = retention_fence
+            .as_ref()
+            .map(|fence| fence.projection_guard())
+            .transpose()?;
         let normalized = normalize_finalized_block(
             identity.number,
             identity.hash,
@@ -467,7 +510,22 @@ impl FinalizedProjectionSink {
         Ok(projected)
     }
 
+    #[cfg(test)]
     fn from_runtime(runtime: ProjectionRuntime) -> Self {
+        Self::from_runtime_inner(runtime, None)
+    }
+
+    fn from_runtime_with_retention_fence(
+        runtime: ProjectionRuntime,
+        retention_fence: Arc<ProjectionRetentionFence>,
+    ) -> Self {
+        Self::from_runtime_inner(runtime, Some(retention_fence))
+    }
+
+    fn from_runtime_inner(
+        runtime: ProjectionRuntime,
+        retention_fence: Option<Arc<ProjectionRetentionFence>>,
+    ) -> Self {
         let durable_checkpoint = runtime.projector.state().checkpoint;
         Self {
             runtime,
@@ -476,6 +534,7 @@ impl FinalizedProjectionSink {
             // the live provider boundary before processing resumes. This also covers a provider
             // marker that jumps from behind the floor to above it before the first poll.
             provider_recovery_floor: durable_checkpoint,
+            retention_fence,
         }
     }
 }
@@ -667,6 +726,7 @@ fn prepare_offchain_data_projection_inner(
                     readiness,
                     runtime_failure_sender,
                     runtime_failure_receiver,
+                    retention_fence: Arc::new(ProjectionRetentionFence::default()),
                 });
             }
             Err(error)
@@ -802,6 +862,7 @@ where
     let readiness_publisher = prepared.readiness_publisher;
     let runtime_failure_sender = prepared.runtime_failure_sender;
     let runtime_failure_receiver = prepared.runtime_failure_receiver;
+    let retention_fence = prepared.retention_fence;
     let writer_lease = prepared.writer_lease;
     let local_finalized = canonical_hashes
         .finalized_block_num_hash()
@@ -873,6 +934,7 @@ where
         writer_lease,
         runtime_failure_sender,
         runtime_failure_receiver,
+        retention_fence,
     })
 }
 
@@ -2007,9 +2069,9 @@ mod tests {
         run_projection_loop, spawn_detached_projection_work, supervise_projection_future,
         validate_projection_network, DurableProjectionWrite, FinalizedProjectionSink,
         FinalizedTarget, FinalizedTargetReconciliationV1, OcompProjectionContainment,
-        OffchainDataProjectionConfig, ProjectionRuntime, ProjectionRuntimeRecoveryHandle,
-        ProjectionRuntimeRecoveryV1, ProjectionWriteDeadlineError, RuntimeBodyFailure,
-        PROJECTION_RECOVERY_DEADLINE,
+        OffchainDataProjectionConfig, ProjectionRetentionFence, ProjectionRuntime,
+        ProjectionRuntimeRecoveryHandle, ProjectionRuntimeRecoveryV1, ProjectionWriteDeadlineError,
+        RuntimeBodyFailure, PROJECTION_RECOVERY_DEADLINE,
     };
     use alloy_consensus::Header;
     use alloy_eips::BlockNumHash;
@@ -4044,5 +4106,28 @@ mod tests {
             validate_projection_network(chain_id).unwrap();
         }
         assert!(validate_projection_network(1_000_000_001).is_err());
+    }
+
+    #[test]
+    fn retained_gc_claim_waits_for_projection_commit_fence() {
+        let fence = Arc::new(ProjectionRetentionFence::default());
+        let projection = fence
+            .projection_guard()
+            .expect("projection acquires shared fence");
+        let worker_fence = Arc::clone(&fence);
+        let (claimed_tx, claimed_rx) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let _claim = worker_fence
+                .gc_claim_guard()
+                .expect("GC acquires exclusive fence");
+            claimed_tx.send(()).expect("publish GC claim");
+        });
+
+        assert!(claimed_rx.recv_timeout(Duration::from_millis(25)).is_err());
+        drop(projection);
+        claimed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("GC claim proceeds after projection commit fence is released");
+        worker.join().expect("GC fence worker joins");
     }
 }

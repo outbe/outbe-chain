@@ -22,6 +22,7 @@ const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
 const PUBLICATION_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[cfg(feature = "ocomp-integration")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PendingPricePublication {
     strictly_after_block: u64,
@@ -250,6 +251,7 @@ fn controlled_quote_is_finalized(world: &mut World) {
 /// Stop the feeder before a controlled-time restart and retain the last
 /// finalized publication as the strict post-restart lower bound. Returning
 /// `None` keeps scenarios without the feeder unchanged.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn stop_before_clock_restart(world: &mut World) -> Option<u64> {
     if !world.price_oracle.is_feeder_running() {
         return None;
@@ -265,6 +267,7 @@ pub(crate) fn stop_before_clock_restart(world: &mut World) -> Option<u64> {
 
 /// Restart the feeder with reset poll/backoff state and return the strict
 /// publication condition that the caller must observe alongside WWD progress.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn resume_after_clock_restart(
     world: &mut World,
     previous_block: Option<u64>,
@@ -282,6 +285,7 @@ pub(crate) fn resume_after_clock_restart(
 /// Poll one post-restart publication without hiding an irreversible lifecycle
 /// transition behind a nested wait. The caller owns the joint WWD/Oracle
 /// barrier and stops polling after the first successful observation.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn observe_pending_publication(
     world: &mut World,
     pending: &PendingPricePublication,
@@ -305,6 +309,7 @@ pub(crate) fn observe_pending_publication(
 
 /// Atomically change the harness-owned quote and prove that the production
 /// feeder published the new exact scale-6 rate on every validator.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn publish_controlled_quote(world: &mut World, expected_rate: U256) {
     let strictly_after_block = world.price_oracle.last_oracle_block().unwrap_or(0);
     let quote = scale6_quote(expected_rate);
@@ -477,6 +482,7 @@ fn feeder_start_quote(current: Option<(String, String)>) -> (String, String) {
     current.unwrap_or_else(|| (MOCK_PRICE.to_owned(), MOCK_VOLUME.to_owned()))
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn feeder_restart_expected_rate(current: Option<(String, String)>) -> U256 {
     let (price, _) = feeder_start_quote(current);
     parse_scale6_rate(&price).unwrap_or_else(|| {
@@ -484,6 +490,7 @@ fn feeder_restart_expected_rate(current: Option<(String, String)>) -> U256 {
     })
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn parse_scale6_rate(price: &str) -> Option<U256> {
     let (whole, fraction) = price.split_once('.').unwrap_or((price, ""));
     if whole.is_empty()
@@ -554,6 +561,7 @@ fn wait_for_unanimous_pair_publication(
     }
 }
 
+#[cfg(feature = "ocomp-integration")]
 fn observe_unanimous_publication(
     world: &mut World,
     phase: OracleEvidencePhaseV1,
@@ -683,6 +691,7 @@ fn wait_until_finalized_height(world: &mut World, target: u64) {
     }
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn scale6_quote(rate: U256) -> String {
     let scale = U256::from(1_000_000_u64);
     let whole = rate / scale;

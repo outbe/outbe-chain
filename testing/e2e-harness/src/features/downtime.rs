@@ -104,7 +104,7 @@ fn committee_keeps_finalizing_until_one_slash(world: &mut World) {
 
     let mut observed_count = None;
     for _ in 0..80 {
-        let head = world.rpc.head(port).unwrap_or_default();
+        let head = world.rpc.head(port).expect("head while waiting for slash");
         let count = world.rpc.slash_count(port, &victim);
         if head > kill_h && count.is_some_and(|value| value == before_count + 1) {
             observed_count = count;
@@ -156,7 +156,10 @@ fn committee_keeps_finalizing_until_one_slash(world: &mut World) {
         "downtime felony must jail the validator"
     );
     assert!(
-        world.rpc.has_voter_felony_event(port, &victim, kill_h),
+        world
+            .rpc
+            .has_voter_felony_event(port, &victim, kill_h)
+            .expect("observe finalized VoterFelony event range"),
         "finalized VoterFelony event is missing"
     );
 
@@ -191,7 +194,7 @@ fn continued_downtime_is_idempotent(world: &mut World) {
     let head = world
         .rpc
         .wait_block_gt(port, target, 40)
-        .unwrap_or_default();
+        .expect("chain progress after downtime felony");
     assert!(head > target, "chain stopped after downtime felony");
 
     let stake_after = world.state.slash_stake_after.expect("post-slash stake");

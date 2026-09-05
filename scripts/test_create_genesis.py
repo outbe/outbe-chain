@@ -63,7 +63,6 @@ def minimal_config(keys_dir: str) -> dict:
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
         "tee": {"mode": "gramine-direct-dev"},
-        "ocomp_discovery_control_port": 30414,
     }
 
 
@@ -839,7 +838,7 @@ class LaunchBundleTests(unittest.TestCase):
                             "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
                     self.assertIn(var, script, f"{role} script is missing {var}")
 
-    def test_exporter_uses_node_projection_and_explicit_discovery_control_port(self):
+    def test_exporter_uses_node_projection(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             exporter = (output_dir / "validator-0" / "run-ocomp-exporter.sh").read_text()
@@ -848,23 +847,6 @@ class LaunchBundleTests(unittest.TestCase):
                 exporter,
             )
             self.assertNotIn("outbe_projection_validator_0_ocomp", exporter)
-            self.assertIn(
-                'OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS="127.0.0.1:30414"',
-                exporter,
-            )
-
-            with self.assertRaisesRegex(ValueError, "is required"):
-                LB.ocomp_discovery_control_port({}, 30401)
-            self.assertEqual(
-                LB.ocomp_discovery_control_port(
-                    {"ocomp_discovery_control_port": 30414}, 30401
-                ),
-                30414,
-            )
-            with self.assertRaises(ValueError):
-                LB.ocomp_discovery_control_port(
-                    {"ocomp_discovery_control_port": 30413}, 30401
-                )
 
     def test_successor_bundle_catalog_and_dormant_worker_are_release_ready(self):
         with tempfile.TemporaryDirectory() as tmp:

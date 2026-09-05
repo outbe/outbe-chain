@@ -147,7 +147,10 @@ fn wait_for_periodic_exclusion(
                 .rpc
                 .validator_record(port, address)
                 .is_some_and(|record| record.status == 4 && !record.has_bls_share)
-                && !world.rpc.is_participant(port, address)
+                && !world
+                    .rpc
+                    .is_participant(port, address)
+                    .expect("observe consensus participation")
         });
         if epoch_advanced && all_nodes_excluded {
             return world
@@ -280,14 +283,10 @@ fn exiting_validator_with_residue(world: &mut World) {
         .expect("stage retained joiner OCOMP validator key");
     world
         .localnet
-        .launch_joiner(index, &[])
+        .launch_caught_up_joiner(index, &[])
         .expect("launch retained joiner");
     let port = world.validators.primary_port();
     let address = format!("{:#x}", identity.address());
-    world
-        .rpc
-        .wait_block(world.validators.http_port(index), 5, 40)
-        .expect("joiner sync");
     world
         .rpc
         .stake(identity.evm_key(), 1000)
@@ -297,7 +296,10 @@ fn exiting_validator_with_residue(world: &mut World) {
         .confirm_ready(identity.evm_key())
         .expect("confirm joiner readiness");
     assert!(
-        world.rpc.wait_participant(port, &address, 50),
+        world
+            .rpc
+            .wait_participant(port, &address, 50)
+            .expect("wait for observable consensus participation"),
         "joiner never became a consensus participant"
     );
     let active = world
@@ -523,12 +525,10 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         world.rpc.validator_record(port, &scratch.address),
         Some(before_owner)
     );
-    assert_eq!(
-        world
-            .rpc
-            .is_validator(port, &format!("{:#x}", duplicate_identity.address())),
-        Some(false)
-    );
+    assert!(!world
+        .rpc
+        .is_validator(port, &format!("{:#x}", duplicate_identity.address()))
+        .expect("observe duplicate validator registry membership"));
 }
 
 #[then("staking without a new readiness confirmation cannot activate the re-registered validator")]
@@ -541,24 +541,34 @@ fn reregistered_validator_requires_reconfirmation(world: &mut World) {
         .stake(scratch.new_identity.evm_key(), 1000)
         .expect("restake re-registered validator");
     assert_eq!(wait_status(world, &scratch.address, 1, 20).status, 1);
-    let start = world.rpc.epoch_start_block(port).unwrap_or_default();
+    let start = world
+        .rpc
+        .epoch_start_block(port)
+        .expect("read epoch start before stale-readiness window");
+    let mut advanced = false;
     for _ in 0..100 {
         if world
             .rpc
             .epoch_start_block(port)
-            .is_some_and(|height| height > start)
+            .expect("observe epoch progress after re-registration")
+            > start
         {
+            advanced = true;
             break;
         }
         sleep(Duration::from_secs(2));
     }
+    assert!(advanced, "epoch did not advance after re-registration");
     let record = world
         .rpc
         .validator_record(port, &scratch.address)
         .expect("re-registered record after periodic window");
     assert_eq!(record.status, 1, "validator activated with stale readiness");
     assert!(!record.has_bls_share);
-    assert!(!world.rpc.is_participant(port, &scratch.address));
+    assert!(!world
+        .rpc
+        .is_participant(port, &scratch.address)
+        .expect("observe consensus participation"));
 }
 
 #[given("isolated validators for successful and reverting lifecycle actions")]

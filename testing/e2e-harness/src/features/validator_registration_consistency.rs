@@ -338,10 +338,10 @@ fn cross_chain_replay_is_rejected(world: &mut World) {
     };
     let port = world.validators.primary_port();
     let after = registry_identity_bundle(world, port);
-    let absent = world
+    let absent = !world
         .rpc
         .is_validator(port, &address_string(identity.address()))
-        == Some(false);
+        .expect("observe replay candidate registry membership");
     let mut violations = Vec::new();
     if outcome.success {
         violations.push(format!(
@@ -428,10 +428,10 @@ fn owner_registration_without_pop_is_rejected(world: &mut World) {
     };
     let port = world.validators.primary_port();
     let after = registry_identity_bundle(world, port);
-    let absent = world
+    let absent = !world
         .rpc
         .is_validator(port, &address_string(identity.address()))
-        == Some(false);
+        .expect("observe no-PoP candidate registry membership");
     let mut violations = Vec::new();
     if outcome.success {
         violations.push(format!(
@@ -754,17 +754,11 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
     };
     let primary = world.validators.primary_port();
     let index = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(index);
 
     world
         .localnet
-        .launch_joiner(index, &[])
+        .launch_caught_up_joiner(index, &[])
         .expect("launch registered joiner");
-    let caught_up = world.rpc.wait_block(joiner_port, 20, 40).unwrap_or(0);
-    assert!(
-        caught_up >= 20,
-        "registered joiner did not catch up before activation"
-    );
     world.rpc.stake(&key, 1_000).expect("stake joiner");
     assert_eq!(
         world
@@ -780,7 +774,8 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
     assert!(
         world
             .rpc
-            .wait_participant(primary, &address_string(address), 70),
+            .wait_participant(primary, &address_string(address), 70)
+            .expect("observe registered validator participation"),
         "joiner did not become a consensus participant"
     );
     assert_eq!(
@@ -832,7 +827,9 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
     assert!(
         world.rpc.wait_finalized_at_least(
             primary,
-            exclusion_height.unwrap_or_default().saturating_add(1),
+            exclusion_height
+                .expect("capture exclusion boundary height")
+                .saturating_add(1),
             30,
         ),
         "post-boundary stake-drain block did not finalize"
@@ -1098,11 +1095,15 @@ fn rejected_registrations_are_atomic(world: &mut World) {
     if world
         .rpc
         .is_validator(port, &address_string(duplicate.address()))
-        != Some(false)
+        .expect("observe duplicate-key candidate registry membership")
     {
         violations.push("duplicate-key candidate acquired a validator record".to_owned());
     }
-    if world.rpc.is_validator(port, &address_string(over_capacity)) != Some(false) {
+    if world
+        .rpc
+        .is_validator(port, &address_string(over_capacity))
+        .expect("observe over-capacity candidate registry membership")
+    {
         violations.push("over-capacity candidate acquired a validator record".to_owned());
     }
     assert!(
