@@ -26,7 +26,7 @@ Feature: Off-chain computation and Metadosis
     And every validator serves the same independently verified compressed tribute
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
-    When the committee logical clock reaches the fresh capacity processing time
+    When the committee reaches fresh capacity processing with V1 workers held for the test-only V2 activation
     Then the same fresh capacity day advances through WAITING and READY
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When an OCOMP successor is preloaded and activated while that V1 job remains pending
@@ -43,7 +43,7 @@ Feature: Off-chain computation and Metadosis
     Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
-    When validator 0 SnapshotExporter restarts from a prepared-only crash state
+    When validator 0 SnapshotExporter restarts with its committed export intact
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
     When a late follower replays the finalized OCOMP request and quorum blocks
@@ -102,7 +102,7 @@ Feature: Off-chain computation and Metadosis
     And validator 0 OCOMP worker restarts through the typed topology
 
   @ocomp-late-local-result
-  Scenario: A validator accepts its local result after the network completes the job
+  Scenario: A validator safely handles its correct late result after the network completes the job
     Given a fresh four-validator OCOMP public measurement localnet
     When validator 3 OCOMP worker is stopped before the job
     And an operator submits one encrypted tribute offer
@@ -112,7 +112,7 @@ Feature: Off-chain computation and Metadosis
     When the production OCOMP domains process that finalized JobIntent
     Then validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing
     When validator 3 OCOMP worker restarts after the finalized quorum
-    Then validator 3 accepts its late local result without shutting down
+    Then validator 3 safely handles its correct late result without changing the canonical outcome or votes
 
   @ocomp-fullnode-deadline
   Scenario: A FullNode restores its deadline barrier and resumes after an exact late result

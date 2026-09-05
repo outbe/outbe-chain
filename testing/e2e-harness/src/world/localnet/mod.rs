@@ -39,6 +39,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
+use crate::internal::launch_log::LaunchLog;
 use crate::internal::proc::{
     self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
 };
@@ -118,6 +119,9 @@ pub struct Localnet {
     /// Owned validator-indexed nodes - the committee (`0..n`) and, when attached,
     /// the joiner (index = committee size).
     validators: HashMap<usize, ChildGuard>,
+    /// Only the latest common-spawn incarnation for each node index. Callers
+    /// supply an independently checked owned PID before using its log evidence.
+    node_launch_logs: HashMap<usize, (u32, LaunchLog)>,
     /// Operator-owned validator-indexed Radicle sidecars.
     radicle_sidecars: HashMap<usize, ChildGuard>,
     /// Independent non-validator source node used only by the Radicle E2E.
@@ -150,11 +154,26 @@ pub struct Localnet {
     scenario_deadline: Option<std::time::Instant>,
 }
 
+// Consensus-affecting test environment belongs to every node in this localnet,
+// including keyless, cold and recovery followers. A missing override must also
+// clear inherited values rather than depend on the harness shell environment.
+fn configure_node_protocol_environment(opts: &StartOpts, command: &mut Command) {
+    match opts.voting_window {
+        Some(window) => {
+            command.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string());
+        }
+        None => {
+            command.env_remove("OUTBE_TEST_VOTING_WINDOW_BLOCKS");
+        }
+    }
+}
+
 impl Localnet {
     pub(crate) fn new(cfg: Config) -> Self {
         Self {
             cfg,
             validators: HashMap::new(),
+            node_launch_logs: HashMap::new(),
             radicle_sidecars: HashMap::new(),
             user_radicle: None,
             followers: HashMap::new(),
@@ -440,7 +459,7 @@ impl Localnet {
     /// [`attach_log`](crate::internal::proc::attach_log)) - we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
     fn spawn_node(
-        &self,
+        &mut self,
         label: &str,
         index: usize,
         node_dir: &Path,
@@ -453,6 +472,7 @@ impl Localnet {
             .collect::<Vec<_>>();
         ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
+        configure_node_protocol_environment(&self.start_opts, &mut cmd);
         crate::world::projection::configure_node_command(&self.cfg, index, &mut cmd)?;
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -464,14 +484,45 @@ impl Localnet {
             eprintln!("[localnet] launch {label}: {prog} {}", rest.join(" "));
             eprintln!("           log: {}", node_dir.join("node.log").display());
         }
+        // A failed replacement must not leave the previous incarnation usable
+        // as evidence for this launch attempt. Capture before any child writes.
+        self.node_launch_logs.remove(&index);
+        let launch_log = LaunchLog::arm(&node_dir.join("node.log"))
+            .wrap_err_with(|| format!("capture node-{index} launch log before spawn"))?;
         let guard = ChildGuard::spawn(label, cmd)?;
+        self.node_launch_logs
+            .insert(index, (guard.pid(), launch_log));
         if self.cfg.debug {
             eprintln!("[localnet] {label} pid {}", guard.pid());
         }
         Ok(guard)
     }
 
+    /// Read only this incarnation's output, including messages emitted before
+    /// the caller began polling. This binds the launch, not liveness: callers
+    /// must separately verify the expected PID is their current owned process.
+    #[cfg(any(test, feature = "ocomp-integration"))]
+    pub(crate) fn node_launch_log(&mut self, index: usize, expected_pid: u32) -> Result<String> {
+        let (pid, log) = self
+            .node_launch_logs
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("node-{index} has no captured launch log"))?;
+        eyre::ensure!(
+            *pid == expected_pid,
+            "node-{index} launch PID mismatch: expected {expected_pid}, captured {pid}"
+        );
+        log.read()
+            .wrap_err_with(|| format!("read node-{index} launch log for PID {expected_pid}"))
+    }
+
     // ---- teardown ------------------------------------------------------------
+
+    fn clear_owned_nodes(&mut self) {
+        self.validators.clear();
+        self.followers.clear();
+        self.follower_startup_probes.clear();
+        self.node_launch_logs.clear();
+    }
 
     /// Drop the owned node handles (killing nodes + `docker rm -f`ing enclaves),
     /// then run a stateless backstop sweep. Its primary role is the SIGINT path,
@@ -486,9 +537,7 @@ impl Localnet {
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
         // Nodes first (release MDBX locks), then their enclaves - matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
-        self.validators.clear();
-        self.followers.clear();
-        self.follower_startup_probes.clear();
+        self.clear_owned_nodes();
         self.radicle_sidecars.clear();
         self.user_radicle = None;
         self.enclaves.clear();
@@ -646,7 +695,7 @@ mod tests {
     #[test]
     fn node_ipc_preflight_rejects_dynamic_node_before_spawning() {
         let env = Environment::default();
-        let localnet = Localnet::new(Config::resolve(&env));
+        let mut localnet = Localnet::new(Config::resolve(&env));
         let node_dir = PathBuf::from("/tmp").join("long-node-directory-".repeat(10));
         let error = localnet
             .spawn_node(
@@ -658,6 +707,127 @@ mod tests {
             .expect_err("invalid IPC path must precede executable lookup");
         assert!(error.to_string().contains("invalid node IPC socket path"));
         assert!(error.to_string().contains(&node_dir.display().to_string()));
+    }
+
+    fn launch_log_fixture(localnet: &mut Localnet, index: usize, marker: &str) -> u32 {
+        use std::time::{Duration, Instant};
+
+        let node_dir = localnet.cfg.validator_dir(index);
+        fs::create_dir_all(&node_dir).unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf '%s\\n' \"$1\"", "node-log-fixture", marker]);
+        proc::attach_log(&mut command, &node_dir).unwrap();
+        let mut child = localnet
+            .spawn_node("node-log-fixture", index, &node_dir, command)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(status) = child.exit_status().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "log fixture did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = child.pid();
+        localnet.validators.insert(index, child);
+        pid
+    }
+
+    #[test]
+    fn node_launch_log_excludes_prior_incarnation_and_rejects_stale_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: dir.path().to_owned(),
+            ..Environment::default()
+        };
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let node_dir = localnet.cfg.validator_dir(0);
+        fs::create_dir_all(&node_dir).unwrap();
+        fs::write(node_dir.join("node.log"), "earlier matching marker\n").unwrap();
+        let first = launch_log_fixture(&mut localnet, 0, "first launch");
+        assert_eq!(
+            localnet.node_launch_log(0, first).unwrap(),
+            "first launch\n"
+        );
+        localnet.validators.remove(&0);
+        let second = launch_log_fixture(&mut localnet, 0, "second launch");
+        assert_eq!(
+            localnet.node_launch_log(0, second).unwrap(),
+            "second launch\n"
+        );
+        assert!(localnet.node_launch_log(0, first).is_err());
+        assert!(localnet.node_launch_log(1, second).is_err());
+    }
+
+    #[test]
+    fn node_launch_log_rejects_missing_replaced_and_truncated_log() {
+        for damage in ["missing", "replaced", "truncated"] {
+            let dir = tempfile::tempdir().unwrap();
+            let env = Environment {
+                data_dir: dir.path().to_owned(),
+                ..Environment::default()
+            };
+            let mut localnet = Localnet::new(Config::resolve(&env));
+            let pid = launch_log_fixture(&mut localnet, 0, "current matching marker");
+            assert_eq!(
+                localnet.node_launch_log(0, pid).unwrap(),
+                "current matching marker\n"
+            );
+            let path = localnet.cfg.validator_dir(0).join("node.log");
+            match damage {
+                "missing" => fs::remove_file(&path).unwrap(),
+                "replaced" => {
+                    fs::rename(&path, path.with_extension("previous")).unwrap();
+                    fs::write(&path, "current matching marker\n").unwrap();
+                }
+                "truncated" => fs::write(&path, "").unwrap(),
+                _ => unreachable!(),
+            }
+            assert!(localnet.node_launch_log(0, pid).is_err(), "{damage}");
+        }
+    }
+
+    #[test]
+    fn node_launch_log_failed_spawn_discards_previous_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: dir.path().to_owned(),
+            ..Environment::default()
+        };
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let pid = launch_log_fixture(&mut localnet, 0, "previous launch");
+        localnet.validators.remove(&0);
+        let node_dir = localnet.cfg.validator_dir(0);
+        assert!(localnet
+            .spawn_node(
+                "missing-node",
+                0,
+                &node_dir,
+                Command::new(dir.path().join("nonexistent-node"))
+            )
+            .is_err());
+        assert!(localnet.node_launch_log(0, pid).is_err());
+        assert!(localnet.node_launch_logs.is_empty());
+    }
+
+    #[test]
+    fn node_launch_log_cleanup_drops_capture_but_retains_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: dir.path().to_owned(),
+            ..Environment::default()
+        };
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let pid = launch_log_fixture(&mut localnet, 0, "retained diagnostics");
+        localnet.clear_owned_nodes();
+        assert!(localnet.node_launch_logs.is_empty());
+        assert!(localnet.validators.is_empty());
+        assert!(localnet.node_launch_log(0, pid).is_err());
+        assert_eq!(
+            fs::read_to_string(localnet.cfg.validator_dir(0).join("node.log")).unwrap(),
+            "retained diagnostics\n"
+        );
     }
 
     #[test]

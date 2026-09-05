@@ -1259,6 +1259,58 @@ impl Rpc {
         )
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn active_ocomp_protocol_bundle_hash_at_on(
+        &self,
+        port: u16,
+        height: u64,
+    ) -> Result<B256> {
+        eth::read_call_at_result(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::activeProtocolBundleHashCall {},
+            height,
+        )
+        .map_err(|error| eyre!("read active OCOMP bundle at h{height}: {error}"))
+    }
+
+    /// Observe the predecessor retention state at one exact finalized checkpoint.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn ocomp_retention_state_at_on(
+        &self,
+        port: u16,
+        bundle_hash: B256,
+        height: u64,
+    ) -> Result<(B256, u32, u64)> {
+        let url = self.url(port);
+        let retiring = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retiringProtocolBundleHashCall {},
+            height,
+        )
+        .map_err(|error| eyre!("read retiring bundle at h{height}: {error}"))?;
+        let live = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::liveLineageCountCall {
+                protocolBundleHash: bundle_hash,
+            },
+            height,
+        )
+        .map_err(|error| eyre!("read live lineage at h{height}: {error}"))?;
+        let until = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retentionUntilCall {
+                protocolBundleHash: bundle_hash,
+            },
+            height,
+        )
+        .map_err(|error| eyre!("read retention deadline at h{height}: {error}"))?;
+        Ok((retiring, live, until))
+    }
+
     /// Active protocol version on the node at `port`.
     pub fn active_version_on(&self, port: u16) -> Option<u64> {
         self.active_version_on_url(&self.url(port))

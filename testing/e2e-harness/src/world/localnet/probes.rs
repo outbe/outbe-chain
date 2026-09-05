@@ -972,17 +972,19 @@ fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
     let (number, nanos_per_unit) = [
         ("ms", 1_000_000_u128),
         ("us", 1_000_u128),
-        ("us", 1_000_u128),
+        ("\u{00b5}s", 1_000_u128),
         ("ns", 1_u128),
         ("s", 1_000_000_000_u128),
     ]
     .into_iter()
     .find_map(|(suffix, scale)| encoded.strip_suffix(suffix).map(|value| (value, scale)))
     .ok_or_else(|| eyre::eyre!("unsupported duration unit in {encoded}"))?;
-    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    let decimal = number.split_once('.');
+    let (whole, fraction) = decimal.unwrap_or((number, ""));
     ensure!(
         !whole.is_empty()
             && whole.bytes().all(|byte| byte.is_ascii_digit())
+            && (decimal.is_none() || !fraction.is_empty())
             && fraction.bytes().all(|byte| byte.is_ascii_digit())
             && fraction.len() <= 18,
         "malformed duration {encoded}"
@@ -1283,6 +1285,33 @@ mod tests {
             parse_canonical_block_processing_micros(record, 163, block_hash).unwrap(),
             None
         );
+        for (duration, expected) in [
+            ("47.731\u{00b5}s", 48),
+            ("47.731us", 48),
+            ("1ns", 1),
+            ("1001ns", 2),
+            ("0.001ms", 1),
+            ("1s", 1_000_000),
+        ] {
+            let observed = record.replace("590.757245ms", duration);
+            assert_eq!(
+                parse_canonical_block_processing_micros(&observed, 162, block_hash).unwrap(),
+                Some(expected),
+                "duration {duration} must round up without changing units"
+            );
+            assert_eq!(
+                parse_canonical_block_processing_micros(&observed, 163, block_hash).unwrap(),
+                None,
+                "a valid duration must not admit a different block"
+            );
+        }
+        for duration in ["1.s", "1.ms", "0ns", "-1us", "1.2.3ms", "1fortnight"] {
+            let observed = record.replace("590.757245ms", duration);
+            assert!(
+                parse_canonical_block_processing_micros(&observed, 162, block_hash).is_err(),
+                "malformed duration {duration} must not produce evidence"
+            );
+        }
     }
 
     #[test]

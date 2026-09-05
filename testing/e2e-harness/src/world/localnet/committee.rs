@@ -29,12 +29,6 @@ fn restore_validator_argv(
     recovery_original.unwrap_or(rebuilt)
 }
 
-pub(super) fn validator_protocol_environment(opts: &StartOpts) -> Vec<(&'static str, String)> {
-    opts.voting_window
-        .map(|window| vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string())])
-        .unwrap_or_default()
-}
-
 fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
     std::iter::once(format!("-{signal}"))
         .chain(std::iter::once("--".to_owned()))
@@ -317,8 +311,7 @@ impl Localnet {
         child.interrupt();
         ensure!(child.exit_status()?.is_some(), "validator-{i} did not stop");
         self.validators.remove(&i);
-        let opts = self.start_opts.clone();
-        self.spawn_validator_with_argv(i, &opts, argv)?;
+        self.spawn_validator_with_argv(i, argv)?;
         sleep(Duration::from_secs(2));
         let child = self
             .validators
@@ -659,21 +652,13 @@ impl Localnet {
         // snapshot verbatim instead of reconstructing a merely equivalent
         // command from mutable harness inputs.
         a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
-        self.spawn_validator_with_argv(i, opts, a)
+        self.spawn_validator_with_argv(i, a)
     }
 
-    fn spawn_validator_with_argv(
-        &mut self,
-        i: usize,
-        opts: &StartOpts,
-        argv: Vec<String>,
-    ) -> Result<()> {
+    fn spawn_validator_with_argv(&mut self, i: usize, argv: Vec<String>) -> Result<()> {
         let vd = self.cfg.validator_dir(i);
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        for (name, value) in validator_protocol_environment(opts) {
-            cmd.env(name, value);
-        }
         cmd.args(&argv);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), i, &vd, cmd)?;
@@ -1445,11 +1430,42 @@ mod tests {
 
     #[test]
     fn validator_recovery_preserves_consensus_relevant_environment() {
-        let opts = super::StartOpts::with_voting_window(41);
-        assert_eq!(
-            super::validator_protocol_environment(&opts),
-            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "41".to_owned())]
-        );
+        for window in [Some(41), None] {
+            for role in [
+                "validator",
+                "keyless-full-node",
+                "cold-follower",
+                "recovery-follower",
+            ] {
+                let mut command = std::process::Command::new("outbe-chain");
+                command
+                    .arg(role)
+                    .env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "stale")
+                    .env("RUST_MIN_STACK", "16777216");
+                let opts = super::StartOpts {
+                    voting_window: window,
+                    ..Default::default()
+                };
+                super::super::configure_node_protocol_environment(&opts, &mut command);
+                let configured = command
+                    .get_envs()
+                    .find(|(key, _)| *key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS")
+                    .expect("shared node launch must explicitly set or remove the override")
+                    .1;
+                assert_eq!(
+                    configured.map(|value| value.to_str().unwrap()),
+                    window.map(|_| "41")
+                );
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [std::ffi::OsStr::new(role)]
+                );
+                assert!(command
+                    .get_envs()
+                    .any(|(key, value)| key == "RUST_MIN_STACK"
+                        && value == Some(std::ffi::OsStr::new("16777216"))));
+            }
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::internal::{
     shell::Sh,
 };
 
-use super::{committee::validator_protocol_environment, Localnet};
+use super::Localnet;
 
 const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
     "--validator",
@@ -322,7 +322,7 @@ impl Localnet {
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
-        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+        self.launch_certified_follower_with_args(name, index, args)
     }
 
     /// Launch the real certified-follower command while deliberately omitting
@@ -359,7 +359,7 @@ impl Localnet {
             &node_dir.join("node.log"),
             ([127, 0, 0, 1], self.cfg.http_port(index)).into(),
         )?;
-        self.launch_certified_follower_with_args(name, index, args, Vec::new())?;
+        self.launch_certified_follower_with_args(name, index, args)?;
         self.follower_startup_probes
             .insert(name.to_owned(), (index, probe));
         Ok(())
@@ -399,7 +399,7 @@ impl Localnet {
             "30s",
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
-        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+        self.launch_certified_follower_with_args(name, index, args)
     }
 
     /// Require an owned negative-probe follower to terminate with the exact
@@ -434,7 +434,6 @@ impl Localnet {
         name: &str,
         index: usize,
         args: Vec<String>,
-        protocol_environment: Vec<(&'static str, String)>,
     ) -> Result<()> {
         let node_dir = self.cfg.validator_dir(index);
         ensure_validator_recovery_follower_args(&args)?;
@@ -442,9 +441,6 @@ impl Localnet {
         command
             .env("RUST_MIN_STACK", "16777216")
             .env("RUST_LOG", "info,outbe_consensus=debug");
-        for (name, value) in protocol_environment {
-            command.env(name, value);
-        }
         command.args(&args);
         attach_log(&mut command, &node_dir)?;
         let guard = self.spawn_node(name, index, &node_dir, command)?;
@@ -492,13 +488,7 @@ impl Localnet {
         self.validator_recovery_original_argv
             .entry(index)
             .or_insert(original);
-        let protocol_environment = validator_protocol_environment(&self.start_opts);
-        self.launch_certified_follower_with_args(
-            &name,
-            index,
-            follower_args,
-            protocol_environment,
-        )?;
+        self.launch_certified_follower_with_args(&name, index, follower_args)?;
         Ok(name)
     }
 

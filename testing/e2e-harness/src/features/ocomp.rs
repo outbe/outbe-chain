@@ -2423,6 +2423,21 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
 
 #[when("the committee logical clock reaches the fresh capacity processing time")]
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
+    // These three artifact scenarios require all four independent outputs, not
+    // merely a quorum. Keep workers held until every node has dispatched the
+    // exact exported job; unrelated capacity and fault scenarios use their own
+    // processing steps and retain their original scheduling.
+    assert!(!world.state.ocomp_pending_v1_workers_held);
+    for validator_index in 0..4 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 0,
+            })
+            .expect("hold each V1 worker before the request can be created");
+    }
+    world.state.ocomp_pending_v1_workers_held = true;
     let scheduled_process_time = world
         .state
         .metadosis_fresh_lifecycle_observation
@@ -2433,6 +2448,11 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // first genesis-configured aligned slot at or after the processing time.
     let target = first_protocol_cycle_at_or_after(world, scheduled_process_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+}
+
+#[when("the committee reaches fresh capacity processing with V1 workers held for the test-only V2 activation")]
+fn committee_processing_holds_v1_for_test_successor(world: &mut World) {
+    committee_clock_reaches_fresh_capacity_processing(world);
 }
 
 fn first_protocol_cycle_at_or_after(world: &World, timestamp: u64) -> u64 {
@@ -3550,7 +3570,7 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .ocomp_job_request
         .clone()
         .expect("pending V1 JobIntent before OCOMP successor activation");
-    assert_job_pinned_on_every_validator(world, pending_request.intent_id, initial_bundle_hash);
+    assert_pending_v1_at_common_finality(world, initial_bundle_hash, None);
 
     let mut successor_bundle = install.protocol_bundle.clone();
     successor_bundle.protocol_version = successor_bundle
@@ -3588,6 +3608,27 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .localnet
         .restart_committee_preserving_enclaves()
         .expect("restart committee once to preload the successor bundle");
+    let full_node = world.validators.joiner_index();
+    let full_node_wire = u8::try_from(full_node).expect("FullNode index fits u8");
+    let (old_full_node_pid, old_status) = world
+        .localnet
+        .owned_full_node_process(full_node)
+        .expect("capture the owned FullNode before test-only V2 preload");
+    assert!(old_status.is_none(), "FullNode exited before preload");
+    world
+        .ocomp
+        .stop_keyless_full_node_roles(full_node_wire)
+        .expect("stop only this FullNode's clients before its preserved preload restart");
+    let (stopped_status, new_full_node_pid) = world
+        .localnet
+        .restart_keyless_full_node_preserving_enclave(full_node, old_full_node_pid, 0)
+        .expect("preload both public bundles while preserving FullNode identity and data");
+    assert_ne!(old_full_node_pid, new_full_node_pid);
+    eprintln!("OCOMP_FULLNODE_PRELOAD old_pid={old_full_node_pid} new_pid={new_full_node_pid} exit={stopped_status}");
+    world
+        .ocomp
+        .start_keyless_full_node_roles(full_node_wire)
+        .expect("restore the FullNode's exporter and V1 worker before proposal");
     for validator_index in 0..world.validators.size() {
         let port = world.validators.http_port(validator_index);
         assert!(
@@ -3613,6 +3654,22 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .ocomp
         .ensure_successor_workers_ready()
         .expect("all V2 Worker lanes register before governance activation");
+    world
+        .ocomp
+        .ensure_keyless_full_node_roles_ready(full_node_wire)
+        .expect("both keyless compute lanes are registered before governance activation");
+    let mut pre_proposal_ports = world.validators.committee_ports();
+    pre_proposal_ports.push(world.validators.http_port(full_node));
+    world
+        .rpc
+        .wait_finalized_checkpoint(&pre_proposal_ports, before_restart, 120)
+        .expect("all five nodes recover exact pre-restart finality before the proposal");
+    let (pre_proposal_pid, pre_proposal_status) = world
+        .localnet
+        .owned_full_node_process(full_node)
+        .expect("recheck FullNode incarnation after finalized preload recovery");
+    assert_eq!(pre_proposal_pid, new_full_node_pid);
+    assert!(pre_proposal_status.is_none());
 
     let head = world
         .rpc
@@ -3622,6 +3679,10 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .checked_add(world.state.voting_window)
         .and_then(|height| height.checked_add(30))
         .expect("OCOMP successor activation height");
+    assert!(
+        activation_height < pending_request.deadline_height,
+        "test-only V2 activation must occur before the pending V1 deadline"
+    );
     let successor = OcompSuccessorV1 {
         activation_height,
         predecessor_protocol_bundle_hash: initial_bundle_hash,
@@ -3662,7 +3723,7 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
     })
     .to_string();
 
-    let node_pids_before_activation = (0..world.validators.size())
+    let mut node_pids_before_activation = (0..world.validators.size())
         .map(|validator_index| {
             world
                 .localnet
@@ -3672,6 +3733,7 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
                 })
         })
         .collect::<Vec<_>>();
+    node_pids_before_activation.push(new_full_node_pid);
     let proposer = world
         .validators
         .operator("validator-0")
@@ -3714,7 +3776,7 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
             "validator-{validator_index} did not expose V2 as the active OCOMP bundle"
         );
     }
-    let node_pids_after_activation = (0..world.validators.size())
+    let mut node_pids_after_activation = (0..world.validators.size())
         .map(|validator_index| {
             world
                 .localnet
@@ -3724,11 +3786,27 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
                 })
         })
         .collect::<Vec<_>>();
+    let mut all_ports = world.validators.committee_ports();
+    all_ports.push(world.validators.http_port(full_node));
+    world
+        .rpc
+        .wait_finalized_checkpoint(&all_ports, activation_height, 120)
+        .expect("committee and keyless FullNode share the exact finalized test-only V2 activation");
+    let (pid, status) = world
+        .localnet
+        .owned_full_node_process(full_node)
+        .expect("observe the same owned FullNode at activation");
+    assert!(status.is_none());
+    node_pids_after_activation.push(pid);
     assert_eq!(
         node_pids_after_activation, node_pids_before_activation,
-        "a validator process restarted at OCOMP activation"
+        "a validator or keyless FullNode restarted at test-only V2 activation"
     );
-    assert_job_pinned_on_every_validator(world, pending_request.intent_id, initial_bundle_hash);
+    assert_pending_v1_at_common_finality(
+        world,
+        initial_bundle_hash,
+        Some((activation_height, successor_bundle_hash)),
+    );
     world
         .ocomp
         .ensure_validator_roles_alive()
@@ -3758,12 +3836,17 @@ fn activation_preserves_nodes_and_pending_v1_pin(world: &mut World) {
         world.state.ocomp_successor_node_pids_before_activation,
         "validator process identities changed at OCOMP activation"
     );
-    let pending_request = world
-        .state
-        .ocomp_job_request
-        .as_ref()
-        .expect("pending V1 JobIntent after activation");
-    assert_job_pinned_on_every_validator(world, pending_request.intent_id, initial_bundle_hash);
+    assert_pending_v1_at_common_finality(
+        world,
+        initial_bundle_hash,
+        Some((
+            world
+                .state
+                .ocomp_successor_activation_height
+                .expect("activation height"),
+            successor_bundle_hash,
+        )),
+    );
     for port in world.validators.committee_ports() {
         assert_eq!(
             world.rpc.active_ocomp_protocol_bundle_hash_on(port),
@@ -3775,6 +3858,72 @@ fn activation_preserves_nodes_and_pending_v1_pin(world: &mut World) {
         .ocomp
         .ensure_validator_roles_alive()
         .expect("all OCOMP roles remain live after successor activation");
+}
+
+fn assert_pending_v1_at_common_finality(
+    world: &mut World,
+    expected_bundle: B256,
+    activation: Option<(u64, B256)>,
+) {
+    assert!(
+        world.state.ocomp_pending_v1_workers_held,
+        "pending-V1 proof requires the deliberately held worker cohort"
+    );
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("canonical V1 request");
+    let target = world
+        .rpc
+        .finalized_result(world.validators.primary_port())
+        .expect("read pending-V1 finalized anchor")
+        .max(activation.map_or(request.finality_recorded_height, |(height, _)| height));
+    let checkpoint = wait_for_common_finalized_checkpoint(world, target, "pending V1 activation");
+    assert!(
+        checkpoint.height < request.deadline_height,
+        "V1 expired before activation proof"
+    );
+    for port in world.validators.committee_ports() {
+        let record = world
+            .rpc
+            .ocomp_job_record_at_on(port, request.intent_id, checkpoint.height)
+            .expect("read V1 at the common finalized activation checkpoint");
+        assert_eq!(
+            record.status,
+            if checkpoint.height < request.open_height {
+                OcompJobStatus::AwaitingFinality
+            } else {
+                OcompJobStatus::VotingOpen
+            },
+            "V1 is not in its height-appropriate pending state"
+        );
+        if let Some((_, bundle)) = activation {
+            assert_eq!(
+                world
+                    .rpc
+                    .active_ocomp_protocol_bundle_hash_at_on(port, checkpoint.height)
+                    .expect("read active bundle at the exact pending-V1 activation checkpoint"),
+                bundle
+            );
+        }
+        assert!(
+            record.terminal.is_none(),
+            "pending V1 already has a terminal outcome"
+        );
+        assert_eq!(record.intent.protocol_bundle_hash, expected_bundle);
+        let finalized = record
+            .finalized
+            .as_ref()
+            .expect("pending job has canonical finality");
+        assert_eq!(finalized.job_id, request.job_id);
+        assert_eq!(finalized.open_height, request.open_height);
+        assert_eq!(finalized.deadline_height, request.deadline_height);
+        assert!(
+            finalized.quorum.is_none(),
+            "pending V1 already has a result quorum"
+        );
+    }
 }
 
 fn registry_authority_from_install(
@@ -3822,35 +3971,35 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .ocomp_successor_bundle_hash
         .expect("V2 activation evidence");
     let ports = world.validators.committee_ports();
-    let finalized_before = world
-        .rpc
-        .finalized(world.validators.primary_port())
-        .expect("finality after V1 completion");
+    let completed_height = world
+        .state
+        .ocomp_vote_accountability
+        .as_ref()
+        .and_then(|accountability| accountability.quorum_height)
+        .expect("canonical V1 quorum height");
+    let completion = wait_for_common_finalized_checkpoint(world, completed_height, "V1 release");
     let retention = ports
         .iter()
         .copied()
         .map(|port| {
+            let (retiring, live, until) = world
+                .rpc
+                .ocomp_retention_state_at_on(port, initial_bundle_hash, completion.height)
+                .expect("read V1 retention at its exact canonical completion checkpoint");
             assert_eq!(
-                world.rpc.retiring_ocomp_protocol_bundle_hash_on(port),
-                Some(initial_bundle_hash),
+                retiring, initial_bundle_hash,
                 "V1 must remain retiring immediately after its final lineage releases"
             );
             assert_eq!(
-                world
-                    .rpc
-                    .ocomp_live_lineage_count_on(port, initial_bundle_hash),
-                Some(0),
+                live, 0,
                 "completed V1 JobIntent must release its Registry lineage"
             );
-            world
-                .rpc
-                .ocomp_retention_until_on(port, initial_bundle_hash)
-                .expect("V1 retention deadline")
+            until
         })
         .collect::<Vec<_>>();
     assert!(retention.iter().all(|height| *height == retention[0]));
     assert!(
-        retention[0] > finalized_before,
+        retention[0] > completion.height,
         "V1 retired before its deterministic retention interval elapsed"
     );
     world.state.ocomp_predecessor_retention_until = Some(retention[0]);
@@ -3902,6 +4051,18 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         .ensure_successor_workers_ready()
         .expect("V2 workers survive the post-activation restart overlap");
 
+    // Hold before submitting the V2 Tribute: it may trigger the job before
+    // the explicit processing-time jump. The restart inventory keeps it held.
+    for validator_index in 0..4_u8 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopWorker {
+                validator_index,
+                worker_ordinal: 1,
+            })
+            .expect("hold V2 workers before the new Tribute");
+    }
+
     let offerer = world
         .validators
         .by_name("validator-1")
@@ -3924,16 +4085,16 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
     let processing_target =
         first_protocol_cycle_at_or_after(world, schedule.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, processing_target);
-    world
-        .ocomp
-        .ensure_successor_workers_ready()
-        .expect("V2 workers survive the processing-time restart overlap");
+    // Request discovery and the held-worker barrier consume the same existing
+    // V2 artifact budget; do not reset it when the cohort is released.
+    let completion_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
 
     let from_height = world
         .state
         .ocomp_successor_activation_height
         .expect("V2 activation height");
-    let request_deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
+    let request_deadline = completion_deadline;
     let request = loop {
         let observed = ports
             .iter()
@@ -3965,8 +4126,24 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
     assert_eq!(request.worldwide_day, successor_wwd_value);
     assert_job_pinned_on_every_validator(world, request.intent_id, successor_bundle_hash);
 
-    let completion_deadline =
-        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
+    wait_case_one_worker_release(world, &request, successor_bundle_hash, completion_deadline)
+        .expect("all four current V2 node incarnations dispatched the exact exported job");
+    arm_case_one_artifact_phase(
+        world,
+        successor_bundle_hash,
+        completion_deadline
+            .checked_duration_since(Instant::now())
+            .expect("V2 artifact budget expired before worker release"),
+    )
+    .expect("arm exact V2 node incarnations before releasing workers");
+    world
+        .ocomp
+        .restart_worker_cohort(&[(0, 1), (1, 1), (2, 1), (3, 1)])
+        .expect("release all four V2 workers before the shared readiness wait");
+    world
+        .ocomp
+        .ensure_successor_workers_ready()
+        .expect("V2 workers reconnect after the held processing-time restart");
     let completed = loop {
         let records = ports
             .iter()
@@ -3998,16 +4175,82 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         );
         sleep(Duration::from_millis(500));
     };
-    let successor_job_id = completed
-        .finalized
+    assert!(
+        completed.finalized.as_ref().is_some(),
+        "completed V2 record lacks finality"
+    );
+    verify_case_one_completed_artifacts(world, request.intent_id, successor_bundle_hash)
+        .expect("V2 job has four exact computations and canonical-voter submission evidence");
+    let binding = completed
+        .terminal
         .as_ref()
-        .expect("completed V2 record has final result")
-        .job_id;
-    world
-        .ocomp
-        .verify_completed_job_artifacts_for_bundle(successor_job_id, successor_bundle_hash)
-        .expect("V2 job leaves authenticated artifacts only in the V2 worker inbox");
+        .and_then(|terminal| terminal.completed_binding.as_ref())
+        .expect("test-only V2 has an exact canonical completed binding");
+    verify_successor_full_node_result(world, binding.job_id, binding.result_digest);
     world.state.ocomp_successor_job_request = Some(request);
+}
+
+fn verify_successor_full_node_result(world: &mut World, job_id: B256, expected_digest: B256) {
+    let index = world.validators.joiner_index();
+    let expected_pid = *world
+        .state
+        .ocomp_successor_node_pids_after_activation
+        .last()
+        .expect("FullNode post-preload incarnation");
+    let path = full_node_local_result_path(world, job_id);
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
+    loop {
+        let (pid, status) = world
+            .localnet
+            .owned_full_node_process(index)
+            .expect("observe exact FullNode during test-only V2 result verification");
+        assert_eq!(pid, expected_pid);
+        assert!(
+            status.is_none(),
+            "FullNode exited before verifying test-only V2"
+        );
+        world
+            .ocomp
+            .ensure_keyless_full_node_roles_alive(u8::try_from(index).unwrap())
+            .expect("FullNode compute clients remain alive");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let result = LysisResultV1::decode_canonical(&bytes, &poc_schema_limits())
+                    .expect("decode FullNode's independently computed test-only V2 result");
+                assert_eq!(result.job_id, job_id);
+                assert_eq!(
+                    result.result_digest(&poc_schema_limits()).unwrap(),
+                    expected_digest
+                );
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("cannot read FullNode result: {error}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "FullNode did not verify the exact test-only V2 result"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let mut ports = world.validators.committee_ports();
+    ports.push(world.validators.http_port(index));
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("post-result target advances beyond every expected live node");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 120)
+        .expect(
+            "all five nodes continue at the same exact finalized checkpoint after V2 verification",
+        );
+    assert!(!dynamic_vote_submission_path(world, index, job_id)
+        .try_exists()
+        .expect("observe FullNode's absence of vote submissions"));
+    let (pid, status) = world.localnet.owned_full_node_process(index).unwrap();
+    assert_eq!(pid, expected_pid);
+    assert!(status.is_none());
 }
 
 #[then("the released V1 authority retires after its retention deadline")]
@@ -4112,6 +4355,229 @@ fn production_ocomp_domains_process_job_intent(world: &mut World) {
         .ocomp
         .ensure_validator_roles_alive()
         .expect("production OCOMP domains remain alive while processing the JobIntent");
+    if world.state.ocomp_pending_v1_workers_held {
+        release_pending_v1_workers_after_exact_exports(world);
+    }
+}
+
+fn release_pending_v1_workers_after_exact_exports(world: &mut World) {
+    let timeout = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("held V1 request");
+    let install = world.ocomp.canonical_fork_install().expect("V1 authority");
+    let activation = match (
+        world.state.ocomp_successor_activation_height,
+        world.state.ocomp_successor_bundle_hash,
+    ) {
+        (Some(height), Some(bundle)) => Some((height.max(request.open_height), bundle)),
+        (None, None) => None,
+        _ => panic!("incomplete test-only V2 activation evidence before worker release"),
+    };
+    assert_pending_v1_at_common_finality(
+        world,
+        install.request_profile.protocol_bundle_hash,
+        activation,
+    );
+    wait_case_one_worker_release(
+        world,
+        &request,
+        install.request_profile.protocol_bundle_hash,
+        timeout,
+    )
+    .expect("all four current V1 node incarnations dispatched the exact exported job");
+    arm_case_one_artifact_phase(
+        world,
+        install.request_profile.protocol_bundle_hash,
+        Duration::from_secs(600),
+    )
+    .expect("arm exact V1 incarnations before releasing workers");
+    world
+        .ocomp
+        .restart_worker_cohort(&[(0, 0), (1, 0), (2, 0), (3, 0)])
+        .expect("release all held V1 workers before waiting for individual readiness");
+    world.state.ocomp_pending_v1_workers_held = false;
+}
+
+fn case_one_compute_started_line(text: &str, job_id: B256) -> Option<&str> {
+    let expected = format!("embedded OCOMP computation started job_id={job_id:#x}");
+    text.lines().find(|line| {
+        line.split_once(" INFO ")
+            .and_then(|(_, message)| message.split_once("outbe_chain::ocomp_exex: "))
+            .is_some_and(|(_, message)| message.trim_end() == expected)
+    })
+}
+
+/// Keep workers held until every current node has consumed its exact export
+/// ACK and dispatched computation. Completed is not a substitute: a validator
+/// first observing Completed need not start its own computation.
+fn wait_case_one_worker_release(
+    world: &mut World,
+    request: &crate::world::rpc::OcompPublicJobRequestV1,
+    bundle_hash: B256,
+    deadline: Instant,
+) -> eyre::Result<()> {
+    let ports = world.validators.committee_ports();
+    ensure!(
+        ports.len() == 4 && world.validators.size() == 4,
+        "worker release requires all four founders"
+    );
+    ensure!(Instant::now() < deadline, "worker release budget expired");
+    world.localnet.ensure_committee_alive()?;
+    let pids = (0..4)
+        .map(|index| {
+            let (pid, status) = world.localnet.owned_validator_process(index)?;
+            ensure!(
+                status.is_none(),
+                "validator-{index} exited before worker release"
+            );
+            // Validate all launch captures before entering any polling wait. The
+            // capture predates spawn, so an already-emitted marker is not lost.
+            world.localnet.node_launch_log(index, pid)?;
+            Ok(pid)
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    let limits = poc_schema_limits();
+    let checkpoint = world.rpc.checkpoint_at(ports[0], request.request_height)?;
+    ensure!(
+        checkpoint.block_hash == request.request_block_hash,
+        "worker release request checkpoint changed"
+    );
+    let mut bundles = Vec::new();
+    for (index, &port) in ports.iter().enumerate() {
+        ensure!(
+            world.rpc.checkpoint_at(port, request.request_height)? == checkpoint,
+            "validator-{index} disagrees on the request checkpoint"
+        );
+        let path = world
+            .ocomp
+            .domain_root(u8::try_from(index)?)?
+            .join("protocol-bundles-v1")
+            .join(format!("{}.ocb1", hex::encode(bundle_hash.as_slice())));
+        let bundle = outbe_ocomp_protocol::profile::ProtocolBundleV1::decode_canonical(
+            &std::fs::read(path)?,
+            &limits,
+        )?;
+        ensure!(
+            bundle.protocol_bundle_hash(&limits)? == bundle_hash,
+            "validator-{index} has the wrong worker release bundle"
+        );
+        bundles.push(bundle);
+    }
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "four exported compute dispatches exceeded the release budget"
+        );
+        world.ocomp.ensure_validator_roles_alive()?;
+        for (index, &expected_pid) in pids.iter().enumerate() {
+            let (pid, status) = world.localnet.owned_validator_process(index)?;
+            ensure!(
+                pid == expected_pid && status.is_none(),
+                "validator-{index} incarnation changed or exited during worker release"
+            );
+        }
+        let heights = ports
+            .iter()
+            .map(|&port| world.rpc.finalized_result(port))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        ensure!(
+            heights
+                .iter()
+                .all(|height| *height < request.deadline_height),
+            "job deadline reached before all four workers could be released"
+        );
+        let height = *heights.iter().min().unwrap();
+        let common = world.rpc.checkpoint_at(ports[0], height)?;
+        for &port in &ports[1..] {
+            ensure!(
+                world.rpc.checkpoint_at(port, height)? == common,
+                "worker release peers disagree on exact finalized hash/root"
+            );
+        }
+        if height >= request.open_height {
+            let mut observations = Vec::new();
+            let mut expected_record = None;
+            for (index, &port) in ports.iter().enumerate() {
+                let record = world
+                    .rpc
+                    .ocomp_job_record_at_on(port, request.intent_id, height)?;
+                ensure!(
+                    record.status == OcompJobStatus::VotingOpen
+                        && record.intent.protocol_bundle_hash == bundle_hash,
+                    "held worker job changed bundle or is no longer VotingOpen"
+                );
+                let finalized = record
+                    .finalized
+                    .as_ref()
+                    .ok_or_else(|| eyre!("held job lacks finality"))?;
+                ensure!(
+                    finalized.job_id == request.job_id
+                        && finalized.open_height == request.open_height
+                        && finalized.deadline_height == request.deadline_height
+                        && finalized.finality_recorded_height == request.finality_recorded_height,
+                    "held worker job changed its canonical identity or window"
+                );
+                if let Some(expected) = &expected_record {
+                    ensure!(
+                        &record == expected,
+                        "held worker job differs across finalized peers"
+                    );
+                }
+                let export = crate::internal::ocomp_worker_outage::observe_export(
+                    world.ocomp.domain_root(u8::try_from(index)?)?,
+                    u8::try_from(index)?,
+                    &record,
+                    checkpoint,
+                    &bundles[index],
+                )?;
+                expected_record = Some(record);
+                let text = world.localnet.node_launch_log(index, pids[index])?;
+                if let (Some(export), Some(marker)) =
+                    (export, case_one_compute_started_line(&text, request.job_id))
+                {
+                    observations.push(serde_json::json!({
+                        "validator_index": index, "node_pid": pids[index],
+                        "export": export, "compute_started": marker,
+                    }));
+                }
+            }
+            if observations.len() == 4 {
+                // Recheck after filesystem/RPC observation, not merely before
+                // it: no stale live identity or expired window authorizes work.
+                for (index, &port) in ports.iter().enumerate() {
+                    let (pid, status) = world.localnet.owned_validator_process(index)?;
+                    ensure!(
+                        pid == pids[index] && status.is_none(),
+                        "worker release lost its live node owner"
+                    );
+                    ensure!(
+                        world.rpc.finalized_result(port)? < request.deadline_height,
+                        "job deadline crossed during worker release observation"
+                    );
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "worker release budget expired during observation"
+                );
+                eprintln!(
+                    "OCOMP_WORKER_RELEASE_V1 {}",
+                    serde_json::json!({
+                        "checkpoint": {
+                            "height": common.height,
+                            "block_hash": common.block_hash,
+                            "state_root": common.state_root,
+                        }, "job_id": request.job_id,
+                        "bundle_hash": bundle_hash, "observations": observations,
+                    })
+                );
+                return Ok(());
+            }
+        }
+        sleep(Duration::from_millis(100));
+    }
 }
 
 #[when("validator 2 prepares one valid vote without broadcasting it")]
@@ -5414,20 +5880,148 @@ fn three_validators_finalize_before_late_compute(world: &mut World) {
 
 #[when("validator 3 OCOMP worker restarts after the finalized quorum")]
 fn restart_late_worker_after_quorum(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("canonical activation");
+    let job_id = activation.job_id;
+    let canonical_result = std::fs::read(local_result_path(world, 0, job_id))
+        .expect("read the quorum participant's canonical result");
+    let result = LysisResultV1::decode_canonical(&canonical_result, &poc_schema_limits())
+        .expect("decode the quorum participant's canonical result");
+    assert_eq!(result.job_id, job_id);
+    assert_eq!(
+        result.result_digest(&poc_schema_limits()).unwrap(),
+        activation.result_digest
+    );
+    assert_eq!(
+        world
+            .state
+            .ocomp_vote_accountability
+            .as_ref()
+            .unwrap()
+            .quorum_result_digest,
+        Some(activation.result_digest)
+    );
+    let (cas, reference) = late_validator_result_cas(world, &canonical_result);
+    assert!(
+        read_pending_late_result(&cas, &reference).is_none(),
+        "held worker must not have already produced this job's exact result"
+    );
+    assert!(!local_result_path(world, 3, job_id)
+        .try_exists()
+        .expect("observe held validator's local result path"));
+    let node_dir = world.validators.data_dir(3);
+    let node_log = crate::internal::launch_log::LaunchLog::checkpoint(
+        &node_dir
+            .parent()
+            .expect("validator slot directory")
+            .join("node.log"),
+    )
+    .expect("arm the existing node log before the late worker starts");
+    let (node_pid, status) = world
+        .localnet
+        .owned_validator_process(3)
+        .expect("capture exact live validator-3 incarnation");
+    assert!(status.is_none());
     world
         .ocomp
         .restart_worker(3, 0)
         .expect("restart validator-3 Worker after finalized quorum");
+    let worker_pid = late_validator_worker_pid(world);
+    world.state.ocomp_late_validator_result =
+        Some(crate::world::state::LateValidatorResultObservation {
+            node_pid,
+            worker_pid,
+            node_log,
+            canonical_result,
+        });
 }
 
-#[then("validator 3 accepts its late local result without shutting down")]
+fn late_validator_worker_pid(world: &World) -> u32 {
+    let workers = world
+        .ocomp
+        .process_records()
+        .iter()
+        .filter(|record| {
+            record.validator_index == Some(3)
+                && record.role == OcompProcessRole::Worker
+                && record.worker_ordinal == Some(0)
+                && record.stopped_at_millis.is_none()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        workers.len(),
+        1,
+        "late worker must have one exact owned incarnation"
+    );
+    workers[0].pid
+}
+
+fn late_validator_result_cas(
+    world: &World,
+    canonical_result: &[u8],
+) -> (
+    outbe_ocomp::cas::FilesystemCasReader,
+    outbe_ocomp_protocol::CasObjectRefV1,
+) {
+    let encoded_bytes = u64::try_from(canonical_result.len()).expect("canonical result length");
+    let cas = outbe_ocomp::cas::FilesystemCasReader::open(
+        world
+            .ocomp
+            .domain_root(3)
+            .expect("validator-3 domain")
+            .join("cas-v1"),
+        outbe_ocomp::cas::CasLimits {
+            // This observer reads one exact expected object, not a job-data quota.
+            max_object_bytes: encoded_bytes,
+            max_total_bytes: u64::MAX,
+        },
+    )
+    .expect("open the held validator's existing CAS read-only");
+    let reference = outbe_ocomp_protocol::CasObjectRefV1 {
+        transport_digest: alloy_primitives::keccak256(canonical_result),
+        encoded_bytes,
+        expected_ocb1_kind: None,
+    };
+    (cas, reference)
+}
+
+fn read_pending_late_result(
+    cas: &outbe_ocomp::cas::FilesystemCasReader,
+    reference: &outbe_ocomp_protocol::CasObjectRefV1,
+) -> Option<Vec<u8>> {
+    match cas.read_verified(reference) {
+        Ok(object) => Some(object.bytes().to_vec()),
+        Err(outbe_ocomp::cas::CasError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            None
+        }
+        Err(error) => panic!("late result CAS observation failed: {error}"),
+    }
+}
+
+#[then("validator 3 safely handles its correct late result without changing the canonical outcome or votes")]
 fn late_local_result_is_not_fatal(world: &mut World) {
-    let job_id = world
+    let activation = world
         .state
         .ocomp_activation
-        .as_ref()
-        .expect("finalized OCOMP activation")
-        .job_id;
+        .clone()
+        .expect("finalized OCOMP activation");
+    let job_id = activation.job_id;
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("canonical request");
+    let mut observation = world
+        .state
+        .ocomp_late_validator_result
+        .take()
+        .expect("late result observer was armed before restarting the worker");
+    let (cas, reference) = late_validator_result_cas(world, &observation.canonical_result);
     let result_path = local_result_path(world, 3, job_id);
     let primary = world.validators.primary_port();
     let finalized_before = world
@@ -5436,24 +6030,151 @@ fn late_local_result_is_not_fatal(world: &mut World) {
         .expect("finality captured before releasing validator-3 Worker");
     let timeout = Instant::now() + Duration::from_secs(600);
 
+    let disposition;
     loop {
         world
             .localnet
             .ensure_committee_alive()
             .expect("late local OCOMP result must not shut down validator-3");
-        let finalized = world
-            .rpc
-            .finalized_result(primary)
-            .expect("observe finality while releasing held OCOMP result");
-        if result_path.is_file() && finalized >= finalized_before.saturating_add(3) {
-            break;
+        let (pid, status) = world
+            .localnet
+            .owned_validator_process(3)
+            .expect("observe exact validator-3 incarnation");
+        assert_eq!(
+            pid, observation.node_pid,
+            "validator-3 must not restart to hide failure"
+        );
+        assert!(status.is_none());
+        world
+            .ocomp
+            .ensure_worker_alive(3, 0)
+            .expect("late worker remains alive");
+        assert_eq!(late_validator_worker_pid(world), observation.worker_pid);
+        let log = observation
+            .node_log
+            .read()
+            .expect("read exact post-release node log");
+        let discarded = log.lines().any(|line| {
+            line.contains("ignored late OCOMP result before local persistence")
+                && line
+                    .split_ascii_whitespace()
+                    .any(|field| field == format!("job_id={job_id}"))
+                && line
+                    .split_ascii_whitespace()
+                    .any(|field| field == "reason=\"checkpoint_pruned\"")
+        });
+        let persisted = match std::fs::read(&result_path) {
+            Ok(bytes) => {
+                assert_eq!(
+                    bytes, observation.canonical_result,
+                    "late local result is not canonical"
+                );
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => panic!("cannot observe late local result: {error}"),
+        };
+        if let Some(bytes) = read_pending_late_result(&cas, &reference) {
+            assert_eq!(
+                bytes, observation.canonical_result,
+                "late compute output differs from quorum"
+            );
+            if persisted || discarded {
+                disposition = if persisted {
+                    "persisted"
+                } else {
+                    "checkpoint_pruned"
+                };
+                break;
+            }
         }
         assert!(
             Instant::now() < timeout,
-            "validator-3 did not persist its late local result while finality continued"
+            "validator-3 did not produce and safely handle the exact late result"
         );
         sleep(Duration::from_millis(250));
     }
+
+    // Require progress after observing the late disposition, not progress that
+    // happened while the worker was still stopped.
+    let target = world
+        .rpc
+        .finalized_result(primary)
+        .expect("read finality after the late result disposition")
+        .max(finalized_before)
+        .checked_add(3)
+        .expect("post-result finality target");
+    let checkpoint = wait_for_common_finalized_checkpoint(world, target, "late validator result");
+    let baseline_accountability = world
+        .state
+        .ocomp_vote_accountability
+        .as_ref()
+        .expect("pre-release canonical votes");
+    for port in world.validators.committee_ports() {
+        let before = world
+            .rpc
+            .ocomp_job_record_at_on(port, request.intent_id, finalized_before)
+            .expect("read completed job at the pre-release finalized block");
+        let after = world
+            .rpc
+            .ocomp_job_record_at_on(port, request.intent_id, checkpoint.height)
+            .expect("read completed job at the post-result common finalized block");
+        assert_eq!(before.status, OcompJobStatus::Completed);
+        assert_eq!(
+            after, before,
+            "late compute changed the canonical completed job"
+        );
+        let accountability = world
+            .rpc
+            .ocomp_vote_accountability_at_on(port, job_id, checkpoint.height)
+            .expect("read post-result votes at the common finalized block");
+        assert!(completed_accountability_is_preserved(
+            baseline_accountability,
+            &accountability
+        ));
+        assert_eq!(
+            accountability.slot_validator_indexes,
+            baseline_accountability.slot_validator_indexes
+        );
+        assert_eq!(
+            accountability.slot_first_signatures,
+            baseline_accountability.slot_first_signatures
+        );
+        if checkpoint.height >= request.deadline_height {
+            dynamic_deadline_validate_accountability(
+                &accountability,
+                baseline_accountability,
+                &[0, 1, 2],
+                request.deadline_height,
+                (
+                    baseline_accountability.member_count,
+                    baseline_accountability.quorum_threshold,
+                ),
+            )
+            .expect("natural deadline closure preserves exactly the original votes");
+            assert_eq!(accountability.timely_bitmap, Some(vec![0x07]));
+            assert_eq!(accountability.matching_bitmap, Some(vec![0x07]));
+            assert_eq!(accountability.missing_bitmap, Some(vec![0x08]));
+            assert_eq!(accountability.divergent_bitmap, Some(vec![0x00]));
+            assert_eq!(accountability.equivocation_bitmap, Some(vec![0x00]));
+        } else {
+            assert_eq!(&accountability, baseline_accountability);
+        }
+    }
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("committee remains live after result handling");
+    world
+        .ocomp
+        .ensure_worker_alive(3, 0)
+        .expect("late worker remains live after finalized progress");
+    assert_eq!(late_validator_worker_pid(world), observation.worker_pid);
+    let (pid, status) = world.localnet.owned_validator_process(3).unwrap();
+    assert_eq!(pid, observation.node_pid);
+    assert!(status.is_none());
+    eprintln!("E2E_OCOMP_LATE_RESULT job_id={job_id} result_digest={} disposition={disposition} finalized_height={}",
+        activation.result_digest, checkpoint.height);
 
     assert!(
         !world
@@ -6751,18 +7472,18 @@ fn four_domains_use_production_basedir(world: &mut World) {
         .expect("all release OCOMP roles use the scenario basedir contract");
 }
 
-#[when("validator 0 SnapshotExporter restarts from a prepared-only crash state")]
-fn snapshot_exporter_recovers_prepared_only_crash(world: &mut World) {
+#[when("validator 0 SnapshotExporter restarts with its committed export intact")]
+fn snapshot_exporter_preserves_committed_export(world: &mut World) {
     let job_id = world
         .state
         .ocomp_activation
         .as_ref()
-        .expect("completed activation before prepared-only restart")
+        .expect("completed activation before committed exporter restart")
         .job_id;
     world
         .ocomp
-        .verify_prepared_only_exporter_restart(0, job_id)
-        .expect("SnapshotExporter exact-replays a prepared-only export");
+        .verify_committed_exporter_restart(0, job_id)
+        .expect("SnapshotExporter preserves its exact acknowledged export across restart");
 }
 
 #[then("each OCOMP domain owns one authenticated production worker")]
@@ -6792,15 +7513,197 @@ fn four_domains_own_authenticated_workers(world: &mut World) {
 
 #[then("each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent")]
 fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
-    let activation = world
+    let intent_id = world
         .state
-        .ocomp_activation
+        .ocomp_job_request
         .as_ref()
-        .expect("finalized public Lysis activation");
+        .expect("V1 JobIntent")
+        .intent_id;
+    let bundle_hash = world
+        .ocomp
+        .canonical_fork_install()
+        .expect("V1 fork authority")
+        .request_profile
+        .protocol_bundle_hash;
+    verify_case_one_completed_artifacts(world, intent_id, bundle_hash)
+        .expect("V1 job has four exact computations and canonical-voter submission evidence");
+}
+
+/// Parent orchestration calls this for V1 immediately before releasing held
+/// V1 workers, and for V2 after its last node restart but BEFORE V2 work is
+/// released. Do not insert a post-hoc call after the processing-time jump.
+pub(crate) fn arm_case_one_artifact_phase(
+    world: &mut World,
+    bundle_hash: B256,
+    budget: Duration,
+) -> eyre::Result<()> {
+    world.localnet.ensure_committee_alive()?;
+    ensure!(
+        world.validators.size() == 4,
+        "artifact phase requires the four founders"
+    );
+    let pids = (0..4_u8)
+        .map(|index| {
+            world
+                .localnet
+                .validator_pid(usize::from(index))
+                .map(|pid| (index, pid))
+        })
+        .collect::<eyre::Result<std::collections::BTreeMap<_, _>>>()?;
     world
         .ocomp
-        .verify_completed_job_artifacts(activation.job_id)
-        .expect("verify every pinned validator's completed production job footprint");
+        .arm_completed_artifact_phase(bundle_hash, pids, budget)
+}
+
+fn verify_case_one_completed_artifacts(
+    world: &mut World,
+    intent_id: B256,
+    bundle_hash: B256,
+) -> eyre::Result<()> {
+    world.localnet.ensure_committee_alive()?;
+    let ports = world.validators.committee_ports();
+    ensure!(
+        ports.len() == 4,
+        "artifact proof omitted an expected validator"
+    );
+    let height = ports
+        .iter()
+        .map(|&port| world.rpc.finalized_result(port))
+        .collect::<eyre::Result<Vec<_>>>()?
+        .into_iter()
+        .min()
+        .ok_or_else(|| eyre!("artifact proof has no finalized checkpoint"))?;
+    let checkpoint = world.rpc.checkpoint_at(ports[0], height)?;
+    let record = world
+        .rpc
+        .ocomp_job_record_at_on(ports[0], intent_id, height)?;
+    ensure!(
+        record.status == OcompJobStatus::Completed,
+        "artifact job is not Completed"
+    );
+    ensure!(
+        record.intent.protocol_bundle_hash == bundle_hash,
+        "artifact job changed bundle"
+    );
+    let finalized = record
+        .finalized
+        .as_ref()
+        .ok_or_else(|| eyre!("artifact job lacks finality"))?;
+    let job_id = finalized.job_id;
+    let binding = record
+        .terminal
+        .as_ref()
+        .and_then(|terminal| terminal.completed_binding.as_ref())
+        .ok_or_else(|| eyre!("artifact job lacks canonical completed binding"))?;
+    let accountability = world
+        .rpc
+        .ocomp_vote_accountability_at_on(ports[0], job_id, height)?;
+    ensure!(
+        accountability.job_id == job_id
+            && accountability.member_count == 4
+            && accountability.quorum_threshold == 3
+            && accountability.quorum_height == Some(binding.quorum_height)
+            && accountability.quorum_result_digest == Some(binding.result_digest)
+            && accountability
+                .quorum_signer_bitmap
+                .as_ref()
+                .is_some_and(|bitmap| {
+                    bitmap.iter().map(|byte| byte.count_ones()).sum::<u32>() == 3
+                })
+            && binding.quorum_height <= height,
+        "artifact quorum differs from canonical completed authority"
+    );
+    for &port in &ports {
+        ensure!(
+            world.rpc.checkpoint_at(port, height)? == checkpoint,
+            "artifact checkpoint differs"
+        );
+        ensure!(
+            world.rpc.ocomp_job_record_at_on(port, intent_id, height)? == record,
+            "artifact job differs at shared finalized checkpoint"
+        );
+        ensure!(
+            world
+                .rpc
+                .ocomp_vote_accountability_at_on(port, job_id, height)?
+                == accountability,
+            "artifact voters differ at shared finalized checkpoint"
+        );
+    }
+    let quorum_checkpoint = world.rpc.checkpoint_at(ports[0], binding.quorum_height)?;
+    let transactions = world
+        .rpc
+        .finalized_ocomp_result_vote_transactions_on(
+            ports[0],
+            binding.quorum_height,
+            binding.quorum_height,
+        )
+        .ok_or_else(|| eyre!("cannot enumerate canonical quorum transactions"))?;
+    let mut canonical_result = None;
+    for transaction in transactions
+        .iter()
+        .filter(|transaction| transaction.success)
+    {
+        ensure!(
+            transaction.block_number == binding.quorum_height
+                && transaction.block_hash == quorum_checkpoint.block_hash,
+            "quorum transaction has a foreign canonical block"
+        );
+        let bytes = world
+            .rpc
+            .ocomp_result_vote_bytes_on(ports[0], transaction.transaction_hash)
+            .ok_or_else(|| eyre!("cannot read canonical quorum vote"))?;
+        let vote = ResultVoteV1::decode_canonical(&bytes, &poc_schema_limits())?;
+        if vote.job_id != job_id {
+            continue;
+        }
+        ensure!(
+            vote.protocol_bundle_hash == bundle_hash
+                && vote.result_validator_set_epoch == accountability.result_validator_set_epoch
+                && vote.result_committee_set_hash == accountability.result_committee_set_hash
+                && vote.result_ocomp_binding_hash == accountability.result_ocomp_binding_hash,
+            "quorum vote has a foreign job binding"
+        );
+        if vote.result.result_digest(&poc_schema_limits())? != binding.result_digest {
+            continue;
+        }
+        if let Some(previous) = &canonical_result {
+            ensure!(previous == &vote.result, "canonical quorum results differ");
+        }
+        canonical_result = Some(vote.result);
+    }
+    let result =
+        canonical_result.ok_or_else(|| eyre!("canonical completed result is unavailable"))?;
+    ensure!(
+        result.job_id == job_id,
+        "canonical result belongs to another job"
+    );
+    let proof = crate::world::ocomp::OcompCanonicalArtifactProof {
+        checkpoint,
+        bundle_hash,
+        result,
+        voters: accountability.slot_validator_indexes,
+    };
+    loop {
+        world.localnet.ensure_committee_alive()?;
+        let pids = (0..4_u8)
+            .map(|index| {
+                world
+                    .localnet
+                    .validator_pid(usize::from(index))
+                    .map(|pid| (index, pid))
+            })
+            .collect::<eyre::Result<std::collections::BTreeMap<_, _>>>()?;
+        if let Some(evidence) = world
+            .ocomp
+            .verify_completed_artifacts_canonical(&proof, &pids)?
+        {
+            world.localnet.ensure_committee_alive()?;
+            eprintln!("OCOMP_ARTIFACT_PROOF_V1 {evidence}");
+            return Ok(());
+        }
+        sleep(Duration::from_millis(250));
+    }
 }
 
 #[when("validator 0 OCOMP worker is stopped through the typed fault control")]
@@ -7022,6 +7925,12 @@ fn late_follower_replays_ocomp_history(world: &mut World) {
         .as_ref()
         .expect("finalized activation before historical replay");
     world
+        .ocomp
+        .stage_cold_history_follower_bundles(OCOMP_TRACE_FOLLOWER_SLOT)
+        .expect(
+            "install only validated public bundles before cold historical follower provisioning",
+        );
+    world
         .localnet
         .provision_full_node_node_host(OCOMP_TRACE_FOLLOWER_SLOT)
         .expect("provision late historical-replay FullNode NodeHost");
@@ -7181,6 +8090,31 @@ mod tests {
     use crate::world::rpc::OcompPublicVoteAccountabilityV1;
     use alloy_primitives::{Address, Bytes, B256, U256};
     use alloy_sol_types::SolEvent;
+
+    #[test]
+    fn case_one_dispatch_marker_requires_exact_job_and_production_event() {
+        let job = B256::repeat_byte(0x31);
+        let valid = format!(
+            "2026-09-05T19:46:15.099744Z  INFO exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex: embedded OCOMP computation started job_id={job:#x}"
+        );
+        assert_eq!(
+            super::case_one_compute_started_line(&valid, job),
+            Some(valid.as_str())
+        );
+        assert!(super::case_one_compute_started_line(&valid, B256::repeat_byte(0x32)).is_none());
+        for invalid in [
+            valid.replace(" INFO ", " WARN "),
+            valid.replace("outbe_chain::ocomp_exex: ", "other_module: "),
+            valid.replace("computation started", "local result arrived"),
+            format!("{valid}0"),
+            format!("{valid} reason=\"checkpoint_pruned\""),
+        ] {
+            assert!(
+                super::case_one_compute_started_line(&invalid, job).is_none(),
+                "{invalid}"
+            );
+        }
+    }
 
     fn completed_accountability() -> OcompPublicVoteAccountabilityV1 {
         OcompPublicVoteAccountabilityV1 {

@@ -62,6 +62,16 @@ pub(crate) struct DowntimeState {
     pub event: Option<DowntimeFelonyEvent>,
 }
 
+/// Observations armed before restarting the held validator worker.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Debug)]
+pub(crate) struct LateValidatorResultObservation {
+    pub node_pid: u32,
+    pub worker_pid: u32,
+    pub node_log: crate::internal::launch_log::LaunchLog,
+    pub canonical_result: Vec<u8>,
+}
+
 /// Owned replacement processes and their launch-scoped observations.
 #[derive(Debug)]
 pub(crate) struct RestartIncarnation {
@@ -427,9 +437,12 @@ pub struct FixtureState {
         Option<crate::world::projection::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) ocomp_late_validator_result: Option<LateValidatorResultObservation>,
     /// Immutable activation height loaded from the scenario's prepared genesis
     /// install. Fresh Measurement activates at block 1.
     pub ocomp_activation_height: Option<u64>,
+    pub ocomp_pending_v1_workers_held: bool,
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
@@ -653,7 +666,10 @@ impl Default for FixtureState {
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,
+            #[cfg(feature = "ocomp-integration")]
+            ocomp_late_validator_result: None,
             ocomp_activation_height: None,
+            ocomp_pending_v1_workers_held: false,
             ocomp_job_request: None,
             ocomp_successor_bundle_hash: None,
             ocomp_successor_activation_height: None,

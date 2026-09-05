@@ -20,6 +20,8 @@ Feature: RocksDB storage through the complete OCOMP path
     And every validator serves the same independently verified compressed tribute
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
+    # Hold workers during processing until all four current nodes have accepted
+    # their exact exports and dispatched computation, then release them together.
     When the committee logical clock reaches the fresh capacity processing time
     Then the same fresh capacity day advances through WAITING and READY
     And Metadosis creates one finalized JobIntent from that public Tribute
@@ -28,6 +30,6 @@ Feature: RocksDB storage through the complete OCOMP path
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
-    When validator 0 SnapshotExporter restarts from a prepared-only crash state
+    When validator 0 SnapshotExporter restarts with its committed export intact
     And all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical

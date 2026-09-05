@@ -221,6 +221,31 @@ impl Localnet {
         Ok(status)
     }
 
+    /// One pre-proposal node-only restart: retain the enclave, NodeHost identity,
+    /// datadir and OCOMP domain. The caller stops/restores the external clients
+    /// and proves finalized recovery before proposing the successor.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn restart_keyless_full_node_preserving_enclave(
+        &mut self,
+        index: usize,
+        expected_pid: u32,
+        upstream_slot: usize,
+    ) -> Result<(std::process::ExitStatus, u32)> {
+        let enclave_pid = self.live_enclave_pid(index)?;
+        let status = self.stop_joiner_full_node_owned(index, expected_pid)?;
+        self.launch_dcap_full_node(&Self::joiner_full_node_name(index), index, upstream_slot)?;
+        eyre::ensure!(
+            self.live_enclave_pid(index)? == enclave_pid,
+            "FullNode enclave incarnation changed during node-only preload"
+        );
+        let (pid, exit) = self.owned_full_node_process(index)?;
+        eyre::ensure!(
+            exit.is_none(),
+            "FullNode preload replacement exited: {exit:?}"
+        );
+        Ok((status, pid))
+    }
+
     /// Exit state for an owned role-neutral FullNode. `None` means the process
     /// was never registered under the canonical key and is not exit evidence.
     pub fn joiner_full_node_exit_status(&mut self, index: usize) -> Option<bool> {
@@ -1037,12 +1062,7 @@ impl Localnet {
             &format!("http://127.0.0.1:{primary}"),
         )?;
         let mut log = LaunchLog::arm(&vd.join("node.log"))?;
-        self.launch_certified_follower_with_args(
-            &name,
-            index,
-            follower_args,
-            super::committee::validator_protocol_environment(&self.start_opts),
-        )?;
+        self.launch_certified_follower_with_args(&name, index, follower_args)?;
         let result = (|| -> Result<()> {
             let deadline = Instant::now() + Duration::from_secs(240);
             let mut target = None;
@@ -1170,9 +1190,6 @@ impl Localnet {
         let vd = self.cfg.validator_dir(index);
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216").args(&a);
-        for (name, value) in super::committee::validator_protocol_environment(&self.start_opts) {
-            cmd.env(name, value);
-        }
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{index}"), index, &vd, cmd)?;
         self.validator_argv.insert(index, a);
@@ -1459,10 +1476,12 @@ mod tests {
         assert!(follower.contains(&"--testnet.unix-time-offset-secs=123".to_owned()));
         assert!(!follower.contains(&"--validator".to_owned()));
         assert!(!follower.contains(&"--validator.evm-key".to_owned()));
-        assert_eq!(
-            super::super::committee::validator_protocol_environment(&localnet.start_opts),
-            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "42".to_owned())]
-        );
+        let mut command = std::process::Command::new("outbe-chain");
+        super::super::configure_node_protocol_environment(&localnet.start_opts, &mut command);
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
+                && value == Some(std::ffi::OsStr::new("42"))));
         assert_eq!(
             fs::read_to_string(vd.join("reth-p2p-secret.hex")).unwrap(),
             "11".repeat(32)
