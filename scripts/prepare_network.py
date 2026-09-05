@@ -28,6 +28,8 @@ script never emits a knowingly partial launch command.
 
 from __future__ import annotations
 
+import copy
+
 import argparse
 import base64
 import json
@@ -41,6 +43,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from offchain_storage import ensure as ensure_storage, load as load_storage, settings as storage_settings
 
 
 SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
@@ -799,12 +803,11 @@ def command_lines(
     consensus_listen_port: int,
     tee_enclave_endpoint: str,
     tee_bootstrap_timeout_secs: int,
-    projection_database: str,
+    storage_config: str,
     use_local_defaults: bool,
 ) -> list[str]:
     lines = [
         'export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"',
-        ': "${OUTBE_PROJECTION_MONGODB_URI:?set OUTBE_PROJECTION_MONGODB_URI}"',
         "",
         # The p2p key is passed as a FILE (`--p2p-secret-key`), never inline hex
         # in argv: the command line is world-readable via `ps`. reth parses the
@@ -831,8 +834,8 @@ def command_lines(
         f"  --log.file.directory {shell_quote(log_dir)} \\",
         f"  --consensus.signing-key {shell_quote(signing_key_path)} \\",
         f"  --validator.evm-key {shell_quote(evm_key_path)} \\",
-        '  --projection.mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI" \\',
-        f"  --projection.mongodb-database {shell_quote(projection_database)} \\",
+        f"  --projection.storage-config {shell_quote(storage_config)} \\",
+
         f"  --tee-enclave-socket {shell_quote(tee_enclave_endpoint)} \\",
         f"  --tee-bootstrap-timeout-secs {tee_bootstrap_timeout_secs} \\",
         f"  --consensus.listen-addr {consensus_listen_host}:{consensus_listen_port}",
@@ -989,7 +992,7 @@ def build_network_markdown(
     lines.append("")
     lines.append("## Per-Validator Commands")
     lines.append("")
-    lines.append("Copy the whole generated bundle to the runtime base directory. Set `OUTBE_PROJECTION_MONGODB_URI` on every host, start each enclave command, and only then start all four founder node commands within the configured TEE bootstrap timeout.")
+    lines.append("Copy the whole generated bundle to the runtime base directory. Review each `validator-N/offchain-storage.toml` (RocksDB by default), start each enclave command, and only then start all four founder node commands within the configured TEE bootstrap timeout.")
     lines.append("")
     for (index, enclave_script_path, enclave_cmd), (_, script_path, cmd) in zip(
         enclave_commands, commands
@@ -1091,7 +1094,7 @@ def main() -> None:
     parser.add_argument("--metrics-addr", default="0.0.0.0")
     parser.add_argument("--discv5-addr", default="0.0.0.0")
     parser.add_argument("--consensus-listen-host", default="0.0.0.0")
-    parser.add_argument("--projection-database-prefix")
+    parser.add_argument("--storage-template", type=Path, help="offchain-storage.toml template; Mongo database receives _validator_N suffix; defaults to per-node RocksDB")
     parser.add_argument("--use-local-defaults", action="store_true")
     parser.add_argument("--include-private-keys", action="store_true")
     parser.add_argument("--force-reth-secrets", action="store_true")
@@ -1121,9 +1124,7 @@ def main() -> None:
     output_dir.mkdir(parents=True)
     projection_scope = secrets.token_hex(8)
     write_secret_hex(output_dir / "projection-scope", projection_scope)
-    projection_database_prefix = args.projection_database_prefix or (
-        f"outbe_{network}_{projection_scope}"
-    )
+    storage_document = load_storage(args.storage_template) if args.storage_template else storage_settings({}, database="unused", mongo_uri="unused")
 
     if args.validators and args.generate_validators:
         raise ValueError("use either --validators or --generate-validators, not both")
@@ -1345,6 +1346,10 @@ def main() -> None:
             runtime_base_dir=runtime_base_dir,
         )
 
+        node_storage = copy.deepcopy(storage_document)
+        if node_storage["backend"] == "mongodb":
+            node_storage["mongodb"]["database"] += f"_validator_{index}"
+        ensure_storage(validator_dir / "offchain-storage.toml", node_storage)
         runtime_validator_dir = f"{runtime_base_dir}/validator-{index}"
         runtime_secret_path = f"{runtime_validator_dir}/reth-p2p-secret.hex"
         runtime_evm_key_path = f"{runtime_validator_dir}/evm-key.hex"
@@ -1400,7 +1405,7 @@ def main() -> None:
             consensus_listen_port=consensus_port,
             tee_enclave_endpoint=tee_enclave_endpoint,
             tee_bootstrap_timeout_secs=args.tee_bootstrap_timeout_secs,
-            projection_database=f"{projection_database_prefix}_validator_{index}",
+            storage_config=f"{runtime_validator_dir}/offchain-storage.toml",
             use_local_defaults=args.use_local_defaults,
         )
         script_path = commands_dir / f"validator-{index}.sh"
