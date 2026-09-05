@@ -15,6 +15,7 @@ readonly NUM_VALIDATORS="${1:?Usage: $0 4 OUTPUT_DIR [SEED_FILE]}"
 readonly OUTPUT_DIR="${2:?Usage: $0 4 OUTPUT_DIR [SEED_FILE]}"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly STORAGE_TEMPLATE="${4:-}"
 readonly SEED_FILE="${3:-$SCRIPT_DIR/seed-testnet.json}"
 
 if [[ "$NUM_VALIDATORS" != "4" ]]; then
@@ -75,7 +76,10 @@ readonly EPOCH_LENGTH="${TESTNET_EPOCH_LENGTH_BLOCKS:-300}"
 readonly DKG_PREPARE_WINDOW="${TESTNET_DKG_PREPARE_WINDOW_BLOCKS:-30}"
 readonly DKG_ACTIVATION_GRACE="${TESTNET_DKG_ACTIVATION_GRACE_BLOCKS:-30}"
 
-python3 "$SCRIPT_DIR/prepare_network.py" \
+storage_args=()
+if [[ -n "$STORAGE_TEMPLATE" ]]; then storage_args+=(--storage-template "$STORAGE_TEMPLATE"); fi
+
+python3 "$SCRIPT_DIR/prepare_network.py" "${storage_args[@]}" \
   --seed "$SEED_FILE" \
   --generate-validators 4 \
   --validator-hosts "$HOST_PATTERN" \

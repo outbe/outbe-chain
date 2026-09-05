@@ -332,8 +332,16 @@ pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000
 /// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
 pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
 
-/// IntexNFT1155 on Outbe: the local ERC-1155 balance ledger for Intex series
-/// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range
-/// precompile). Called by IntexFactory (settle/burnSettled) and by GemFactory
-/// (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af");
+/// IntexNFT1155: the Intex ERC-1155 series balance ledger. CREATE3 proxy under
+/// salt "outbe-intex:IntexNFT1155:<version>", not a precompile.
+#[cfg(not(feature = "e2e-test"))]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x956d5Dc2D4FFD706ea9f2d1da350EEC73557ff8a");
+#[cfg(feature = "e2e-test")]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
+
+/// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
+/// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:<version>".
+#[cfg(not(feature = "e2e-test"))]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xc863eA177036b01a73B56B16a7F51c2529382547");
+#[cfg(feature = "e2e-test")]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");

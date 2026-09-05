@@ -1,6 +1,6 @@
 //! Builds one authenticated Lysis input manifest from finalized public RPC data.
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use alloy_primitives::{keccak256, B256};
 use outbe_compressed_entities::{
@@ -23,7 +23,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_offchain_data::{ProjectionConfig, ProjectionState};
 use outbe_offchain_storage::{
-    MongoStorage, MongoStorageConfig, StorageError, StorageErrorKind, StorageReaderHandle,
+    StorageConfig, StorageError, StorageErrorKind, StorageProvider, StorageReadSource,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::RetainedTributePin;
@@ -62,8 +62,7 @@ const EXPORT_PROGRESS_RECORD_HEARTBEAT: u64 = 256;
 pub struct RpcInputExporterConfigV1 {
     pub rpc_url: String,
     pub rpc_max_response_bytes: usize,
-    pub mongo: MongoStorageConfig,
-    pub projection_start_block: u64,
+    pub storage: StorageConfig,
     pub tribute_page_limit: usize,
     pub chain_id: u64,
     pub genesis_hash: B256,
@@ -80,17 +79,16 @@ pub struct RpcInputExporterConfigV1 {
 pub struct RpcInputExporterV1 {
     config: RpcInputExporterConfigV1,
     rpc: PublicOcompRpcClientV1,
-    tribute_source: FinalizedTributeSource,
+    storage_source: StorageReadSource,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
 }
 
 impl RpcInputExporterV1 {
     pub fn open(config: RpcInputExporterConfigV1) -> Result<Self, RpcInputExporterErrorV1> {
-        let storage = MongoStorage::connect(config.mongo.clone()).map_err(source_open_error)?;
-        let storage: StorageReaderHandle = Arc::new(storage);
-        let tribute_source = FinalizedTributeSource::new(storage, config.tribute_page_limit)
-            .map_err(|error| stage("open finalized Tribute source", error))?;
+        let storage_source = StorageProvider::new(config.storage.clone())
+            .and_then(|provider| provider.read_source(&hex::encode(config.protocol_bundle_hash)))
+            .map_err(source_open_error)?;
         let rpc =
             PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let cas = FilesystemCas::open(
@@ -104,7 +102,7 @@ impl RpcInputExporterV1 {
         Ok(Self {
             config,
             rpc,
-            tribute_source,
+            storage_source,
             cas,
             reader,
         })
@@ -196,10 +194,17 @@ impl RpcInputExporterV1 {
         let projection_config = ProjectionConfig {
             chain_id: self.config.chain_id,
             genesis_hash: self.config.genesis_hash,
-            start_block: self.config.projection_start_block,
+            start_block: self.config.storage.start_block,
         };
-        let projection_state = self
-            .tribute_source
+        // Keep one caught-up secondary view for the checkpoint and the entire
+        // inventory. No read can refresh this session while it is being consumed.
+        let storage = self
+            .storage_source
+            .open_session()
+            .map_err(source_open_error)?;
+        let tribute_source = FinalizedTributeSource::new(storage, self.config.tribute_page_limit)
+            .map_err(|error| stage("open finalized Tribute source", error))?;
+        let projection_state = tribute_source
             .projection_state(projection_config)
             .map_err(|error| stage("read finalized projection checkpoint", error))?;
         require_projection_checkpoint(projection_state.as_ref(), &finalized.request)?;
@@ -238,8 +243,7 @@ impl RpcInputExporterV1 {
                     TributeInventoryWorkConfig::default(),
                 )
                 .map_err(|error| stage("create Tribute inventory", error))?;
-                let mut stream = self
-                    .tribute_source
+                let mut stream = tribute_source
                     .reconstruction_stream(
                         pin,
                         finalized.intent.authenticated_day_count,
@@ -277,6 +281,7 @@ impl RpcInputExporterV1 {
             }
             Err(error) => return Err(stage("reopen Tribute inventory", error)),
         };
+        drop(tribute_source);
         on_progress();
         let mut publisher = DurableInputArtifactPublisher::open(
             &self.cas,

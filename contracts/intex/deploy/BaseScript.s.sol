@@ -18,7 +18,7 @@ abstract contract BaseScript is Script {
     ///         throwaway address set without disturbing the pinned production set; blank/unset = production.
     function saltVersion() internal view returns (string memory version) {
         version = vm.envOr("SALT_VERSION", string(""));
-        if (bytes(version).length == 0) version = "v3.0.0";
+        if (bytes(version).length == 0) version = "v4.0.0";
     }
 
     /// @notice The protocol-wide CREATE3 factory, deployed from contracts/shared.

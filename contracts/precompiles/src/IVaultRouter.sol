@@ -27,6 +27,12 @@ interface IVaultRouter {
     error LiquiditySourceNotFound();
     error LiquidityTargetNotFound();
     error InsufficientSharesForWithdraw(uint256 availableShares, uint256 requiredShares);
+    error SameVaultRebalance();
+    error InvalidRebalanceAmount();
+    error RebalanceVaultNotRegistered(address vault);
+    error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
+    error UnsupportedAssetDecimals(uint8 decimals);
+    error CcaNotActive(address cca);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -50,6 +56,16 @@ interface IVaultRouter {
         uint256 assetsAmount,
         uint256 burnedShares,
         StablesTarget targetType
+    );
+
+    event LiquidityRebalanced(
+        address indexed cca,
+        address indexed vaultFrom,
+        address indexed vaultTo,
+        uint256 assetsWithdrawn,
+        uint256 burnedShares,
+        uint256 assetsDeposited,
+        uint256 mintedShares
     );
 
     /// @notice Returns the number of assets.
@@ -127,4 +143,20 @@ interface IVaultRouter {
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
+
+    /// @notice Moves `assetsAmount` of liquidity from `vaultFrom` to `vaultTo`. The caller
+    ///         supplies the destination asset at the oracle cross rate and receives the source
+    ///         asset in exchange; it must have approved this router for at least the required
+    ///         amount. `maxAmountTo` bounds what the router may pull if the rate moved since
+    ///         the caller quoted it. Caller must be an active CCA.
+    function rebalance(address vaultFrom, address vaultTo, uint256 assetsAmount, uint256 maxAmountTo)
+        external
+        returns (uint256 amountTo);
+
+    /// @notice What a {rebalance} of `assetsAmount` would require the caller to supply, so it
+    ///         can approve exactly that before calling.
+    function previewRebalance(address vaultFrom, address vaultTo, uint256 assetsAmount)
+        external
+        view
+        returns (address assetFrom, address assetTo, uint256 amountTo);
 }

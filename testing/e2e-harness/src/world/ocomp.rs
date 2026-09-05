@@ -2969,15 +2969,10 @@ fn configure_snapshot_exporter_projection(
     cfg: &Config,
     validator_index: usize,
 ) {
-    command
-        .env(
-            "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
-            &cfg.projection_mongodb_uri,
-        )
-        .env(
-            "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
-            cfg.validator_projection_database(validator_index),
-        );
+    command.env(
+        "OUTBE_OCOMP_STORAGE_CONFIG",
+        cfg.projection_storage_config(validator_index),
+    );
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -4285,16 +4280,17 @@ mod tests {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        let expected_database = topology.cfg.validator_projection_database(validator_index);
         assert_eq!(
-            environment.get("OUTBE_OCOMP_PROJECTION_MONGODB_URI"),
-            Some(&Some(topology.cfg.projection_mongodb_uri.clone()))
+            environment.get("OUTBE_OCOMP_STORAGE_CONFIG"),
+            Some(&Some(
+                topology
+                    .cfg
+                    .projection_storage_config(validator_index)
+                    .display()
+                    .to_string()
+            ))
         );
-        assert_eq!(
-            environment.get("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE"),
-            Some(&Some(expected_database.clone()))
-        );
-        assert!(!expected_database.ends_with("_ocomp"));
+        assert_eq!(environment.len(), 1);
     }
 
     fn child_guard() -> ChildGuard {

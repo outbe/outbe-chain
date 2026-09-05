@@ -2,7 +2,7 @@
 # Bring up (or tear down) a single-node MongoDB replica set in Docker for the
 # localnet projection sink.
 #
-# run-testnet.sh requires OUTBE_PROJECTION_MONGODB_URI to point at a
+# Select this endpoint in each offchain-storage.toml [mongodb] section for a
 # TRANSACTION-CAPABLE deployment (replica set or sharded cluster) - a standalone
 # mongod cannot run the multi-document transactions the projection sink uses. A
 # one-member `rs0` replica set is the smallest such deployment, so that is what

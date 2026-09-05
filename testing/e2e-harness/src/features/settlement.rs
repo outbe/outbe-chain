@@ -325,13 +325,26 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("quote settling the reward Gem")
     .payableUnits;
-    fund_and_approve(
+    // The vault is credited here, not at settle time. Before the drain: this is an
+    // ordinary transaction and pays its own gas.
+    let paynote_proof = paynote::deposit_and_prove(
         world,
-        fixture.asset,
+        world.validators.primary_port(),
         &key,
         owner,
-        addresses::GEM_FACTORY_ADDR,
-        payable,
+        fixture.asset,
+        u128::try_from(payable).expect("Gem cost fits a PayNote spend amount"),
+    );
+    assert_eq!(
+        eth::read_call(
+            &url,
+            fixture.asset,
+            &ISettlementAsset::balanceOfCall {
+                account: fixture.vault,
+            },
+        ),
+        Some(payable),
+        "reserve vault did not receive exact Gem cost at deposit time"
     );
     let keys =
         eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
@@ -381,23 +394,12 @@ fn validator_redeems_reward_gem(world: &mut World) {
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
-            asset: fixture.asset,
+            payNoteProof: paynote_proof.into(),
         },
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
-    assert_eq!(
-        eth::read_call(
-            &url,
-            fixture.asset,
-            &ISettlementAsset::balanceOfCall {
-                account: fixture.vault,
-            },
-        ),
-        Some(payable),
-        "reserve vault did not receive exact Gem cost"
-    );
 
     let promis_before = promis_balance(&url, owner, &keys.view);
     let promis_nonce = eth::read_call(
