@@ -21,11 +21,46 @@ use crate::internal::{
     },
     shell::Sh,
 };
+use crate::world::rpc::TxOutcome;
 use crate::world::validators::RegistrationIdentity;
 
 use super::Localnet;
 
 const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
+
+fn registration_outcome(url: &str, transaction_hash: &str) -> Result<TxOutcome> {
+    let receipt = eth::raw_json_result(
+        url,
+        "eth_getTransactionReceipt",
+        serde_json::json!([transaction_hash]),
+    )?;
+    registration_receipt(transaction_hash, receipt)
+}
+
+fn registration_receipt(transaction_hash: &str, receipt: serde_json::Value) -> Result<TxOutcome> {
+    let expected: B256 = transaction_hash.parse()?;
+    let actual: B256 = serde_json::from_value(receipt["transactionHash"].clone())?;
+    eyre::ensure!(
+        actual == expected,
+        "registration receipt belongs to a different transaction"
+    );
+    eyre::ensure!(
+        receipt["status"].as_str() == Some("0x1"),
+        "registration receipt is not successful"
+    );
+    let outcome = TxOutcome {
+        transaction_hash: transaction_hash.to_owned(),
+        success: true,
+        receipt,
+    };
+    eyre::ensure!(
+        outcome.block_number().is_some(),
+        "registration receipt omitted block number"
+    );
+    outcome.block_hash()?;
+    Ok(outcome)
+}
+
 const PRODUCTION_NO_ATTEST_REJECTION: &str = "production DCAP release refuses runtime attestation \
 none (gramine-sgx; remote attestation disabled - EGETKEY sealing available)";
 
@@ -161,6 +196,29 @@ impl Localnet {
     /// Stop the non-voting phase without deleting its synchronized Reth data.
     pub fn stop_joiner_full_node(&mut self, index: usize) {
         self.followers.remove(&Self::joiner_full_node_name(index));
+    }
+
+    /// Stop only the live FullNode incarnation observed by the scenario, and
+    /// retain its actual exit status before permitting a replacement role.
+    pub(crate) fn stop_joiner_full_node_owned(
+        &mut self,
+        index: usize,
+        expected_pid: u32,
+    ) -> Result<std::process::ExitStatus> {
+        let (pid, status) = self.owned_full_node_process(index)?;
+        eyre::ensure!(pid == expected_pid, "FullNode {index} incarnation changed");
+        eyre::ensure!(
+            status.is_none(),
+            "FullNode {index} already exited: {status:?}"
+        );
+        let name = Self::joiner_full_node_name(index);
+        let status = self
+            .followers
+            .get_mut(&name)
+            .ok_or_else(|| eyre!("FullNode {index} owner disappeared"))?
+            .stop_and_reap()?;
+        self.followers.remove(&name);
+        Ok(status)
     }
 
     /// Exit state for an owned role-neutral FullNode. `None` means the process
@@ -369,15 +427,28 @@ impl Localnet {
     /// Add ValidatorSet and OCOMP material to an already joined role-neutral
     /// NodeHost. This deliberately does not perform a second TEE join.
     pub fn provision_existing_node_as_joiner(&mut self, index: usize) -> Result<()> {
-        self.provision_joiner_registration(index)?;
+        self.provision_existing_node_as_joiner_observed(index)
+            .map(drop)
+    }
+
+    /// Preserve the real registration and P2P receipts for finalized assertions.
+    pub(crate) fn provision_existing_node_as_joiner_observed(
+        &mut self,
+        index: usize,
+    ) -> Result<[TxOutcome; 2]> {
+        let outcomes = self.provision_joiner_registration_observed(index)?;
         #[cfg(feature = "ocomp-integration")]
         crate::world::ocomp::stage_direct_joiner_domain_material(&self.cfg, index)?;
-        Ok(())
+        Ok(outcomes)
     }
 
     /// Generate and register Validator/OCOMP identity without changing the
     /// currently running node or enclave profile.
     pub fn provision_joiner_registration(&mut self, index: usize) -> Result<()> {
+        self.provision_joiner_registration_observed(index).map(drop)
+    }
+
+    fn provision_joiner_registration_observed(&mut self, index: usize) -> Result<[TxOutcome; 2]> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(&vd)?;
         let signing_key = vd.join("signing-key.hex").display().to_string();
@@ -492,7 +563,7 @@ impl Localnet {
         bls_public_key: Bytes,
         radicle_node_id: B256,
         registration_signature: Bytes,
-    ) -> Result<()> {
+    ) -> Result<[TxOutcome; 2]> {
         // Fund from validator-0, prove that an unrelated EOA cannot register
         // this ValidatorSet identity, then self-register and publish the P2P
         // address. The rejected call uses the joiner's otherwise-valid BLS
@@ -529,9 +600,7 @@ impl Localnet {
         }
         let register_tx =
             eth::send_call(&self.cfg.rpc0, addresses::VS_ADDR, key, &registration, None)?;
-        if eth::receipt_success(&self.cfg.rpc0, &register_tx) != Some(true) {
-            return Err(eyre!("joiner registration failed: {register_tx}"));
-        }
+        let register = registration_outcome(&self.cfg.rpc0, &register_tx)?;
         let p2p_tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
@@ -543,11 +612,8 @@ impl Localnet {
             },
             None,
         )?;
-        if eth::receipt_success(&self.cfg.rpc0, &p2p_tx) != Some(true) {
-            return Err(eyre!("joiner P2P registration failed: {p2p_tx}"));
-        }
-
-        Ok(())
+        let p2p = registration_outcome(&self.cfg.rpc0, &p2p_tx)?;
+        Ok([register, p2p])
     }
 
     /// Start a node's role-neutral enclave and complete its one on-chain TEE join.
@@ -1046,6 +1112,13 @@ impl Localnet {
     }
 
     fn joiner_validator_args(&self, index: usize, extra: &[&str]) -> Result<Vec<String>> {
+        eyre::ensure!(
+            !extra
+                .iter()
+                .any(|arg| *arg == "--testnet.unix-time-offset-secs"
+                    || arg.starts_with("--testnet.unix-time-offset-secs=")),
+            "joiner clock must come from shared StartOpts, not extra arguments"
+        );
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
@@ -1164,6 +1237,91 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registration_receipt_requires_exact_successful_mined_transaction() {
+        let transaction = format!("{:#x}", B256::repeat_byte(1));
+        let receipt = serde_json::json!({
+            "transactionHash": transaction,
+            "status": "0x1", "blockNumber": "0x2",
+            "blockHash": format!("{:#x}", B256::repeat_byte(2)),
+        });
+        assert_eq!(
+            registration_receipt(&transaction, receipt.clone())
+                .unwrap()
+                .block_number(),
+            Some(2)
+        );
+        for (field, value) in [
+            (
+                "transactionHash",
+                serde_json::json!(format!("{:#x}", B256::repeat_byte(3))),
+            ),
+            ("status", serde_json::json!("0x0")),
+            ("status", serde_json::Value::Null),
+            ("blockNumber", serde_json::Value::Null),
+            ("blockHash", serde_json::Value::Null),
+        ] {
+            let mut bad = receipt.clone();
+            bad[field] = value;
+            assert!(registration_receipt(&transaction, bad).is_err());
+        }
+    }
+
+    #[test]
+    fn joiner_extra_clock_is_rejected_before_runtime_directory_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment::default();
+        let mut cfg = crate::internal::config::Config::resolve(&env);
+        cfg.dir = root.path().to_owned();
+        let mut net = Localnet::new(cfg);
+        for offset in [None, Some(0), Some(-12)] {
+            net.start_opts.unix_time_offset_secs = offset;
+            for extra in [
+                vec!["--testnet.unix-time-offset-secs", "12"],
+                vec!["--testnet.unix-time-offset-secs=12"],
+            ] {
+                assert!(net
+                    .joiner_validator_args(4, &extra)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shared StartOpts"));
+                assert!(!net.cfg.validator_dir(4).exists());
+            }
+        }
+    }
+
+    #[test]
+    fn full_node_role_stop_requires_exact_live_owner_and_reaps_it() {
+        let root = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment::default();
+        let mut cfg = crate::internal::config::Config::resolve(&env);
+        cfg.dir = root.path().to_owned();
+        let mut net = Localnet::new(cfg);
+        for index in [4, 5] {
+            let mut command = Command::new("sleep");
+            command.arg("60");
+            let name = Localnet::joiner_full_node_name(index);
+            net.followers.insert(
+                name.clone(),
+                proc::ChildGuard::spawn(&name, command).unwrap(),
+            );
+        }
+        let original = net.owned_full_node_process(4).unwrap();
+        assert!(net.stop_joiner_full_node_owned(4, 0).is_err());
+        assert_eq!(net.owned_full_node_process(4).unwrap(), original);
+        net.stop_joiner_full_node_owned(4, original.0).unwrap();
+        assert!(net.owned_full_node_process(4).is_err());
+        assert!(net.owned_full_node_process(5).unwrap().1.is_none());
+        net.followers
+            .get_mut(&Localnet::joiner_full_node_name(5))
+            .unwrap()
+            .stop_and_reap()
+            .unwrap();
+        let exited = net.owned_full_node_process(5).unwrap();
+        assert!(exited.1.is_some());
+        assert!(net.stop_joiner_full_node_owned(5, exited.0).is_err());
+    }
+
+    #[test]
     fn lease_full_node_releases_only_proven_exited_ownership_with_logs_retained() {
         use crate::internal::launch_log::LaunchLog;
         use std::process::Command;
@@ -1247,6 +1405,36 @@ mod tests {
         let vd = localnet.cfg.validator_dir(4);
         fs::create_dir_all(&vd).unwrap();
         fs::write(vd.join("reth-p2p-secret.hex"), "11".repeat(32)).unwrap();
+        for offset in [None, Some(0), Some(123), Some(-37)] {
+            localnet.start_opts.unix_time_offset_secs = offset;
+            let argv = localnet
+                .joiner_validator_args(4, &["--consensus.keys-dir", "/exact/custom-keys"])
+                .unwrap();
+            let inherited = argv
+                .iter()
+                .filter(|arg| arg.starts_with("--testnet.unix-time-offset-secs"))
+                .cloned()
+                .collect::<Vec<_>>();
+            let expected = offset
+                .into_iter()
+                .map(|value| format!("--testnet.unix-time-offset-secs={value}"))
+                .collect::<Vec<_>>();
+            assert_eq!(inherited, expected);
+            let follower = super::super::follower::derive_validator_recovery_follower_args(
+                &argv,
+                "http://127.0.0.1:8545",
+            )
+            .unwrap();
+            assert_eq!(
+                follower
+                    .iter()
+                    .filter(|arg| arg.starts_with("--testnet.unix-time-offset-secs"))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        localnet.start_opts.unix_time_offset_secs = Some(123);
         let argv = localnet
             .joiner_validator_args(4, &["--consensus.keys-dir", "/exact/custom-keys"])
             .unwrap();

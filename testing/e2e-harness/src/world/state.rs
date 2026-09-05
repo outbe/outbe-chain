@@ -336,6 +336,10 @@ pub struct FixtureState {
     pub tee_lease: TeeLeaseEvidenceV1,
     /// Public restart measurements saved before process teardown.
     pub restart_observations: Vec<serde_json::Value>,
+    /// Common finalized state captured before the current lifecycle transition.
+    pub(crate) lifecycle_before: Option<crate::world::rpc::FinalizedCheckpoint>,
+    /// Explicitly expected owned nodes and their current observation intervals.
+    pub(crate) lifecycle_incarnations: std::collections::BTreeMap<usize, RestartIncarnation>,
     pub(crate) pending_dkg_restart: Option<PendingDkgRestartState>,
     pub(crate) committee_restart: Vec<RestartIncarnation>,
     pub(crate) downtime: Option<DowntimeState>,
@@ -604,6 +608,8 @@ impl Default for FixtureState {
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
             restart_observations: Vec::new(),
+            lifecycle_before: None,
+            lifecycle_incarnations: std::collections::BTreeMap::new(),
             pending_dkg_restart: None,
             committee_restart: Vec::new(),
             downtime: None,

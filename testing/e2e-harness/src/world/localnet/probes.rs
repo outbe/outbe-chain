@@ -41,6 +41,33 @@ fn read_required_node_log(path: &Path, node: &str) -> Result<String> {
     })
 }
 
+fn has_required_signing_share(node_dir: &Path) -> Result<bool> {
+    let mut found = false;
+    for path in [
+        node_dir.join("keys/dkg_share.hex"),
+        node_dir.join("data/keys/dkg_share.hex"),
+    ] {
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).wrap_err_with(|| format!("inspect share {}", path.display()));
+            }
+            Ok(metadata) => ensure!(
+                metadata.is_file(),
+                "share is not a regular file: {}",
+                path.display()
+            ),
+        }
+        outbe_consensus::bls::load_signing_share(
+            &path,
+            &outbe_consensus::bls::KeyBackend::Plaintext,
+        )
+        .wrap_err_with(|| format!("decode existing share {}", path.display()))?;
+        found = true;
+    }
+    Ok(found)
+}
+
 /// One successful testnet startup-recovery span observed from a validator.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CeStartupReplayObservationV1 {
@@ -557,6 +584,11 @@ impl Localnet {
             .is_ok()
         })
     }
+
+    /// Absence is distinct from an unreadable or malformed existing share.
+    pub(crate) fn has_share_file_result(&self, index: usize) -> Result<bool> {
+        has_required_signing_share(&self.cfg.validator_dir(index))
+    }
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
@@ -795,10 +827,46 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        parse_canonical_block_observed_at_micros, parse_canonical_block_processing_micros,
-        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, read_required_node_log,
+        has_required_signing_share, parse_canonical_block_observed_at_micros,
+        parse_canonical_block_processing_micros, parse_ce_startup_replay,
+        parse_finalized_block_observed_at_micros, read_required_node_log,
         validator_slot_node_log_path, CeStartupReplayObservationV1, RethLogTail,
     };
+
+    #[test]
+    fn absent_signing_share_is_not_a_malformed_share() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!has_required_signing_share(root.path()).unwrap());
+        for relative in ["keys/dkg_share.hex", "data/keys/dkg_share.hex"] {
+            let path = root.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "not a share").unwrap();
+            assert!(has_required_signing_share(root.path()).is_err());
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn dangling_or_non_file_share_is_an_observation_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("keys/dkg_share.hex");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(root.path().join("absent"), &path).unwrap();
+        assert!(has_required_signing_share(root.path()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(has_required_signing_share(root.path()).is_err());
+        std::fs::remove_dir(&path).unwrap();
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(has_required_signing_share(root.path())
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+    }
 
     #[test]
     fn follower_trace_path_uses_its_owned_validator_slot() {

@@ -450,6 +450,30 @@ impl Localnet {
         Ok(())
     }
 
+    /// Fault the exact observed node and reap both owned children before arming
+    /// replacement observations. Never use a process-name fallback for this fault.
+    pub(crate) fn restart_validator_and_enclave_owned_observed(
+        &mut self,
+        index: usize,
+        expected_node_pid: u32,
+        expected_enclave_pid: u32,
+        before_launch: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        ensure!(
+            self.live_validator_and_enclave_pids(index)?
+                == (expected_node_pid, expected_enclave_pid),
+            "validator-{index} restart target incarnation changed"
+        );
+        self.kill_validator_owned(index, expected_node_pid)?;
+        self.enclaves
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned enclave"))?
+            .stop_and_reap()?;
+        self.enclaves.remove(&index);
+        before_launch(self)?;
+        self.restart()
+    }
+
     /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
     /// state; the node keeps running. Its enclave session must reconnect (with
     /// identity re-validation) on the next request - a node restart is not
@@ -1124,6 +1148,107 @@ mod owned_committee_tests {
             .ensure_committee_alive()
             .expect_err("an exited owned validator must fail readiness");
         assert!(error.to_string().contains("validator-0 exited"));
+    }
+
+    fn owned_restart_fixture() -> (tempfile::TempDir, Localnet, (u32, u32)) {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            validators: 1,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let mut node = Command::new("sleep");
+        node.arg("60");
+        let node = ChildGuard::spawn("owned-restart-node", node).unwrap();
+        let mut enclave = Command::new("sleep");
+        enclave.arg("60");
+        let enclave = crate::internal::proc::EnclaveGuard::from_test_child(
+            ChildGuard::spawn("owned-restart-enclave", enclave).unwrap(),
+        );
+        let pids = (node.pid(), enclave.pid());
+        localnet.validators.insert(0, node);
+        localnet.enclaves.insert(0, enclave);
+        (directory, localnet, pids)
+    }
+
+    #[test]
+    fn owned_restart_rejects_either_changed_identity_without_stopping_children() {
+        for change_node in [true, false] {
+            let (_directory, mut localnet, pids) = owned_restart_fixture();
+            let expected = if change_node {
+                (0, pids.1)
+            } else {
+                (pids.0, 0)
+            };
+            let mut observed = false;
+            let result = localnet.restart_validator_and_enclave_owned_observed(
+                0,
+                expected.0,
+                expected.1,
+                |_| {
+                    observed = true;
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert!(!observed);
+            assert_eq!(localnet.live_validator_and_enclave_pids(0).unwrap(), pids);
+        }
+    }
+
+    #[test]
+    fn owned_restart_arms_observation_after_reaping_and_preserves_other_children() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        let mut survivor = Command::new("sleep");
+        survivor.arg("60");
+        let survivor = ChildGuard::spawn("owned-restart-survivor", survivor).unwrap();
+        let survivor_pid = survivor.pid();
+        localnet.validators.insert(1, survivor);
+        let mut observed = false;
+        let result =
+            localnet.restart_validator_and_enclave_owned_observed(0, pids.0, pids.1, |net| {
+                assert!(!net.validators.contains_key(&0));
+                assert!(!net.enclaves.contains_key(&0));
+                assert_eq!(net.validator_pid(1)?, survivor_pid);
+                observed = true;
+                Err(eyre::eyre!("injected observation failure"))
+            });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("injected observation failure"));
+        assert!(observed);
+        assert!(localnet
+            .validators
+            .get_mut(&1)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
+        assert!(!localnet.validators.contains_key(&0));
+        assert!(!localnet.enclaves.contains_key(&0));
+    }
+
+    #[test]
+    fn owned_restart_rejects_an_already_exited_node_without_replacing_its_enclave() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        localnet
+            .validators
+            .get_mut(&0)
+            .unwrap()
+            .stop_and_reap()
+            .unwrap();
+        let mut observed = false;
+        let result =
+            localnet.restart_validator_and_enclave_owned_observed(0, pids.0, pids.1, |_| {
+                observed = true;
+                Ok(())
+            });
+        assert!(result.is_err());
+        assert!(!observed);
+        assert_eq!(localnet.live_enclave_pid(0).unwrap(), pids.1);
     }
 
     #[test]

@@ -280,6 +280,14 @@ pub(crate) struct EnclaveGuard {
 }
 
 impl EnclaveGuard {
+    #[cfg(test)]
+    pub(crate) fn from_test_child(child: ChildGuard) -> Self {
+        Self {
+            child,
+            docker: None,
+        }
+    }
+
     /// PID of the owned foreground launcher (Docker client for containerized SGX).
     pub(crate) fn pid(&self) -> u32 {
         self.child.pid()

@@ -1061,10 +1061,9 @@ fn restart_dynamic_membership_nodes_at(
         .localnet
         .restart_committee_at_unix_time_offset(offset)
         .unwrap_or_else(|error| panic!("restart the original committee for {phase}: {error:#}"));
-    let offset_arg = format!("--testnet.unix-time-offset-secs={offset}");
     world
         .localnet
-        .launch_joiner(joiner_index, &[offset_arg.as_str()])
+        .launch_joiner(joiner_index, &[])
         .unwrap_or_else(|error| panic!("restart the fifth validator for {phase}: {error:#}"));
 
     let mut ports = world.validators.committee_ports();
