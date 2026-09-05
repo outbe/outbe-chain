@@ -11,7 +11,6 @@ ocomp-finality-fixture = [
     "dep:alloy-consensus",
     "dep:alloy-rlp",
     "dep:alloy-trie",
-    "dep:commonware-consensus",
     "dep:k256",
     "dep:outbe-common",
     "dep:outbe-fidelity",
@@ -28,6 +27,7 @@ ocomp-finality-fixture = [
 ]
 ocomp-integration = [
     "ocomp-finality-fixture",
+    "dep:outbe-ocomp",
     "dep:k256",
     "outbe-metadosis/test-utils",
     "dep:outbe-nod",
@@ -37,7 +37,6 @@ ocomp-integration = [
     "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
-    "dep:reth-ethereum",
     "dep:reth-provider",
 ]
 # Real MongoDB tests spawn Docker. Keep them out of workspace-wide unit and
@@ -78,6 +77,9 @@ outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true
+outbe-radicle.workspace = true
+# Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.
+radicle = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
@@ -91,6 +93,7 @@ outbe-nodfactory = { workspace = true, optional = true }
 # Note construction and proving for the Nod cost-discharge scenario.
 outbe-paynote = { workspace = true, features = ["test-utils"], optional = true }
 outbe-node = { workspace = true, optional = true }
+outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
@@ -100,7 +103,7 @@ outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
 rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
-reth-ethereum = { workspace = true, optional = true }
+reth-ethereum.workspace = true
 reth-primitives-traits = { workspace = true, optional = true }
 reth-provider = { workspace = true, features = ["test-utils"], optional = true }
 reth-storage-api = { workspace = true, optional = true }
@@ -129,7 +132,7 @@ ark-ff.workspace = true
 # the harness plays the L2 network signing `zkMerkleRoot` with a registered key.
 bytes.workspace = true
 commonware-codec.workspace = true
-commonware-consensus = { workspace = true, optional = true }
+commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 blst.workspace = true
@@ -139,9 +142,16 @@ rustix.workspace = true
 
 # The e2e runner is a binary: the CLI defines the environment (validators, TEE
 # mode, sudo); Gherkin tags define each scenario's requirements.
+[dev-dependencies]
+commonware-parallel.workspace = true
+
 [[bin]]
 name = "outbe-e2e"
 path = "src/main.rs"
+
+[[bin]]
+name = "outbe-e2e-build"
+path = "src/bin/outbe-e2e-build.rs"
 
 [[bin]]
 name = "outbe-release-sgx-e2e"

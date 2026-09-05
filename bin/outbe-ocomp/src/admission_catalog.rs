@@ -999,7 +999,7 @@ mod tests {
         VerifiedAdmissionRecordV1 {
             protocol_bundle_hash: hash(1),
             job_id: hash(2),
-            attempt: 3,
+            attempt: 0,
             plan_hash: hash(4),
             plan_ordinal,
             unit_id: hash(u8::try_from(plan_ordinal + 5).unwrap()),
@@ -1023,7 +1023,7 @@ mod tests {
         let header = AdmissionCatalogHeaderV1 {
             protocol_bundle_hash: hash(1),
             job_id: hash(2),
-            attempt: 3,
+            attempt: 0,
             input_manifest_ref: CasObjectRefV1 {
                 transport_digest: hash(20),
                 encoded_bytes: 200,

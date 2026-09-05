@@ -20,8 +20,9 @@ fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
     let mut prev = 0u64;
     for _ in 0..5 {
         sleep(Duration::from_secs(10));
-        let ch = rpc.head(committee).unwrap_or(0);
-        let vh = rpc.head(joiner).unwrap_or(0);
+        let (Some(ch), Some(vh)) = (rpc.head(committee), rpc.head(joiner)) else {
+            return false;
+        };
         if ch.saturating_sub(vh) > 3 || vh <= prev {
             return false;
         }
@@ -93,7 +94,10 @@ fn full_node_syncs(world: &mut World) {
         .localnet
         .launch_joiner_full_node(idx, 0, &[])
         .expect("launch non-voting full node");
-    let h = world.rpc.wait_block(joiner_port, 20, 40).unwrap_or(0);
+    let h = world
+        .rpc
+        .wait_block(joiner_port, 20, 40)
+        .expect("full node RPC must reach the committee tip");
     assert!(h >= 20, "full node did not catch up to tip (head {h})");
 }
 
@@ -115,12 +119,25 @@ fn full_node_parity(world: &mut World) {
         "active set unchanged by a full node"
     );
 
-    let pn = world.rpc.finalized(joiner_port).unwrap_or(20);
-    let sr_c = world.rpc.state_root(primary, pn);
-    let sr_v = world.rpc.state_root(joiner_port, pn);
+    let pn = world
+        .rpc
+        .finalized(joiner_port)
+        .expect("full node finalized height after sync");
+    assert!(
+        world.rpc.wait_finalized_at_least(primary, pn, 30),
+        "committee did not finalize full-node parity height {pn}"
+    );
+    let committee_checkpoint = world
+        .rpc
+        .checkpoint_at(primary, pn)
+        .expect("committee checkpoint at full-node finalized height");
+    let full_node_checkpoint = world
+        .rpc
+        .checkpoint_at(joiner_port, pn)
+        .expect("full-node checkpoint at finalized height");
     assert_eq!(
-        sr_c, sr_v,
-        "state-root parity committee vs full node @h{pn}"
+        committee_checkpoint, full_node_checkpoint,
+        "finalized hash/state-root parity committee vs full node @h{pn}"
     );
 }
 
@@ -207,7 +224,10 @@ fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
         "shareless validator acquired stake before the explicit stake step"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "REGISTERED shareless validator must not be a consensus participant"
     );
     assert_eq!(
@@ -247,7 +267,10 @@ fn shareless_validator_stakes_confirms(world: &mut World) {
         "staked joiner is PENDING"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "PENDING joiner must not be a participant before confirm-ready"
     );
     world.rpc.confirm_ready(&key).expect("confirm ready");
@@ -288,7 +311,10 @@ fn promoted_with_inflight_offer(world: &mut World) {
         )
         .expect("in-flight Tribute must be projected by the original committee");
     assert!(
-        world.rpc.wait_participant(primary, &addr, 70),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 70)
+            .expect("wait for observable consensus participation"),
         "joiner never became a consensus participant"
     );
     assert_eq!(
@@ -376,7 +402,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
         voter_misses_after_boundary <= voter_misses_at_activation.saturating_add(1),
         "ACTIVE joiner accumulated voter misses beyond the one pre-eligibility boundary finalization: before={voter_misses_at_activation}, after={voter_misses_after_boundary}"
     );
-    let signing_target = world.rpc.head(primary).unwrap_or_default() + 5;
+    let signing_target = world.rpc.head(primary).expect("post-activation head") + 5;
     assert!(
         world
             .rpc
@@ -456,7 +482,10 @@ fn promoted_deactivates(world: &mut World) {
         "deactivated -> EXITING (3)"
     );
     assert!(
-        world.rpc.is_participant(primary, &addr),
+        world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "EXITING stays a participant until the reshare"
     );
     assert_eq!(
@@ -495,7 +524,7 @@ fn exits_and_demotes(world: &mut World) {
         let st = world.rpc.validator_status(primary, &addr);
         let cc = world.rpc.consensus_count(primary);
         if cc == Some(4) && st == Some(4) {
-            exit_h = world.rpc.head(primary).unwrap_or(0);
+            exit_h = world.rpc.head(primary).expect("exit boundary head");
             break;
         }
     }
@@ -544,15 +573,21 @@ fn exits_and_demotes(world: &mut World) {
         "moving stake to the unbonding queue must not move native value"
     );
     assert!(
-        world.localnet.log_has(
-            idx,
-            "no threshold share for this epoch - running consensus engine in VERIFIER mode"
-        ),
+        world
+            .localnet
+            .log_has(
+                idx,
+                "no threshold share for this epoch - running consensus engine in VERIFIER mode"
+            )
+            .expect("read required owned process log"),
         "node did not demote to a verifier-follower"
     );
 
     sleep(Duration::from_secs(20));
-    let vh = world.rpc.head(joiner_port).unwrap_or(0);
+    let vh = world
+        .rpc
+        .head(joiner_port)
+        .expect("demoted follower head after exit");
     assert!(
         vh > exit_h,
         "demoted node stopped following finality (head {vh} <= {exit_h})"
@@ -586,10 +621,10 @@ fn exits_and_demotes(world: &mut World) {
     for _ in 0..240 {
         let primary_supply = world.rpc.supply(primary);
         let follower_supply = world.rpc.supply(joiner_port);
-        let follower_finalized = world.rpc.finalized(joiner_port).unwrap_or(0);
+        let follower_finalized = world.rpc.finalized(joiner_port);
         if primary_supply.as_deref() == Some("3")
             && follower_supply == primary_supply
-            && follower_finalized >= receipt_block
+            && follower_finalized.is_some_and(|height| height >= receipt_block)
         {
             follower_caught_up = true;
             break;

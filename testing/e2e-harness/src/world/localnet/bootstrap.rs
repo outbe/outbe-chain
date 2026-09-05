@@ -605,6 +605,7 @@ impl Localnet {
     /// Bootstrap using a checked, typed genesis profile.
     pub fn bootstrap_with_profile(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
         profile.validate_for_committee(n)?;
+        self.cfg.validate_committee_ipc_paths(n)?;
         self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 

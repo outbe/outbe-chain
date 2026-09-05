@@ -1,4 +1,4 @@
-@settlement @tee @sgx-no-attest @sudo @min-validators-4
+@settlement @ocomp @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Protocol positions redeem through the reserve into COEN
   Settlement evidence uses a six-decimal USD asset and an ownerless reserve
   vault deployed by the scenario, while every state transition runs through

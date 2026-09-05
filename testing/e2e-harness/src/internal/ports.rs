@@ -70,12 +70,19 @@ pub(crate) enum Service {
     OcompWorker1,
     OcompWorker2,
     OcompWorker3,
+    OcompSuccessorSupervisor,
+    OcompSuccessorMessage,
+    OcompSuccessorWorker0,
+    OcompSuccessorWorker1,
+    OcompSuccessorWorker2,
+    OcompSuccessorWorker3,
+    OcompSnapshotExporter,
 }
 
 impl Service {
     /// Every service known to collision and preflight checks.
     #[cfg(test)]
-    const ALL: [Service; 15] = [
+    const ALL: [Service; 22] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -89,12 +96,20 @@ impl Service {
         Self::OcompWorker1,
         Self::OcompWorker2,
         Self::OcompWorker3,
+        Self::OcompSuccessorSupervisor,
+        Self::OcompSuccessorMessage,
+        Self::OcompSuccessorWorker0,
+        Self::OcompSuccessorWorker1,
+        Self::OcompSuccessorWorker2,
+        Self::OcompSuccessorWorker3,
+        Self::OcompSnapshotExporter,
         Self::Radicle,
         Self::RadicleStatus,
     ];
 
-    /// Frozen chain/OCOMP block order. Never insert a new service here.
-    const CORE: [Service; 13] = [
+    /// Complete chain/OCOMP runtime block. Derived OCOMP listeners must have an
+    /// explicit slot here so allocation and preflight cannot miss them.
+    const CORE: [Service; 20] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -108,6 +123,13 @@ impl Service {
         Self::OcompWorker1,
         Self::OcompWorker2,
         Self::OcompWorker3,
+        Self::OcompSuccessorSupervisor,
+        Self::OcompSuccessorMessage,
+        Self::OcompSuccessorWorker0,
+        Self::OcompSuccessorWorker1,
+        Self::OcompSuccessorWorker2,
+        Self::OcompSuccessorWorker3,
+        Self::OcompSnapshotExporter,
     ];
 
     const RADICLE: [Service; 2] = [Self::Radicle, Self::RadicleStatus];
@@ -132,6 +154,13 @@ impl Service {
             Self::OcompWorker1 => 10,
             Self::OcompWorker2 => 11,
             Self::OcompWorker3 => 12,
+            Self::OcompSuccessorSupervisor => 13,
+            Self::OcompSuccessorMessage => 14,
+            Self::OcompSuccessorWorker0 => 15,
+            Self::OcompSuccessorWorker1 => 16,
+            Self::OcompSuccessorWorker2 => 17,
+            Self::OcompSuccessorWorker3 => 18,
+            Self::OcompSnapshotExporter => 19,
             Self::Radicle => 0,
             Self::RadicleStatus => 1,
         }
@@ -147,7 +176,9 @@ impl Service {
 }
 
 /// Ports per node block.
-const BLOCK: u16 = Service::CORE.len() as u16;
+// Keep the established 21-port stride so removing an obsolete listener does
+// not renumber the consensus ports baked into canonical fixtures.
+const BLOCK: u16 = 21;
 const RADICLE_BLOCK: u16 = Service::RADICLE.len() as u16;
 const RADICLE_BASE: u16 = 50_000;
 
@@ -423,11 +454,28 @@ mod tests {
         assert_eq!(p.port(Tee, 0), 18546);
         assert_eq!(p.port(Consensus, 0), 18551);
         assert_eq!(p.port(OcompSupervisor, 0), 18552);
+        assert_eq!(p.port(OcompSnapshotExporter, 0), 18564);
         assert_eq!(p.port(Radicle, 0), RADICLE_BASE);
         assert_eq!(p.port(RadicleStatus, 0), RADICLE_BASE + 1);
         assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
         assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
         assert_eq!(p.port(Radicle, 1), RADICLE_BASE + RADICLE_BLOCK);
+    }
+
+    #[test]
+    fn ocomp_derived_listeners_are_inside_each_disjoint_node_block() {
+        let p = static_ports(4);
+        for index in 0..4 {
+            let supervisor = p.port(OcompSupervisor, index);
+            assert_eq!(p.port(OcompMessage, index), supervisor + 1);
+            assert_eq!(p.port(OcompWorker0, index), supervisor + 2);
+            assert_eq!(p.port(OcompWorker3, index), supervisor + 5);
+            assert_eq!(p.port(OcompSuccessorSupervisor, index), supervisor + 6);
+            assert_eq!(p.port(OcompSuccessorMessage, index), supervisor + 7);
+            assert_eq!(p.port(OcompSuccessorWorker0, index), supervisor + 8);
+            assert_eq!(p.port(OcompSuccessorWorker3, index), supervisor + 11);
+            assert_eq!(p.port(OcompSnapshotExporter, index), supervisor + 12);
+        }
     }
 
     #[test]

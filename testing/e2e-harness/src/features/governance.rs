@@ -39,13 +39,19 @@ fn propose_gip(world: &mut World, name: String, text: String) {
 
 #[then(expr = "proposal {int} is pending and targets the governance module with kind {string}")]
 fn proposal_pending_governance(world: &mut World, id: u64, kind: String) {
-    let mut vs = world.rpc.vote_status(id);
+    let mut vs = world
+        .rpc
+        .vote_status(id)
+        .expect("observe governance proposal status");
     for _ in 0..10 {
         if vs.visible {
             break;
         }
         sleep(Duration::from_secs(3));
-        vs = world.rpc.vote_status(id);
+        vs = world
+            .rpc
+            .vote_status(id)
+            .expect("observe governance proposal status");
     }
     assert!(vs.visible, "proposal #{id} not visible after propose");
     assert_eq!(vs.status, "pending", "proposal should be pending");
@@ -92,7 +98,10 @@ fn cast_yes_votes_on_proposal(world: &mut World, names: String, id: u64) {
 #[then(expr = "proposal {int} is approved")]
 fn proposal_approved(world: &mut World, id: u64) {
     assert!(
-        world.rpc.wait_vote_status(id, "approved", 60),
+        world
+            .rpc
+            .wait_vote_status(id, "approved", 60)
+            .expect("observe governance proposal approval"),
         "proposal #{id} not approved after deadline"
     );
 }

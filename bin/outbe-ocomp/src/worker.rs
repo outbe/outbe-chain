@@ -2915,7 +2915,7 @@ mod tests {
         PlanCommitmentV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
             job_id: B256::repeat_byte(2),
-            attempt: 3,
+            attempt: 0,
             input_manifest_hash: B256::repeat_byte(4),
             wwd: 20_260_724,
             lysis_budget: U256::from(99_000_000_u64),

@@ -296,6 +296,13 @@ impl SnapshotExporterObservabilityServerV1 {
         metrics::counter!("outbe_ocomp_snapshot_exporter_commits_total").increment(1);
     }
 
+    pub fn late_ack_ignored(&self) {
+        metrics::counter!("outbe_ocomp_snapshot_exporter_late_acks_ignored_total").increment(1);
+        if let Ok(mut state) = self.state.lock() {
+            state.last_activity = Instant::now();
+        }
+    }
+
     pub fn discovery_error(&self, error: String) {
         metrics::counter!("outbe_ocomp_snapshot_exporter_discovery_errors_total").increment(1);
         self.set_error(error);

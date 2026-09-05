@@ -70,6 +70,7 @@ metrics.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-consensus.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true

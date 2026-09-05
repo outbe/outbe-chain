@@ -79,6 +79,8 @@ impl Default for World {
             .start_scenario(env.validators)
             .expect("allocate this scenario's port blocks");
         let mut cfg = Config::for_scenario(&env, id);
+        cfg.validate_committee_ipc_paths(env.validators)
+            .expect("validate scenario node IPC paths before starting services");
         let capacity_meter = std::env::var("OUTBE_OCOMP_CAPACITY_RUN_ID")
             .ok()
             .map(|run_id| {
