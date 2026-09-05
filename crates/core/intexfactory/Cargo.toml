@@ -13,6 +13,8 @@ outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
+outbe-paynote.workspace = true
+outbe-zkproof.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ring.workspace = true
@@ -21,6 +23,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-intex = { workspace = true, features = ["test-utils"] }
+outbe-paynote = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
@@ -30,4 +33,4 @@ bench-utils = []
 # Retarget the intex contract addresses at the throwaway CREATE3 set an e2e chain
 # deploys with the well-known anvil key, and let a payout e2e credit proceeds
 # without a deployed router. Never enabled in a release build.
-e2e-test = ["outbe-intex/test-utils"]
+e2e-test = ["outbe-intex/test-utils", "outbe-primitives/e2e-test"]

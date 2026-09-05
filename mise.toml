@@ -240,15 +240,15 @@ mise run localnet-stop
 """
 
 [tasks.localnet-stack-start]
-description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
+description = "Start or resume a 4-validator localnet with mock TEE and RocksDB by default"
 run = "bash ./scripts/localnet-stack.sh start"
 
 [tasks.localnet-stack-stop]
-description = "Stop the managed localnet and MongoDB (keep chain data)"
+description = "Stop the managed localnet (keep chain data)"
 run = "bash ./scripts/localnet-stack.sh stop"
 
 [tasks.localnet-stack-clean]
-description = "Stop the managed localnet and MongoDB, then remove chain data"
+description = "Stop the managed localnet, then remove chain data"
 run = "bash ./scripts/localnet-stack.sh clean"
 
 [tasks.localnet-sgx-bootstrap]
@@ -285,6 +285,24 @@ description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
 cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock --repo . --jobs 8 --output target/e2e-artifacts/mock.json
 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --tee mock --validators 4 --all "$@"
+"""
+
+[tasks.e2e-offchain-storage]
+description = "Run the separate Linux OCOMP storage E2E matrix: RocksDB and MongoDB"
+run = """
+set -eu
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane gramine-direct --repo . --jobs 8 --output target/e2e-artifacts/gramine-direct.json
+for backend in rocksdb mongodb; do
+  target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/gramine-direct.json --tee gramine-direct --validators 4 --projection-backend "$backend" --tags @offchain-storage-e2e "$@"
+done
+"""
+
+[tasks.e2e-offchain-storage-native]
+description = "Run RocksDB OCOMP storage E2E with the native mock enclave, without Docker or SGX"
+run = """
+set -eu
+cargo run --locked --release -j 8 -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e-build -- --lane mock-native --repo . --jobs 8 --output target/e2e-artifacts/mock-native.json
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock-native.json --tee mock-native --no-sudo --validators 4 --projection-backend rocksdb --tags @offchain-storage-native-e2e "$@"
 """
 
 # --- Off-chain Computation PoC --------------------------------------- #

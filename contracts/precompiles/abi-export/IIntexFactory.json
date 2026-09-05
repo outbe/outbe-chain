@@ -233,9 +233,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
+        "name": "payNoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],

@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::errors::GemFactoryError;
 use crate::runtime;
@@ -17,6 +18,16 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IGemFactory.sol"
 );
+
+/// Base gas charged by the registry before invoking [`dispatch`]: `settleGem`
+/// verifies a PayNote spend proof, which is real native work every validator
+/// repeats.
+pub fn base_gas(input: &[u8]) -> u64 {
+    match input.first_chunk::<4>() {
+        Some(&IGemFactory::settleGemCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
+        _ => PRECOMPILE_BASE_GAS,
+    }
+}
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -40,7 +51,7 @@ pub fn dispatch(
                 runtime::issue_merchant_gem(&storage, sender, c.positionId, c.owner, c.promisLoad)
             }),
             settleGem(c) => mutate_void(c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId, c.asset)
+                runtime::settle_gem(&storage, sender, c.gemId, &c.payNoteProof)
             }),
             minePromis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {

@@ -10,9 +10,12 @@ interface IGemFactory {
     ///         capacity. Only the position's merchant (the caller) may call.
     function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
-    /// @notice Settle a gem, paying its cost into the Reserve in `asset` (the
-    ///         settlement stablecoin supplied by the caller).
-    function settleGem(uint256 gemId, address asset) external;
+    /// @notice Settle a gem by spending a PayNote for its cost.
+    /// @dev Moves no tokens: the underlying assets reached the Reserve when the
+    ///      note was deposited.
+    /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
+    ///        spender, carry a settlement asset the gem accepts, and cover the cost.
+    function settleGem(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to the caller,
     ///         gated by off-chain proof of work. Authorized by the caller's Promis
     ///         modify key: `mac = HMAC(modifyKey, op-preimage)` where `opNonce`

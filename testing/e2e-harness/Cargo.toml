@@ -33,7 +33,6 @@ ocomp-integration = [
     "dep:outbe-nod",
     "dep:outbe-nodfactory",
     "dep:outbe-offchain-data",
-    "dep:outbe-offchain-storage",
     "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
@@ -97,7 +96,7 @@ outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
-outbe-offchain-storage = { workspace = true, optional = true }
+outbe-offchain-storage.workspace = true
 outbe-oracle = { workspace = true, optional = true }
 outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }

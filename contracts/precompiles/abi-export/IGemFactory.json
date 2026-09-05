@@ -252,9 +252,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
+        "name": "payNoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],

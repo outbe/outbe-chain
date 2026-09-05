@@ -12,9 +12,14 @@ interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexHolder`. Caller must be the holder or its authorized
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
-    ///         `paymentToken` must be registered with the vault router under either of the
-    ///         series' currencies; the issuance one converts through COEN and needs fresh rates.
-    function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
+    /// @dev The cost is paid by spending a PayNote, so this call moves no
+    ///      tokens: the underlying assets reached the reserve vault when the
+    ///      note was deposited.
+    /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
+    ///        spender, carry a token registered with the vault router under either of
+    ///        the series' currencies, and cover the settlement cost. The issuance
+    ///        currency converts through COEN and needs fresh rates.
+    function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;
 
     /// @notice What settling one Intex of `seriesId` with `paymentToken` costs, and
     ///         which of the series' two currencies that token settles on. Reverts

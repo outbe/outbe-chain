@@ -64,7 +64,7 @@ sol! {
     }
 
     interface IIntexSettlement {
-        function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
+        function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes payNoteProof) external;
         function quoteSettlement(bytes14 seriesId, address paymentToken) external view returns (uint16 settlementCurrency, uint256 payableUnits);
     }
 
@@ -222,10 +222,10 @@ pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -
         asset,
         holder_key,
         &ITestToken::approveCall {
-            spender: INTEX_FACTORY,
+            spender: crate::internal::addresses::PAYNOTE_ADDR,
             amount,
         },
-        "approve the engine",
+        "approve the note pool",
     )?;
     Ok(())
 }
@@ -244,14 +244,15 @@ pub fn quote_cost(url: &str, series: FixedBytes<14>, payment_token: Address) -> 
     .map(|quote| quote.payableUnits)
 }
 
-/// Settle `amount` units of `series` held by the caller, paying in `payment_token`.
+/// Settle `amount` units of `series` held by the caller. The proof carries the
+/// asset, so this takes no payment token.
 pub fn settle(
     url: &str,
     holder_key: &str,
     series: FixedBytes<14>,
     holder: Address,
     amount: u32,
-    payment_token: Address,
+    paynote_proof: &[u8],
 ) -> Result<()> {
     send_checked(
         url,
@@ -261,7 +262,7 @@ pub fn settle(
             seriesId: series,
             intexHolder: holder,
             amount: U256::from(amount),
-            paymentToken: payment_token,
+            payNoteProof: paynote_proof.to_vec().into(),
         },
         "settle",
     )

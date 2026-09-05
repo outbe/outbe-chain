@@ -481,7 +481,7 @@ fn unpublished_selectors_refuse_native_value() {
             seriesId: Default::default(),
             intexHolder: Address::ZERO,
             amount: U256::ZERO,
-            paymentToken: Address::ZERO,
+            payNoteProof: Default::default(),
         }
         .abi_encode(),
         IIntexFactory::setAuthorizedSettlerCall {

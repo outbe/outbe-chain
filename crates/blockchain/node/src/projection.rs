@@ -29,8 +29,9 @@ use outbe_offchain_data::{
     ProjectionReadinessPublisher, ProjectionStatus, RuntimeBodyReaders, TributeRetentionSelector,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, MongoStorage, MongoStorageConfig, MongoWriterLease, PendingOverlayStorage,
-    StorageError, StorageErrorKind, StorageReaderHandle, StorageWriterHandle,
+    AtomicWriteBatch, OpenedStorage, PendingOverlayStorage, StorageConfig, StorageError,
+    StorageErrorKind, StorageOwnershipGuard, StorageProvider, StorageReaderHandle,
+    StorageWriterHandle,
 };
 use outbe_primitives::{
     chain::network_for_chain_id,
@@ -57,7 +58,7 @@ const PROJECTION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 pub const PROJECTION_RECOVERY_DEADLINE: Duration = Duration::from_secs(8);
 
 #[derive(Debug, thiserror::Error)]
-#[error("MongoDB projection reconnect deadline expired for block {block_number} ({block_hash})")]
+#[error("offchain storage projection reconnect deadline expired for block {block_number} ({block_hash})")]
 pub struct ProjectionWriteDeadlineError {
     block_number: u64,
     block_hash: B256,
@@ -132,20 +133,15 @@ pub struct OffchainDataProjectionConfig {
     pub chain_id: u64,
     /// Canonical genesis hash recorded in the managed projection state.
     pub genesis_hash: B256,
-    /// First finalized block eligible for projection.
-    pub start_block: u64,
-    /// MongoDB connection string.
-    pub mongodb_uri: String,
-    /// MongoDB database containing projection namespaces.
-    pub mongodb_database: String,
+    /// Shared backend configuration, including the first projected block.
+    pub storage: StorageConfig,
 }
 
-/// Projection instance whose MongoDB connection, topology, and managed state passed preflight.
+/// Projection instance whose offchain storage connection, topology, and managed state passed preflight.
 pub struct PreparedOffchainDataProjection {
     projector: OffchainDataProjection,
-    storage: Arc<MongoStorage>,
+    storage: OpenedStorage,
     overlay: Arc<PendingOverlayStorage>,
-    writer_lease: MongoWriterLease,
     readiness_publisher: ProjectionReadinessPublisher,
     readiness: ProjectionReadinessHandle,
     runtime_failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
@@ -156,7 +152,7 @@ pub struct PreparedOffchainDataProjection {
 /// Orders retained-input projection commits against OCOMP garbage collection.
 ///
 /// Projection holds the shared side from pin selection through the durable
-/// MongoDB commit. The retention worker briefly takes the exclusive side only
+/// offchain storage commit. The retention worker briefly takes the exclusive side only
 /// while it durably claims a lease for collection; physical deletion happens
 /// after the exclusive guard is released.
 #[derive(Default)]
@@ -192,11 +188,11 @@ impl PreparedOffchainDataProjection {
         self.readiness.clone()
     }
 
-    /// Durable release capability backed by the exact Mongo storage owned by this projection.
+    /// Durable release capability backed by the exact storage owned by this projection.
     #[must_use]
     pub fn retained_tribute_writer(&self) -> Arc<RetainedTributeWriter> {
-        let reader: StorageReaderHandle = self.storage.clone();
-        let writer: StorageWriterHandle = self.storage.clone();
+        let reader = self.storage.reader.clone();
+        let writer = self.storage.writer.clone();
         Arc::new(RetainedTributeWriter::new(reader, writer))
     }
 
@@ -215,7 +211,7 @@ pub struct ReadyOffchainDataProjection {
     _reader: StorageReaderHandle,
     overlay: Arc<PendingOverlayStorage>,
     writer: StorageWriterHandle,
-    writer_lease: MongoWriterLease,
+    writer_lease: StorageOwnershipGuard,
     runtime_failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     runtime_failure_receiver: tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
     retention_fence: Arc<ProjectionRetentionFence>,
@@ -235,7 +231,7 @@ pub enum ProjectionRuntimeRecoveryV1 {
 }
 
 impl ProjectionRuntimeRecoveryHandle {
-    /// Proves that the shared MongoDB backend can start transactions again, then closes only the
+    /// Proves that the shared offchain storage backend can start transactions again, then closes only the
     /// transient runtime-read outage. A fatal body failure is sticky and is never cleared here.
     pub fn reconcile(&self, generation: u64) -> ProjectionRuntimeRecoveryV1 {
         if let Err(error) = self.writer.verify_transaction_capability() {
@@ -588,7 +584,7 @@ fn apply_durable_projection_write_before(
                     %error,
                     block_number = write.checkpoint.number,
                     block_hash = %write.checkpoint.hash,
-                    "MongoDB projection write failed; retrying exact atomic batch"
+                    "offchain storage projection write failed; retrying exact atomic batch"
                 );
                 std::thread::sleep(
                     PROJECTION_RETRY_INTERVAL
@@ -645,7 +641,7 @@ fn storage_failure_class(error: &StorageError) -> ProjectionFailureClass {
     }
 }
 
-/// Connects to MongoDB and validates storage prerequisites before Reth component initialization.
+/// Connects to offchain storage and validates storage prerequisites before Reth component initialization.
 pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
@@ -666,10 +662,10 @@ fn prepare_offchain_data_projection_inner(
     selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
     validate_projection_network(config.chain_id)?;
-    if config.start_block != 1 {
+    if config.storage.start_block != 1 {
         bail!(
             "ADR-005 requires projection start_block 1, found {}",
-            config.start_block
+            config.storage.start_block
         );
     }
 
@@ -677,7 +673,7 @@ fn prepare_offchain_data_projection_inner(
     loop {
         let remaining = PROJECTION_RECOVERY_DEADLINE.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            bail!("MongoDB startup recovery exceeded the eight-second total deadline");
+            bail!("offchain storage startup recovery exceeded the eight-second total deadline");
         }
         let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
         let attempt_config = config.clone();
@@ -690,18 +686,18 @@ fn prepare_offchain_data_projection_inner(
                     attempt_selector,
                 ));
             })
-            .wrap_err("spawn MongoDB startup validation worker")?;
+            .wrap_err("spawn offchain storage startup validation worker")?;
         let attempt = match attempt_rx.recv_timeout(remaining) {
             Ok(attempt) => attempt,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                bail!("MongoDB startup recovery exceeded the eight-second total deadline");
+                bail!("offchain storage startup recovery exceeded the eight-second total deadline");
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("MongoDB startup validation worker exited unexpectedly");
+                bail!("offchain storage startup validation worker exited unexpectedly");
             }
         };
         match attempt {
-            Ok((storage, overlay, projector, writer_lease)) => {
+            Ok((storage, overlay, projector)) => {
                 let initial = match projector.state().checkpoint {
                     Some(checkpoint) => ProjectionStatus::CatchingUp {
                         checkpoint: Some(checkpoint),
@@ -721,7 +717,6 @@ fn prepare_offchain_data_projection_inner(
                     projector,
                     storage,
                     overlay,
-                    writer_lease,
                     readiness_publisher,
                     readiness,
                     runtime_failure_sender,
@@ -776,49 +771,46 @@ fn prepare_projection_attempt(
     selector: Option<Arc<dyn TributeRetentionSelector>>,
 ) -> Result<
     (
-        Arc<MongoStorage>,
+        OpenedStorage,
         Arc<PendingOverlayStorage>,
         OffchainDataProjection,
-        MongoWriterLease,
     ),
     PrepareProjectionError,
 > {
     let projection_config = ProjectionConfig {
         chain_id: config.chain_id,
         genesis_hash: config.genesis_hash,
-        start_block: config.start_block,
+        start_block: config.storage.start_block,
     };
-    let storage = Arc::new(
-        MongoStorage::connect(MongoStorageConfig {
-            uri: config.mongodb_uri.clone(),
-            database: config.mongodb_database.clone(),
-        })
-        .map_err(PrepareProjectionError::Storage)?,
-    );
-    storage
-        .verify_transaction_support()
+    let storage = StorageProvider::new(config.storage.clone())
+        .and_then(|provider| provider.open_writer())
         .map_err(PrepareProjectionError::Storage)?;
-    let writer_lease = storage
-        .acquire_writer_lease()
-        .map_err(PrepareProjectionError::Storage)?;
-    gauge!("outbe_projection_mongo_topology_capable").set(1.0);
-    let reader: StorageReaderHandle = storage.clone();
+    let reader = storage.reader.clone();
     match selector.as_ref() {
         Some(selector) => OffchainDataProjection::open_with_retention_selector(
             projection_config,
             reader.clone(),
-            storage.clone(),
+            storage.writer.clone(),
             Arc::clone(selector),
         ),
-        None => OffchainDataProjection::open(projection_config, reader.clone(), storage.clone()),
+        None => {
+            OffchainDataProjection::open(projection_config, reader.clone(), storage.writer.clone())
+        }
     }
     .map_err(PrepareProjectionError::Projection)?;
     storage
-        .verify_acknowledged_transaction()
+        .writer
+        .verify_transaction_capability()
         .map_err(PrepareProjectionError::Storage)?;
+    gauge!("outbe_projection_storage_write_capable", "backend" => config.storage.backend_name())
+        .set(1.0);
+    info!(
+        backend = config.storage.backend_name(),
+        "offchain storage opened"
+    );
     let (overlay, projector) = open_logical_projection(projection_config, reader, selector)
         .map_err(PrepareProjectionError::Projection)?;
-    Ok((storage, overlay, projector, writer_lease))
+    Ok((storage, overlay, projector))
 }
 
 fn open_logical_projection(
@@ -858,12 +850,12 @@ where
     };
     let overlay = prepared.overlay;
     let reader: StorageReaderHandle = overlay.clone();
-    let writer: StorageWriterHandle = prepared.storage;
+    let writer = prepared.storage.writer;
     let readiness_publisher = prepared.readiness_publisher;
     let runtime_failure_sender = prepared.runtime_failure_sender;
     let runtime_failure_receiver = prepared.runtime_failure_receiver;
     let retention_fence = prepared.retention_fence;
-    let writer_lease = prepared.writer_lease;
+    let writer_lease = prepared.storage.ownership;
     let local_finalized = canonical_hashes
         .finalized_block_num_hash()
         .wrap_err("read local Reth finalized checkpoint for offchain-data validation")?
@@ -876,7 +868,7 @@ where
         {
             Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
             Some(canonical_hash) => return Err(eyre::eyre!(
-                "offchain-data MongoDB checkpoint identity mismatch at block {}: stored {}, canonical {}",
+                "offchain-data offchain storage checkpoint identity mismatch at block {}: stored {}, canonical {}",
                 checkpoint.block_number,
                 checkpoint.block_hash,
                 canonical_hash
@@ -952,7 +944,7 @@ fn require_finalized_checkpoint(
         && checkpoint.block_hash != local_finalized.hash
     {
         bail!(
-            "offchain-data MongoDB checkpoint {} ({}) does not match local Reth finalized {} ({})",
+            "offchain-data offchain storage checkpoint {} ({}) does not match local Reth finalized {} ({})",
             checkpoint.block_number,
             checkpoint.block_hash,
             local_finalized.number,
@@ -1089,7 +1081,7 @@ struct ProjectionRuntime {
     _reader: StorageReaderHandle,
     overlay: Option<Arc<PendingOverlayStorage>>,
     writer: StorageWriterHandle,
-    _writer_lease: Option<MongoWriterLease>,
+    _writer_lease: Option<StorageOwnershipGuard>,
     runtime_failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     runtime_failure_receiver: Option<tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>>,
 }
@@ -1139,7 +1131,7 @@ fn apply_durable_projection_write(writer: &StorageWriterHandle, write: &DurableP
                     %error,
                     block_number = write.checkpoint.number,
                     block_hash = %write.checkpoint.hash,
-                    "MongoDB projection write failed; retrying exact atomic batch"
+                    "offchain storage projection write failed; retrying exact atomic batch"
                 );
                 std::thread::sleep(PROJECTION_RETRY_INTERVAL);
             }
@@ -1204,11 +1196,11 @@ where
     let (durable_write_tx, durable_write_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_ack_tx, mut recovery_ack_rx) = tokio::sync::mpsc::unbounded_channel();
     std::thread::Builder::new()
-        .name("offchain-mongo-writer".to_owned())
+        .name("offchain-storage-writer".to_owned())
         .spawn(move || {
             run_durable_projection_writer(durable_writer, durable_write_rx, durable_checkpoint_tx);
         })
-        .wrap_err("spawn offchain-data MongoDB writer")?;
+        .wrap_err("spawn offchain-data offchain storage writer")?;
 
     // `finalized_block_stream` emits only changes, so the current provider value must be sampled
     // separately to avoid waiting forever when the node starts at an already-finalized height.
@@ -1233,7 +1225,7 @@ where
     let mut notifications_open = true;
     let mut finalized_stream_open = true;
     let mut runtime_failures_open = true;
-    let mut mongo_unavailable_since: Option<tokio::time::Instant> = None;
+    let mut storage_unavailable_since: Option<tokio::time::Instant> = None;
     let mut immediate_recovery_used = false;
 
     let retry_start = tokio::time::Instant::now() + PROJECTION_RETRY_INTERVAL;
@@ -1339,7 +1331,7 @@ where
                 match changed {
                     Ok(()) => match runtime_failures.borrow_and_update().clone() {
                     Some(RuntimeBodyFailure::Unavailable { .. }) => {
-                        let since = *mongo_unavailable_since
+                        let since = *storage_unavailable_since
                             .get_or_insert_with(tokio::time::Instant::now);
                         publish_status(
                             &readiness_publisher,
@@ -1349,8 +1341,8 @@ where
                             },
                             latest_target,
                         );
-                        gauge!("outbe_projection_mongo_reconnect_active").set(1.0);
-                        gauge!("outbe_projection_mongo_reconnect_remaining_seconds")
+                        gauge!("outbe_projection_storage_reconnect_active").set(1.0);
+                        gauge!("outbe_projection_storage_reconnect_remaining_seconds")
                             .set(PROJECTION_RECOVERY_DEADLINE.as_secs_f64());
                         let recovery_target = latest_target.unwrap_or(recovery_baseline);
                         pending_target = Some(match pending_target {
@@ -1388,7 +1380,7 @@ where
                 match result {
                     Ok(Ok(durable_checkpoint)) => {
                         let attempted_target = pending_target;
-                        mongo_unavailable_since = None;
+                        storage_unavailable_since = None;
                         immediate_recovery_used = false;
                         if pending_target.is_some_and(|pending| {
                             durable_checkpoint.map_or(
@@ -1419,7 +1411,7 @@ where
                     }
                     Ok(Err(error)) => {
                         if projection_is_unavailable(&error) {
-                            let since = *mongo_unavailable_since
+                            let since = *storage_unavailable_since
                                 .get_or_insert_with(tokio::time::Instant::now);
                             publish_status(
                                 &readiness_publisher,
@@ -1429,8 +1421,8 @@ where
                                 },
                                 latest_target,
                             );
-                            gauge!("outbe_projection_mongo_reconnect_active").set(1.0);
-                            gauge!("outbe_projection_mongo_reconnect_remaining_seconds").set(
+                            gauge!("outbe_projection_storage_reconnect_active").set(1.0);
+                            gauge!("outbe_projection_storage_reconnect_remaining_seconds").set(
                                 PROJECTION_RECOVERY_DEADLINE
                                     .saturating_sub(since.elapsed())
                                     .as_secs_f64(),
@@ -1440,7 +1432,7 @@ where
                                     &readiness_publisher,
                                     &projection_exit,
                                     ProjectionFailureClass::MongoReconnectDeadline,
-                                    "MongoDB reconnect deadline expired",
+                                    "offchain storage reconnect deadline expired",
                                 );
                                 finality_stalled = true;
                                 can_start_attempt = false;
@@ -1514,7 +1506,7 @@ where
             }
 
             recovered = recovery_ack_rx.recv(), if !finality_stalled => {
-                if recovered.is_some() && mongo_unavailable_since.take().is_some() {
+                if recovered.is_some() && storage_unavailable_since.take().is_some() {
                     immediate_recovery_used = false;
                     publish_status(
                         &readiness_publisher,
@@ -1523,13 +1515,13 @@ where
                         },
                         latest_target,
                     );
-                    gauge!("outbe_projection_mongo_reconnect_active").set(0.0);
-                    gauge!("outbe_projection_mongo_reconnect_remaining_seconds").set(0.0);
+                    gauge!("outbe_projection_storage_reconnect_active").set(0.0);
+                    gauge!("outbe_projection_storage_reconnect_remaining_seconds").set(0.0);
                 }
             }
 
             _ = async {
-                match mongo_unavailable_since {
+                match storage_unavailable_since {
                     Some(since) => {
                         tokio::time::sleep_until(since + PROJECTION_RECOVERY_DEADLINE).await
                     }
@@ -1540,7 +1532,7 @@ where
                     &readiness_publisher,
                     &projection_exit,
                     ProjectionFailureClass::MongoReconnectDeadline,
-                    "MongoDB reconnect deadline expired",
+                    "offchain storage reconnect deadline expired",
                 );
                 finality_stalled = true;
                 can_start_attempt = false;
@@ -1688,8 +1680,8 @@ fn publish_status(
         }
     }
     if ready > 0.0 {
-        gauge!("outbe_projection_mongo_reconnect_active").set(0.0);
-        gauge!("outbe_projection_mongo_reconnect_remaining_seconds").set(0.0);
+        gauge!("outbe_projection_storage_reconnect_active").set(0.0);
+        gauge!("outbe_projection_storage_reconnect_remaining_seconds").set(0.0);
     }
     publisher.publish(status);
 }
@@ -1985,7 +1977,7 @@ where
                 batch: durable_batch,
                 overlay_ack,
             })
-            .map_err(|_| eyre::eyre!("durable MongoDB writer queue is closed"))?;
+            .map_err(|_| eyre::eyre!("durable offchain storage writer queue is closed"))?;
         logical_checkpoint_tx
             .send(FinalizedTarget::new(
                 projected.block_number,
@@ -2217,11 +2209,13 @@ mod tests {
             prepare_offchain_data_projection(OffchainDataProjectionConfig {
                 chain_id: outbe_primitives::chain::DEVNET_CHAIN_ID,
                 genesis_hash: B256::repeat_byte(0x11),
-                start_block: 1,
-                mongodb_uri:
-                    "mongodb://127.0.0.1:1/?directConnection=true&serverSelectionTimeoutMS=50"
-                        .to_owned(),
-                mongodb_database: "startup_unavailable".to_owned(),
+                storage: outbe_offchain_storage::StorageConfig {
+                    start_block: 1,
+                    backend: outbe_offchain_storage::StorageBackend::MongoDb(outbe_offchain_storage::MongoStorageConfig {
+                        uri: "mongodb://127.0.0.1:1/?directConnection=true&serverSelectionTimeoutMS=50".to_owned(),
+                        database: "startup_unavailable".to_owned(),
+                    }),
+                },
             })
             .err()
             .expect("unavailable MongoDB must fail startup preparation"),
