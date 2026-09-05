@@ -64,32 +64,6 @@ impl RequestBudgetSplit {
         Self::assemble(base_limit, lysis_budget, auction_base, carry_over_credit)
     }
 
-    /// Rebuild the split a stored receipt recorded. The accumulator moves between attempts, so a
-    /// replay reconstructs the draw from the receipt instead of re-reading the balance.
-    pub(crate) fn from_receipt(
-        base_limit: U256,
-        lysis_budget: U256,
-        nominal_total: U256,
-        receipt: &RequestBudgetSplitReceiptV1,
-    ) -> Result<Self> {
-        let invalid = || MetadosisError::InvalidOcompBudgetSplit {
-            day_limit: base_limit,
-            lysis_budget,
-        };
-        let carry_over_credit = base_limit.checked_sub(lysis_budget).ok_or_else(invalid)?;
-        let auction_base = receipt
-            .day_limit
-            .checked_sub(base_limit)
-            .ok_or_else(invalid)?;
-        let demand = nominal_total
-            .checked_sub(lysis_budget)
-            .ok_or_else(invalid)?;
-        if auction_base > demand {
-            return Err(invalid().into());
-        }
-        Self::assemble(base_limit, lysis_budget, auction_base, carry_over_credit)
-    }
-
     fn assemble(
         base_limit: U256,
         lysis_budget: U256,
@@ -116,9 +90,8 @@ impl RequestBudgetSplit {
 /// Apply the request effect for a split that the authoritative Metadosis job
 /// state has proven fresh.
 ///
-/// This function intentionally does not perform receipt lookup. OCM-08 owns
-/// that lookup and must call [`validate_replayed_request_budget_effect`] when
-/// the effect receipt already exists.
+/// The single-attempt FSM invokes this exactly once for a WorldwideDay. An
+/// existing receipt is an invariant violation rather than a replay path.
 pub(crate) fn apply_fresh_request_budget_effect(
     storage: StorageHandle<'_>,
     request: RequestBudgetEffect,
@@ -185,33 +158,6 @@ pub(crate) fn apply_auction_brief(
         }
         Ok(())
     })
-}
-
-/// Validate an authoritative receipt for a replay without touching owner
-/// storage. OCM-08 decides between fresh apply and replay from persisted job
-/// state; callers cannot accidentally select the replay path with `None`.
-pub(crate) fn validate_replayed_request_budget_effect(
-    request: RequestBudgetEffect,
-    existing: &RequestBudgetSplitReceiptV1,
-) -> Result<RequestBudgetSplitReceiptV1> {
-    if existing.pending_nonce > request.pending_nonce {
-        return Err(MetadosisError::OcompBudgetEffectFromFuture {
-            effect_nonce: existing.pending_nonce,
-            current_nonce: request.pending_nonce,
-        }
-        .into());
-    }
-    let split = RequestBudgetSplit::from_receipt(
-        request.day_limit,
-        request.lysis_budget,
-        request.nominal_total,
-        existing,
-    )?;
-    let expected = expected_receipt(&request, split, existing.pending_nonce)?;
-    if existing != &expected {
-        return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
-    }
-    Ok(existing.clone())
 }
 
 fn expected_receipt(

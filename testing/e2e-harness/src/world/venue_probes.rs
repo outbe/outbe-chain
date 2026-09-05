@@ -11,6 +11,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::sol;
 
 use crate::internal::eth;
+#[cfg(feature = "ocomp-integration")]
 use crate::world::{origin_venue, World};
 
 sol! {
@@ -94,6 +95,7 @@ fn logs_of(
     .cloned()
 }
 
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
     match eth::read_call(
         url,
@@ -107,6 +109,7 @@ pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> 
         None => "the router did not answer".to_owned(),
     }
 }
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
@@ -136,10 +139,6 @@ pub(crate) fn day_colour(world: &World, worldwide_day: u32) -> String {
         None => "day state unreadable".to_owned(),
     }
 }
-#[cfg(not(feature = "ocomp-integration"))]
-pub(crate) fn day_colour(_world: &World, _worldwide_day: u32) -> String {
-    "day type unreadable without ocomp-integration".to_owned()
-}
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
     match world
@@ -155,10 +154,7 @@ pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
         _ => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
     }
 }
-#[cfg(not(feature = "ocomp-integration"))]
-pub(crate) fn day_closure(_world: &World, _worldwide_day: u32) -> String {
-    "day closure unreadable without ocomp-integration".to_owned()
-}
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
     let now = eth::latest_block_timestamp(url).unwrap_or_default();
     match eth::read_call(
@@ -381,6 +377,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
         .collect();
     format!("{side} ignored {}", described.join(", "))
 }
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
@@ -644,6 +641,7 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
 }
 
 /// What `holder` owns of `series`: units still issued, and units already settled.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_balances(
     url: &str,
     nft: Address,
@@ -680,6 +678,7 @@ pub(crate) fn series_balances(
 }
 
 /// Whether the collection knows the series at all.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_exists(
     url: &str,
     nft: Address,
@@ -694,6 +693,7 @@ pub(crate) fn series_exists(
 }
 
 /// A series' lifecycle state as the collection has it: 0 Issued, 1 Qualified, 2 Called.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_state(
     url: &str,
     nft: Address,
@@ -705,6 +705,7 @@ pub(crate) fn series_state(
 
 /// Units the series was issued across every chain. A forfeit is measured against
 /// this, not against what one chain happens to hold.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_issued_count(
     url: &str,
     nft: Address,
@@ -715,6 +716,7 @@ pub(crate) fn series_issued_count(
 }
 
 /// When the series was Called, as both chains recorded it.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_called_at(
     url: &str,
     nft: Address,
@@ -726,6 +728,7 @@ pub(crate) fn series_called_at(
 
 /// When the notice a Called series was given runs out. Expiry is derived against
 /// this, never stored, so a scenario has to wait past it rather than watch a flag.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_call_deadline(
     url: &str,
     nft: Address,
@@ -736,6 +739,7 @@ pub(crate) fn series_call_deadline(
 }
 
 /// The prices the engine derived at issuance: entry, floor, and call.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_prices(
     url: &str,
     nft: Address,
@@ -751,6 +755,7 @@ pub(crate) fn series_prices(
 }
 
 /// PROMIS-units the series carries per Intex unit.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_promis_load(
     url: &str,
     nft: Address,
@@ -761,6 +766,7 @@ pub(crate) fn series_promis_load(
 }
 
 /// The Issued token id of `series`, which the bridge moves.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn issued_token_id(
     url: &str,
     nft: Address,

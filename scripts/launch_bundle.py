@@ -75,30 +75,6 @@ def embedded_ocomp_endpoint_port(config: dict[str, Any], consensus_port: int) ->
     return endpoint_port
 
 
-def ocomp_discovery_control_port(config: dict[str, Any], ocomp_endpoint_port: int) -> int:
-    """Allocate the exporter-side durable discovery control endpoint.
-
-    The port is an explicit deployment choice. It is accepted only when it
-    does not collide with bundle lanes or another configured listener.
-    """
-    if "ocomp_discovery_control_port" not in config:
-        raise ValueError("ocomp_discovery_control_port is required")
-    candidate = int(config["ocomp_discovery_control_port"])
-    if not 1 <= candidate <= 65535:
-        raise ValueError(f"invalid OCOMP discovery control port: {candidate}")
-    lane_end = ocomp_endpoint_port + 12
-    if lane_end > 65535:
-        raise ValueError(
-            f"OCOMP endpoint leaves no complete lane/control window: {ocomp_endpoint_port}"
-        )
-    configured_listeners = {port_of(config, name) for name in DEFAULT_PORTS}
-    if candidate in configured_listeners or ocomp_endpoint_port <= candidate <= lane_end:
-        raise ValueError(
-            f"OCOMP discovery control port collides with another listener: {candidate}"
-        )
-    return candidate
-
-
 def write_script(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/usr/bin/env bash\nset -euo pipefail\n\n" + body.strip() + "\n")
@@ -359,7 +335,6 @@ def node_script(
     consensus_port: int,
     host: str,
     identity: dict[str, Any],
-    discovery_control_port: int,
 ) -> str:
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
@@ -407,7 +382,6 @@ printf '%s' "$(tr -d '[:space:]' < "$KEYS/reth-p2p-secret.hex")" > "$KEYS/reth-p
 # A debug build needs a larger thread stack: block 1 lazily initializes k256's
 # secp256k1 tables in an unoptimized frame that overflows reth's default.
 export RUST_MIN_STACK="${{RUST_MIN_STACK:-16777216}}"
-export OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS="127.0.0.1:{discovery_control_port}"
 
 exec {quote(binary)} node \\
   --validator \\
@@ -678,7 +652,6 @@ def ocomp_exporter_script(
     base_dir: str,
     identity: dict[str, Any],
     ocomp_endpoint_port: int,
-    discovery_control_port: int,
 ) -> str:
     binary = str(config.get("ocomp_binary", "outbe-ocomp"))
     database = f"outbe_projection_validator_{index}"
@@ -693,7 +666,6 @@ if [ -f {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")} ]; then
 fi
 export OUTBE_OCOMP_PROJECTION_MONGODB_URI="mongodb://127.0.0.1:{port_of(config, "mongodb_port")}/?replicaSet=rs0"
 export OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE={quote(database)}
-export OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS="127.0.0.1:{discovery_control_port}"
 
 exec {quote(binary)} snapshot-exporter \\
   --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
@@ -991,9 +963,7 @@ echo "follow one with: journalctl -u outbe-node@$INDEX -f"
     write_script(output_dir / "install-systemd.sh", install)
 
 
-def preflight_script(
-    *, config: dict[str, Any], base_dir: str, index: int, discovery_control_port: int
-) -> str:
+def preflight_script(*, config: dict[str, Any], base_dir: str, index: int) -> str:
     """Check, on this machine, everything that silently breaks a launch.
 
     Every item here cost a real debugging session: a genesis that differs
@@ -1032,7 +1002,7 @@ if command -v docker >/dev/null; then
   [ "${{dbs:-0}}" != "0" ] && {{ note "mongo projections" "$dbs left from an earlier run"; fail=1; }}
 fi
 
-for port in {tee_port} {rpc_port} {discovery_control_port}; do
+for port in {tee_port} {rpc_port}; do
   ss -ltn 2>/dev/null | grep -q ":$port " && {{ note "port $port" "already in use"; fail=1; }}
 done
 
@@ -1348,7 +1318,6 @@ def render(
         directory = output_dir / f"validator-{index}"
         host, _, consensus_port = validator["p2p_address"].rpartition(":")
         ocomp_endpoint_port = embedded_ocomp_endpoint_port(config, int(consensus_port))
-        discovery_control_port = ocomp_discovery_control_port(config, ocomp_endpoint_port)
 
         write_script(directory / "run-mongodb.sh", mongodb_script(config=config, index=index))
         write_script(
@@ -1376,7 +1345,6 @@ def render(
                 consensus_port=int(consensus_port),
                 host=host,
                 identity=identity,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(
@@ -1390,7 +1358,6 @@ def render(
                 config=config,
                 base_dir=base_dir,
                 index=index,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(
@@ -1405,7 +1372,6 @@ def render(
                 base_dir=base_dir,
                 identity=identity,
                 ocomp_endpoint_port=ocomp_endpoint_port,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(

@@ -59,13 +59,10 @@ fn evidence_for(world: &World, victim_index: usize, epoch: u64) -> ConflictingNo
 }
 
 fn wait_finalized_outcome(world: &World, outcome: &TxOutcome) {
-    let block = outcome
-        .block_number()
-        .expect("evidence receipt must carry a block number");
-    assert!(
-        world.rpc.wait_finalized_at_least(primary(world), block, 30),
-        "evidence transaction at block {block} did not become finalized"
-    );
+    world
+        .rpc
+        .finalize_outcome(outcome, &[primary(world)], 30)
+        .expect("evidence transaction must have a canonical finalized outcome");
 }
 
 fn parse_evidence_event(outcome: &TxOutcome) -> Option<EvidenceEvent> {
@@ -126,7 +123,10 @@ fn submit_initial_felony(world: &mut World) {
     assert_eq!(before.status, STATUS_ACTIVE, "victim must start ACTIVE");
     assert!(before.has_bls_share, "victim must start with a BLS share");
     assert!(
-        world.rpc.is_participant(port, &victim),
+        world
+            .rpc
+            .is_participant(port, &victim)
+            .expect("observe consensus participation"),
         "victim must start as a consensus participant"
     );
     assert_eq!(
@@ -214,8 +214,9 @@ fn valid_evidence_and_reverse(world: &mut World) {
     assert_eq!(
         world
             .rpc
-            .evidence_felony_event_count(port, &victim, from_block),
-        Some(0),
+            .evidence_felony_event_count(port, &victim, from_block)
+            .expect("observe fresh finalized evidence range"),
+        0,
         "fresh evidence range must contain no prior felony event"
     );
 
@@ -402,8 +403,9 @@ fn exactly_one_punishment_changes_all_surfaces(world: &mut World) {
     assert_eq!(
         world
             .rpc
-            .evidence_felony_event_count(port, &victim, from_block),
-        Some(1),
+            .evidence_felony_event_count(port, &victim, from_block)
+            .expect("observe finalized evidence application range"),
+        1,
         "exactly one EvidenceFelonyApplied event must be finalized"
     );
     assert!(
@@ -499,8 +501,8 @@ fn requests_early_unjail(world: &mut World) {
     world.state.marker_count = Some(outcome.success as usize);
 }
 
-#[then("unjail is rejected or commits PENDING without a BLS share")]
-fn early_unjail_is_rejected_or_shareless(world: &mut World) {
+#[then("early unjail is rejected and preserves the retained jailed committee member")]
+fn early_unjail_is_rejected_while_retained(world: &mut World) {
     let port = primary(world);
     let victim = world.state.joiner_addr.clone().expect("jailed victim");
     let accepted = world.state.marker_count == Some(1);
@@ -509,26 +511,21 @@ fn early_unjail_is_rejected_or_shareless(world: &mut World) {
         .validator_record(port, &victim)
         .expect("victim after early unjail");
 
-    if !accepted {
-        assert_eq!(
-            record.status, STATUS_JAILED,
-            "reverted early unjail must preserve JAILED"
-        );
-        return;
-    }
-
+    assert!(!accepted, "retained committee member accepted early unjail");
     assert_eq!(
-        record.status, STATUS_PENDING,
-        "accepted unjail must transition to PENDING"
-    );
-    // D-10 target invariant. Current code leaves the pre-boundary share live.
-    assert!(
-        !record.has_bls_share,
-        "D-10 target invariant: accepted early unjail must atomically clear its live BLS share"
+        record.status, STATUS_JAILED,
+        "reverted early unjail must preserve JAILED"
     );
     assert!(
-        !world.rpc.is_participant(port, &victim),
-        "shareless PENDING validator must not remain a participant"
+        record.has_bls_share,
+        "retained jailed committee member lost its live BLS share before exclusion"
+    );
+    assert!(
+        world
+            .rpc
+            .is_participant(port, &victim)
+            .expect("observe consensus participation"),
+        "retained jailed committee member disappeared before exclusion boundary"
     );
 }
 
@@ -540,20 +537,26 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
     let victim = world.state.joiner_addr.clone().expect("jailed victim");
     let victim_key = world.validators.get(3).evm_key().expect("victim key");
 
-    // If the early request was rejected, first let the jail-triggered boundary
-    // exclude the validator, then use the normal JAILED -> PENDING path.
-    if world.state.marker_count == Some(0) {
-        wait_until(
-            || !world.rpc.is_participant(port, &victim),
-            120,
-            "jailed validator exclusion boundary",
-        );
-        let outcome = world
-            .rpc
-            .unjail_validator(&victim_key)
-            .expect("unjail after exclusion boundary");
-        assert!(outcome.success, "post-exclusion unjail must succeed");
-    }
+    assert_eq!(
+        world.state.marker_count,
+        Some(0),
+        "early unjail must revert"
+    );
+    wait_until(
+        || {
+            !world
+                .rpc
+                .is_participant(port, &victim)
+                .expect("observe consensus participation")
+        },
+        120,
+        "jailed validator exclusion boundary",
+    );
+    let outcome = world
+        .rpc
+        .unjail_validator(&victim_key)
+        .expect("unjail after exclusion boundary");
+    assert!(outcome.success, "post-exclusion unjail must succeed");
 
     let unconfirmed_epoch = world.rpc.epoch_on(port).expect("epoch after unjail");
     wait_until(
@@ -572,7 +575,10 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         "unjail must remain PENDING without readiness confirmation"
     );
     assert!(
-        !world.rpc.is_participant(port, &victim),
+        !world
+            .rpc
+            .is_participant(port, &victim)
+            .expect("observe consensus participation"),
         "unconfirmed PENDING validator must stay excluded"
     );
 
@@ -585,7 +591,12 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
         "readiness reconfirmation must succeed"
     );
     wait_until(
-        || world.rpc.is_participant(port, &victim),
+        || {
+            world
+                .rpc
+                .is_participant(port, &victim)
+                .expect("observe consensus participation")
+        },
         180,
         "fresh reshare after readiness reconfirmation",
     );
@@ -631,7 +642,8 @@ fn retain_current_epoch_evidence(world: &mut World) {
     world.state.marker_count = Some(
         world
             .localnet
-            .log_count(0, "DKG reshare activated; new active set committed"),
+            .log_count(0, "DKG reshare activated; new active set committed")
+            .expect("read required owned process log"),
     );
     world.state.slash_stake_before = Some(record.stake);
     world.state.slash_count_before = Some(record.slash_count);
@@ -659,7 +671,8 @@ fn advance_beyond_snapshot_ring(world: &mut World) {
                 .is_some_and(|epoch| epoch >= target_epoch);
             let rotations = world
                 .localnet
-                .log_count(0, "DKG reshare activated; new active set committed");
+                .log_count(0, "DKG reshare activated; new active set committed")
+                .expect("read required owned process log");
             epoch_advanced && rotations >= initial_boundaries + SNAPSHOT_RETAIN_EPOCHS as usize
         },
         360,
@@ -733,12 +746,15 @@ fn evicted_evidence_is_rejected_atomically(world: &mut World) {
         "felony accounting must not change"
     );
     assert_eq!(
-        world.rpc.evidence_felony_event_count(
-            port,
-            &victim,
-            world.state.marker_height.expect("event range start")
-        ),
-        Some(0),
+        world
+            .rpc
+            .evidence_felony_event_count(
+                port,
+                &victim,
+                world.state.marker_height.expect("event range start")
+            )
+            .expect("observe finalized evidence range after rejected replay"),
+        0,
         "rejected evicted evidence must emit no punishment event"
     );
 }

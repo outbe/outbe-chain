@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ocomp::OcompRequestProfileExt, WwdDayType, WwdStatus};
+use crate::{WwdDayType, WwdStatus};
 use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
 use outbe_oracle::schema::OracleContract;
@@ -2811,13 +2811,12 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
 
         let metadosis = MetadosisContract::new(storage);
         let schema_limits = crate::ocomp::schema::poc_schema_limits();
-        let fsm_limits = super::ocomp_storage::request_profile().fsm_limits();
         let first = metadosis
-            .ocomp_fsm_state(first_wwd, &schema_limits, fsm_limits)
+            .ocomp_fsm_state(first_wwd, &schema_limits)
             .unwrap()
             .projection();
         let second = metadosis
-            .ocomp_fsm_state(second_wwd, &schema_limits, fsm_limits)
+            .ocomp_fsm_state(second_wwd, &schema_limits)
             .unwrap()
             .projection();
         assert_eq!(first.phase, crate::ocomp::state::DayPhase::Ready);
@@ -3145,12 +3144,12 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
         assert!(metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(!metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         let limits = crate::ocomp::schema::poc_schema_limits();
-        let profile = metadosis
+        let _profile = metadosis
             .read_ocomp_request_profile(&limits)
             .unwrap()
             .unwrap();
         let fsm = metadosis
-            .ocomp_fsm_state(wwd, &limits, profile.fsm_limits())
+            .ocomp_fsm_state(wwd, &limits)
             .unwrap()
             .projection();
         assert_eq!(fsm.phase, crate::ocomp::state::DayPhase::Ready);

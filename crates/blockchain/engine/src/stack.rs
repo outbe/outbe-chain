@@ -92,7 +92,10 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
-use outbe_node::ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector};
+use outbe_node::{
+    ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
+    projection::ProjectionRetentionFence,
+};
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 fn radicle_channel_config() -> (u64, u32, usize) {
@@ -293,6 +296,7 @@ pub struct ConsensusStackServices {
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     retained_tribute_writer: Arc<RetainedTributeWriter>,
+    projection_retention_fence: Arc<ProjectionRetentionFence>,
     retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
@@ -307,6 +311,7 @@ impl ConsensusStackServices {
     pub fn new(
         projection_readiness: ProjectionReadinessHandle,
         retained_tribute_writer: Arc<RetainedTributeWriter>,
+        projection_retention_fence: Arc<ProjectionRetentionFence>,
         retention_selector: Arc<SharedOcompRetentionSelector>,
         finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
@@ -315,6 +320,7 @@ impl ConsensusStackServices {
             projection_readiness,
             ocomp_readiness: None,
             retained_tribute_writer,
+            projection_retention_fence,
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
@@ -2432,6 +2438,7 @@ async fn run_follow_stack<E>(
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     retained_tribute_writer: Arc<RetainedTributeWriter>,
+    projection_retention_fence: Arc<ProjectionRetentionFence>,
     retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
@@ -2517,6 +2524,7 @@ where
         projection_readiness,
         ocomp_readiness,
         retained_tribute_writer,
+        projection_retention_fence,
         retention_selector,
         finalized_ce_committer,
         ce_startup_recovery,
@@ -2677,6 +2685,7 @@ async fn run_certified_follow_stack<E>(
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     retained_tribute_writer: Arc<RetainedTributeWriter>,
+    projection_retention_fence: Arc<ProjectionRetentionFence>,
     retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
@@ -3071,10 +3080,11 @@ where
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes_and_fence(
             ocomp_storage_root.join("ocomp_retention"),
             ocomp_proof_source,
             retained_tribute_writer,
+            projection_retention_fence,
         ),
     );
     retention_selector
@@ -3252,6 +3262,7 @@ where
         projection_readiness,
         ocomp_readiness,
         retained_tribute_writer,
+        projection_retention_fence,
         retention_selector,
         finalized_ce_committer,
         ce_startup_recovery,
@@ -3288,6 +3299,7 @@ where
             projection_readiness,
             ocomp_readiness,
             retained_tribute_writer,
+            projection_retention_fence,
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
@@ -4528,6 +4540,22 @@ where
         recovery_anchor_hash,
     );
 
+    // Restore certified provider finality before a queued payload can wait for
+    // projection. The executor heartbeat cannot run while that wait is active.
+    let recovery_checkpoint = ProjectionCheckpoint {
+        block_number: recovery_anchor_height,
+        block_hash: recovery_anchor_hash,
+    };
+    let fcu_provider_node = node.clone();
+    confirm_recovered_forkchoice(
+        ctx.child("recovered_forkchoice"),
+        recovery_checkpoint,
+        || executor_actor.replay_recovered_forkchoice_once(recovery_checkpoint),
+        move || read_reth_recovery_forkchoice(&fcu_provider_node),
+    )
+    .await
+    .wrap_err("failed to confirm recovered Reth forkchoice before validator startup")?;
+
     // Start broadcast engine with P2P channel.
     let _broadcast_handle = broadcast_engine.start(broadcast_channel);
 
@@ -4608,10 +4636,11 @@ where
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes_and_fence(
             ocomp_retention_dir,
             ocomp_proof_source,
             retained_tribute_writer,
+            projection_retention_fence,
         ),
     );
     retention_selector

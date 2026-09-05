@@ -29,7 +29,7 @@ use outbe_node::{
     ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
     projection::{
         prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
-        OffchainDataProjectionConfig,
+        OffchainDataProjectionConfig, ProjectionRetentionFence,
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
@@ -1286,6 +1286,7 @@ fn run_node() -> eyre::Result<()> {
         ProjectionReadinessHandle,
         Option<ProjectionReadinessHandle>,
         Arc<RetainedTributeWriter>,
+        Arc<ProjectionRetentionFence>,
         Arc<SharedOcompRetentionSelector>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
@@ -1309,6 +1310,7 @@ fn run_node() -> eyre::Result<()> {
             projection_readiness,
             ocomp_readiness,
             retained_tribute_writer,
+            projection_retention_fence,
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
@@ -1413,6 +1415,7 @@ fn run_node() -> eyre::Result<()> {
                             let mut services = outbe_engine::ConsensusStackServices::new(
                                 projection_readiness,
                                 retained_tribute_writer,
+                                projection_retention_fence,
                                 retention_selector,
                                 finalized_ce_committer,
                                 ce_startup_recovery,
@@ -1683,22 +1686,10 @@ fn run_node() -> eyre::Result<()> {
             None
         };
         let retention_selector = Arc::new(SharedOcompRetentionSelector::new());
-        let discovery_control_address = std::env::var("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS")
-            .wrap_err("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS is required")?
-            .parse::<std::net::SocketAddr>()
-            .wrap_err("parse OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS")?;
-        if !discovery_control_address.ip().is_loopback()
-            || discovery_control_address.port() == 0
-        {
-            eyre::bail!(
-                "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS must be a non-zero loopback socket"
-            );
-        }
         let discovery_spool_root = ocomp_domain_root.join("exporter-v1/discovery");
         let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
             domain_root: ocomp_domain_root,
             discovery_spool_root,
-            discovery_control_address,
             bundles: ocomp_runtime_bundles,
             policy: ocomp_policy,
             validator_rpc_url: ocomp_validator_rpc_url,
@@ -1902,6 +1893,7 @@ fn run_node() -> eyre::Result<()> {
         let proof_chain_id = builder.config().chain.chain().id();
         let projection_readiness = prepared_projection.readiness();
         let retained_tribute_writer = prepared_projection.retained_tribute_writer();
+        let projection_retention_fence = prepared_projection.retention_fence();
         let ce_data_dir = builder
             .config()
             .datadir
@@ -2421,6 +2413,7 @@ fn run_node() -> eyre::Result<()> {
                 projection_readiness,
                 ocomp_readiness_for_consensus,
                 retained_tribute_writer,
+                projection_retention_fence,
                 retention_selector,
                 finalized_ce_committer,
                 ce_startup_recovery,
@@ -3063,8 +3056,7 @@ mod tests {
         for unavailable in [
             OcompJobStatus::AwaitingFinality,
             OcompJobStatus::Expired,
-            OcompJobStatus::Conflicted,
-            OcompJobStatus::Canceled,
+            OcompJobStatus::Failed,
         ] {
             assert!(!super::ocomp_job_available_for_calculation(unavailable));
         }
