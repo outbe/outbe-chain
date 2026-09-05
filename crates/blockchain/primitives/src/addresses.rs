@@ -332,8 +332,27 @@ pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000
 /// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
 pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
 
+// ---------------------------------------------------------------------------
+// Intex CREATE3 proxies
+// ---------------------------------------------------------------------------
+//
+// Deployed through the protocol Create3Factory, so an address depends only on
+// `(factory, deployer, salt)` - production is salt "outbe-intex:<Name>:v3.0.0"
+// under deployer 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05, `e2e-test` is salt
+// "outbe-intex:<Name>:e2e-test" under the well-known anvil account. Both sets
+// move whenever the factory does; `outbe-intexfactory` and `outbe-desis`
+// re-export from here rather than pinning their own copies.
+
 /// IntexNFT1155 on Outbe: the local ERC-1155 balance ledger for Intex series
-/// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range
-/// precompile). Called by IntexFactory (settle/burnSettled) and by GemFactory
-/// (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af");
+/// (Issued/Settled tokens). Called by IntexFactory (settle/burnSettled) and by
+/// GemFactory (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
+#[cfg(not(feature = "e2e-test"))]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x0936E2352a913DC4Be0517a8a87668c59cC12295");
+#[cfg(feature = "e2e-test")]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
+
+/// OriginRouter on Outbe: outbound ERC-7786 sends and the auction's target-chain registry.
+#[cfg(not(feature = "e2e-test"))]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xbb926C9eC73ee1785715Eb4002D60ba38da06A57");
+#[cfg(feature = "e2e-test")]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");

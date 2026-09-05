@@ -65,10 +65,10 @@ const OUTBE = "outbe-testnet";
 // each one shares a single address on every chain; only the wCOEN payment token
 // is a per-chain deployment. Networks gate availability, addresses do not.
 const APP = {
-  auction: a("0x3EB42c05F1bF00CdAaF9F825b2DDA3fc93D20d7f"),
-  escrow: a("0x88C521C9A79b16a00aa2e4285670246cC2dbe868"),
-  nft: a("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af"),
-  nftBridge: a("0x4056B412a0D3A0931FE2078Be8Ec4a57ADDb3958"),
+  auction: a("0x8C33709933Bc4E4F4055e48987Ce7690985eE0ba"),
+  escrow: a("0xE81c946184b1c096f3A9eeC02FD7C3DaE61D7781"),
+  nft: a("0x0936E2352a913DC4Be0517a8a87668c59cC12295"),
+  nftBridge: a("0xF92c195a7ffF0625549A2DE2D935c19594E2754d"),
 };
 
 /** outbe runtime precompiles (addresses.rs) + the fan-out router. */
@@ -79,7 +79,7 @@ const OUTBE_ONLY = {
   desis: a("0x0000000000000000000000000000000000001016"),
   vaultRouter: a("0x0000000000000000000000000000000000001017"),
   // CREATE3 proxy, salt "outbe-intex:OriginRouter:v3.0.0".
-  originRouter: a("0xCBfa290DCd34319Ff1aec79A4084f2C900977599"),
+  originRouter: a("0xbb926C9eC73ee1785715Eb4002D60ba38da06A57"),
 };
 
 /** Networks where the auction/escrow pair is live. The NFT pair runs on the origin

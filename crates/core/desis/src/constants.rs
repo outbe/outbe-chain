@@ -1,14 +1,6 @@
-use alloy_primitives::{address, Address};
-
-/// OriginRouter on Outbe (outbound ERC-7786 sends).
-/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginRouter:v3.0.0".
-#[cfg(not(feature = "e2e-test"))]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xCBfa290DCd34319Ff1aec79A4084f2C900977599");
-
-/// Same proxy under salt "outbe-intex:OriginRouter:e2e-test", deployed by the well-known
-/// anvil account so a throwaway chain needs no production key.
-#[cfg(feature = "e2e-test")]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c780Cb34526d8411E");
+/// OriginRouter on Outbe (outbound ERC-7786 sends). Defined in
+/// `outbe_primitives::addresses`, which also picks the e2e set.
+pub use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;

@@ -58,6 +58,9 @@ trybuild = "1"
 [features]
 default = []
 bench-utils = []
+# Retarget the Intex CREATE3 addresses at the throwaway set an e2e chain deploys
+# with the well-known anvil key. Never enabled in a release build.
+e2e-test = []
 test-utils = []
 tee-attestation-v1 = []
 
