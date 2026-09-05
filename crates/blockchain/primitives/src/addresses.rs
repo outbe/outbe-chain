@@ -332,26 +332,15 @@ pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000
 /// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
 pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
 
-// ---------------------------------------------------------------------------
-// Intex CREATE3 proxies
-// ---------------------------------------------------------------------------
-//
-// Deployed through the protocol Create3Factory, so an address depends only on
-// `(factory, deployer, salt)` - production is salt "outbe-intex:<Name>:v4.0.0"
-// under deployer 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05, `e2e-test` is salt
-// "outbe-intex:<Name>:e2e-test" under the well-known anvil account. Both sets
-// move whenever the factory does; `outbe-intexfactory` and `outbe-desis`
-// re-export from here rather than pinning their own copies.
-
-/// IntexNFT1155 on Outbe: the local ERC-1155 balance ledger for Intex series
-/// (Issued/Settled tokens). Called by IntexFactory (settle/burnSettled) and by
-/// GemFactory (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
+/// IntexNFT1155: the Intex ERC-1155 series balance ledger. CREATE3 proxy under
+/// salt "outbe-intex:IntexNFT1155:<version>", not a precompile.
 #[cfg(not(feature = "e2e-test"))]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x956d5Dc2D4FFD706ea9f2d1da350EEC73557ff8a");
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
-/// OriginRouter on Outbe: outbound ERC-7786 sends and the auction's target-chain registry.
+/// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
+/// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:<version>".
 #[cfg(not(feature = "e2e-test"))]
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xc863eA177036b01a73B56B16a7F51c2529382547");
 #[cfg(feature = "e2e-test")]

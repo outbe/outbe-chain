@@ -1,5 +1,3 @@
-/// OriginRouter on Outbe (outbound ERC-7786 sends). Defined in
-/// `outbe_primitives::addresses`, which also picks the e2e set.
 pub use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).

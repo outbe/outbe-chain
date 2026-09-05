@@ -5,9 +5,6 @@
 use alloy_primitives::{address, Address};
 use outbe_primitives::units::SCALE_1E18_U128;
 
-/// The Intex CREATE3 proxies this module calls: IntexNFT1155 (settle /
-/// burnSettled / balanceOf) and OriginRouter (outbound ERC-7786 sends). Both are
-/// defined in `outbe_primitives::addresses`, which also picks the e2e set.
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
 /// A payout e2e credits proceeds without deploying the router, so a throwaway
