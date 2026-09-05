@@ -10,6 +10,7 @@ use thiserror::Error;
 pub enum DayPhase {
     Ready,
     OffchainPending,
+    Terminal,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,7 +19,6 @@ pub enum JobFsmTransitionKind {
     Request,
     OpenVoting,
     Expire,
-    Conflict,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,7 +28,7 @@ pub struct JobFsmTransitionRule {
     pub to: DayPhase,
 }
 
-const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 5] = [
+const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 4] = [
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Defer,
         from: DayPhase::Ready,
@@ -47,12 +47,7 @@ const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 5] = [
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Expire,
         from: DayPhase::OffchainPending,
-        to: DayPhase::Ready,
-    },
-    JobFsmTransitionRule {
-        kind: JobFsmTransitionKind::Conflict,
-        from: DayPhase::OffchainPending,
-        to: DayPhase::Ready,
+        to: DayPhase::Terminal,
     },
 ];
 
@@ -67,18 +62,11 @@ pub const fn transition_rules() -> &'static [JobFsmTransitionRule] {
     &JOB_FSM_TRANSITION_RULES
 }
 
-/// Fork-bounded lifecycle limits.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct JobFsmLimits {
-    pub max_terminal_records: u16,
-}
-
 /// Whether request processing must apply the request-phase budget effect or
 /// only validate the already-authoritative receipt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestEffectMode {
     Fresh { effect_nonce: u64 },
-    Replay { effect_nonce: u64 },
 }
 
 /// Commands accepted by the request/expiry slice of the production FSM.
@@ -103,10 +91,6 @@ pub enum JobFsmCommand {
         at_height: u64,
         at_time: u64,
     },
-    Conflict {
-        at_height: u64,
-        at_time: u64,
-    },
 }
 
 impl JobFsmCommand {
@@ -116,7 +100,6 @@ impl JobFsmCommand {
             Self::Request { .. } => JobFsmTransitionKind::Request,
             Self::OpenVoting { .. } => JobFsmTransitionKind::OpenVoting,
             Self::Expire { .. } => JobFsmTransitionKind::Expire,
-            Self::Conflict { .. } => JobFsmTransitionKind::Conflict,
         }
     }
 }
@@ -134,22 +117,14 @@ pub struct JobFsmProjection {
     pub retained_lysis_budget: Option<U256>,
 }
 
-/// Terminal retry outcome retained by the bounded FSM history.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RetryTerminalOutcome {
-    Expired,
-    Conflicted,
-}
-
-/// Immutable evidence retained for an attempt that returned the WWD to READY.
+/// Immutable evidence retained while an expiry transition is committed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalAttempt {
     pub intent_id: B256,
     pub pending_nonce: u64,
     pub terminal_height: u64,
     pub terminal_time: u64,
-    pub next_pending_nonce: u64,
-    pub outcome: RetryTerminalOutcome,
+    pub retained_lysis_budget: U256,
 }
 
 /// Canonical persistence projection of the immutable request-phase effect.
@@ -228,7 +203,7 @@ pub enum JobFsmError {
     #[error("OCOMP request is not due until height {due_height}")]
     RequestNotDue { due_height: u64 },
     #[error(
-        "OCOMP deferred retry height {next_check_height} must follow processing height {at_height}"
+        "OCOMP deferred READY height {next_check_height} must follow processing height {at_height}"
     )]
     InvalidDeferredHeight {
         at_height: u64,
@@ -244,8 +219,6 @@ pub enum JobFsmError {
     VotingOpenTooEarly { open_height: u64 },
     #[error("OCOMP expiry requires a live attempt deadline")]
     ExpiryRequiresDeadline,
-    #[error("OCOMP certified conflict requires OFFCHAIN_PENDING state")]
-    ConflictRequiresPending,
     #[error("OCOMP intent id is the reserved zero hash")]
     ZeroIntentId,
     #[error("OCOMP request budget receipt hash is the reserved zero hash")]
@@ -260,16 +233,8 @@ pub enum JobFsmError {
         at_height: u64,
         deadline_height: u64,
     },
-    #[error("OCOMP retry changed the frozen Lysis budget")]
-    RetryBudgetMismatch,
-    #[error("OCOMP retry changed the request budget receipt")]
-    RetryReceiptMismatch,
-    #[error("OCOMP pending nonce overflow")]
-    PendingNonceOverflow,
-    #[error("OCOMP retry height overflow")]
-    RetryHeightOverflow,
-    #[error("OCOMP terminal record cap {limit} is exhausted")]
-    TerminalRecordCapExceeded { limit: u16 },
+    #[error("OCOMP height overflow")]
+    HeightOverflow,
     #[error("OCOMP terminal evidence is inconsistent")]
     InvalidTerminalEvidence,
     #[error("OCOMP request effect is inconsistent")]
@@ -279,8 +244,7 @@ pub enum JobFsmError {
 }
 
 impl JobFsmState {
-    /// Constructs the only fresh lifecycle state. Retry states are reachable
-    /// solely through a successful terminal transition.
+    /// Constructs the only fresh lifecycle state.
     #[must_use]
     pub fn initial_ready(worldwide_day: WorldwideDay, first_check_height: u64) -> Self {
         Self {
@@ -297,7 +261,7 @@ impl JobFsmState {
 
     /// Restores persisted lifecycle state and fails closed on any
     /// status/index/budget inconsistency.
-    pub fn restore(snapshot: JobFsmSnapshot, limits: JobFsmLimits) -> Result<Self, JobFsmError> {
+    pub fn restore(snapshot: JobFsmSnapshot) -> Result<Self, JobFsmError> {
         let state = Self {
             worldwide_day: snapshot.worldwide_day,
             ready: snapshot.ready.map(|ready| ReadyAttempt {
@@ -314,7 +278,7 @@ impl JobFsmState {
             }),
             terminal: snapshot.terminal,
         };
-        state.validate(limits)?;
+        state.validate()?;
         Ok(state)
     }
 
@@ -343,10 +307,7 @@ impl JobFsmState {
     /// Returns whether the exact request-phase economic effect is fresh or an
     /// immutable replay. This decision is derived from lifecycle state rather
     /// than supplied by a caller.
-    pub fn request_effect_mode(
-        &self,
-        lysis_budget: U256,
-    ) -> Result<RequestEffectMode, JobFsmError> {
+    pub fn request_effect_mode(&self) -> Result<RequestEffectMode, JobFsmError> {
         let ready = self.ready.ok_or(JobFsmError::RequestRequiresReady)?;
         match ready.retained_effect {
             None => {
@@ -357,39 +318,21 @@ impl JobFsmState {
                     effect_nonce: ready.pending_nonce,
                 })
             }
-            Some(effect) => {
-                if effect.lysis_budget != lysis_budget {
-                    return Err(JobFsmError::RetryBudgetMismatch);
-                }
-                if effect.effect_nonce > ready.pending_nonce {
-                    return Err(JobFsmError::InvalidRequestEffect);
-                }
-                Ok(RequestEffectMode::Replay {
-                    effect_nonce: effect.effect_nonce,
-                })
-            }
+            Some(_) => Err(JobFsmError::InvalidRequestEffect),
         }
     }
 
     /// Applies one transition atomically in memory. The receiver changes only
     /// after both the transition and the complete invariant checker succeed.
-    pub fn apply(
-        &mut self,
-        command: JobFsmCommand,
-        limits: JobFsmLimits,
-    ) -> Result<JobFsmProjection, JobFsmError> {
+    pub fn apply(&mut self, command: JobFsmCommand) -> Result<JobFsmProjection, JobFsmError> {
         let mut candidate = self.clone();
-        candidate.apply_inner(command, limits)?;
-        candidate.validate(limits)?;
+        candidate.apply_inner(command)?;
+        candidate.validate()?;
         *self = candidate;
         Ok(self.projection())
     }
 
-    fn apply_inner(
-        &mut self,
-        command: JobFsmCommand,
-        limits: JobFsmLimits,
-    ) -> Result<(), JobFsmError> {
+    fn apply_inner(&mut self, command: JobFsmCommand) -> Result<(), JobFsmError> {
         let transition_kind = command.transition_kind();
         let transition_rule = transition_rules()
             .iter()
@@ -399,7 +342,6 @@ impl JobFsmState {
         if self.phase()? != transition_rule.from {
             return Err(match transition_kind {
                 JobFsmTransitionKind::Expire => JobFsmError::ExpiryRequiresPending,
-                JobFsmTransitionKind::Conflict => JobFsmError::ConflictRequiresPending,
                 JobFsmTransitionKind::OpenVoting => JobFsmError::OpenVotingRequiresPending,
                 JobFsmTransitionKind::Defer | JobFsmTransitionKind::Request => {
                     JobFsmError::RequestRequiresReady
@@ -459,15 +401,7 @@ impl JobFsmState {
                         lysis_budget,
                         receipt_hash: request_budget_receipt_hash,
                     },
-                    Some(effect) => {
-                        if effect.lysis_budget != lysis_budget {
-                            return Err(JobFsmError::RetryBudgetMismatch);
-                        }
-                        if effect.receipt_hash != request_budget_receipt_hash {
-                            return Err(JobFsmError::RetryReceiptMismatch);
-                        }
-                        effect
-                    }
+                    Some(_) => return Err(JobFsmError::InvalidRequestEffect),
                 };
                 self.live = Some(LiveAttempt {
                     intent_id,
@@ -489,7 +423,7 @@ impl JobFsmState {
                         open_height: live
                             .requested_height
                             .checked_add(1)
-                            .ok_or(JobFsmError::RetryHeightOverflow)?,
+                            .ok_or(JobFsmError::HeightOverflow)?,
                     });
                 }
                 if deadline_height <= at_height {
@@ -513,23 +447,7 @@ impl JobFsmState {
                         deadline_height,
                     });
                 }
-                self.retry_after_terminal(
-                    live,
-                    at_height,
-                    at_time,
-                    RetryTerminalOutcome::Expired,
-                    limits,
-                )
-            }
-            JobFsmCommand::Conflict { at_height, at_time } => {
-                let live = self.live.ok_or(JobFsmError::ConflictRequiresPending)?;
-                self.retry_after_terminal(
-                    live,
-                    at_height,
-                    at_time,
-                    RetryTerminalOutcome::Conflicted,
-                    limits,
-                )
+                self.expire(live, at_height, at_time)
             }
         }?;
 
@@ -539,85 +457,49 @@ impl JobFsmState {
         Ok(())
     }
 
-    fn retry_after_terminal(
+    fn expire(
         &mut self,
         live: LiveAttempt,
         at_height: u64,
         at_time: u64,
-        outcome: RetryTerminalOutcome,
-        limits: JobFsmLimits,
     ) -> Result<(), JobFsmError> {
-        let terminal_records = u16::try_from(self.terminal.len()).map_err(|_| {
-            JobFsmError::TerminalRecordCapExceeded {
-                limit: limits.max_terminal_records,
-            }
-        })?;
-        if terminal_records >= limits.max_terminal_records {
-            return Err(JobFsmError::TerminalRecordCapExceeded {
-                limit: limits.max_terminal_records,
-            });
-        }
-        let next_pending_nonce = live
-            .pending_nonce
-            .checked_add(1)
-            .ok_or(JobFsmError::PendingNonceOverflow)?;
-        let next_check_height = at_height
-            .checked_add(1)
-            .ok_or(JobFsmError::RetryHeightOverflow)?;
         self.terminal.push(TerminalAttempt {
             intent_id: live.intent_id,
             pending_nonce: live.pending_nonce,
             terminal_height: at_height,
             terminal_time: at_time,
-            next_pending_nonce,
-            outcome,
-        });
-        self.ready = Some(ReadyAttempt {
-            pending_nonce: next_pending_nonce,
-            next_check_height,
-            retained_effect: Some(live.retained_effect),
+            retained_lysis_budget: live.retained_effect.lysis_budget,
         });
         self.live = None;
         Ok(())
     }
 
     fn phase(&self) -> Result<DayPhase, JobFsmError> {
-        match (self.ready.is_some(), self.live.is_some()) {
-            (true, false) => Ok(DayPhase::Ready),
-            (false, true) => Ok(DayPhase::OffchainPending),
+        match (
+            self.ready.is_some(),
+            self.live.is_some(),
+            self.terminal.len(),
+        ) {
+            (true, false, 0) => Ok(DayPhase::Ready),
+            (false, true, 0) => Ok(DayPhase::OffchainPending),
+            (false, false, 1) => Ok(DayPhase::Terminal),
             _ => Err(JobFsmError::InvalidPhaseCardinality),
         }
     }
 
     /// Runs the production invariant checker over every status/index/budget
     /// equivalence represented by this bounded state.
-    pub fn validate(&self, limits: JobFsmLimits) -> Result<(), JobFsmError> {
-        if self.ready.is_some() == self.live.is_some() {
-            return Err(JobFsmError::InvalidPhaseCardinality);
-        }
-        let terminal_records = u16::try_from(self.terminal.len()).map_err(|_| {
-            JobFsmError::TerminalRecordCapExceeded {
-                limit: limits.max_terminal_records,
-            }
-        })?;
-        if terminal_records > limits.max_terminal_records {
-            return Err(JobFsmError::TerminalRecordCapExceeded {
-                limit: limits.max_terminal_records,
-            });
-        }
-
-        for (index, terminal) in self.terminal.iter().enumerate() {
-            let expected_nonce =
-                u64::try_from(index).map_err(|_| JobFsmError::InvalidTerminalEvidence)?;
-            if terminal.pending_nonce != expected_nonce
-                || terminal.next_pending_nonce != expected_nonce + 1
-                || terminal.intent_id.is_zero()
-            {
+    pub fn validate(&self) -> Result<(), JobFsmError> {
+        let phase = self.phase()?;
+        for terminal in &self.terminal {
+            if terminal.pending_nonce != 0 || terminal.intent_id.is_zero() {
                 return Err(JobFsmError::InvalidTerminalEvidence);
             }
         }
-        let expected_current_nonce =
-            u64::try_from(self.terminal.len()).map_err(|_| JobFsmError::InvalidTerminalEvidence)?;
+
+        if phase == DayPhase::Terminal {
+            return Ok(());
+        }
 
         let (pending_nonce, retained_effect) = if let Some(ready) = self.ready {
             if ready.pending_nonce == 0 && ready.retained_effect.is_some()
@@ -638,12 +520,8 @@ impl JobFsmState {
             }
             (live.pending_nonce, Some(live.retained_effect))
         };
-        if pending_nonce != expected_current_nonce {
-            return Err(if pending_nonce == 0 {
-                JobFsmError::InvalidInitialNonce
-            } else {
-                JobFsmError::InvalidTerminalEvidence
-            });
+        if pending_nonce != 0 {
+            return Err(JobFsmError::InvalidInitialNonce);
         }
         if let Some(effect) = retained_effect {
             if effect.effect_nonce != 0 || effect.effect_nonce > pending_nonce {
@@ -677,6 +555,19 @@ impl JobFsmState {
                 terminal_records,
                 retained_lysis_budget: Some(live.retained_effect.lysis_budget),
             },
+            (None, None) if self.terminal.len() == 1 => {
+                let terminal = self.terminal[0];
+                JobFsmProjection {
+                    worldwide_day: self.worldwide_day,
+                    phase: DayPhase::Terminal,
+                    pending_nonce: terminal.pending_nonce,
+                    next_check_height: None,
+                    live_intent_id: None,
+                    deadline_height: None,
+                    terminal_records,
+                    retained_lysis_budget: Some(terminal.retained_lysis_budget),
+                }
+            }
             _ => unreachable!("validated OCOMP FSM phase cardinality"),
         }
     }
@@ -711,39 +602,30 @@ impl From<RetainedRequestEffect> for RetainedRequestEffectSnapshot {
 mod tests {
     use super::*;
 
-    const LIMITS: JobFsmLimits = JobFsmLimits {
-        max_terminal_records: 2,
-    };
-
     #[test]
-    fn certified_conflict_requeues_the_same_budget_at_the_next_height() {
+    fn expiry_is_terminal_and_does_not_create_a_successor_attempt() {
         let mut state = JobFsmState::initial_ready(WorldwideDay::new(20_260_726), 10);
         state
-            .apply(
-                JobFsmCommand::Request {
-                    at_height: 10,
-                    deadline_height: 74,
-                    intent_id: B256::repeat_byte(0x11),
-                    lysis_budget: U256::from(900),
-                    request_budget_receipt_hash: B256::repeat_byte(0x22),
-                },
-                LIMITS,
-            )
+            .apply(JobFsmCommand::Request {
+                at_height: 10,
+                deadline_height: 74,
+                intent_id: B256::repeat_byte(0x11),
+                lysis_budget: U256::from(900),
+                request_budget_receipt_hash: B256::repeat_byte(0x22),
+            })
             .unwrap();
 
         let projection = state
-            .apply(
-                JobFsmCommand::Conflict {
-                    at_height: 21,
-                    at_time: 1_800,
-                },
-                LIMITS,
-            )
+            .apply(JobFsmCommand::Expire {
+                at_height: 74,
+                at_time: 1_800,
+            })
             .unwrap();
 
-        assert_eq!(projection.phase, DayPhase::Ready);
-        assert_eq!(projection.pending_nonce, 1);
-        assert_eq!(projection.next_check_height, Some(22));
+        assert_eq!(projection.phase, DayPhase::Terminal);
+        assert_eq!(projection.pending_nonce, 0);
+        assert_eq!(projection.next_check_height, None);
+        assert_eq!(projection.live_intent_id, None);
         assert_eq!(projection.retained_lysis_budget, Some(U256::from(900)));
         assert_eq!(projection.terminal_records, 1);
         assert_eq!(
@@ -751,10 +633,9 @@ mod tests {
             &[TerminalAttempt {
                 intent_id: B256::repeat_byte(0x11),
                 pending_nonce: 0,
-                terminal_height: 21,
+                terminal_height: 74,
                 terminal_time: 1_800,
-                next_pending_nonce: 1,
-                outcome: RetryTerminalOutcome::Conflicted,
+                retained_lysis_budget: U256::from(900),
             }]
         );
     }

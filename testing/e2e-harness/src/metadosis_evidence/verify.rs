@@ -1116,6 +1116,7 @@ fn slash_path(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "ocomp-integration")]
     use std::path::PathBuf;
 
     use crate::verification_ledger::{SourceIdentityV1, TestDiscoveryV1};

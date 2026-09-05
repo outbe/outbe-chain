@@ -119,7 +119,6 @@ TOP_LEVEL_KEYS = {
     "chain_binary",
     "keygen_binary",
     "consensus_p2p_port",
-    "ocomp_discovery_control_port",
     "gas_limit",
     "timestamp",
     "epoch_length_blocks",
@@ -426,9 +425,6 @@ def validate_config(config: dict[str, Any]) -> None:
     ports["consensus_p2p_port"] = consensus_port
     ports["ocomp_embedded_port"] = launch_bundle.embedded_ocomp_endpoint_port(
         config, consensus_port
-    )
-    ports["ocomp_discovery_control_port"] = launch_bundle.ocomp_discovery_control_port(
-        config, ports["ocomp_embedded_port"]
     )
     seen: dict[int, str] = {}
     for name, port_value in sorted(ports.items()):

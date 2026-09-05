@@ -81,7 +81,7 @@ pub use state::{DayLimitFormationReceipt, OcompDayLimitFormation};
 /// mutate consensus state.
 pub mod model {
     pub use crate::ocomp::state::{
-        transition_rules, DayPhase, JobFsmCommand, JobFsmLimits, JobFsmState, JobFsmTransitionKind,
+        transition_rules, DayPhase, JobFsmCommand, JobFsmState, JobFsmTransitionKind,
         ReadyAttemptSnapshot, RequestEffectMode,
     };
 }

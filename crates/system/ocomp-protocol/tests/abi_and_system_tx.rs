@@ -6,8 +6,8 @@ use alloy_primitives::keccak256;
 use outbe_ocomp_protocol::abi::{
     GET_ACTIVE_LYSIS_GENERATION_SELECTOR, GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,
     GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0, OCOMP_ACTIVATION_REJECTED_SELECTOR,
-    OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0, OCOMP_LIFECYCLE_BEGIN_SELECTOR,
-    OCOMP_REQUESTED_TOPIC0, OCOMP_TERMINAL_REQUEST_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR,
+    OCOMP_EXPIRED_TOPIC0, OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_REQUESTED_TOPIC0,
+    OCOMP_TERMINAL_REQUEST_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR,
 };
 
 fn selector(signature: &str) -> [u8; 4] {
@@ -42,11 +42,7 @@ fn abi_selectors_errors_and_topics_match_independent_keccak() {
     );
     assert_eq!(
         OCOMP_EXPIRED_TOPIC0,
-        keccak256(b"OffchainJobExpired(bytes32,uint32,uint64,uint64,uint64)")
-    );
-    assert_eq!(
-        OCOMP_CONFLICTED_TOPIC0,
-        keccak256(b"OffchainJobConflicted(bytes32,bytes32,uint32,uint64,uint64,bytes32)")
+        keccak256(b"OffchainJobExpired(bytes32,uint32,uint64)")
     );
     assert_eq!(
         LYSIS_ACTIVATED_TOPIC0,

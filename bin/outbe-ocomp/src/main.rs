@@ -18,9 +18,7 @@ use outbe_consensus::proof::constants::consensus_chain_id;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
-use outbe_ocomp::discovery_control::{DiscoveryAckRefV1, DiscoveryOfferRefV1};
-use outbe_ocomp::discovery_spool::{DiscoverySpoolV1, PendingDiscoveryV1, StoredDiscoveryAckV1};
-use outbe_ocomp::discovery_transport::{DiscoveryOfferServerV1, ReceivedDiscoveryOfferV1};
+use outbe_ocomp::discovery_spool::{AckPutOutcomeV1, DiscoverySpoolV1, PendingDiscoveryV1};
 use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
 use outbe_ocomp::supervisor::DiscoveryRecord;
@@ -83,7 +81,6 @@ const EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const OCOMP_TRIBUTE_PAGE_LIMIT: usize = 256;
 const PROJECTION_START_BLOCK: u64 = 1;
 const PROTOCOL_BUNDLE_HASHES_ENV: &str = "OCOMP_PROTOCOL_BUNDLE_HASHES";
-const DISCOVERY_CONTROL_ADDRESS_ENV: &str = "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProductionConfig {
@@ -324,8 +321,6 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
 
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
-    let discovery_control_address =
-        discovery_control_address_from_lookup(|name| env::var(name).ok())?;
     let observability = Arc::new(SnapshotExporterObservabilityServerV1::start(
         snapshot_exporter_observability_address(runtime.supervisor_address)?,
     )?);
@@ -403,10 +398,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     let async_runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    async_runtime.block_on(run_discovery_offer_server(
-        discovery_control_address,
-        chain_id,
-        genesis_hash,
+    async_runtime.block_on(run_snapshot_exporter_reconciler(
         lanes,
         completions,
         observability,
@@ -425,10 +417,6 @@ struct SnapshotExporterLaneControlV1 {
 }
 
 enum SnapshotExporterCompletionV1 {
-    Ack {
-        observation_id: B256,
-        acknowledgment: DiscoveryAckRefV1,
-    },
     Failed {
         bundle_hash: B256,
         observation_id: Option<B256>,
@@ -513,12 +501,7 @@ fn drain_snapshot_exporter_lane(
                     }
                 };
                 match export_pending_discovery(lane, &pending, observability) {
-                    Ok(acknowledgment) => {
-                        let _ = completions.send(SnapshotExporterCompletionV1::Ack {
-                            observation_id: pending.reference.observation_id,
-                            acknowledgment,
-                        });
-                    }
+                    Ok(()) => {}
                     Err(error) => {
                         cycle_failed = true;
                         let detail = error.to_string();
@@ -553,7 +536,7 @@ fn export_pending_discovery(
     lane: &mut SnapshotExporterLaneV1,
     pending: &PendingDiscoveryV1,
     observability: &SnapshotExporterObservabilityServerV1,
-) -> Result<DiscoveryAckRefV1, Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let bundle_hash = pending.spec.summary.protocol_bundle_hash;
     if lane.protocol_bundle.hash() != bundle_hash {
         return Err(runtime_error(format!(
@@ -570,28 +553,35 @@ fn export_pending_discovery(
     let receipt = lane
         .exporter
         .export_observing(&record, || observability.export_progress())?;
-    // put_ack persists the ACK record with file and directory fsync before it
-    // returns. Only that durable reference is eligible for ZeroMQ delivery.
-    let (acknowledgment, _) =
-        lane.spool
-            .put_ack(&pending.reference, &receipt, lane.protocol_bundle.bundle())?;
-    observability.committed();
-    eprintln!("OCOMP snapshot exporter committed finalized input for {job_id} using {bundle_hash}");
-    Ok(acknowledgment)
+    // The fsynced ACK is the sole cross-process completion authority. The
+    // embedded reader observes it from the same durable spool independently.
+    match lane
+        .spool
+        .put_ack(&pending.reference, &receipt, lane.protocol_bundle.bundle())?
+    {
+        AckPutOutcomeV1::Committed { .. } => {
+            observability.committed();
+            eprintln!(
+                "OCOMP snapshot exporter committed finalized input for {job_id} using {bundle_hash}"
+            );
+        }
+        AckPutOutcomeV1::Retired => {
+            observability.late_ack_ignored();
+            eprintln!(
+                "OCOMP snapshot exporter ignored a late commit for retired job {job_id} using {bundle_hash}"
+            );
+        }
+    }
+    Ok(())
 }
 
-async fn run_discovery_offer_server(
-    address: SocketAddr,
-    chain_id: u64,
-    genesis_hash: B256,
-    mut lanes: BTreeMap<B256, SnapshotExporterLaneControlV1>,
+async fn run_snapshot_exporter_reconciler(
+    lanes: BTreeMap<B256, SnapshotExporterLaneControlV1>,
     mut completions: tokio::sync::mpsc::UnboundedReceiver<SnapshotExporterCompletionV1>,
     observability: Arc<SnapshotExporterObservabilityServerV1>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut server = DiscoveryOfferServerV1::bind(address).await?;
     let mut wake = tokio::time::interval(EXPORTER_RECONCILE_INTERVAL);
     wake.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut waiting = BTreeMap::<B256, ReceivedDiscoveryOfferV1>::new();
     let mut failing_lanes = BTreeSet::new();
     loop {
         tokio::select! {
@@ -608,49 +598,11 @@ async fn run_discovery_offer_server(
                     }
                 }
             }
-            received = server.receive_offer() => {
-                match received {
-                    Ok(received) => match serve_received_offer(
-                        &mut server,
-                        chain_id,
-                        genesis_hash,
-                        &mut lanes,
-                        &mut waiting,
-                        received,
-                    ).await {
-                        Ok(()) => {}
-                        Err(ServeReceivedOfferErrorV1::Observation(error)) => {
-                            observability.discovery_error(error.to_string());
-                            observability.reconcile_failed(
-                                pending_discovery_count(&lanes).unwrap_or(1),
-                            );
-                        }
-                        Err(ServeReceivedOfferErrorV1::Fatal(error)) => return Err(error),
-                    },
-                    Err(error) => {
-                        observability.discovery_error(error.to_string());
-                        observability.reconcile_failed(pending_discovery_count(&lanes).unwrap_or(1));
-                    }
-                }
-            }
             completion = completions.recv() => {
                 let completion = completion.ok_or_else(|| {
                     runtime_error("all snapshot exporter lane workers exited")
                 })?;
                 match completion {
-                    SnapshotExporterCompletionV1::Ack {
-                        observation_id,
-                        acknowledgment,
-                    } => {
-                        if let Some(received) = waiting.remove(&observation_id) {
-                            if let Err(error) = server.send_ack(&received, &acknowledgment).await {
-                                observability.discovery_error(error.to_string());
-                                eprintln!(
-                                    "OCOMP SnapshotExporter could not send optional ACK wakeup for {observation_id}: {error}"
-                                );
-                            }
-                        }
-                    }
                     SnapshotExporterCompletionV1::Failed {
                         bundle_hash,
                         observation_id,
@@ -680,90 +632,6 @@ async fn run_discovery_offer_server(
     }
 }
 
-async fn serve_received_offer(
-    server: &mut DiscoveryOfferServerV1,
-    chain_id: u64,
-    genesis_hash: B256,
-    lanes: &mut BTreeMap<B256, SnapshotExporterLaneControlV1>,
-    waiting: &mut BTreeMap<B256, ReceivedDiscoveryOfferV1>,
-    received: ReceivedDiscoveryOfferV1,
-) -> Result<(), ServeReceivedOfferErrorV1> {
-    let reference = received.reference().clone();
-    if reference.chain_id != chain_id || reference.genesis_hash != genesis_hash {
-        return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
-            "discovery offer belongs to a different chain or genesis",
-        )));
-    }
-    let mut selected_bundle = None;
-    let mut selected_pending = None;
-    for (bundle_hash, lane) in lanes.iter() {
-        if let Some(stored) = lane
-            .spool
-            .ack(&reference.observation_id)
-            .map_err(observation_offer_error)?
-        {
-            require_stored_ack_matches_offer(&stored, &reference)
-                .map_err(ServeReceivedOfferErrorV1::Observation)?;
-            server
-                .send_ack(&received, &stored.reference)
-                .await
-                .map_err(|error| ServeReceivedOfferErrorV1::Observation(Box::new(error)))?;
-            return Ok(());
-        }
-        if let Some(pending) = lane
-            .spool
-            .pending(&reference.observation_id)
-            .map_err(observation_offer_error)?
-        {
-            if selected_pending.is_some() {
-                return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
-                    "discovery offer exists in more than one bundle spool",
-                )));
-            }
-            selected_bundle = Some(*bundle_hash);
-            selected_pending = Some(pending);
-        }
-    }
-    let pending = selected_pending.ok_or_else(|| {
-        ServeReceivedOfferErrorV1::Observation(runtime_error(
-            "discovery offer has no durable spool authority",
-        ))
-    })?;
-    if pending.reference != reference {
-        return Err(ServeReceivedOfferErrorV1::Observation(runtime_error(
-            "discovery offer conflicts with durable spool authority",
-        )));
-    }
-    let bundle_hash = selected_bundle.ok_or_else(|| {
-        ServeReceivedOfferErrorV1::Observation(runtime_error(
-            "discovery offer has no configured bundle lane",
-        ))
-    })?;
-    let lane = lanes.get(&bundle_hash).ok_or_else(|| {
-        ServeReceivedOfferErrorV1::Fatal(runtime_error("discovery bundle lane disappeared"))
-    })?;
-    waiting.insert(reference.observation_id, received);
-    match lane.trigger.try_send(()) {
-        Ok(()) | Err(mpsc::TrySendError::Full(())) => {}
-        Err(mpsc::TrySendError::Disconnected(())) => {
-            return Err(ServeReceivedOfferErrorV1::Fatal(runtime_error(format!(
-                "snapshot exporter lane {bundle_hash} exited"
-            ))));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug)]
-enum ServeReceivedOfferErrorV1 {
-    Observation(Box<dyn std::error::Error>),
-    Fatal(Box<dyn std::error::Error>),
-}
-
-fn observation_offer_error(error: impl std::error::Error + 'static) -> ServeReceivedOfferErrorV1 {
-    ServeReceivedOfferErrorV1::Observation(Box::new(error))
-}
-
 fn pending_discovery_count(
     lanes: &BTreeMap<B256, SnapshotExporterLaneControlV1>,
 ) -> Result<u64, Box<dyn std::error::Error>> {
@@ -778,18 +646,6 @@ fn pending_discovery_count(
 
 fn discovery_spool_path(root: &Path, protocol_bundle_hash: B256) -> PathBuf {
     root.join(hex::encode(protocol_bundle_hash.as_slice()))
-}
-
-fn require_stored_ack_matches_offer(
-    stored: &StoredDiscoveryAckV1,
-    offered: &DiscoveryOfferRefV1,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if stored.reference.offer_ref() != *offered {
-        return Err(runtime_error(
-            "discovery ACK conflicts with redelivered offer",
-        ));
-    }
-    Ok(())
 }
 
 fn runtime_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
@@ -848,20 +704,6 @@ fn retry_snapshot_exporter_startup<T, E>(
     }
 }
 
-fn discovery_control_address_from_lookup(
-    mut lookup: impl FnMut(&str) -> Option<String>,
-) -> Result<SocketAddr, Box<dyn std::error::Error>> {
-    let address = lookup(DISCOVERY_CONTROL_ADDRESS_ENV)
-        .ok_or("OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS is required")?
-        .parse::<SocketAddr>()?;
-    if !address.ip().is_loopback() || address.port() == 0 {
-        return Err(
-            "OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS must be a nonzero loopback endpoint".into(),
-        );
-    }
-    Ok(address)
-}
-
 fn required_env(name: &'static str) -> Result<String, Box<dyn std::error::Error>> {
     env::var(name).map_err(|_| format!("required environment variable {name} is missing").into())
 }
@@ -874,7 +716,6 @@ fn install_consensus_domain(chain_id: u64) -> Result<(), Box<dyn std::error::Err
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_ocomp::discovery_transport::DiscoveryOfferClientV1;
 
     const HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
@@ -918,19 +759,6 @@ mod tests {
             Err(StartupError::Fatal)
         );
         assert_eq!(fatal_attempts, 1);
-    }
-
-    #[test]
-    fn discovery_control_endpoint_is_mandatory_nonzero_and_loopback() {
-        assert!(discovery_control_address_from_lookup(|_| None).is_err());
-        assert!(
-            discovery_control_address_from_lookup(|_| Some("0.0.0.0:30414".to_owned())).is_err()
-        );
-        assert!(discovery_control_address_from_lookup(|_| Some("127.0.0.1:0".to_owned())).is_err());
-        assert_eq!(
-            discovery_control_address_from_lookup(|_| Some("127.0.0.1:30414".to_owned())).unwrap(),
-            "127.0.0.1:30414".parse().unwrap()
-        );
     }
 
     #[test]
@@ -1098,88 +926,5 @@ mod tests {
             outbe_consensus::config::outbe_app_namespace(),
             [b"outbe".as_slice(), ROLE_CHAIN_ID.to_be_bytes().as_slice()].concat()
         );
-    }
-
-    #[tokio::test]
-    async fn corrupt_observation_is_local_and_the_next_lane_remains_runnable() {
-        let chain_id = 42;
-        let genesis_hash = B256::repeat_byte(0x31);
-        let limits = poc_schema_limits();
-        let root = tempfile::tempdir().unwrap();
-        let corrupt_spool =
-            DiscoverySpoolV1::open(root.path().join("corrupt"), chain_id, genesis_hash, limits)
-                .unwrap();
-        let healthy_spool =
-            DiscoverySpoolV1::open(root.path().join("healthy"), chain_id, genesis_hash, limits)
-                .unwrap();
-        let corrupt_spec = test_support::finalized_job_spec(0x41, 100, chain_id, genesis_hash);
-        let healthy_spec = test_support::finalized_job_spec(0x51, 101, chain_id, genesis_hash);
-        let (corrupt_reference, _) = corrupt_spool.put_offer(7, &corrupt_spec).unwrap();
-        let (healthy_reference, _) = healthy_spool.put_offer(8, &healthy_spec).unwrap();
-        std::fs::write(
-            corrupt_spool.offer_path(&corrupt_reference.observation_id),
-            [0xFF],
-        )
-        .unwrap();
-
-        let (corrupt_tx, _corrupt_rx) = mpsc::sync_channel(1);
-        let (healthy_tx, healthy_rx) = mpsc::sync_channel(1);
-        let mut lanes = BTreeMap::from([
-            (
-                B256::ZERO,
-                SnapshotExporterLaneControlV1 {
-                    spool: corrupt_spool,
-                    trigger: corrupt_tx,
-                },
-            ),
-            (
-                healthy_spec.summary.protocol_bundle_hash,
-                SnapshotExporterLaneControlV1 {
-                    spool: healthy_spool,
-                    trigger: healthy_tx,
-                },
-            ),
-        ]);
-        let mut waiting = BTreeMap::new();
-        let mut server = DiscoveryOfferServerV1::bind("127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap();
-
-        let mut corrupt_client = DiscoveryOfferClientV1::connect(server.address())
-            .await
-            .unwrap();
-        corrupt_client.send_offer(&corrupt_reference).await.unwrap();
-        let received = server.receive_offer().await.unwrap();
-        assert!(matches!(
-            serve_received_offer(
-                &mut server,
-                chain_id,
-                genesis_hash,
-                &mut lanes,
-                &mut waiting,
-                received,
-            )
-            .await,
-            Err(ServeReceivedOfferErrorV1::Observation(_))
-        ));
-
-        let mut healthy_client = DiscoveryOfferClientV1::connect(server.address())
-            .await
-            .unwrap();
-        healthy_client.send_offer(&healthy_reference).await.unwrap();
-        let received = server.receive_offer().await.unwrap();
-        serve_received_offer(
-            &mut server,
-            chain_id,
-            genesis_hash,
-            &mut lanes,
-            &mut waiting,
-            received,
-        )
-        .await
-        .unwrap();
-        healthy_rx
-            .try_recv()
-            .expect("healthy lane must still be triggered after local corruption");
     }
 }

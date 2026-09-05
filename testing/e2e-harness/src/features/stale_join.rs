@@ -15,7 +15,6 @@ use crate::world::World;
 #[when("a staked joiner has not confirmed readiness")]
 fn staked_joiner_unconfirmed(world: &mut World) {
     let idx = world.validators.joiner_index();
-    let joiner_port = world.validators.http_port(idx);
     let primary = world.validators.primary_port();
 
     world
@@ -24,9 +23,8 @@ fn staked_joiner_unconfirmed(world: &mut World) {
         .expect("provision joiner");
     world
         .localnet
-        .launch_joiner(idx, &[])
+        .launch_caught_up_joiner(idx, &[])
         .expect("launch joiner");
-    world.rpc.wait_block(joiner_port, 20, 40);
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
@@ -52,7 +50,9 @@ fn stays_pending(world: &mut World) {
     let mut crossed = false;
     for _ in 0..40 {
         sleep(Duration::from_secs(10));
-        let ch = world.rpc.head(primary).unwrap_or(0);
+        let Some(ch) = world.rpc.head(primary) else {
+            continue;
+        };
         if world.rpc.validator_status(primary, &addr) != Some(1) {
             stayed_pending = false;
         }
@@ -82,7 +82,10 @@ fn stays_pending(world: &mut World) {
         "active set must stay 4"
     );
     assert!(
-        !world.rpc.is_participant(primary, &addr),
+        !world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("observe consensus participation"),
         "unconfirmed joiner must not be a participant"
     );
 }
@@ -101,7 +104,10 @@ fn confirmed_joiner_activates(world: &mut World) {
     let primary = world.validators.primary_port();
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
     assert!(
-        world.rpc.wait_participant(primary, &addr, 40),
+        world
+            .rpc
+            .wait_participant(primary, &addr, 40)
+            .expect("wait for observable consensus participation"),
         "confirmed joiner never became a participant"
     );
     assert_eq!(
@@ -118,15 +124,19 @@ fn confirmed_joiner_activates(world: &mut World) {
     assert_eq!(
         world
             .localnet
-            .log_count(joiner, "attributable invalid VRF seed partial"),
+            .log_count(joiner, "attributable invalid VRF seed partial")
+            .expect("read required owned process log"),
         0,
         "joiner rejected the active committee's VRF partials"
     );
     assert_eq!(
-        world.localnet.log_count(
-            joiner,
-            "finalized certificate carries an unverifiable VRF proof"
-        ),
+        world
+            .localnet
+            .log_count(
+                joiner,
+                "finalized certificate carries an unverifiable VRF proof"
+            )
+            .expect("read required owned process log"),
         0,
         "joiner could not verify the active committee's finalized VRF proof"
     );
