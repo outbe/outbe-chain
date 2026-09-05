@@ -246,15 +246,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return { settlementCurrency: Number(settlementCurrency), payableUnits };
   }
 
-  /** ERC-20 decimals + symbol of an arbitrary settlement token. */
-  async function tokenMeta(n: Network, token: `0x${string}`): Promise<{ decimals: number; symbol: string }> {
-    const [decimals, symbol] = (await Promise.all([
-      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
-      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-    ])) as [number, string];
-    return { decimals: Number(decimals), symbol };
-  }
-
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
   function toBidRate(rate: string): bigint {
     const raw = parseUnits(rate, 6);
@@ -1061,62 +1052,38 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_settle",
     "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via " +
-      "intex_promis_mine). Defaults to your own wallet; pass holder only if that holder authorized you via " +
-      "auction_settler_set. Allowed when the series is Qualified (voluntary) or Called (forced, " +
-      "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
-      "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
-      "settle/mine itself. Settlement only ever happens on outbe: a position sitting on BSC has to be brought " +
-      "over with intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
+      "intex_promis_mine). The cost is paid by spending a PayNote, so pass pay_note_proof: this call moves " +
+      "no tokens of its own and needs no approval. Get the price with intex_settlement_tokens, deposit a " +
+      "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
+      "keeps the two unlinked), then build the spend proof off-chain; the MCP cannot produce it. " +
+      "Defaults to your own wallet; pass holder only if that holder authorized you via auction_settler_set. " +
+      "Allowed when the series is Qualified (voluntary) or Called (forced, within the call period). The " +
+      "Settled token (soulbound) and the later Promis go to the SIGNING wallet, not to holder; since the MCP " +
+      "signs with one key, to land them on a different wallet that wallet must settle/mine itself. " +
+      "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
+      "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
     {
       series: seriesArg,
       amount: amountArg,
       holder: accountArg,
-      payment_token: z.string().optional().describe("0x address of the stable to pay in; defaults to the first accepted token"),
+      pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its spender"),
       network: networkArg.optional(),
       wait: waitArg,
     },
-    handler(async ({ series, amount, holder, payment_token, network, wait }) => {
+    handler(async ({ series, amount, holder, pay_note_proof, network, wait }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
-
-      let token: `0x${string}`;
-      if (payment_token) {
-        token = getAddress(payment_token);
-      } else {
-        const tokens = await settlementTokens(n, series);
-        if (tokens.length === 0) {
-          throw new Error(`no settlement token is registered for series ${series}`);
-        }
-        token = tokens[0];
+      if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
+        throw new Error("pay_note_proof must be a 0x-prefixed hex PayNote spend proof");
       }
-      const [{ settlementCurrency, payableUnits }, { decimals: tokenDec, symbol: tokenSymbol }] =
-        await Promise.all([quoteSettlement(n, series, token), tokenMeta(n, token)]);
+
       const factory = addr(n, "factory");
-      const total = payableUnits * BigInt(amount);
-
-      const allowance = (await n.client.readContract({
-        address: token,
-        abi: ERC20_ABI,
-        functionName: "allowance",
-        args: [account.address, factory],
-      })) as bigint;
-      let autoApprove: { txHash: Hex; amount: string } | null = null;
-      if (allowance < total) {
-        const approveData = encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: "approve",
-          args: [factory, total],
-        });
-        const ar = await submit(n, token, approveData, 0n, true); // must be mined before settle
-        autoApprove = { txHash: ar.txHash, amount: total.toString() };
-      }
-
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
         functionName: "settle",
-        args: [series, intexHolder, BigInt(amount), token],
+        args: [series, intexHolder, BigInt(amount), pay_note_proof as Hex],
       });
       const receipt = await submit(n, factory, data, 0n, wait);
       return ok({
@@ -1124,11 +1091,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         series,
         intexHolder,
         amount,
-        paymentToken: { address: token, symbol: tokenSymbol, decimals: tokenDec },
-        settlementCurrency,
-        perUnit: { raw: payableUnits.toString(), value: formatUnits(payableUnits, tokenDec) },
-        total: { raw: total.toString(), value: formatUnits(total, tokenDec) },
-        autoApprove,
         self: intexHolder === account.address,
         ...receipt,
       });
@@ -1137,8 +1099,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_settlement_tokens",
-    "Tokens you can settle a series with and the per-Intex cost in each. Pass one of these to " +
-      "auction_bid_settle as payment_token; it approves the factory for what it needs.",
+    "Tokens you can settle a series with and the per-Intex cost in each. Use the cost to size the " +
+      "PayNote you deposit before calling auction_bid_settle.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");

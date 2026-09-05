@@ -13,6 +13,8 @@ outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
+outbe-paynote.workspace = true
+outbe-zkproof.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ring.workspace = true
@@ -21,6 +23,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-intex = { workspace = true, features = ["test-utils"] }
+outbe-paynote = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
