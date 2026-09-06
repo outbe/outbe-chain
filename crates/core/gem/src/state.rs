@@ -347,7 +347,6 @@ impl GemContract<'_> {
         (deadline / 3_600) as u32
     }
 
-    /// First instant after the bucket, so a closed one holds only gems that are due.
     pub(crate) const fn bucket_end(day: u32) -> u64 {
         (day as u64 + 1) * 3_600
     }
@@ -360,7 +359,6 @@ impl GemContract<'_> {
         ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
     }
 
-    /// `keccak256(bucket_be32 ++ slot_be32)`.
     pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&day.to_be_bytes());
@@ -368,7 +366,6 @@ impl GemContract<'_> {
         keccak256(buf)
     }
 
-    /// The bucket slot's gem, or `None` for a slot already retired.
     pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
         let id = self
             .expiry_bucket_at
@@ -400,7 +397,6 @@ impl GemContract<'_> {
         Ok(dropped)
     }
 
-    /// Earliest day still holding a called gem.
     pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
         tree_math::find_first_left_inclusive(&ExpiryDayTree(self), 0)
     }

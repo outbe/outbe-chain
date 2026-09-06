@@ -134,7 +134,6 @@ pub struct IntexFactoryContract {
 
     // Called groups awaiting their settlement window, bucketed by the hour it closes
     // in. A called group has left the bin index, so these members are its only trace.
-    /// Set semantics: a bucket leaves the tree only once it empties.
     #[attribute(order = 28)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 29)]
@@ -155,26 +154,20 @@ pub struct IntexFactoryContract {
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
-    /// 0 = nothing issued yet in this currency.
     #[attribute(order = 35)]
     pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Hour since the epoch -> slots ever used in its bucket. Retired slots are
-    /// zeroed in place rather than compacted, so a cursor into a bucket stays valid.
+    /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 36)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// Bucket -> groups still waiting in it. The day leaves the tree when this hits 0.
     #[attribute(order = 37)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`; zero marks
-    /// a slot already retired.
+    /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`.
     #[attribute(order = 38)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `scoped(iso, day)` -> `(bucket << 32) | slot` the group waits in. 0 = not
-    /// queued; no deadline lands on the epoch's first hour.
+    /// `scoped(iso, day)` -> `(bucket << 32) | slot`; 0 = not queued.
     #[attribute(order = 39)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
-    /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
     #[attribute(order = 40)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 41)]

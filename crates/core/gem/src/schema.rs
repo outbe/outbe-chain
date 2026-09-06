@@ -177,14 +177,13 @@ pub struct GemContract {
 
     // --- Called gems, bucketed by the hour their notice period closes in. Calling is
     // driven by price and expiry only by time, so the two stages stay separate.
-    /// Set semantics: a bucket leaves the tree only once it empties.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Gem id -> `(bucket << 32) | slot` it waits in; zero means it never queued.
+    /// Gem id -> `(bucket << 32) | slot`; 0 = not queued.
     #[attribute(order = 23)]
     pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
@@ -201,17 +200,15 @@ pub struct GemContract {
     #[attribute(order = 26)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Hour since the epoch -> slots ever used in its bucket. Retired slots are
-    /// zeroed in place rather than compacted, so a cursor into a bucket stays valid.
+    /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
     #[attribute(order = 27)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// Bucket -> gems still waiting in it. The day leaves the tree when this hits 0.
     #[attribute(order = 28)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id; zero marks a slot already retired.
+    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id.
     #[attribute(order = 29)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
     #[attribute(order = 31)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 32)]
