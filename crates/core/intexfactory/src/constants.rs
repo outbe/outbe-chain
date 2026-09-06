@@ -89,6 +89,6 @@ pub const MAX_SERIES_PER_MARK: usize = 8;
 /// Deadline buckets one expiry sweep may open per block; each costs a tree descent.
 pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
 
-/// Bucket slots one expiry sweep may look at per block: an empty slot still costs a
-/// read, so the walk needs its own budget.
-pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 512;
+/// Bucket slots one expiry sweep may look at per block: an empty or not-yet-due slot
+/// still costs a read. Twice the action budget, so emptied slots cannot starve it.
+pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 2 * MAX_SERIES_ACTIONS_PER_BLOCK;
