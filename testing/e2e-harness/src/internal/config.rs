@@ -71,6 +71,7 @@ pub(crate) struct Config {
     pub seed: PathBuf,
     /// Transaction-capable MongoDB URI (`--projection-mongodb-uri`).
     pub projection_mongodb_uri: String,
+    pub projection_backend: crate::env::ProjectionBackend,
     /// Stable unique logical-database prefix for this harness run.
     pub projection_database_prefix: String,
     /// Primary RPC url (validator-0).
@@ -142,6 +143,7 @@ impl Config {
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),
             projection_mongodb_uri: env.projection_mongodb_uri.clone(),
+            projection_backend: env.projection_backend,
             projection_database_prefix,
             rpc0: format!("http://127.0.0.1:{}", env.ports.port(Service::Http, 0)),
             path: path_with_foundry(),
@@ -281,6 +283,11 @@ impl Config {
     /// Stable, bounded control socket path for the independent source node.
     pub fn user_radicle_control_socket(&self) -> PathBuf {
         self.radicle_scenario_runtime_dir().join("user.sock")
+    }
+
+    /// Shared by this node and its OCOMP exporter, independent of process role.
+    pub fn projection_storage_config(&self, i: usize) -> PathBuf {
+        self.validator_dir(i).join("offchain-storage.toml")
     }
 
     /// Exact projection database assigned to validator `i`.

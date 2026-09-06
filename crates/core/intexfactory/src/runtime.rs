@@ -743,17 +743,17 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settle: `settler` is the caller. Gating reads Intex; value movement
-/// (token / vault / NFT) goes via storage.call.
+/// Settle: `settler` is the caller. The cost is discharged by spending a PayNote,
+/// so no tokens move here; the NFT move goes via storage.call.
 pub fn settle(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     intex_holder: Address,
     settler: Address,
     amount: U256,
-    payment_token: Address,
+    paynote_proof: &[u8],
 ) -> Result<()> {
-    if intex_holder.is_zero() || settler.is_zero() || payment_token.is_zero() {
+    if intex_holder.is_zero() || settler.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if amount.is_zero() {
@@ -793,47 +793,8 @@ pub fn settle(
         return Err(IntexFactoryError::NotAuthorized.into());
     }
 
-    let currency = accept_payment_token(storage, payment_token, &series)?;
-
-    let payment = cost_in_token(storage, &series, payment_token, currency)?
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
-
-    // Pull payment from the settler, deposit into the reserve vault.
-    // Fee-on-transfer safe: measure the received delta.
-    let before = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
-    storage.call(
-        payment_token,
-        U256::ZERO,
-        IERC20::transferFromCall {
-            from: settler,
-            to: INTEX_FACTORY_ADDRESS,
-            amount: payment,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    let after = erc20_balance_of(storage, payment_token, INTEX_FACTORY_ADDRESS)?;
-    let received = after
-        .checked_sub(before)
-        .ok_or_else(|| PrecompileError::Revert("payment balance underflow".into()))?;
-
-    storage.call(
-        payment_token,
-        U256::ZERO,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount: received,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-
-    // Deposit into the reserve vault via the router's Solidity ABI.
-    let shares = outbe_vaultrouter::api::deposit(storage, payment_token, received)?;
-    if shares.is_zero() {
-        return Err(IntexFactoryError::ZeroSharesReceived.into());
-    }
+    // Last, so a doomed settle never pays for proof verification.
+    discharge_cost(storage, &series, amount, settler, paynote_proof)?;
 
     // Burn Issued from holder, issue Settled to the settler.
     storage.call(
@@ -862,6 +823,39 @@ pub fn settle(
             amount,
         },
     )
+}
+
+/// Discharges the settlement cost by spending one PayNote.
+fn discharge_cost(
+    storage: &StorageHandle<'_>,
+    series: &outbe_intex::SeriesRecord,
+    amount: U256,
+    settler: Address,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
+
+    // Notes are bearer: anyone can relay a proof, so bind its spender to the settler.
+    if claim.spender != settler {
+        return Err(IntexFactoryError::PayNoteSpenderMismatch {
+            expected: settler,
+            actual: claim.spender,
+        }
+        .into());
+    }
+
+    let currency = accept_payment_token(storage, claim.asset, series)?;
+    let cost = cost_in_token(storage, series, claim.asset, currency)?
+        .checked_mul(amount)
+        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    if U256::from(claim.spend_amount) < cost {
+        return Err(IntexFactoryError::PayNoteUndercoversCost {
+            covered: claim.spend_amount,
+            required: cost,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 // --- storage.call helpers (localnet-exercised) ---
@@ -973,12 +967,6 @@ fn asset_iso_code(storage: &StorageHandle<'_>, token: Address) -> Result<u16> {
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
-}
-
-fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {
-    let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
 }
 
 fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Result<u8> {

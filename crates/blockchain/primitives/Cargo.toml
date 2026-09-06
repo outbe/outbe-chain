@@ -58,6 +58,8 @@ trybuild = "1"
 [features]
 default = []
 bench-utils = []
+# Retarget the Intex CREATE3 addresses at the throwaway e2e set. Never in a release build.
+e2e-test = []
 test-utils = []
 tee-attestation-v1 = []
 

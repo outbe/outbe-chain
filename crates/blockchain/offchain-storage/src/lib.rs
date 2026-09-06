@@ -1,13 +1,20 @@
 //! Backend-neutral, synchronous storage for node-local off-chain data.
 
+mod config;
 mod memory;
 mod mongo;
 mod pending;
+mod provider;
+mod rocks;
+mod rocks_codec;
 mod types;
 
+pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
 pub use memory::MemoryStorage;
 pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
 pub use pending::PendingOverlayStorage;
+pub use provider::{OpenedStorage, StorageOwnershipGuard, StorageProvider, StorageReadSource};
+pub use rocks::{RocksDbReader, RocksDbStorage};
 pub use types::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
     StorageError, StorageErrorKind, StorageMetadata, StoredValue, Value, MAX_ATOMIC_BATCH_BYTES,

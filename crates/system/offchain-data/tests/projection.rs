@@ -1574,3 +1574,128 @@ fn failed_recognized_receipt_and_noncanonical_metadata_stall_without_checkpoint(
         Err(ProjectionError::MalformedProjectionMetadata(_))
     ));
 }
+
+#[test]
+fn rocksdb_retirement_and_gc_preserve_open_export_session_and_durable_checkpoint() {
+    use outbe_offchain_storage::{RocksDbReader, RocksDbStorage};
+    use outbe_tribute::RetainedTributeWriter;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("primary");
+    let storage = Arc::new(RocksDbStorage::open(&path).unwrap());
+    let day = 20260715;
+    let pin = RetainedTributePin {
+        input_lease_id: B256::repeat_byte(0x51),
+        worldwide_day: WorldwideDay::new(day),
+    };
+    let owner = Address::repeat_byte(0x52);
+    let id = poseidon_entity(owner, day);
+    let body = tribute_body(id, owner, day);
+    let commitment = tribute_commitment(&body);
+    let mut projection = OffchainDataProjection::open_with_retention_selector(
+        config(10),
+        storage.clone(),
+        storage.clone(),
+        Arc::new(FixedRetentionSelector { pin }),
+    )
+    .unwrap();
+    projection
+        .project_block(&FinalizedBlock {
+            number: 10,
+            hash: B256::repeat_byte(0x53),
+            receipts: vec![receipt(
+                0,
+                0x54,
+                vec![log(
+                    0,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_body_after(&body, B256::ZERO),
+                )],
+            )],
+        })
+        .unwrap();
+    let before = Arc::new(RocksDbReader::open(&path, &root.path().join("before")).unwrap());
+    projection
+        .project_block(&FinalizedBlock {
+            number: 11,
+            hash: B256::repeat_byte(0x55),
+            receipts: vec![receipt(
+                0,
+                0x56,
+                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
+            )],
+        })
+        .unwrap();
+    let retired = Arc::new(RocksDbReader::open(&path, &root.path().join("retired")).unwrap());
+    assert!(TributeRepositoryReader::new(before.clone())
+        .get(id)
+        .unwrap()
+        .is_some());
+    assert!(TributeRepositoryReader::new(retired.clone())
+        .get(id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        read_projection_state(config(10), before.clone())
+            .unwrap()
+            .unwrap()
+            .checkpoint
+            .unwrap()
+            .block_number,
+        10
+    );
+    assert_eq!(
+        read_projection_state(config(10), retired.clone())
+            .unwrap()
+            .unwrap()
+            .checkpoint
+            .unwrap()
+            .block_number,
+        11
+    );
+    let expected = RetainedTributeReader::new(before.clone())
+        .get_current_or_retained(pin, id, commitment)
+        .unwrap()
+        .unwrap()
+        .encode();
+    assert_eq!(
+        RetainedTributeReader::new(retired.clone())
+            .get_current_or_retained(pin, id, commitment)
+            .unwrap()
+            .unwrap()
+            .encode(),
+        expected
+    );
+    // The same primary capability is used by projection and post-release GC.
+    let gc = RetainedTributeWriter::new(storage.clone(), storage.clone());
+    assert!(gc.release_input_lease_page(pin.input_lease_id).unwrap());
+    assert!(gc.release_input_lease_page(pin.input_lease_id).unwrap());
+    // GC does not change an already-open export inventory's view.
+    assert_eq!(
+        RetainedTributeReader::new(retired.clone())
+            .get_current_or_retained(pin, id, commitment)
+            .unwrap()
+            .unwrap()
+            .encode(),
+        expected
+    );
+    let after = Arc::new(RocksDbReader::open(&path, &root.path().join("after")).unwrap());
+    assert!(RetainedTributeReader::new(after)
+        .get_current_or_retained(pin, id, commitment)
+        .unwrap()
+        .is_none());
+    drop((gc, projection, storage, before, retired));
+    let reopened = Arc::new(RocksDbStorage::open(&path).unwrap());
+    assert_eq!(
+        read_projection_state(config(10), reopened.clone())
+            .unwrap()
+            .unwrap()
+            .checkpoint
+            .unwrap()
+            .block_number,
+        11
+    );
+    assert!(RetainedTributeReader::new(reopened)
+        .get_current_or_retained(pin, id, commitment)
+        .unwrap()
+        .is_none());
+}

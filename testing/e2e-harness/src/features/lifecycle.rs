@@ -77,7 +77,7 @@ fn offer_processed_and_projected(world: &mut World) {
         "supply should be 1"
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(
             world.state.tribute_tx_hash.as_deref().expect("tribute tx"),
             60,
@@ -300,7 +300,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
         "in-flight offer did not land (supply != 2)"
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(
             world
                 .state
@@ -365,7 +365,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
         "in-flight offer landed once"
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection_on_nodes(
             world
                 .state
@@ -639,7 +639,7 @@ fn exits_and_demotes(world: &mut World) {
         world.rpc.finalized(joiner_port),
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection_on_nodes(
             world
                 .state
