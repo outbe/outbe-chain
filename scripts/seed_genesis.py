@@ -1978,7 +1978,7 @@ def apply_seed(
     # Seed the profile selectors (prod seeds nothing).
     for section, address, slot, label in (
         ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
-        ("gem", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
+        ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
     ):
         if section not in seed:
             continue
