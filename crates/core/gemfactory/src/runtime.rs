@@ -12,7 +12,7 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
-use crate::constants::{CALL_RATE, FLOOR_RATE, SRA_RATE};
+use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
@@ -52,8 +52,9 @@ pub fn issue_gem(
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (floor_price, initial_state) = compute_params(gem_type, promis_load, entry_price)?;
-    let call_price = derived_call_price(entry_price)?;
+    let terms = outbe_gem::config::read(storage)?;
+    let (floor_price, initial_state) = compute_params(gem_type, promis_load, entry_price, &terms)?;
+    let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let params = GemAddParams {
         owner,
@@ -62,7 +63,7 @@ pub fn issue_gem(
         entry_price_minor: entry_price,
         floor_price_minor: floor_price,
         call_price_minor: call_price,
-        call_rate: CALL_RATE as u16,
+        call_rate: terms.call_rate,
         issuance_currency,
         reference_currency,
         initial_state,
@@ -221,8 +222,9 @@ pub fn issue_merchant_gem(
     let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     compute_cost(entry_price, promis_load, 100)?;
-    let floor_price = derived_floor(entry_price)?.max(record.source_floor_price);
-    let call_price = derived_call_price(entry_price)?;
+    let terms = outbe_gem::config::read(storage)?;
+    let floor_price = derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price);
+    let call_price = derived_call_price(entry_price, terms.call_rate)?;
 
     let gem_id = gem_api::add_gem(
         storage,
@@ -233,7 +235,7 @@ pub fn issue_merchant_gem(
             entry_price_minor: entry_price,
             floor_price_minor: floor_price,
             call_price_minor: call_price,
-            call_rate: CALL_RATE as u16,
+            call_rate: terms.call_rate,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             initial_state: GemState::Issued,
@@ -563,6 +565,7 @@ fn compute_params(
     gem_type: GemTypes,
     promis_load: U256,
     coen_rate: U256,
+    terms: &outbe_gem::GemParams,
 ) -> Result<(U256, GemState)> {
     // The cost is derived from the record on demand; it is computed here only to
     // reject a load whose cost rounds to zero.
@@ -573,17 +576,26 @@ fn compute_params(
         // the cost into the Reserve vault just like Wallet/Cca/Sra.
         GemTypes::Genesis => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (derived_floor(coen_rate)?, GemState::Qualified)
+            (
+                derived_floor(coen_rate, terms.floor_rate)?,
+                GemState::Qualified,
+            )
         }
         GemTypes::Sra => {
             compute_cost(coen_rate, promis_load, SRA_RATE)?;
-            (derived_floor(coen_rate)?, GemState::Issued)
+            (
+                derived_floor(coen_rate, terms.floor_rate)?,
+                GemState::Issued,
+            )
         }
         // Validator (post-genesis), Wallet, Cca - standard agent-class flow:
         // cost = entry x load, floor = rate x 1.08, born Issued.
         GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             compute_cost(coen_rate, promis_load, 100)?;
-            (derived_floor(coen_rate)?, GemState::Issued)
+            (
+                derived_floor(coen_rate, terms.floor_rate)?,
+                GemState::Issued,
+            )
         }
         // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
         // not through this agent-class path.
@@ -613,18 +625,18 @@ fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
 }
 
 /// Floor price = `entry x (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
-fn derived_floor(entry_price: U256) -> Result<U256> {
+fn derived_floor(entry_price: U256, floor_rate: u16) -> Result<U256> {
     let acc = entry_price
-        .checked_mul(U256::from(100 + FLOOR_RATE))
+        .checked_mul(U256::from(100 + u64::from(floor_rate)))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
 }
 
 /// Call price = `entry x (100 + CALL_RATE) / 100` (128% markup => 2.28x).
 /// Entry equals the issuance-time coen rate in the single-currency case.
-fn derived_call_price(entry_price: U256) -> Result<U256> {
+fn derived_call_price(entry_price: U256, call_rate: u16) -> Result<U256> {
     let acc = entry_price
-        .checked_mul(U256::from(100 + CALL_RATE))
+        .checked_mul(U256::from(100 + u64::from(call_rate)))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
 }

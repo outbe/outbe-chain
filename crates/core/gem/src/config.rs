@@ -6,7 +6,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW, POSITION_VALIDITY_SECONDS,
+    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
+    POSITION_VALIDITY_SECONDS,
 };
 use crate::schema::GemContract;
 
@@ -19,6 +20,9 @@ pub struct GemParams {
     pub call_window: u32,
     pub call_threshold: u32,
     pub call_notice_period: u32,
+    /// Percentage points over the entry price; see `crate::constants`.
+    pub call_rate: u16,
+    pub floor_rate: u16,
     /// How long a parked-Intex position may still issue gems.
     pub position_validity: u64,
 }
@@ -29,12 +33,13 @@ impl GemParams {
         call_window: CALL_WINDOW,
         call_threshold: CALL_THRESHOLD,
         call_notice_period: CALL_NOTICE_PERIOD,
+        call_rate: CALL_RATE,
+        floor_rate: FLOOR_RATE,
         position_validity: POSITION_VALIDITY_SECONDS,
     };
 
-    /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
-    /// so window and threshold stay whole multiples of a day; the notice and
-    /// the position validity are wall-clock waits an e2e run has to sit out.
+    /// Short timings for dev/test. `called` is day-granular, so window and
+    /// threshold stay whole days; the notice and validity are real waits.
     pub const DEV: Self = Self {
         call_window: 3 * 24 * 3600,
         call_threshold: 2 * 24 * 3600,
@@ -42,6 +47,8 @@ impl GemParams {
         call_notice_period: 3 * 24 * 3600,
         #[cfg(feature = "e2e-test")]
         call_notice_period: 600,
+        call_rate: 10,
+        floor_rate: 5,
         #[cfg(not(feature = "e2e-test"))]
         position_validity: 7 * 24 * 3600,
         #[cfg(feature = "e2e-test")]

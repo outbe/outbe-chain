@@ -32,3 +32,10 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 /// GemPosition validity period: a parked Intex expires this long after
 /// `parked_at`; no new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
+
+/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.
+pub const FLOOR_RATE: u16 = 8;
+
+/// Call-price markup rate: call price = `entry x (100 + CALL_RATE) / 100`.
+/// Its breach arms a Call Event.
+pub const CALL_RATE: u16 = 128;
