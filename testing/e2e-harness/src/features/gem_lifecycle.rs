@@ -311,6 +311,9 @@ fn settle_and_mine(world: &mut World) {
     )
     .expect("quote settling the merchant gem")
     .payableUnits;
+    // A zero quote would otherwise become a one-unit note and fail inside the
+    // settle, where the revert reads as a balance problem instead of a price one.
+    assert!(!payable.is_zero(), "the gem quoted a zero settlement cost");
     // The cost is discharged by burning a note, so the vault is credited here
     // rather than at settle time.
     let paynote_proof = crate::features::paynote::deposit_and_prove(
