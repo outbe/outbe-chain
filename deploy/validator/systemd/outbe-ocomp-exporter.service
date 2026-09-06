@@ -1,5 +1,5 @@
 [Unit]
-Description=Outbe OCOMP worker %i
+Description=Outbe OCOMP SnapshotExporter
 After=outbe-full-node.service outbe-validator.service
 PartOf=outbe-full-node.service outbe-validator.service
 StartLimitIntervalSec=300
@@ -13,12 +13,8 @@ EnvironmentFile=/opt/outbe-chain/validator.env
 Environment=OUTBE_OCOMP_BASE_PATH=/opt/outbe-chain
 Environment=OCOMP_VALIDATOR_INDEX=0
 Environment=OUTBE_OCOMP_RPC_URL=http://127.0.0.1:8545
-ExecStart=/opt/outbe-chain/outbe-ocomp worker \
-  --chain-id ${OCOMP_CHAIN_ID} \
-  --genesis-hash ${OCOMP_GENESIS_HASH} \
-  --boot-nonce ${OCOMP_BOOT_NONCE} \
-  --worker-ordinal %i \
-  --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASHES} \
+Environment=OUTBE_OCOMP_STORAGE_CONFIG=/opt/outbe-chain/offchain-storage.toml
+ExecStart=/opt/outbe-chain/outbe-ocomp snapshot-exporter \
   --supervisor-address 127.0.0.1:30401
 Restart=on-failure
 RestartSec=5

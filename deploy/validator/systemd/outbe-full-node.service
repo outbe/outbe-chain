@@ -2,6 +2,7 @@
 Description=Outbe certified FullNode
 After=network-online.target outbe-mongodb.service outbe-enclave.service
 Wants=network-online.target
+Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
 Requires=outbe-mongodb.service outbe-enclave.service
 Conflicts=outbe-validator.service
 StartLimitIntervalSec=300
@@ -24,9 +25,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --engine.memory-block-buffer-target 0 \
   --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \
   --tee-enclave-socket 127.0.0.1:17000 \
-  --projection.mongodb-uri mongodb://127.0.0.1:27017/?replicaSet=rs0 \
-  --projection.mongodb-database outbe_projection_validator \
-  --projection.start-block 1 \
+  --projection.storage-config /opt/outbe-chain/offchain-storage.toml \
   --http \
   --http.addr 127.0.0.1 \
   --http.port 8545 \
