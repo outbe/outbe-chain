@@ -67,6 +67,9 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 outbe-chain-constants.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
