@@ -7,7 +7,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{Revert, SolCall, SolError};
+use alloy_sol_types::SolCall;
 use cucumber::{then, when};
 use eyre::{ensure, eyre, Result};
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
@@ -432,13 +432,6 @@ enum DeactivationRejection {
 }
 
 impl DeactivationRejection {
-    fn reason(self) -> &'static str {
-        match self {
-            Self::Unauthorized => "unauthorized: caller must be owner or validator itself",
-            Self::Repeated => "can only deactivate an active validator",
-        }
-    }
-
     fn status(self) -> u8 {
         match self {
             Self::Unauthorized => 2,
@@ -447,13 +440,13 @@ impl DeactivationRejection {
     }
 }
 
-/// The trace must be the top-level replay of this exact canonical transaction,
-/// not a latest-state simulation or a revert found in an unrelated child call.
+/// Proves canonical inclusion and failure of the intended transaction. Receipt
+/// evidence does not prove an exact revert reason; production tests cover that
+/// contract separately. Finalized block-boundary observations check atomicity.
 fn verify_deactivation_rejection(
     outcome: &TxOutcome,
     transaction: &Value,
     block: &Value,
-    trace: &Value,
     before: &Account,
     caller: Address,
     rejection: DeactivationRejection,
@@ -467,8 +460,8 @@ fn verify_deactivation_rejection(
         "deactivation rejection is outside its bonded lifecycle phase"
     );
     // ValidatorSet authorizes the config owner or validator itself. Delegated
-    // operational keys do not authorize this call; the exact unauthorized
-    // replay below also proves that the other validator was not the owner.
+    // operational keys do not authorize this call. Check the actor independently
+    // of receipt status; no diagnostic RPC is needed for this identity check.
     ensure!(
         (caller == before.address) == matches!(rejection, DeactivationRejection::Repeated),
         "deactivation rejection used the wrong actor"
@@ -505,33 +498,13 @@ fn verify_deactivation_rejection(
         }
         .abi_encode(),
     );
-    for call in [transaction, trace] {
-        ensure!(
-            serde_json::from_value::<Address>(call["from"].clone())? == caller
-                && serde_json::from_value::<Address>(call["to"].clone())? == addresses::VS_ADDR
-                && serde_json::from_value::<Bytes>(call["input"].clone())? == input
-                && serde_json::from_value::<U256>(call["value"].clone())? == U256::ZERO,
-            "rejection transaction or replay changed actor, target, calldata or value"
-        );
-    }
     ensure!(
-        trace["type"].as_str() == Some("CALL")
-            && trace["error"].as_str() == Some("execution reverted"),
-        "deactivation replay did not revert its top-level call"
+        serde_json::from_value::<Address>(transaction["from"].clone())? == caller
+            && serde_json::from_value::<Address>(transaction["to"].clone())? == addresses::VS_ADDR
+            && serde_json::from_value::<Bytes>(transaction["input"].clone())? == input
+            && serde_json::from_value::<U256>(transaction["value"].clone())? == U256::ZERO,
+        "rejection transaction changed actor, target, calldata or value"
     );
-    let output: Bytes = serde_json::from_value(trace["output"].clone())?;
-    let revert = Revert::abi_decode_validate(&output)
-        .map_err(|_| eyre!("deactivation replay omitted a valid Error(string) payload"))?;
-    ensure!(
-        revert.reason == rejection.reason() && revert.abi_encode().as_slice() == output.as_ref(),
-        "deactivation replay did not prove the exact intended rejection"
-    );
-    if let Some(reason) = trace.get("revertReason") {
-        ensure!(
-            reason.as_str() == Some(rejection.reason()),
-            "deactivation replay has contradictory rejection diagnostics"
-        );
-    }
     Ok(())
 }
 
@@ -563,36 +536,26 @@ fn finalized_deactivation_rejection(
     )?;
     ensure!(
         serde_json::from_value::<B256>(block["parentHash"].clone())? == parent.block_hash,
-        "rejection replay parent differs from the shared finalized prestate anchor"
+        "rejection block parent differs from the shared finalized prestate anchor"
     );
-    // Reth replays this block from its parent, applies pre-execution changes and
-    // prior transactions, then traces the requested transaction. Thus nonzero
-    // transaction indices use the actual execution prestate, not just H-1.
-    let trace = eth::raw_json_result(
-        &url,
-        "debug_traceTransaction",
-        json!([outcome.transaction_hash,
-            {"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}]),
-    )?;
     retain(
         world,
-        &format!("{phase}_replay"),
+        &format!("{phase}_canonical_rejection"),
         json!({"checkpoint": checkpoint_json(checkpoint), "parent": checkpoint_json(parent),
             "caller": caller, "validator": account(&before)?.address,
-            "expected_reason": rejection.reason(), "transaction": transaction,
-            "block": block, "trace": trace}),
+            "proof_kind": "canonical_failed_receipt_and_block_boundary_state",
+            "exact_revert_reason_proven": false, "transaction": transaction, "block": block}),
     );
     verify_deactivation_rejection(
         outcome,
         &transaction,
         &block,
-        &trace,
         account(&before)?,
         caller,
         rejection,
     )?;
     unchanged_bond(account(&before)?, account(&after)?, rejection.status())?;
-    // Fence historical RPC reads and replay against a changed canonical view,
+    // Fence historical state reads against a changed canonical view,
     // and retain the same complete owned cohort after the proof.
     observe(world, &format!("{phase}_parent_verified"), parent)?;
     observe(world, &format!("{phase}_verified"), checkpoint)
@@ -1488,7 +1451,6 @@ mod tests {
         outcome: TxOutcome,
         transaction: Value,
         block: Value,
-        trace: Value,
         before: Account,
         caller: Address,
     }
@@ -1526,15 +1488,10 @@ mod tests {
             let block = json!({"hash": block_hash, "number": "0x2",
                 "parentHash": B256::repeat_byte(3),
                 "transactions": [B256::repeat_byte(4), hash]});
-            let trace = json!({"type": "CALL", "from": caller, "to": addresses::VS_ADDR,
-                "input": input, "value": "0x0", "error": "execution reverted",
-                "output": Bytes::from(Revert::from(rejection.reason().to_owned()).abi_encode()),
-                "revertReason": rejection.reason()});
             Self {
                 outcome,
                 transaction,
                 block,
-                trace,
                 before,
                 caller,
             }
@@ -1545,7 +1502,6 @@ mod tests {
                 &self.outcome,
                 &self.transaction,
                 &self.block,
-                &self.trace,
                 &self.before,
                 self.caller,
                 rejection,
@@ -1554,69 +1510,28 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_exact_rejection_replays_accept_both_phases_and_nonzero_index() {
+    fn lifecycle_canonical_rejection_accepts_both_phases_and_nonzero_index() {
         for rejection in [
             DeactivationRejection::Unauthorized,
             DeactivationRejection::Repeated,
         ] {
-            let mut proof = RejectionFixture::new(rejection);
-            assert!(proof.verify(rejection).is_ok());
-            // The ABI payload is authoritative even if the optional decoded
-            // diagnostic is absent from an otherwise complete top-level trace.
-            proof.trace.as_object_mut().unwrap().remove("revertReason");
-            assert!(proof.verify(rejection).is_ok());
+            assert!(RejectionFixture::new(rejection).verify(rejection).is_ok());
         }
     }
 
     #[test]
-    fn lifecycle_canonical_revert_cannot_substitute_an_unrelated_failure() {
-        for rejection in [
-            DeactivationRejection::Unauthorized,
-            DeactivationRejection::Repeated,
-        ] {
-            for reason in ["validator not registered", "unrelated failure", ""] {
-                let mut proof = RejectionFixture::new(rejection);
-                proof.trace["output"] =
-                    json!(Bytes::from(Revert::from(reason.to_owned()).abi_encode()));
-                proof.trace["revertReason"] = json!(reason);
-                assert!(receipt_identity(&proof.outcome, false).is_ok());
-                assert!(proof.verify(rejection).is_err());
-            }
-            let mut proof = RejectionFixture::new(rejection);
-            proof.trace["error"] = json!("out of gas");
-            assert!(proof.verify(rejection).is_err());
-        }
-    }
-
-    #[test]
-    fn lifecycle_rejection_requires_strict_abi_not_diagnostics_or_child_reverts() {
+    fn lifecycle_canonical_rejection_requires_failed_receipt_without_logs() {
         let rejection = DeactivationRejection::Unauthorized;
-        for output in [
-            Value::Null,
-            json!("0x"),
-            json!("0x08c379a0"),
-            json!("not hex"),
-        ] {
+        for status in [Value::Null, json!("0x1"), json!("invalid")] {
             let mut proof = RejectionFixture::new(rejection);
-            proof.trace["output"] = output;
+            proof.outcome.receipt["status"] = status;
             assert!(proof.verify(rejection).is_err());
         }
         let mut proof = RejectionFixture::new(rejection);
-        let mut output = Revert::from(rejection.reason().to_owned()).abi_encode();
-        output.push(0);
-        proof.trace["output"] = json!(Bytes::from(output));
+        proof.outcome.success = true;
         assert!(proof.verify(rejection).is_err());
         let mut proof = RejectionFixture::new(rejection);
-        proof.trace["revertReason"] = json!("unrelated failure");
-        assert!(proof.verify(rejection).is_err());
-        let mut proof = RejectionFixture::new(rejection);
-        let child = proof.trace.clone();
-        proof.trace["calls"] = json!([child]);
-        proof.trace["error"] = Value::Null;
-        proof.trace["output"] = json!("0x");
-        assert!(proof.verify(rejection).is_err());
-        let mut proof = RejectionFixture::new(rejection);
-        proof.trace["type"] = json!("DELEGATECALL");
+        proof.outcome.receipt["logs"] = json!([{"address": addresses::VS_ADDR}]);
         assert!(proof.verify(rejection).is_err());
     }
 
@@ -1650,26 +1565,19 @@ mod tests {
     #[test]
     fn lifecycle_rejection_binds_sender_target_calldata_and_zero_value() {
         let rejection = DeactivationRejection::Repeated;
-        for replay in [false, true] {
-            for field in ["from", "to", "input", "value"] {
-                let mut proof = RejectionFixture::new(rejection);
-                let call = if replay {
-                    &mut proof.trace
-                } else {
-                    &mut proof.transaction
-                };
-                call[field] = match field {
-                    "from" | "to" => json!(Address::repeat_byte(8)),
-                    "input" => json!(Bytes::from(
-                        eth::IValidatorSet::deactivateValidatorCall {
-                            validatorAddress: Address::repeat_byte(8),
-                        }
-                        .abi_encode(),
-                    )),
-                    _ => json!("0x1"),
-                };
-                assert!(proof.verify(rejection).is_err());
-            }
+        for field in ["from", "to", "input", "value"] {
+            let mut proof = RejectionFixture::new(rejection);
+            proof.transaction[field] = match field {
+                "from" | "to" => json!(Address::repeat_byte(8)),
+                "input" => json!(Bytes::from(
+                    eth::IValidatorSet::deactivateValidatorCall {
+                        validatorAddress: Address::repeat_byte(8),
+                    }
+                    .abi_encode()
+                )),
+                _ => json!("0x1"),
+            };
+            assert!(proof.verify(rejection).is_err());
         }
     }
 
@@ -1702,7 +1610,6 @@ mod tests {
                 DeactivationRejection::Repeated => Address::repeat_byte(9),
             };
             proof.transaction["from"] = json!(proof.caller);
-            proof.trace["from"] = json!(proof.caller);
             assert!(proof.verify(rejection).is_err());
         }
     }
@@ -1715,7 +1622,7 @@ mod tests {
             match missing {
                 0 => proof.transaction = Value::Null,
                 1 => proof.block = Value::Null,
-                _ => proof.trace = Value::Null,
+                _ => proof.outcome.receipt = Value::Null,
             }
             assert!(proof.verify(rejection).is_err());
         }

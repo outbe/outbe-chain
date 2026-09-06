@@ -392,7 +392,7 @@ impl Localnet {
             // real contents are only observable through `txpool_content` /
             // `txpool_status` (`eth_pendingTransactions` does not reflect them).
             "--http.api",
-            "eth,net,web3,outbe,debug,txpool",
+            "eth,net,web3,outbe,txpool",
             "--rpc.eth-proof-window",
             1868,
             "--port",
