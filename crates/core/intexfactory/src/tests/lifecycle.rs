@@ -498,7 +498,7 @@ mod call_sweep {
                 .qualified_group_members(REFERENCE_ISO, day)
                 .unwrap()
                 .is_empty());
-            let bucket = IntexFactoryContract::deadline_day(scan_ts + 7 * DAY);
+            let bucket = IntexFactoryContract::deadline_bucket(scan_ts + 7 * DAY);
             assert_eq!(
                 factory
                     .expiry_bucket_at
@@ -545,7 +545,7 @@ mod call_sweep {
     /// First instant a group with this deadline can be retired: the sweep works a
     /// deadline day only once that day has closed.
     fn due(deadline: u64) -> u64 {
-        IntexFactoryContract::day_end(IntexFactoryContract::deadline_day(deadline))
+        IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline))
     }
 
     fn sweep_at(s: &StorageHandle<'_>, now: u64) {

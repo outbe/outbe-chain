@@ -38,11 +38,11 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 
 /// Bucket slots one expiry sweep may look at per block. An empty or not-yet-due
-/// slot still costs a read, so without its own budget one long day would be walked
+/// slot still costs a read, so without its own budget one long bucket would be walked
 /// end to end in a single block.
 pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 256;
 
-/// Deadline-day buckets one expiry sweep may open per block. Each costs a tree
-/// descent plus its own bookkeeping, so a long backlog of days spreads over blocks
+/// Deadline buckets one expiry sweep may open per block. Each costs a tree
+/// descent plus its own bookkeeping, so a long backlog of buckets spreads over blocks
 /// the same way a long bucket does.
 pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;

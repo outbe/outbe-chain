@@ -12,7 +12,7 @@ use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS, NOTICE_GRACE_PERIOD};
+use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS};
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -278,7 +278,7 @@ impl IntexFactoryContract<'_> {
         self.called_group_count.write(&key, members.len() as u32)?;
         self.called_group_deadline.write(&key, deadline)?;
 
-        let day = Self::deadline_day(deadline);
+        let day = Self::deadline_bucket(deadline);
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), key)?;
@@ -295,69 +295,18 @@ impl IntexFactoryContract<'_> {
         Ok(())
     }
 
-    /// Hold a group's settlement window open because its call notice could not be
-    /// sent: holders who were never told cannot settle. The deadline moves out by the
-    /// grace and the group moves to the bucket of its new day, so the sweep needs to
-    /// know nothing about notices. Bounded, so a route nobody repairs cannot strand
-    /// the load; only the first failure extends it.
-    pub(crate) fn hold_for_undelivered_notice(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        now: u64,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        if self.called_group_count.read(&key)? == 0 || self.notice_undelivered_at.read(&key)? != 0 {
-            return Ok(());
-        }
-        self.notice_undelivered_at.write(&key, now)?;
-
-        let held = now.saturating_add(u64::from(NOTICE_GRACE_PERIOD));
-        if held <= self.called_group_deadline.read(&key)? {
-            return Ok(());
-        }
-        self.called_group_deadline.write(&key, held)?;
-        self.move_to_bucket(key, Self::deadline_day(held))
+    /// Hour since the epoch a deadline falls in. Plain UTC, like the call scan's
+    /// quote window: a deadline is wall-clock time, not a WorldwideDay. Hours rather
+    /// than days so a group waits at most an hour past its deadline for the sweep,
+    /// which is what the target chain already shows as expired.
+    pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
+        (deadline / 3_600) as u32
     }
 
-    /// Move a queued group to another day's bucket, leaving its old slot empty.
-    fn move_to_bucket(&mut self, key: u64, day: u32) -> Result<()> {
-        let packed = self.called_group_slot.read(&key)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (old_day, old_slot) = Self::unpack_slot(packed);
-        if old_day == day {
-            return Ok(());
-        }
-        self.release_expiry_slot(old_day, old_slot, key)?;
-
-        let slot = self.expiry_bucket_len.read(&day)?;
-        self.expiry_bucket_at
-            .write(&Self::bucket_slot_key(day, slot), key)?;
-        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
-        self.called_group_slot
-            .write(&key, Self::packed_slot(day, slot))?;
-
-        let live = self.expiry_bucket_live.read(&day)?;
-        self.expiry_bucket_live
-            .write(&day, live.saturating_add(1))?;
-        if live == 0 {
-            tree_math::add(&ExpiryDayTree(&*self), day)?;
-        }
-        Ok(())
-    }
-
-    /// Day since the epoch a deadline falls in. Plain UTC, like the call scan's
-    /// quote window: a deadline is wall-clock time, not a WorldwideDay.
-    pub(crate) const fn deadline_day(deadline: u64) -> u32 {
-        (deadline / SECONDS_PER_DAY) as u32
-    }
-
-    /// First instant after `day`. Every deadline bucketed under it is strictly
-    /// earlier, so a day that has closed holds only entries that are due.
-    pub(crate) const fn day_end(day: u32) -> u64 {
-        (day as u64 + 1) * SECONDS_PER_DAY
+    /// First instant after the bucket. Every deadline bucketed under it is strictly
+    /// earlier, so a bucket that has closed holds only entries that are due.
+    pub(crate) const fn bucket_end(day: u32) -> u64 {
+        (day as u64 + 1) * 3_600
     }
 
     const fn packed_slot(day: u32, slot: u32) -> u64 {
@@ -368,7 +317,7 @@ impl IntexFactoryContract<'_> {
         ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
     }
 
-    /// `keccak256(day_be32 ++ slot_be32)`.
+    /// `keccak256(bucket_be32 ++ slot_be32)`.
     pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&day.to_be_bytes());
@@ -410,13 +359,11 @@ impl IntexFactoryContract<'_> {
         })
     }
 
-    /// Drop an expired group and free its bucket slot.
+    /// Drop an expired group and free the bucket slot it says it waits in.
     pub(crate) fn remove_called_group(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
-        day: u32,
-        slot: u32,
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
         let count = self.called_group_count.read(&key)?;
@@ -429,9 +376,44 @@ impl IntexFactoryContract<'_> {
         }
         self.called_group_count.clear(&key)?;
         self.called_group_deadline.clear(&key)?;
-        self.notice_undelivered_at.clear(&key)?;
+
+        // The group's own record of where it waits, not the caller's: a slot passed in
+        // from a stale walk would free somebody else's, or nobody's.
+        let packed = self.called_group_slot.read(&key)?;
         self.called_group_slot.clear(&key)?;
+        if packed == 0 {
+            return Ok(());
+        }
+        let (day, slot) = Self::unpack_slot(packed);
         self.release_expiry_slot(day, slot, key)
+    }
+
+    /// Drop whatever is left of a bucket the sweep believes it has finished, so a
+    /// day cannot outlive its entries. Only an entry that broke the "a deadline lies
+    /// inside its own day" invariant can reach this; without it a single such entry
+    /// would keep the day at the front of the tree and stall every later one.
+    pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
+        let len = self.expiry_bucket_len.read(&day)?;
+        let mut dropped = 0u32;
+        for slot in 0..len {
+            let slot_key = Self::bucket_slot_key(day, slot);
+            let key = self.expiry_bucket_at.read(&slot_key)?;
+            if key == 0 {
+                continue;
+            }
+            let (iso_code, worldwide_day) = Self::unscoped(key);
+            self.remove_called_group(iso_code, worldwide_day)?;
+            dropped += 1;
+        }
+        // Whatever the slots said, the day itself must go.
+        self.expiry_bucket_len.clear(&day)?;
+        self.expiry_bucket_live.clear(&day)?;
+        tree_math::remove(&ExpiryDayTree(&*self), day)?;
+        if self.expiry_sweep_day.read()? == day {
+            self.expiry_sweep_day.write(0)?;
+            self.expiry_cursor.write(0)?;
+        }
+        Ok(dropped)
     }
 
     /// Free one bucket slot, retiring the whole bucket once nothing waits in it.

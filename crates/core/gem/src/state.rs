@@ -8,7 +8,10 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{
+        BIN_STEP_BP, MAX_CALL_WINDOW_DAYS, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME,
+        TOKEN_SYMBOL,
+    },
     errors::GemError,
     schema::{GemContract, GemData, GemState},
 };
@@ -115,9 +118,12 @@ impl GemContract<'_> {
             self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
-        if item.call_window > self.max_call_window.read(&item.reference_currency)? {
+        // Bounded here rather than where it is read, so the span the scan collects is
+        // never shorter than the window a gem was issued with.
+        let window = item.call_window.min(MAX_CALL_WINDOW_DAYS * 86_400);
+        if window > self.max_call_window.read(&item.reference_currency)? {
             self.max_call_window
-                .write(&item.reference_currency, item.call_window)?;
+                .write(&item.reference_currency, window)?;
         }
 
         Ok(())
@@ -170,15 +176,19 @@ impl GemContract<'_> {
                 item.qualified_at = self.storage.timestamp()?.to::<u64>();
             }
             GemState::Settled => {
-                // Qualified leaves the bin index, Called the deadline queue.
+                // Qualified leaves the bin index; Called leaves it below.
                 if item.state == GemState::Qualified as u8 {
                     self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
-                } else if item.state == GemState::Called as u8 {
-                    self.remove_called(gem_id)?;
                 }
                 item.settled_at = self.storage.timestamp()?.to::<u64>();
             }
             _ => {}
+        }
+
+        // Whatever it becomes, a gem that stops being Called must leave its expiry
+        // bucket: an entry outliving its state pins the day at the front of the tree.
+        if item.state == GemState::Called as u8 && new_state != GemState::Called {
+            self.remove_called(gem_id)?;
         }
 
         item.state = new_state as u8;
@@ -287,7 +297,7 @@ impl GemContract<'_> {
     }
 
     pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        let day = Self::deadline_day(deadline);
+        let day = Self::deadline_bucket(deadline);
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), gem_id)?;
@@ -342,16 +352,17 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Day since the epoch a deadline falls in. Plain UTC, like the call scan's
-    /// quote window: a deadline is wall-clock time, not a WorldwideDay.
-    pub(crate) const fn deadline_day(deadline: u64) -> u32 {
-        (deadline / 86_400) as u32
+    /// Hour since the epoch a deadline falls in. Plain UTC, like the call scan's
+    /// quote window: a deadline is wall-clock time, not a WorldwideDay. Hours rather
+    /// than days so a gem waits at most an hour past its deadline for the sweep.
+    pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
+        (deadline / 3_600) as u32
     }
 
-    /// First instant after `day`. Every deadline bucketed under it is strictly
-    /// earlier, so a day that has closed holds only gems that are due.
-    pub(crate) const fn day_end(day: u32) -> u64 {
-        (day as u64 + 1) * 86_400
+    /// First instant after the bucket. Every deadline bucketed under it is strictly
+    /// earlier, so a bucket that has closed holds only gems that are due.
+    pub(crate) const fn bucket_end(day: u32) -> u64 {
+        (day as u64 + 1) * 3_600
     }
 
     const fn packed_slot(day: u32, slot: u32) -> u64 {
@@ -363,7 +374,7 @@ impl GemContract<'_> {
         ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
     }
 
-    /// `keccak256(day_be32 ++ slot_be32)`.
+    /// `keccak256(bucket_be32 ++ slot_be32)`.
     pub(crate) fn bucket_slot_key(day: u32, slot: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&day.to_be_bytes());
@@ -377,6 +388,33 @@ impl GemContract<'_> {
             .expiry_bucket_at
             .read(&Self::bucket_slot_key(day, slot))?;
         Ok((!id.is_zero()).then_some(id))
+    }
+
+    /// Drop whatever is left of a bucket the sweep believes it has finished, so a day
+    /// cannot outlive its entries. Only a gem that broke the "a deadline lies inside
+    /// its own day" invariant can reach this; without it one such gem would keep the
+    /// day at the front of the tree and stall every later one.
+    pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
+        let len = self.expiry_bucket_len.read(&day)?;
+        let mut dropped = 0u32;
+        for slot in 0..len {
+            let gem_id = self
+                .expiry_bucket_at
+                .read(&Self::bucket_slot_key(day, slot))?;
+            if gem_id.is_zero() {
+                continue;
+            }
+            self.remove_called(gem_id)?;
+            dropped += 1;
+        }
+        self.expiry_bucket_len.clear(&day)?;
+        self.expiry_bucket_live.clear(&day)?;
+        tree_math::remove(&ExpiryDayTree(&*self), day)?;
+        if self.expiry_sweep_day.read()? == day {
+            self.expiry_sweep_day.write(0)?;
+            self.expiry_cursor.write(0)?;
+        }
+        Ok(dropped)
     }
 
     /// Earliest day still holding a called gem.

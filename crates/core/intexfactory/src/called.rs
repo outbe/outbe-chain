@@ -401,7 +401,7 @@ pub(crate) fn try_call_group(
         crate::qualified::enqueue_notice(
             factory,
             crate::qualified::NOTICE_CALLED,
-            crate::qualified::pack_called_notice(series_id, group.iso_code, called_at),
+            crate::qualified::pack_called_notice(series_id, called_at),
         )?;
     }
 
@@ -418,16 +418,13 @@ pub(crate) fn try_call_group(
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did. Returns how
-/// many chunks the router refused: a batch that never left means holders who were
-/// never told, and the caller has to hold their window open.
+/// travels so every target derives the same deadline the origin did.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
-) -> Result<u32> {
-    let mut refused = 0u32;
+) -> Result<()> {
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
         // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
         let sent = storage.with_checkpoint(|| {
@@ -452,10 +449,9 @@ pub(crate) fn notify_called(
                 called_at,
                 series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                 error = ?error,
-                "called notice: refused by the router"
+                "called notice: dropping"
             );
-            refused += 1;
         }
     }
-    Ok(refused)
+    Ok(())
 }

@@ -846,13 +846,13 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         // Same bucket, ghost first: the one behind it must still be reached.
         gem.push_called(ghost, deadline).unwrap();
         gem.mark_called(live, T_NOW).unwrap();
-        let day = GemContract::deadline_day(deadline);
+        let day = GemContract::deadline_bucket(deadline);
         let load = api::get_gem(storage, live)
             .unwrap()
             .unwrap()
             .promis_load_minor;
 
-        let ctx = block_ctx_at(storage, GemContract::day_end(day));
+        let ctx = block_ctx_at(storage, GemContract::bucket_end(day));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
@@ -875,7 +875,7 @@ fn a_due_entry_that_cannot_burn_credits_nothing() {
 
         let ctx = block_ctx_at(
             storage,
-            GemContract::day_end(GemContract::deadline_day(T_NOW)),
+            GemContract::bucket_end(GemContract::deadline_bucket(T_NOW)),
         );
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();

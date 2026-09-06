@@ -652,8 +652,8 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         );
         crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
 
-        let near_day = IntexFactoryContract::deadline_day(now + DAY);
-        let far_day = IntexFactoryContract::deadline_day(now + 10 * DAY);
+        let near_day = IntexFactoryContract::deadline_bucket(now + DAY);
+        let far_day = IntexFactoryContract::deadline_bucket(now + 10 * DAY);
         assert_eq!(
             f.expiry_bucket_live.read(&near_day).unwrap(),
             0,
@@ -673,57 +673,37 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 }
 
 #[test]
-fn a_group_whose_notice_never_left_keeps_its_window_until_the_grace_runs_out() {
+fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let day = WorldwideDay::new(20260101);
-        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
 
         f.push_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
             .unwrap();
-        let bucket = IntexFactoryContract::deadline_day(now + DAY);
-
-        f.hold_for_undelivered_notice(REFERENCE_ISO, day, now)
+        let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
+        // A deadline outside its own bucket can only come from a broken invariant,
+        // and it must not park the day at the front of the tree forever.
+        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+        f.called_group_deadline
+            .write(&key, now + 400 * DAY)
             .unwrap();
-        let held = now + u64::from(crate::constants::NOTICE_GRACE_PERIOD);
-        assert_eq!(
-            f.called_group_deadline.read(&key).unwrap(),
-            held,
-            "holders who were never told get their window extended"
-        );
-        assert_eq!(
-            f.expiry_bucket_live.read(&bucket).unwrap(),
-            0,
-            "and the group leaves the bucket it can no longer expire in"
-        );
-        assert_eq!(
-            f.first_expiry_day().unwrap(),
-            Some(IntexFactoryContract::deadline_day(held)),
-            "waiting instead in the bucket of the day the hold ends"
-        );
-
-        f.hold_for_undelivered_notice(REFERENCE_ISO, day, now + DAY)
-            .unwrap();
-        assert_eq!(
-            f.called_group_deadline.read(&key).unwrap(),
-            held,
-            "a second failure does not extend it again"
-        );
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                1,
-                IntexFactoryContract::day_end(IntexFactoryContract::deadline_day(held)),
-                CHAIN_ID,
-            ),
+            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
             s.clone(),
         );
         crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
         assert_eq!(
             f.first_expiry_day().unwrap(),
             None,
-            "a route nobody repaired does not strand the load forever"
+            "the day leaves the tree instead of blocking every later one"
+        );
+        assert_eq!(
+            f.called_group_count.read(&key).unwrap(),
+            0,
+            "and takes its group's records with it"
         );
     });
 }

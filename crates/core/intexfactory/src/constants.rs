@@ -47,9 +47,9 @@ pub const NOTIFY_CHUNK_LIMIT: u32 = 2048;
 
 /// Router calls one firing may make. This is the cost that matters: entries coalesce into marks of
 /// [`MAX_SERIES_PER_MARK`], each fanning out to the day's target chains, so bounding entries alone
-/// bounds nothing. Paired with the poll period it sets the drain's daily capacity - and the shape
-/// the call scan produces is one run per block, so the fragmented case is the one that has to fit:
-/// entries that never coalesce still get a call each.
+/// bounds nothing. Paired with the poll period it sets the drain's daily capacity - and a run is one
+/// group at one call time, so the fragmented case is the one that has to fit: entries that never
+/// coalesce cost a call each.
 pub const NOTIFY_MESSAGE_LIMIT: u32 = 256;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
@@ -87,17 +87,12 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 
-/// Deadline-day buckets one expiry sweep may open per block. Each costs a tree
-/// descent plus its own bookkeeping, so a long backlog of days spreads over blocks
+/// Deadline buckets one expiry sweep may open per block. Each costs a tree
+/// descent plus its own bookkeeping, so a long backlog of buckets spreads over blocks
 /// the same way a long bucket does.
 pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
 
-/// How long a called group waits when its notice could not be sent. A holder who
-/// was never told cannot settle, so the window is held open while the route is
-/// repaired - and bounded, so a route nobody repairs cannot strand the load.
-pub const NOTICE_GRACE_PERIOD: u32 = CALL_NOTICE_PERIOD;
-
 /// Bucket slots one expiry sweep may look at per block. An empty or not-yet-due
-/// slot still costs a read, so without its own budget one long day would be walked
+/// slot still costs a read, so without its own budget one long bucket would be walked
 /// end to end in a single block.
 pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 512;

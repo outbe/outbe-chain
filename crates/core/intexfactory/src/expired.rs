@@ -34,7 +34,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         };
         // A deadline lies inside its own day by construction, so a day that has not
         // closed yet holds nobody who is due - and no later day can be due either.
-        if now < IntexFactoryContract::day_end(day) {
+        if now < IntexFactoryContract::bucket_end(day) {
             break;
         }
         buckets -= 1;
@@ -67,9 +67,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             }
 
-            match storage
-                .with_checkpoint(|| expire_group(storage, iso_code, worldwide_day, day, slot))
-            {
+            match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day)) {
                 Ok(members) => budget = budget.saturating_sub(members),
                 Err(error) => {
                     tracing::warn!(
@@ -80,8 +78,21 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         "expiry sweep: retiring group without credit"
                     );
                     // Dropped whole, not just out of the bucket: leaving its records
-                    // behind would refuse the pair a later call forever.
-                    factory.remove_called_group(iso_code, worldwide_day, day, slot)?;
+                    // behind would refuse the pair a later call forever. Charged like
+                    // a retirement, because clearing the members costs the same.
+                    let dropped = storage.with_checkpoint(|| {
+                        let mut factory = IntexFactoryContract::new(storage.clone());
+                        let members =
+                            factory
+                                .called_group_count
+                                .read(&IntexFactoryContract::scoped(
+                                    iso_code,
+                                    worldwide_day.value(),
+                                ))?;
+                        factory.remove_called_group(iso_code, worldwide_day)?;
+                        Ok(members)
+                    });
+                    budget = budget.saturating_sub(dropped.unwrap_or(1).max(1));
                 }
             }
             slot += 1;
@@ -94,10 +105,17 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // A closed day whose entries all stayed put would otherwise be handed back
-        // every block; nothing here can become due later, so it is done.
+        // The day has closed and its whole bucket has been walked, so nothing in it
+        // can still be waiting. Anything left broke the bucketing invariant; retire
+        // it loudly rather than let it sit at the front of the tree forever.
         if factory.expiry_bucket_live.read(&day)? != 0 {
-            break;
+            let dropped = factory.force_retire_bucket(day)?;
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                day,
+                dropped,
+                "expiry sweep: bucket outlived its day, retiring it"
+            );
         }
     }
     Ok(())
@@ -108,37 +126,46 @@ fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
     worldwide_day: WorldwideDay,
-    day: u32,
-    slot: u32,
 ) -> Result<u32> {
     let mut factory = IntexFactoryContract::new(storage.clone());
     let group = factory.called_group(iso_code, worldwide_day)?;
 
     let mut credit = U256::ZERO;
     for &series_id in &group.members {
-        let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
-        let returned = forfeited
-            .promis_load_minor
-            .checked_mul(U256::from(forfeited.units))
-            .ok_or_else(|| PrecompileError::Revert("forfeited promis load overflow".into()))?;
+        // Per member: one series that cannot expire must not cost its group's whole
+        // credit, which a shared checkpoint would roll back along with it.
+        let returned = storage.with_checkpoint(|| {
+            let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
+            let returned = forfeited
+                .promis_load_minor
+                .checked_mul(U256::from(forfeited.units))
+                .ok_or_else(|| PrecompileError::Revert("forfeited promis load overflow".into()))?;
+            emit_event(
+                storage,
+                crate::precompile::IIntexFactory::SeriesExpired {
+                    seriesId: series_id.into(),
+                    forfeitedUnits: forfeited.units,
+                    returnedPromis: returned,
+                },
+            )?;
+            Ok(returned)
+        });
+        let returned = match returned {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(target: "outbe::intexfactory", series = %series_id, error = ?error, "expiry sweep: skipping series");
+                continue;
+            }
+        };
         credit = credit
             .checked_add(returned)
             .ok_or_else(|| PrecompileError::Revert("forfeited promis credit overflow".into()))?;
-
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::SeriesExpired {
-                seriesId: series_id.into(),
-                forfeitedUnits: forfeited.units,
-                returnedPromis: returned,
-            },
-        )?;
     }
 
     if !credit.is_zero() {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .add_to_total_unallocated(credit)?;
     }
-    factory.remove_called_group(iso_code, worldwide_day, day, slot)?;
+    factory.remove_called_group(iso_code, worldwide_day)?;
     Ok(group.members.len() as u32)
 }

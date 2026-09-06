@@ -339,7 +339,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         };
         // A deadline lies inside its own day by construction, so a day that has not
         // closed yet holds nobody who is due - and no later day can be due either.
-        if now < GemContract::day_end(day) {
+        if now < GemContract::bucket_end(day) {
             break;
         }
         buckets -= 1;
@@ -373,13 +373,15 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Ok(true) => burned = burned.saturating_add(1),
                 // Due and still not burning: the entry no longer matches its gem.
                 // Out of the bucket either way, so it cannot hold the day back.
+                // `remove_called`, not just the slot: leaving the reverse index behind
+                // would point a live gem at a slot it no longer owns.
                 Ok(false) => {
                     tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
-                    gem.release_expiry_slot(day, slot, gem_id)?;
+                    gem.remove_called(gem_id)?;
                 }
                 Err(error) => {
                     tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: quarantining gem");
-                    gem.release_expiry_slot(day, slot, gem_id)?;
+                    gem.remove_called(gem_id)?;
                 }
             }
             slot += 1;
@@ -392,10 +394,12 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         gem.expiry_sweep_day.write(0)?;
         gem.expiry_cursor.write(0)?;
-        // A closed day whose entries all stayed put would otherwise be handed back
-        // every block; nothing here can become due later, so it is done.
+        // The day has closed and its whole bucket has been walked, so nothing in it can
+        // still be waiting. Anything left broke the bucketing invariant; retire it
+        // loudly rather than let it sit at the front of the tree forever.
         if gem.expiry_bucket_live.read(&day)? != 0 {
-            break;
+            let dropped = gem.force_retire_bucket(day)?;
+            tracing::warn!(target: "outbe::gem", day, dropped, "expiry sweep: bucket outlived its day, retiring it");
         }
     }
     Ok(burned)

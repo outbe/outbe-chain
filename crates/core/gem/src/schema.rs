@@ -178,7 +178,7 @@ pub struct GemContract {
     // --- Called gems, bucketed by the UTC day their notice period closes in.
     // Calling is driven by price, expiry only by time, so the two stages keep
     // separate structures - and a bucket makes call order irrelevant to expiry.
-    /// Days since the epoch holding at least one called gem. Set semantics, so a
+    /// Hours since the epoch holding at least one called gem. Set semantics, so a
     /// day leaves only once its bucket empties.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -186,7 +186,7 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Gem id -> `(day << 32) | slot` it waits in; zero means it never queued.
+    /// Gem id -> `(bucket << 32) | slot` it waits in; zero means it never queued.
     #[attribute(order = 23)]
     pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
@@ -204,14 +204,14 @@ pub struct GemContract {
     #[attribute(order = 26)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Day since the epoch -> slots ever used in its bucket. Retired slots are
+    /// Hour since the epoch -> slots ever used in its bucket. Retired slots are
     /// zeroed in place rather than compacted, so a cursor into a bucket stays valid.
     #[attribute(order = 27)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// Day -> gems still waiting in it. The day leaves the tree when this hits 0.
+    /// Bucket -> gems still waiting in it. The day leaves the tree when this hits 0.
     #[attribute(order = 28)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(day_be32 ++ slot_be32)` -> gem id; zero marks a slot already retired.
+    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id; zero marks a slot already retired.
     #[attribute(order = 29)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.

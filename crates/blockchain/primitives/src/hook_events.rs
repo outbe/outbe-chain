@@ -3,7 +3,8 @@
 use alloy_primitives::{Address, Log};
 
 use crate::addresses::{
-    GOVERNANCE_ADDRESS, NOD_ADDRESS, STABLECOIN_FACTORY_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
+    GEM_ADDRESS, GOVERNANCE_ADDRESS, NOD_ADDRESS, STABLECOIN_FACTORY_ADDRESS, UPDATE_ADDRESS,
+    VOTE_ADDRESS,
 };
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
@@ -15,6 +16,9 @@ pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
     NOD_ADDRESS,
     GOVERNANCE_ADDRESS,
     STABLECOIN_FACTORY_ADDRESS,
+    // Forfeits moved from the daily trigger into the block hook, and the amount they
+    // return to the unallocated limit is only auditable through their events.
+    GEM_ADDRESS,
 ];
 
 /// Returns `true` when `address` is whitelisted for hook-event receipt publication.

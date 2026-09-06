@@ -269,11 +269,10 @@ pub const NOTICE_QUALIFIED: u8 = 0;
 /// A notice carrying one Called series, which its group no longer holds.
 pub const NOTICE_CALLED: u8 = 1;
 
-/// A Called entry packs its call time and its reference currency into the bytes the
-/// 14-byte `SeriesId` leaves free: the origin's stamp must reach the target instead
-/// of its delivery time, and the currency names the group a failed send belongs to.
-pub fn pack_called_notice(series_id: SeriesId, iso_code: u16, called_at: u32) -> U256 {
-    series_id.to_word() | (U256::from(iso_code) << 32usize) | U256::from(called_at)
+/// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
+/// free, so the origin's stamp reaches the target instead of its delivery time.
+pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
+    series_id.to_word() | U256::from(called_at)
 }
 
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries one day and
@@ -282,10 +281,9 @@ pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bo
     ts == called_at && id.worldwide_day() == day
 }
 
-fn unpack_called_notice(entry: U256) -> (SeriesId, u16, u32) {
+fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
     (
         SeriesId::from_word(entry),
-        ((entry >> 32usize) & U256::from(u16::MAX)).to::<u16>(),
         (entry & U256::from(u32::MAX)).to::<u32>(),
     )
 }
@@ -364,7 +362,7 @@ fn drain_called_run(
     messages: &mut u32,
     calls_left: u32,
 ) -> Result<u32> {
-    let (first_id, iso_code, called_at) = unpack_called_notice(first);
+    let (first_id, called_at) = unpack_called_notice(first);
     // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
     // be lost silently. Only an entry written by an older binary carries one; drop it where it shows.
     if called_at == 0 {
@@ -379,7 +377,6 @@ fn drain_called_run(
     }
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
-    let mut groups = vec![iso_code];
 
     // The run is what one message carries, so it is cut to the calls still budgeted
     // rather than to the whole firing's window.
@@ -389,14 +386,11 @@ fn drain_called_run(
         if factory.notify_kind.read(&index)? != NOTICE_CALLED {
             break;
         }
-        let (id, iso, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
+        let (id, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
         if !joins_run(worldwide_day, called_at, id, ts) {
             break;
         }
         run.push(id);
-        if !groups.contains(&iso) {
-            groups.push(iso);
-        }
         index += 1;
     }
 
@@ -405,33 +399,19 @@ fn drain_called_run(
         factory.notify_kind.clear(&slot)?;
     }
     *messages = messages.saturating_add(router_calls(run.len()));
-    // The entries are gone either way - a batch left in the queue would wedge the
-    // drain and with it the whole cycle trigger. A batch the router refused is
-    // answered by holding its groups' settlement windows open, not by retrying.
-    let refused = storage
+    // Best-effort: a batch that cannot be sent is dropped, never left to wedge the
+    // drain and with it the whole cycle trigger.
+    if let Err(error) = storage
         .with_checkpoint(|| crate::called::notify_called(storage, worldwide_day, called_at, &run))
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                target: "outbe::intexfactory",
-                worldwide_day = worldwide_day.value(),
-                called_at,
-                error = ?error,
-                "called notice: send failed"
-            );
-            router_calls(run.len())
-        });
-    if refused > 0 {
-        let now = storage.timestamp()?.to::<u64>();
-        let mut factory = IntexFactoryContract::new(storage.clone());
-        for iso in groups {
-            // Isolated: a group the hold cannot be applied to must not take the drain
-            // down, and with it every later trigger in this block.
-            if let Err(error) = storage
-                .with_checkpoint(|| factory.hold_for_undelivered_notice(iso, worldwide_day, now))
-            {
-                tracing::warn!(target: "outbe::intexfactory", iso, error = ?error, "called notice: hold failed");
-            }
-        }
+    {
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            worldwide_day = worldwide_day.value(),
+            called_at,
+            series = ?run.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            error = ?error,
+            "called notice: dropping"
+        );
     }
     Ok(index - at)
 }
