@@ -1444,6 +1444,8 @@ fn run_node() -> eyre::Result<()> {
         let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
             runner.start(async move |ctx| {
                 let graceful_shutdown = ctx.child("shutdown");
+                let (follower_drain, follower_shutdown) =
+                    outbe_engine::follower_shutdown::follower_drain_pair();
                 let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
                     outbe_engine::run_consensus_stack(
                         stack_ctx,
@@ -1458,7 +1460,8 @@ fn run_node() -> eyre::Result<()> {
                                 retention_selector,
                                 finalized_ce_committer,
                                 ce_startup_recovery,
-                            );
+                            )
+                            .with_follower_shutdown(follower_shutdown);
                             if let Some(readiness) = ocomp_readiness {
                                 services = services.with_ocomp_readiness(readiness);
                             }
@@ -1472,6 +1475,12 @@ fn run_node() -> eyre::Result<()> {
                 commonware_macros::select! {
                     _ = shutdown_token_clone.cancelled() => {
                         info!("consensus stack shutting down");
+                        // Close follower delivery ingress and persist all accepted
+                        // proofs while Marshal can still answer certificate reads.
+                        let follower_result = follower_drain.drain(Duration::from_secs(5)).await;
+                        if let Err(error) = &follower_result {
+                            tracing::error!(%error, "follower drain failed before Marshal shutdown");
+                        }
                         let stop_result = graceful_shutdown
                             .stop(0, Some(Duration::from_secs(5)))
                             .await;
@@ -1482,6 +1491,11 @@ fn run_node() -> eyre::Result<()> {
                         if let Err(error) = &stack_result {
                             tracing::error!(%error, "consensus stack failed during shutdown");
                         }
+                        let stack_result = match (stack_result, follower_result) {
+                            (Err(error), Err(drain)) => Err(error.wrap_err(format!("follower drain also failed: {drain:#}"))),
+                            (Err(error), _) | (_, Err(error)) => Err(error),
+                            (Ok(()), Ok(())) => Ok(()),
+                        };
                         consensus_shutdown_result(stop_result, stack_result)
                     },
                     result = &mut stack_handle => {

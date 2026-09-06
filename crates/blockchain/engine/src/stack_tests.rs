@@ -1,17 +1,17 @@
 use super::*;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use commonware_actor::{Feedback, Unreliable};
 use commonware_consensus::{
-    marshal::{self, core::Buffer, resolver::handler, Start, Update},
+    Reporter,
+    marshal::{self, Start, Update, core::Buffer, resolver::handler},
     simplex::{
+        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
         elector::{Config as _, Elector as _, RoundRobin},
         types::{Activity, Finalization, Finalize, Proposal, Subject},
-        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
     },
     types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
-    Reporter,
 };
-use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};
+use commonware_cryptography::bls12381::{PrivateKey, primitives::variant::MinSig};
 use commonware_cryptography::certificate::{Provider as _, Scheme as _};
 use commonware_cryptography::sha256::Digest as Sha256Digest;
 use commonware_cryptography::{Hasher as _, Sha256};
@@ -21,29 +21,30 @@ use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
 use commonware_runtime::{
-    buffer::paged::CacheRef, tokio as commonware_tokio, IoBufs, Runner as _, Supervisor as _,
+    IoBufs, Runner as _, Supervisor as _, buffer::paged::CacheRef, tokio as commonware_tokio,
 };
 use commonware_storage::archive::immutable;
 use commonware_utils::{
+    NZUsize,
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum as _, Set},
     vec::NonEmptyVec,
-    NZUsize,
 };
+use futures::FutureExt as _;
 use outbe_consensus::{
     block::ConsensusBlock,
     bls::bootstrap_dkg,
     committee_provider::CommitteeProvider,
     hybrid::{HybridScheme, HybridSchemeProvider, VrfMaterialProvider},
     reporter::ReporterContinuity,
-    test_harness::{mock_genesis, MockAutomaton, MockRelay, MockReporter},
+    test_harness::{MockAutomaton, MockRelay, MockReporter, mock_genesis},
 };
 use outbe_primitives::OutbeHeader;
 use outbe_radicle::integration::{RadicleStatusChannel, RadicleVotingGate, RadicleVotingGateError};
 use reth_ethereum::{
-    primitives::{Header, SealedBlock, SealedHeader},
     Block,
+    primitives::{Header, SealedBlock, SealedHeader},
 };
 use reth_provider::ProviderResult;
 use std::{
@@ -52,8 +53,9 @@ use std::{
     marker::PhantomData,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
+        Arc, Barrier, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Barrier, Mutex as StdMutex,
+        mpsc,
     },
     time::{Duration, SystemTime},
 };
@@ -1768,6 +1770,21 @@ async fn start_recovery_marshal(
     handler::Handler<outbe_consensus::digest::Digest>,
     commonware_runtime::Handle<()>,
 ) {
+    start_recovery_marshal_with_reporter(context, provider, AckingMarshalReporter).await
+}
+
+async fn start_recovery_marshal_with_reporter<R>(
+    context: commonware_runtime::tokio::Context,
+    provider: HybridSchemeProvider<MinSig>,
+    reporter: R,
+) -> (
+    outbe_consensus::marshal_types::MarshalMailbox,
+    handler::Handler<outbe_consensus::digest::Digest>,
+    commonware_runtime::Handle<()>,
+)
+where
+    R: Reporter<Activity = outbe_consensus::marshal_types::MarshalUpdate> + Send + 'static,
+{
     let page_cache = CacheRef::from_pooler(
         &context,
         NonZeroU16::new(1024).unwrap(),
@@ -1868,7 +1885,7 @@ async fn start_recovery_marshal(
         NonZeroUsize::new(16).unwrap(),
     );
     let handle = actor.start(
-        AckingMarshalReporter,
+        reporter,
         EmptyMarshalBuffer::default(),
         (resolver_rx, NoopMarshalResolver),
     );
@@ -2057,6 +2074,161 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
             digest: recovered.1,
         })
     );
+}
+
+#[test]
+fn follower_shutdown_keeps_certificate_available_until_observer_drains() {
+    commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let round = Round::new(Epoch::new(0), View::new(17));
+        let block = recovery_block(17);
+        let (provider, finalization) = recovery_finalization_fixture(&block, round);
+        let clock = context.child("proof_ready");
+        let shutdown = context.child("shutdown");
+        let (mut mailbox, _resolver, actor) = start_recovery_marshal(context, provider).await;
+        let _ = mailbox.verified(round, block).await;
+        let _ = mailbox.report(Activity::Finalization(finalization));
+        recover_application_finalized_round(clock, mailbox.clone(), 17)
+            .await
+            .unwrap();
+        // Use the NodeHost pre-stop handshake. An accepted notification must
+        // still be able to obtain its exact proof after shutdown is requested.
+        let (control, drain) = crate::follower_shutdown::follower_drain_pair();
+        let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
+        let _reporter = drain
+            .install(outbe_consensus::executor::Mailbox::from_sender(tx))
+            .unwrap()
+            .unwrap();
+        let waiting = control.drain(Duration::from_secs(5));
+        tokio::pin!(waiting);
+        assert!(waiting.as_mut().now_or_never().is_none());
+        let observer = async {
+            use futures::StreamExt as _;
+            assert!(
+                deliveries.next().await.is_none(),
+                "ingress must close before proof drain"
+            );
+            assert!(
+                mailbox.get_finalization(Height::new(17)).await.is_some(),
+                "marshal has no certified finalization at follower height 17 during shutdown drain"
+            );
+            Ok(())
+        };
+        drain.finish(async { Ok(()) }, observer).await.unwrap();
+        waiting.await.unwrap();
+        shutdown
+            .stop(0, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        actor.await.unwrap();
+        assert!(
+            mailbox.get_finalization(Height::new(17)).await.is_none(),
+            "only after proof drain may Marshal be unavailable"
+        );
+    });
+}
+
+#[test]
+fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
+    use futures::StreamExt as _;
+    use outbe_consensus::finalization::parent_cert_store::{
+        CertifiedParentProofStore as _, FinalizedParentCertStore,
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let proof_dir = directory.path().join("proofs");
+    let result = commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let round = Round::new(Epoch::new(0), View::new(17));
+        let mut raw = Block::default();
+        raw.header.number = 1;
+        raw.header.parent_hash = recovery_block(0).block_hash();
+        let block =
+            ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw.map_header(OutbeHeader::new)));
+        let (provider, finalization) = recovery_finalization_fixture(&block, round);
+        let scheme = provider.scoped(round.epoch()).unwrap();
+        let addresses = vec![
+            Address::repeat_byte(1),
+            Address::repeat_byte(2),
+            Address::repeat_byte(3),
+        ];
+        let public_keys: Vec<Vec<u8>> = scheme
+            .participants()
+            .iter()
+            .map(|key| key.encode().as_ref().to_vec())
+            .collect();
+        let snapshot = outbe_consensus::proof::build_committee_snapshot(
+            &addresses,
+            &public_keys,
+            scheme.expected_vrf_material_version(),
+            scheme
+                .identity()
+                .map(|key| key.encode().as_ref().to_vec())
+                .unwrap_or_default(),
+            B256::ZERO,
+        )
+        .unwrap();
+        let (control, drain) = crate::follower_shutdown::follower_drain_pair();
+        let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
+        let reporter = drain
+            .install(outbe_consensus::executor::Mailbox::from_sender(tx))
+            .unwrap()
+            .unwrap();
+        let shutdown = context.child("shutdown");
+        let (mut mailbox, _resolver, actor) =
+            start_recovery_marshal_with_reporter(context, provider, reporter).await;
+        let _ = mailbox.verified(round, block.clone()).await;
+        let _ = mailbox.report(Activity::Finalization(finalization));
+        let accepted_ack = loop {
+            let message = tokio::time::timeout(Duration::from_secs(5), deliveries.next())
+                .await
+                .unwrap()
+                .unwrap();
+            if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = message {
+                if let Update::Block(delivered, ack) = *update {
+                    if delivered.number() == 0 {
+                        ack.acknowledge();
+                        continue;
+                    }
+                    assert_eq!(delivered.block_hash(), block.block_hash());
+                    break ack;
+                }
+            }
+        };
+        // Freeze the accepted delivery before its executor ACK, then request
+        // shutdown. This is the exact race cut from lifecycle scenarios4/9.
+        let wait = control.drain(Duration::from_secs(5));
+        tokio::pin!(wait);
+        assert!(wait.as_mut().now_or_never().is_none());
+        assert!(deliveries.next().await.is_none());
+        let store = FinalizedParentCertStore::open(&proof_dir).unwrap();
+        let cert = mailbox.get_finalization(Height::new(1)).await.unwrap();
+        let record =
+            build_certified_follower_parent_record(&cert, &block, &snapshot, &scheme).unwrap();
+        let key = record.proof_key();
+        let expected = record.clone();
+        let execution = async {
+            accepted_ack.acknowledge();
+            Ok(())
+        };
+        let observer = async {
+            // Still available AFTER stop request, through the real mailbox.
+            let exact = mailbox.get_finalization(Height::new(1)).await.unwrap();
+            assert_eq!(exact.encode(), cert.encode());
+            store.put_finalization(record).map_err(eyre::Report::new)
+        };
+        drain.finish(execution, observer).await.unwrap();
+        wait.await.unwrap();
+        assert_eq!(mailbox.get_processed_height().await, Some(Height::new(1)));
+        shutdown
+            .stop(0, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        actor.await.unwrap();
+        drop(store);
+        let reopened = FinalizedParentCertStore::open(&proof_dir).unwrap();
+        assert_eq!(reopened.get_finalization(key), Some(expected));
+        true
+    });
+    assert!(result);
 }
 
 #[test]
@@ -2323,7 +2495,7 @@ fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
 #[test]
 fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
     use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
-    use outbe_primitives::projection::{projection_readiness, ProjectionStatus, WaitOutcome};
+    use outbe_primitives::projection::{ProjectionStatus, WaitOutcome, projection_readiness};
     use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
 
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
@@ -2997,15 +3169,19 @@ fn test_pending_dkg_material_alone_does_not_restore_boundary() {
     // alone; the pending-boundary file remains absent and DkgManager has no
     // pending artifact to verify/drain.
     save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
-    assert!(load_pending_dkg_state(dir.path(), &backend)
-        .unwrap()
-        .is_some());
+    assert!(
+        load_pending_dkg_state(dir.path(), &backend)
+            .unwrap()
+            .is_some()
+    );
     assert!(load_pending_dkg_boundary(dir.path()).unwrap().is_none());
 
     let manager = DkgManagerMailbox::new();
-    assert!(commonware_runtime::tokio::Runner::default()
-        .start(|_| async move { manager.pending_boundary_artifact(Epoch::new(7)).await })
-        .is_none());
+    assert!(
+        commonware_runtime::tokio::Runner::default()
+            .start(|_| async move { manager.pending_boundary_artifact(Epoch::new(7)).await })
+            .is_none()
+    );
 }
 
 #[test]
@@ -3122,10 +3298,12 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
             Some(artifact.clone())
         );
         assert_eq!(manager.take_committed_boundary_artifact().await, None);
-        assert!(manager
-            .pending_boundary_artifact(Epoch::new(7))
-            .await
-            .is_none());
+        assert!(
+            manager
+                .pending_boundary_artifact(Epoch::new(7))
+                .await
+                .is_none()
+        );
     });
 }
 
@@ -3977,9 +4155,11 @@ fn dkg_recovery_provider_gap_preserves_existing_ceremony() {
     )
     .unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("missing finalized header at height 80"));
+    assert!(
+        error
+            .to_string()
+            .contains("missing finalized header at height 80")
+    );
     assert_eq!(manager.canonical_output(Epoch::new(0)), Some(expected));
     assert!(
         finalized_log_rx.try_recv().is_err(),
@@ -4125,23 +4305,27 @@ fn active_vrf_material_and_local_share_status_change_together() {
         Some(share),
     );
     assert!(bridge.has_threshold_shares());
-    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
-        &config::outbe_app_namespace(),
-        participants.clone(),
-        keys[0].clone(),
-        vrf_materials.clone(),
-    )
-    .is_some());
+    assert!(
+        HybridScheme::<MinSig>::signer_with_vrf_provider(
+            &config::outbe_app_namespace(),
+            participants.clone(),
+            keys[0].clone(),
+            vrf_materials.clone(),
+        )
+        .is_some()
+    );
 
     activate_vrf_material_and_publish_local_share(&bridge, &vrf_materials, 2, polynomial, None);
     assert!(!bridge.has_threshold_shares());
-    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
-        &config::outbe_app_namespace(),
-        participants,
-        keys[0].clone(),
-        vrf_materials,
-    )
-    .is_none());
+    assert!(
+        HybridScheme::<MinSig>::signer_with_vrf_provider(
+            &config::outbe_app_namespace(),
+            participants,
+            keys[0].clone(),
+            vrf_materials,
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -4333,15 +4517,15 @@ fn ordered_set_index_shift_on_prefix_join() {
 #[cfg(test)]
 mod muxer_contract {
     use commonware_consensus::types::Epoch;
-    use commonware_cryptography::ed25519::{PrivateKey as Ed25519PrivateKey, PublicKey};
     use commonware_cryptography::Signer as _;
+    use commonware_cryptography::ed25519::{PrivateKey as Ed25519PrivateKey, PublicKey};
     use commonware_p2p::{
+        Channel, Receiver as _, Recipients, Sender as _,
         simulated::{self, Link, Network, Oracle},
         utils::mux::{Builder as _, Muxer},
-        Channel, Receiver as _, Recipients, Sender as _,
     };
     use commonware_runtime::{
-        deterministic, Clock as _, IoBuf, Quota, Runner, Spawner as _, Supervisor as _,
+        Clock as _, IoBuf, Quota, Runner, Spawner as _, Supervisor as _, deterministic,
     };
     use std::{num::NonZeroU32, time::Duration};
 
@@ -4655,7 +4839,7 @@ mod muxer_contract {
 #[test]
 fn epoch_transition_finalizes_view_one() {
     use commonware_consensus::types::{Epoch, View};
-    use commonware_runtime::{deterministic, Runner};
+    use commonware_runtime::{Runner, deterministic};
     use std::time::Duration;
 
     let runner = deterministic::Runner::timed(Duration::from_secs(30));
@@ -4686,7 +4870,7 @@ fn epoch_transition_finalizes_view_one() {
 #[test]
 fn cross_node_race_stalls_under_lazy_registration() {
     use commonware_consensus::types::Epoch;
-    use commonware_runtime::{deterministic, Runner};
+    use commonware_runtime::{Runner, deterministic};
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -4745,7 +4929,7 @@ fn cross_node_race_stalls_under_lazy_registration() {
 #[test]
 fn pre_register_helper_avoids_cross_node_race() {
     use commonware_consensus::types::Epoch;
-    use commonware_runtime::{deterministic, Runner};
+    use commonware_runtime::{Runner, deterministic};
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -4802,7 +4986,7 @@ fn pre_register_helper_avoids_cross_node_race() {
 #[test]
 fn repeated_dkg_cycles_no_stall() {
     use commonware_consensus::types::{Epoch, View};
-    use commonware_runtime::{deterministic, Runner};
+    use commonware_runtime::{Runner, deterministic};
     use std::collections::HashMap;
     use std::time::Duration;
 

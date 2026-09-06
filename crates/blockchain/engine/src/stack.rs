@@ -293,6 +293,7 @@ type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 /// point from growing one positional argument for every execution-side
 /// subsystem.
 pub struct ConsensusStackServices {
+    follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     retained_tribute_writer: Arc<RetainedTributeWriter>,
@@ -318,6 +319,7 @@ impl ConsensusStackServices {
     ) -> Self {
         Self {
             projection_readiness,
+            follower_shutdown: None,
             ocomp_readiness: None,
             retained_tribute_writer,
             projection_retention_fence,
@@ -327,6 +329,13 @@ impl ConsensusStackServices {
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             radicle_endpoint: None,
         }
+    }
+
+    /// Install the NodeHost-owned follower pre-stop handshake.
+    #[must_use]
+    pub fn with_follower_shutdown(mut self, shutdown: crate::follower_shutdown::FollowerDrain) -> Self {
+        self.follower_shutdown = Some(shutdown);
+        self
     }
 
     /// Installs the FullNode-only OCOMP execution barrier. Validator callers
@@ -2442,6 +2451,7 @@ async fn run_follow_stack<E>(
     retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    follower_shutdown: crate::follower_shutdown::FollowerDrain,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -2529,6 +2539,7 @@ where
         finalized_ce_committer,
         ce_startup_recovery,
         ocomp_storage_root,
+        follower_shutdown,
     )
     .await
 }
@@ -2690,6 +2701,7 @@ async fn run_certified_follow_stack<E>(
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ocomp_storage_root: std::path::PathBuf,
+    follower_shutdown: crate::follower_shutdown::FollowerDrain,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -3125,7 +3137,12 @@ where
         Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
         None => executor_actor,
     };
-    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let Some(executor_reporter) = follower_shutdown.install(executor_mailbox)? else {
+        // Shutdown won the startup race. No execution delivery was accepted.
+        return Ok(());
+    };
+    let observer_ingress = executor_reporter.clone();
+    let executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
@@ -3139,6 +3156,7 @@ where
     let observer_store = finalized_parent_cert_store.clone();
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
+        let mut last_persisted = None;
         while let Some(height) = execution_finalized_height_rx.recv().await {
             if !follower_height_has_certified_finalization(height) {
                 continue;
@@ -3152,10 +3170,25 @@ where
             )
             .await?;
             observer_bridge.set_last_finalized_block_number(height);
+            last_persisted = Some(height);
         }
-        Err(eyre::eyre!(
-            "certified FullNode finality observer stopped before the follower engine"
-        ))
+        ensure!(
+            observer_ingress.is_quiescing()?,
+            "certified FullNode finality observer stopped before ingress quiesced"
+        );
+        if let Some(height) = last_persisted {
+            let processed = observer_mailbox
+                .get_processed_height()
+                .await
+                .ok_or_else(|| {
+                    eyre::eyre!("marshal unavailable before follower proof drain completed")
+                })?;
+            ensure!(
+                processed.get() >= height,
+                "marshal has not acknowledged follower proof drain: processed {processed}, persisted {height}"
+            );
+        }
+        Ok::<(), eyre::Report>(())
     };
     let follow_engine = run_follow_engine(
         ctx.child("follow_engine"),
@@ -3163,9 +3196,7 @@ where
             marshal_actor,
             marshal_mailbox,
             recovered_height: last_consensus_finalized,
-            executor_reporter: crate::marshal_update_reporter::MarshalUpdateReporter::new(
-                executor_mailbox,
-            ),
+            executor_reporter,
             upstream: upstream_client,
             local,
             tip: tip_client,
@@ -3175,12 +3206,16 @@ where
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
         },
     );
-    tokio::pin!(finality_observer);
-    tokio::pin!(follow_engine);
-    tokio::select! {
-        result = &mut follow_engine => result,
-        result = &mut finality_observer => result,
-    }
+    let executor_exit = async move {
+        executor_handle
+            .await
+            .map_err(|error| eyre::eyre!("certified follower executor task failed: {error:?}"))?
+    };
+    // A clean marshal stop must not hide an executor error observed while its
+    // mailbox drains, nor discard a queued finality reconciliation.
+    let accepted_work = follower_shutdown.finish(executor_exit, finality_observer);
+    futures::try_join!(follow_engine, accepted_work)?;
+    Ok(())
 }
 
 fn validate_testnet_only_flags(
@@ -3259,6 +3294,7 @@ where
         + 'static,
 {
     let ConsensusStackServices {
+        follower_shutdown,
         projection_readiness,
         ocomp_readiness,
         retained_tribute_writer,
@@ -3303,6 +3339,8 @@ where
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
+            follower_shutdown
+                .ok_or_else(|| eyre::eyre!("follower pre-stop handshake is not installed"))?,
         )
         .await;
     }
