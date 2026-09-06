@@ -4,6 +4,7 @@ set -euo pipefail
 OUTBE_ROOT=/opt/outbe-chain
 ENV_FILE=$OUTBE_ROOT/validator.env
 FEEDER_CONFIG=$OUTBE_ROOT/feeder-public.toml
+STORAGE_CONFIG=$OUTBE_ROOT/offchain-storage.toml
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 EXPECTED_SOURCE_DIR=$OUTBE_ROOT/deploy/validator
 HELPER=$SOURCE_DIR/outbe-validator-service.py
@@ -20,7 +21,7 @@ fail() {
 [[ $SOURCE_DIR == "$EXPECTED_SOURCE_DIR" ]] || \
   fail "deployment assets must be installed at $EXPECTED_SOURCE_DIR"
 
-for file in "$ENV_FILE" "$FEEDER_CONFIG"; do
+for file in "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"; do
   [[ -f $file && ! -L $file ]] || fail "missing local configuration: $file"
   [[ $(stat -c %u "$file") -eq 0 ]] || fail "configuration must be root-owned: $file"
   [[ -z $(find "$file" -maxdepth 0 -perm /022 -print) ]] || \
@@ -105,6 +106,7 @@ case $OUTBE_ENCLAVE_RUNTIME in
       bin/outbe-tee-enclave \
       gramine/loader \
       gramine/libpal.so \
+      network-descriptor-v1.bin \
       outbe-tee-enclave.manifest.sgx \
       outbe-tee-enclave.sig; do
       [[ -f $OUTBE_ROOT/sgx/$relative ]] || \
@@ -228,8 +230,8 @@ install -o outbe -g outbe -m 0640 \
 install -o outbe -g outbe -m 0640 \
   "$OUTBE_ROOT/protocol-bundle-v1.ocb1" "$OCOMP_DOMAIN/protocol-bundle-v1.ocb1"
 
-chown root:outbe "$ENV_FILE" "$FEEDER_CONFIG"
-chmod 0640 "$ENV_FILE" "$FEEDER_CONFIG"
+chown root:outbe "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"
+chmod 0640 "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"
 chown root:root "$HELPER"
 chmod 0755 "$HELPER"
 
