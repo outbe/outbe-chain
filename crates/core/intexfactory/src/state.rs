@@ -12,7 +12,7 @@ use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use crate::constants::{BIN_STEP_BP, MAX_CALL_WINDOW_DAYS};
+use crate::constants::BIN_STEP_BP;
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -146,9 +146,9 @@ impl IntexFactoryContract<'_> {
         call_threshold: u32,
     ) -> Result<()> {
         let secs_per_day = SECONDS_PER_DAY as u32;
-        let window = call_window.min(MAX_CALL_WINDOW_DAYS * secs_per_day);
-        if window > self.max_call_window.read(&reference_currency)? {
-            self.max_call_window.write(&reference_currency, window)?;
+        if call_window > self.max_call_window.read(&reference_currency)? {
+            self.max_call_window
+                .write(&reference_currency, call_window)?;
         }
         // A threshold under a day can never be met, and would latch the range shut.
         if call_threshold < secs_per_day {

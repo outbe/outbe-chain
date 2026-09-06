@@ -5,7 +5,7 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::{NOTIFY_CHUNK_LIMIT, NOTIFY_MESSAGE_LIMIT};
+use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use outbe_intexfactory::qualified::{
     drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
 };
@@ -94,14 +94,16 @@ fn a_run_longer_than_the_wire_cap_still_empties() {
 fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = NOTIFY_CHUNK_LIMIT + 5;
+        // One coalesced run: the wire cap turns every eight entries into one call.
+        let run_cap = MAX_ROUTER_CALLS_PER_FIRING * MAX_SERIES_PER_MARK as u32;
+        let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);
         }
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (NOTIFY_CHUNK_LIMIT, queued),
+            (run_cap, queued),
             "head lands on the first unconsumed entry, not past it"
         );
 
@@ -177,11 +179,7 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = NOTIFY_MESSAGE_LIMIT + 5;
-        assert!(
-            queued < NOTIFY_CHUNK_LIMIT,
-            "the call budget must bind first"
-        );
+        let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT + index);
         }
@@ -189,12 +187,12 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (NOTIFY_MESSAGE_LIMIT, queued),
+            (MAX_ROUTER_CALLS_PER_FIRING, queued),
             "the firing stops on its router-call budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in NOTIFY_MESSAGE_LIMIT..queued {
+        for index in MAX_ROUTER_CALLS_PER_FIRING..queued {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

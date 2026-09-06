@@ -621,14 +621,12 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
             "issuing on the narrow profile again does not shrink the range"
         );
 
-        f.widen_call_terms(REFERENCE_ISO, u32::MAX, live_threshold)
-            .unwrap();
+        f.widen_call_terms(REFERENCE_ISO, live_window, 600).unwrap();
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
-                .unwrap()
-                .0,
-            crate::constants::MAX_CALL_WINDOW_DAYS,
-            "a corrupt window is capped, not read whole"
+                .unwrap(),
+            (40, 10),
+            "a threshold under a day cannot be met, so it does not narrow the range"
         );
     });
 }

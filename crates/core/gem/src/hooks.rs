@@ -12,8 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_EXPIRY_SLOTS_PER_BLOCK,
-    MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_WINDOW, MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
+    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -321,12 +321,10 @@ pub(crate) fn call_currency(
 /// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let now = ctx.block.timestamp;
-    let mut budget = MAX_GEM_FORFEITS_PER_BLOCK;
-    let mut slots = MAX_EXPIRY_SLOTS_PER_BLOCK;
-    let mut buckets = MAX_EXPIRY_BUCKETS_PER_BLOCK;
+    let mut budget = MAX_EXPIRY_STEPS_PER_BLOCK;
     let mut burned: u32 = 0;
 
-    while budget > 0 && slots > 0 && buckets > 0 {
+    while budget > 0 {
         let mut gem = GemContract::new(ctx.storage.clone());
         let Some(day) = gem.first_expiry_day()? else {
             break;
@@ -335,8 +333,6 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         if now < GemContract::bucket_end(day) {
             break;
         }
-        buckets -= 1;
-
         let len = gem.expiry_bucket_len.read(&day)?;
         let resume = match gem.expiry_sweep_day.read()? == day {
             true => gem.expiry_cursor.read()?.min(len),
@@ -345,10 +341,10 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
         let mut slot = resume;
         while slot < len {
-            if budget == 0 || slots == 0 {
+            if budget == 0 {
                 break;
             }
-            slots -= 1;
+            budget -= 1;
             let Some(gem_id) = gem.expiry_slot(day, slot)? else {
                 slot += 1;
                 continue;
@@ -357,7 +353,6 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 slot += 1;
                 continue;
             }
-            budget -= 1;
             match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
                 Ok(true) => burned = burned.saturating_add(1),
                 // Due and still not burning: the entry no longer matches its gem.
@@ -410,7 +405,7 @@ fn window_for(
     let mut window = Vec::new();
     if pair_index != 0 {
         let widest = gem.max_call_window.read(&iso_code)?.max(CALL_WINDOW);
-        let window_days = (widest / 86_400).min(MAX_CALL_WINDOW_DAYS);
+        let window_days = widest / 86_400;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

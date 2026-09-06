@@ -9,9 +9,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::constants::{
-    MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_EXPIRY_SLOTS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK,
-};
+use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
@@ -20,10 +18,8 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = &ctx.storage;
     let now = ctx.block.timestamp;
     let mut budget = MAX_SERIES_ACTIONS_PER_BLOCK;
-    let mut slots = MAX_EXPIRY_SLOTS_PER_BLOCK;
-    let mut buckets = MAX_EXPIRY_BUCKETS_PER_BLOCK;
 
-    while budget > 0 && slots > 0 && buckets > 0 {
+    while budget > 0 {
         let mut factory = IntexFactoryContract::new(storage.clone());
         let Some(day) = factory.first_expiry_day()? else {
             break;
@@ -32,8 +28,6 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         if now < IntexFactoryContract::bucket_end(day) {
             break;
         }
-        buckets -= 1;
-
         let len = factory.expiry_bucket_len.read(&day)?;
         let resume = match factory.expiry_sweep_day.read()? == day {
             true => factory.expiry_cursor.read()?.min(len),
@@ -42,10 +36,10 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
 
         let mut slot = resume;
         while slot < len {
-            if budget == 0 || slots == 0 {
+            if budget == 0 {
                 break;
             }
-            slots -= 1;
+            budget -= 1;
             let Some((iso_code, worldwide_day)) = factory.expiry_slot(day, slot)? else {
                 slot += 1;
                 continue;
@@ -58,7 +52,8 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
             }
 
             match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day)) {
-                Ok(members) => budget = budget.saturating_sub(members),
+                // The slot itself was already charged above.
+                Ok(members) => budget = budget.saturating_sub(members.saturating_sub(1)),
                 Err(error) => {
                     tracing::warn!(
                         target: "outbe::intexfactory",
@@ -80,7 +75,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         factory.remove_called_group(iso_code, worldwide_day)?;
                         Ok(members)
                     });
-                    budget = budget.saturating_sub(dropped.unwrap_or(1).max(1));
+                    budget = budget.saturating_sub(dropped.unwrap_or(1).saturating_sub(1));
                 }
             }
             slot += 1;

@@ -28,28 +28,16 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Ceiling on the days one call scan reads per currency, so a corrupt record cannot
-/// turn into an unbounded oracle read. The Oracle backfills no further anyway.
-pub(crate) const MAX_CALL_WINDOW_DAYS: u32 = 366;
-
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
 /// series with its index move and notice. Budgeted apart because they differ in cost.
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
-/// Queue entries drained per `intex_notify` firing. A day of calls enqueues one entry per series and
-/// can run to tens of thousands, while the call deadline runs from the origin's stamp - so a backlog
-/// spends the holder's notice window rather than deferring it, and the drain has to keep up. Sized
-/// above [`NOTIFY_MESSAGE_LIMIT`] x [`MAX_SERIES_PER_MARK`] so coalesced entries are not held back by
-/// a cap that costs nothing to raise; the router-call budget is what actually bounds a firing.
-pub const NOTIFY_CHUNK_LIMIT: u32 = 2048;
-
-/// Router calls one firing may make. This is the cost that matters: entries coalesce into marks of
-/// [`MAX_SERIES_PER_MARK`], each fanning out to the day's target chains, so bounding entries alone
-/// bounds nothing. Paired with the poll period it sets the drain's daily capacity - and a run is one
-/// group at one call time, so the fragmented case is the one that has to fit: entries that never
-/// coalesce cost a call each.
-pub const NOTIFY_MESSAGE_LIMIT: u32 = 256;
+/// Router calls one `intex_notify` firing may make. This is the cost that matters:
+/// entries coalesce into marks of [`MAX_SERIES_PER_MARK`], each fanning out to the
+/// day's target chains, so bounding entries alone bounds nothing. An entry that
+/// costs no call still spends one, so the drain always moves.
+pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 256;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
@@ -85,10 +73,3 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
-
-/// Deadline buckets one expiry sweep may open per block; each costs a tree descent.
-pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
-
-/// Bucket slots one expiry sweep may look at per block: an empty or not-yet-due slot
-/// still costs a read. Twice the action budget, so emptied slots cannot starve it.
-pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 2 * MAX_SERIES_ACTIONS_PER_BLOCK;

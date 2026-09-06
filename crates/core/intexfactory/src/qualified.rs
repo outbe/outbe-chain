@@ -19,8 +19,8 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
-    NOTIFY_CHUNK_LIMIT, NOTIFY_MESSAGE_LIMIT, ORIGIN_ROUTER_ADDRESS,
+    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_ACTIONS_PER_BLOCK,
+    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -298,10 +298,10 @@ pub(crate) fn enqueue_notice(
     Ok(())
 }
 
-/// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
-/// entries and [`NOTIFY_MESSAGE_LIMIT`] router calls per firing. This is where
-/// every outbound mark leaves from - the scans that queue them run in a block
-/// hook, which cannot call contracts.
+/// Cycle-trigger entry: send the queued notices, at most
+/// [`MAX_ROUTER_CALLS_PER_FIRING`] router calls' worth. This is where every
+/// outbound mark leaves from - the scans that queue them run in a block hook,
+/// which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let factory = IntexFactoryContract::new(storage.clone());
@@ -310,13 +310,13 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     if head >= tail {
         return Ok(());
     }
-    let stop = tail.min(head.saturating_add(NOTIFY_CHUNK_LIMIT));
+    let stop = tail;
     let mut index = head;
     let mut messages: u32 = 0;
-    while index < stop && messages < NOTIFY_MESSAGE_LIMIT {
+    while index < stop && messages < MAX_ROUTER_CALLS_PER_FIRING {
         let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
-        let calls_left = NOTIFY_MESSAGE_LIMIT - messages;
+        let calls_left = MAX_ROUTER_CALLS_PER_FIRING - messages;
         let consumed = if kind == NOTICE_CALLED {
             drain_called_run(
                 &factory,
@@ -330,6 +330,7 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         } else {
             factory.notify_at.clear(&index)?;
             factory.notify_kind.clear(&index)?;
+            messages = messages.saturating_add(1);
             // Best-effort: a notice that cannot be sent is dropped, never left to wedge the drain.
             if let Err(error) =
                 storage.with_checkpoint(|| send_notice(&storage, kind, entry, &mut messages))
@@ -366,6 +367,7 @@ fn drain_called_run(
     if called_at == 0 {
         factory.notify_at.clear(&at)?;
         factory.notify_kind.clear(&at)?;
+        *messages = messages.saturating_add(1);
         tracing::warn!(
             target: "outbe::intexfactory",
             series = %first_id,

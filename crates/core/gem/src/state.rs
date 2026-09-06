@@ -8,10 +8,7 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{
-        BIN_STEP_BP, MAX_CALL_WINDOW_DAYS, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME,
-        TOKEN_SYMBOL,
-    },
+    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     schema::{GemContract, GemData, GemState},
 };
@@ -118,10 +115,9 @@ impl GemContract<'_> {
             self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
-        let window = item.call_window.min(MAX_CALL_WINDOW_DAYS * 86_400);
-        if window > self.max_call_window.read(&item.reference_currency)? {
+        if item.call_window > self.max_call_window.read(&item.reference_currency)? {
             self.max_call_window
-                .write(&item.reference_currency, window)?;
+                .write(&item.reference_currency, item.call_window)?;
         }
 
         Ok(())
