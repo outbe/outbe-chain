@@ -62,6 +62,238 @@ use std::{
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Real lookup transport, endpoint service and manager, under the same retained
+/// supervision task as production. Only the external finalized feed is gated.
+#[test]
+fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
+    use outbe_radicle::{integration::*, manager::*};
+
+    struct GatedFeed {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl FinalizedFeed for GatedFeed {
+        fn subscribe(
+            &self,
+        ) -> Result<tokio::sync::mpsc::UnboundedReceiver<FinalizedBlock>, ManagerError> {
+            Ok(tokio::sync::mpsc::unbounded_channel().1)
+        }
+        fn sample(&self) -> BoxFuture<'_, Result<Option<FinalizedBlock>, ManagerError>> {
+            Box::pin(async {
+                self.entered.notify_one();
+                self.release.notified().await;
+                Ok(None)
+            })
+        }
+    }
+    struct NoSnapshot;
+    impl SnapshotReader for NoSnapshot {
+        fn read_exact(&self, _: FinalizedBlock) -> Result<FinalizedSnapshot, ManagerError> {
+            panic!("feed has no finalized snapshot");
+        }
+    }
+
+    for outcome in 0..5 {
+        commonware_tokio::Runner::new(commonware_tokio::Config::default().with_worker_threads(2))
+            .start(|context| async move {
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let release = Arc::new(tokio::sync::Notify::new());
+                let (_, status) = RadicleStatusChannel::enabled(Address::ZERO, [1; 32]);
+                let (endpoint, resolver, _) = EndpointNetwork::build(
+                    outbe_radicle::endpoint::ChainIdentity {
+                        chain_id: 1,
+                        genesis_hash: B256::ZERO,
+                    },
+                    status,
+                );
+                let manager = RadicleManager::start(
+                    ManagerConfig {
+                        self_validator: Address::ZERO,
+                        local_node_id: [1; 32],
+                        repair_interval: Duration::from_secs(30),
+                        retry: RetryPolicy::default(),
+                    },
+                    ManagerDependencies {
+                        finality: Arc::new(GatedFeed {
+                            entered: entered.clone(),
+                            release: release.clone(),
+                        }),
+                        snapshots: Arc::new(NoSnapshot),
+                        endpoints: Arc::new(resolver.clone()),
+                        control: Arc::new(NativeHeartwoodControl::new(
+                            "/unused-radicle-test-control".into(),
+                            Duration::from_secs(1),
+                        )),
+                        repository_status: Arc::new(
+                            HttpRepositoryStatus::new(
+                                "127.0.0.1:1".parse().unwrap(),
+                                Duration::from_secs(1),
+                            )
+                            .unwrap(),
+                        ),
+                    },
+                );
+                entered.notified().await;
+                let endpoint_owner = EndpointTaskOwner::default();
+                let drain_owner = endpoint_owner.clone();
+                let drain_resolver = resolver.clone();
+                let (draining_tx, draining_rx) = tokio::sync::oneshot::channel();
+                let application = crate::application_shutdown::ApplicationDrain::new(async move {
+                    draining_tx.send(()).unwrap();
+                    shutdown_bounded(
+                        Duration::from_secs(5),
+                        manager,
+                        drain_owner.shutdown(&drain_resolver),
+                    )
+                    .await
+                    .map_err(Into::into)
+                });
+                let owner_drain = application.clone();
+                let inner_drain = application.clone();
+                let (network_tx, network_rx) = tokio::sync::oneshot::channel();
+                let mut stack =
+                    context
+                        .child("retained_application_owner")
+                        .spawn(move |ctx| async move {
+                            owner_drain
+                                .finish(async move {
+                                    let signer = PrivateKey::from_seed(11);
+                                    let cfg = lookup::Config::local(
+                                        signer.clone(),
+                                        b"radicle-shutdown-test",
+                                        "127.0.0.1:0".parse().unwrap(),
+                                        1024 * 1024,
+                                    );
+                                    let (mut network, _oracle) =
+                                        lookup::Network::new(ctx.child("network"), cfg);
+                                    let (sender, receiver) =
+                                        network.register(42, Quota::per_second(NZU32!(64)), 64);
+                                    assert!(network_tx.send(network.start()).is_ok());
+                                    let (_, local) = LocalEndpointIdentityChannel::create(
+                                        LocalEndpointIdentity {
+                                            validator: Address::ZERO,
+                                            node_id: [1; 32],
+                                            addresses: vec![
+                                                outbe_radicle::endpoint::EndpointAddress::dns(
+                                                    "local.example",
+                                                    8776,
+                                                )
+                                                .unwrap(),
+                                            ],
+                                        },
+                                    );
+                                    assert!(
+                                        endpoint_owner
+                                            .start(endpoint.run(sender, receiver, signer, local))
+                                            .unwrap()
+                                    );
+                                    match outcome {
+                                        0 => {
+                                            let mut engine =
+                                                ctx.child("engine").spawn(|engine| async move {
+                                                    let _ = engine.stopped().await;
+                                                });
+                                            supervise_epoch_loop_result(
+                                                &ctx,
+                                                Err(eyre::eyre!("VRF expiry witness")),
+                                                &mut engine,
+                                                &inner_drain,
+                                            )
+                                            .await?;
+                                            Ok(())
+                                        }
+                                        1 => Err(eyre::eyre!("startup failure witness")),
+                                        2 => panic!("protocol panic witness"),
+                                        4 => {
+                                            let _ = ctx.stopped().await;
+                                            Ok(())
+                                        }
+                                        _ => Ok(()),
+                                    }
+                                })
+                                .await
+                        });
+                let mut network = network_rx.await.unwrap();
+                let signal_stop = if outcome == 4 {
+                    let application = application.clone();
+                    let shutdown = context.child("external_stop");
+                    Some(tokio::spawn(async move {
+                        application.drain().await.unwrap();
+                        shutdown
+                            .stop(0, Some(Duration::from_secs(5)))
+                            .await
+                            .unwrap();
+                    }))
+                } else {
+                    None
+                };
+                tokio::time::timeout(Duration::from_secs(2), draining_rx)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(
+                    context.stopped().now_or_never().is_none(),
+                    "transport stopped before manager drain"
+                );
+                // The real endpoint is still servicing its interface while the
+                // manager has an accepted in-flight provider operation.
+                resolver
+                    .refresh(&FinalizedSnapshot {
+                        block: FinalizedBlock {
+                            number: 0,
+                            hash: B256::ZERO,
+                        },
+                        validators: vec![],
+                        registry_generation: 0,
+                        repositories: vec![],
+                    })
+                    .await
+                    .unwrap();
+                assert!((&mut stack).now_or_never().is_none());
+                assert!(
+                    (&mut network).now_or_never().is_none(),
+                    "network ended while manager was draining"
+                );
+                release.notify_one();
+                let result = tokio::time::timeout(Duration::from_secs(8), &mut stack)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                application
+                    .drain()
+                    .await
+                    .expect("endpoint must ACK and join before transport closes");
+                match outcome {
+                    0 => {
+                        assert!(format!("{:#}", result.unwrap_err()).contains("VRF expiry witness"))
+                    }
+                    1 => assert!(
+                        format!("{:#}", result.unwrap_err()).contains("startup failure witness")
+                    ),
+                    2 => assert!(
+                        format!("{:#}", result.unwrap_err()).contains("protocol panic witness")
+                    ),
+                    _ => result.unwrap(),
+                }
+                // The retained owner may return after global-stop guards are
+                // acknowledged but before the network publishes its result.
+                // Its supervision tree then cancels that task. Both outcomes
+                // prove termination; a panic remains an error. Crucially, the
+                // endpoint ACK/join was already required to succeed above.
+                let transport = tokio::time::timeout(Duration::from_secs(2), &mut network)
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    transport,
+                    Ok(()) | Err(commonware_runtime::Error::Closed)
+                ));
+                if let Some(stop) = signal_stop {
+                    stop.await.unwrap();
+                }
+            });
+    }
+}
+
 #[derive(Clone)]
 struct ShutdownNullSender<P> {
     participants: Vec<P>,
@@ -239,6 +471,7 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
                         &owner,
                         Ok(EpochLoopOutcome::GlobalStop),
                         &mut engine_handle,
+                        &crate::application_shutdown::ApplicationDrain::default(),
                     )
                     .await
                     .expect("simplex engine must drain on global stop");
@@ -364,6 +597,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
                     &owner,
                     Err(eyre::eyre!("synthetic fatal stack cause")),
                     &mut engine_handle,
+                    &crate::application_shutdown::ApplicationDrain::default(),
                 )
                 .await
             });
@@ -495,6 +729,7 @@ fn completed_engine_outcome_is_not_polled_twice() {
             &context,
             Ok(EpochLoopOutcome::EngineExit(Ok(()))),
             &mut engine_handle,
+            &crate::application_shutdown::ApplicationDrain::default(),
         )
         .await
         .expect("an already observed engine exit must stop the stack without repolling the handle");
@@ -516,6 +751,7 @@ fn signer_replacement_aborts_engine_after_epoch_select_completes() {
             &context,
             Ok(EpochLoopOutcome::ReplaceSigner),
             &mut engine_handle,
+            &crate::application_shutdown::ApplicationDrain::default(),
         )
         .await
         .expect("signer replacement must stop the old engine before restarting the epoch");

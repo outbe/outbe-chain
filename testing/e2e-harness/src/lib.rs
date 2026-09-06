@@ -357,9 +357,10 @@ pub async fn run() {
                 if let Some(proof) = &world.state.expected_tee_lease_guard_shutdown_full_node {
                     expected_failed_slots.push(proof.slot);
                 }
-                let node_cleanup = world
-                    .localnet
-                    .teardown_with_expected_exits(&expected_failed_slots);
+                let node_cleanup = world.localnet.teardown_with_expected_exits(
+                    &expected_failed_slots,
+                    &world.state.expected_dkg_expiry_exits,
+                );
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state

@@ -988,6 +988,30 @@ where
     }
 }
 
+/// Global stop acknowledges signal guards, not publication of the stack result.
+/// Give the retained owner time to return its terminal error before aborting it.
+async fn await_consensus_stack_shutdown(
+    handle: &mut commonware_runtime::Handle<eyre::Result<()>>,
+    deadline: Duration,
+) -> eyre::Result<()> {
+    match tokio::time::timeout(deadline, &mut *handle).await {
+        Ok(result) => result.map_err(|error| {
+            eyre::eyre!("consensus stack task failed during shutdown: {error:?}")
+        })?,
+        Err(_) => {
+            let timeout = eyre::eyre!("consensus stack result deadline exceeded after global stop");
+            match abort_and_wait_supervised(handle).await {
+                Ok(Some(Err(error))) => Err(error.wrap_err(format!("{timeout:#}"))),
+                Err(error) => Err(timeout.wrap_err(format!(
+                    "consensus stack task failed while reaping: {error:?}"
+                ))),
+                // Forced cancellation is cleanup, not a successful stack exit.
+                Ok(Some(Ok(())) | None) => Err(timeout),
+            }
+        }
+    }
+}
+
 fn consensus_shutdown_result(
     stop: Result<(), commonware_runtime::Error>,
     stack: eyre::Result<()>,
@@ -1350,15 +1374,20 @@ fn run_node() -> eyre::Result<()> {
             outbe_radicle::integration::EndpointNetworkService,
             outbe_radicle::integration::LocalEndpointIdentityHandle,
             outbe_radicle::integration::RadicleStatusHandle,
+            outbe_radicle::integration::EndpointTaskOwner,
         )>,
         Option<oneshot::Receiver<()>>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
+    // A terminal protocol outcome must drain Radicle without racing the main
+    // signal branch into aborting the stack before it returns its primary error.
+    let radicle_shutdown_token = shutdown_token.child_token();
 
     // Consensus thread is spawned conditionally - see inside run_with_components
     // where `args.is_validator` is known. For now, prepare the closure.
     let shutdown_token_clone = shutdown_token.clone();
+    let radicle_shutdown_for_consensus = radicle_shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
         let (
@@ -1463,6 +1492,12 @@ fn run_node() -> eyre::Result<()> {
         let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
             runner.start(async move |ctx| {
                 let graceful_shutdown = ctx.child("shutdown");
+                let application_shutdown = radicle_shutdown_for_consensus;
+                let application_drain = outbe_engine::application_shutdown::ApplicationDrain::new(async move {
+                    application_shutdown.cancel();
+                    await_radicle_drain(radicle_drained, RADICLE_DRAIN_DEADLINE).await
+                });
+                let stack_application_drain = application_drain.clone();
                 let (follower_drain, follower_shutdown) =
                     outbe_engine::follower_shutdown::follower_drain_pair();
                 let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
@@ -1480,12 +1515,13 @@ fn run_node() -> eyre::Result<()> {
                                 finalized_ce_committer,
                                 ce_startup_recovery,
                             )
-                            .with_follower_shutdown(follower_shutdown);
+                            .with_follower_shutdown(follower_shutdown)
+                            .with_application_drain(stack_application_drain);
                             if let Some(readiness) = ocomp_readiness {
                                 services = services.with_ocomp_readiness(readiness);
                             }
-                            if let Some((endpoint, local, status)) = radicle {
-                                services = services.with_radicle(status, endpoint, local);
+                            if let Some((endpoint, local, status, owner)) = radicle {
+                                services = services.with_radicle(status, endpoint, local, owner);
                             }
                             services
                         },
@@ -1496,9 +1532,7 @@ fn run_node() -> eyre::Result<()> {
                         info!("consensus stack shutting down");
                         // The manager may still be using endpoint discovery. Keep
                         // Commonware transport alive until both owners have drained.
-                        let radicle_result = await_radicle_drain(
-                            radicle_drained, RADICLE_DRAIN_DEADLINE,
-                        ).await;
+                        let radicle_result = application_drain.drain().await;
                         if let Err(error) = &radicle_result {
                             tracing::error!(%error, "Radicle drain failed before transport shutdown");
                         }
@@ -1511,10 +1545,9 @@ fn run_node() -> eyre::Result<()> {
                         let stop_result = graceful_shutdown
                             .stop(0, Some(Duration::from_secs(5)))
                             .await;
-                        let stack_result = abort_and_wait_supervised(&mut stack_handle).await;
-                        let stack_result = stack_result.map_err(|error| eyre::eyre!(
-                            "consensus stack task failed during shutdown: {error:?}"
-                        )).and_then(|result| result.unwrap_or(Ok(())));
+                        let stack_result = await_consensus_stack_shutdown(
+                            &mut stack_handle, Duration::from_secs(5),
+                        ).await;
                         if let Err(error) = &stack_result {
                             tracing::error!(%error, "consensus stack failed during shutdown");
                         }
@@ -1523,7 +1556,9 @@ fn run_node() -> eyre::Result<()> {
                             (Err(error), _) | (_, Err(error)) => Err(error),
                             (Ok(()), Ok(())) => Ok(()),
                         };
-                        radicle_result.and(consensus_shutdown_result(stop_result, stack_result))
+                        outbe_engine::application_shutdown::combine(
+                            consensus_shutdown_result(stop_result, stack_result), radicle_result,
+                        )
                     },
                     result = &mut stack_handle => {
                         let result = result.map_err(|error| {
@@ -2362,7 +2397,9 @@ fn run_node() -> eyre::Result<()> {
                     repository_status,
                 },
             );
-            let observer_shutdown = shutdown_token.clone();
+            let observer_shutdown = radicle_shutdown_token.clone();
+            let endpoint_owner = outbe_radicle::integration::EndpointTaskOwner::default();
+            let observer_endpoint_owner = endpoint_owner.clone();
             let observer_publisher = publisher.clone();
             let observer_resolver = resolver.clone();
             let observer_status = radicle_status.clone();
@@ -2388,7 +2425,7 @@ fn run_node() -> eyre::Result<()> {
                             if let Err(error) = outbe_radicle::integration::shutdown_bounded(
                                 std::time::Duration::from_secs(5),
                                 manager,
-                                observer_resolver.shutdown(),
+                                observer_endpoint_owner.shutdown(&observer_resolver),
                             ).await {
                                 tracing::error!(%error, "Radicle integration shutdown failed");
                                 observer_outcome.record_failure(eyre::eyre!(error).wrap_err("Radicle integration shutdown failed"));
@@ -2439,7 +2476,7 @@ fn run_node() -> eyre::Result<()> {
                 drop(guard);
             });
             (
-                Some((endpoint, local_endpoint, radicle_status.clone())),
+                Some((endpoint, local_endpoint, radicle_status.clone(), endpoint_owner)),
                 Some(observer),
                 Some(drained_rx),
             )
@@ -3218,6 +3255,70 @@ mod tests {
                 .unwrap_err();
             assert!(format!("{error:#}").contains("stack failure during drain"));
         });
+    }
+
+    #[test]
+    fn supervised_shutdown_waits_for_a_pending_terminal_result() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        use futures::FutureExt as _;
+        commonware_runtime::tokio::Runner::default().start(async move |ctx| {
+            let (release, ready) = tokio::sync::oneshot::channel();
+            let mut stack = ctx.child("terminal_result").spawn(move |_| async move {
+                ready.await.unwrap();
+                Err(eyre::eyre!("original terminal error after drain"))
+            });
+            let wait = super::await_consensus_stack_shutdown(
+                &mut stack,
+                std::time::Duration::from_secs(1),
+            );
+            tokio::pin!(wait);
+            assert!(
+                wait.as_mut().now_or_never().is_none(),
+                "shutdown must not abort a pending result"
+            );
+            release.send(()).unwrap();
+            assert!(
+                format!("{:#}", wait.await.unwrap_err())
+                    .contains("original terminal error after drain")
+            );
+        });
+    }
+
+    #[test]
+    fn supervised_shutdown_reaps_a_stalled_stack_but_returns_failure() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::tokio::Runner::default().start(async move |ctx| {
+            let (alive, dropped) = tokio::sync::oneshot::channel::<()>();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let mut stack = ctx
+                .child("stalled_terminal_result")
+                .spawn(move |_| async move {
+                    let _alive = alive;
+                    started.send(()).unwrap();
+                    std::future::pending::<eyre::Result<()>>().await
+                });
+            ready.await.unwrap();
+            let error =
+                super::await_consensus_stack_shutdown(&mut stack, std::time::Duration::ZERO)
+                    .await
+                    .unwrap_err();
+            assert!(error.to_string().contains("result deadline exceeded"));
+            assert!(
+                dropped.await.is_err(),
+                "forced cancellation must reap the stack"
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn application_drain_does_not_trigger_the_external_signal_branch() {
+        let external = tokio_util::sync::CancellationToken::new();
+        let application = external.child_token();
+        application.cancel();
+        assert!(!external.is_cancelled());
+        let another_application = external.child_token();
+        external.cancel();
+        assert!(another_application.is_cancelled());
     }
 
     #[test]

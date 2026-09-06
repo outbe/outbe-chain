@@ -44,6 +44,7 @@ use crate::internal::proc::{
     self, ChildGuard, DockerImageId, EnclaveGuard, args, redact_args_for_log,
 };
 use crate::internal::shell::Sh;
+use crate::world::state::DkgExpiryExpectedExit;
 
 /// Per-node execution cache for validators co-located by the devnet harness.
 /// The upstream 4 GiB default is a single-node deployment default; applying it
@@ -531,23 +532,56 @@ impl Localnet {
     /// run's unique data subdir + enclave run tag, so it never touches another
     /// run's nodes/containers.
     fn shutdown(&mut self) -> Result<()> {
-        self.shutdown_with_expected_exits(&[])
+        self.shutdown_with_expected_exits(&[], &[])
     }
 
-    fn stop_owned_nodes(&mut self, expected_failed_slots: &[usize]) -> Result<()> {
+    fn stop_owned_nodes(
+        &mut self,
+        expected_failed_slots: &[usize],
+        expected_dkg_expiry_exits: &[DkgExpiryExpectedExit],
+    ) -> Result<()> {
         let mut failures = Vec::new();
-        for child in self
+        // Check every retained slot, including missing handles that the stop
+        // loop cannot visit. A replacement launch cannot inherit this proof.
+        for proof in expected_dkg_expiry_exits {
+            let owned_pid = self.validators.get(&proof.slot).map(ChildGuard::pid);
+            let launch_pid = self.node_launch_logs.get(&proof.slot).map(|(pid, _)| *pid);
+            if proof.node_pid == 0
+                || owned_pid != Some(proof.node_pid)
+                || launch_pid != Some(proof.node_pid)
+            {
+                failures.push(format!(
+                    "DKG expiry slot {} expected PID {}, owned {owned_pid:?}, launch {launch_pid:?}",
+                    proof.slot, proof.node_pid
+                ));
+            }
+        }
+        for (slot, child) in self
             .validators
-            .values_mut()
-            .chain(self.followers.values_mut())
+            .iter_mut()
+            .map(|(slot, child)| (Some(*slot), child))
+            .chain(self.followers.values_mut().map(|child| (None, child)))
         {
             let pid = child.pid();
+            let expiry = expected_dkg_expiry_exits
+                .iter()
+                .find(|proof| Some(proof.slot) == slot);
             let expected = self.node_launch_logs.iter().any(|(slot, (owned_pid, _))| {
                 *owned_pid == pid && expected_failed_slots.contains(slot)
             });
             let result = (|| -> Result<()> {
                 let before = child.exit_status()?;
                 let status = child.stop_and_reap()?;
+                if let Some(proof) = expiry {
+                    eyre::ensure!(
+                        proof.node_pid == pid
+                            && before.is_some_and(|status| status.code() == Some(1))
+                            && status.code() == Some(1),
+                        "DKG expiry slot {} PID {pid} did not retain its witnessed natural exit 1 before cleanup: before={before:?}, after={status}",
+                        proof.slot
+                    );
+                    return Ok(());
+                }
                 // An intentional protocol rejection must have happened before
                 // cleanup. The after-hook independently requires its exact
                 // cause in both runtime log sinks; this is not a log waiver.
@@ -570,14 +604,18 @@ impl Localnet {
         Ok(())
     }
 
-    fn shutdown_with_expected_exits(&mut self, expected_failed_slots: &[usize]) -> Result<()> {
+    fn shutdown_with_expected_exits(
+        &mut self,
+        expected_failed_slots: &[usize],
+        expected_dkg_expiry_exits: &[DkgExpiryExpectedExit],
+    ) -> Result<()> {
         // Stateless signal-path backstop for the harness-owned price feeder.
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
         // Nodes first (release MDBX locks), then their enclaves - matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
-        let node_result = self.stop_owned_nodes(expected_failed_slots);
+        let node_result = self.stop_owned_nodes(expected_failed_slots, expected_dkg_expiry_exits);
         self.radicle_sidecars.clear();
         self.user_radicle = None;
         self.enclaves.clear();
@@ -636,9 +674,14 @@ impl Localnet {
         self.shutdown()
     }
 
-    /// Expected exit-1 slots still require the after-hook's exact fault audit.
-    pub(crate) fn teardown_with_expected_exits(&mut self, slots: &[usize]) -> Result<()> {
-        self.shutdown_with_expected_exits(slots)
+    /// Expected exit-1 slots still require the after-hook's exact fault audit;
+    /// DKG expiry additionally requires its retained slot/PID halt evidence.
+    pub(crate) fn teardown_with_expected_exits(
+        &mut self,
+        slots: &[usize],
+        dkg_expiry_exits: &[DkgExpiryExpectedExit],
+    ) -> Result<()> {
+        self.shutdown_with_expected_exits(slots, dkg_expiry_exits)
     }
 
     /// Stop the localnet (alias for [`teardown`](Self::teardown)).
@@ -806,12 +849,124 @@ mod tests {
             child.reap_fault(std::time::Duration::from_secs(2)).unwrap();
             localnet.validators.insert(0, child);
             assert_eq!(
-                localnet.stop_owned_nodes(&expected_slots).is_ok(),
+                localnet.stop_owned_nodes(&expected_slots, &[]).is_ok(),
                 accepted,
                 "exit {code}, expected {expected_slots:?}"
             );
             assert!(localnet.validators.is_empty());
             assert!(localnet.node_launch_logs.is_empty());
+        }
+    }
+
+    fn expiry_cleanup_fixture(script: &str, exited: bool) -> (tempfile::TempDir, Localnet, u32) {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: dir.path().to_owned(),
+            ..Environment::default()
+        };
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let node_dir = localnet.cfg.validator_dir(0);
+        fs::create_dir_all(&node_dir).unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", script]);
+        proc::attach_log(&mut command, &node_dir).unwrap();
+        // attach_log defaults stdin to null; this fixture must keep `read`
+        // blocked until cleanup signals it instead of exiting on immediate EOF.
+        command.stdin(std::process::Stdio::piped());
+        let mut child = localnet
+            .spawn_node("expiry-exit-fixture", 0, &node_dir, command)
+            .unwrap();
+        if exited {
+            child.reap_fault(std::time::Duration::from_secs(2)).unwrap();
+        } else {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !localnet
+                .node_launch_log(0, child.pid())
+                .unwrap()
+                .contains("ready\n")
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "live fixture not ready"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(child.exit_status().unwrap().is_none());
+        }
+        let pid = child.pid();
+        localnet.validators.insert(0, child);
+        (dir, localnet, pid)
+    }
+
+    #[test]
+    fn dkg_expiry_cleanup_requires_exact_owned_and_launch_pid() {
+        for damage in [
+            "none",
+            "witness_pid",
+            "zero_pid",
+            "witness_slot",
+            "launch_pid",
+            "missing_launch",
+            "missing_owner",
+            "missing_proof",
+        ] {
+            let (_dir, mut localnet, pid) = expiry_cleanup_fixture("exit 1", true);
+            let mut proofs = vec![DkgExpiryExpectedExit {
+                slot: 0,
+                node_pid: pid,
+            }];
+            match damage {
+                "none" => {}
+                "witness_pid" => proofs[0].node_pid += 1,
+                "zero_pid" => proofs[0].node_pid = 0,
+                "witness_slot" => proofs[0].slot = 1,
+                "launch_pid" => localnet.node_launch_logs.get_mut(&0).unwrap().0 += 1,
+                "missing_launch" => {
+                    localnet.node_launch_logs.remove(&0);
+                }
+                "missing_owner" => {
+                    localnet.validators.remove(&0);
+                }
+                "missing_proof" => proofs.clear(),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                localnet.stop_owned_nodes(&[], &proofs).is_ok(),
+                damage == "none",
+                "accepted damaged DKG expiry evidence: {damage}"
+            );
+            assert!(localnet.validators.is_empty());
+            assert!(localnet.node_launch_logs.is_empty());
+        }
+    }
+
+    #[test]
+    fn dkg_expiry_cleanup_rejects_success_other_errors_signals_and_live_children() {
+        for (script, exited, accepted) in [
+            ("exit 1", true, true),
+            ("exit 0", true, false),
+            ("exit 2", true, false),
+            ("kill -KILL $$", true, false),
+            // Readiness is emitted after installing the trap. Cleanup itself
+            // will produce exit 1, which must not count as a natural halt.
+            (
+                "trap 'exit 1' TERM; printf 'ready\\n'; read unused",
+                false,
+                false,
+            ),
+        ] {
+            let (_dir, mut localnet, pid) = expiry_cleanup_fixture(script, exited);
+            let proof = DkgExpiryExpectedExit {
+                slot: 0,
+                node_pid: pid,
+            };
+            // Even an existing slot allowance cannot bypass the exact proof.
+            assert_eq!(
+                localnet.stop_owned_nodes(&[0], &[proof]).is_ok(),
+                accepted,
+                "script {script}, exited before cleanup {exited}"
+            );
+            assert!(localnet.validators.is_empty());
         }
     }
 

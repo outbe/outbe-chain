@@ -481,7 +481,9 @@ pub(super) fn observe(world: &mut World) -> Result<()> {
                 .localnet
                 .stopped_validator_header_output(index, node_pid, height, deadline)?;
             let header = header_output(output, height).map_err(|error| {
-                eyre!("validator-{index} owned PID {node_pid} canonical header read failed: {error:#}")
+                eyre!(
+                    "validator-{index} owned PID {node_pid} canonical header read failed: {error:#}"
+                )
             })?;
             if height == anchor.height {
                 ensure!(
@@ -588,6 +590,8 @@ fn retained_proof(observations: &[serde_json::Value]) -> Result<HaltWitness> {
 }
 
 pub(super) fn assert_retained(world: &mut World) -> Result<()> {
+    // A failed revalidation must never leave an earlier cleanup allowance.
+    world.state.expected_dkg_expiry_exits.clear();
     let witness = retained_proof(&world.state.restart_observations)?;
     let ready_height = dkg_ready_height(world)?;
     ensure!(
@@ -626,6 +630,14 @@ pub(super) fn assert_retained(world: &mut World) -> Result<()> {
             &telemetry(&log, &witness.target, witness.expiry)?,
         )?;
     }
+    world.state.expected_dkg_expiry_exits = witness
+        .peers
+        .iter()
+        .map(|peer| crate::world::state::DkgExpiryExpectedExit {
+            slot: peer.index,
+            node_pid: peer.node_pid,
+        })
+        .collect();
     Ok(())
 }
 
@@ -633,7 +645,7 @@ pub(super) fn assert_retained(world: &mut World) -> Result<()> {
 mod tests {
     use std::os::unix::process::ExitStatusExt;
 
-    use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
+    use outbe_primitives::reshare_artifact::{OutbeBlockArtifacts, encode_outbe_block_artifacts};
 
     use super::*;
 
@@ -758,18 +770,22 @@ mod tests {
         let good = log(&proof.peers[0].headers);
         let propagated = format!("{good}   1: {EXPIRED}1, height 66, deadline 66\n");
         telemetry(&propagated, &proof.target, proof.expiry).unwrap();
-        assert!(telemetry(
-            &format!("{good}   1: {EXPIRED}2, height 66, deadline 66\n"),
-            &proof.target,
-            proof.expiry
-        )
-        .is_err());
-        assert!(telemetry(
-            &format!("   1: {EXPIRED}1, height 66, deadline 66\n"),
-            &proof.target,
-            proof.expiry
-        )
-        .is_err());
+        assert!(
+            telemetry(
+                &format!("{good}   1: {EXPIRED}2, height 66, deadline 66\n"),
+                &proof.target,
+                proof.expiry
+            )
+            .is_err()
+        );
+        assert!(
+            telemetry(
+                &format!("   1: {EXPIRED}1, height 66, deadline 66\n"),
+                &proof.target,
+                proof.expiry
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -954,6 +970,14 @@ mod tests {
         let proof = witness();
         assert!(retained_proof(&[]).is_err());
         assert!(retained_proof(&[json!({"phase": PHASE, "proof": {}})]).is_err());
+        // A tag/height or generic error record is not a completed halt proof.
+        assert!(
+            retained_proof(&[json!({
+                "phase": PHASE,
+                "proof": {"expiry": 66, "exit_code": 1, "error": "consensus failed"}
+            })])
+            .is_err()
+        );
         let row = json!({"phase": PHASE, "proof": proof});
         assert!(retained_proof(&[row.clone(), row]).is_err());
         for path in [
@@ -963,6 +987,10 @@ mod tests {
             "wrong_root",
             "missing_tail",
             "wrong_exit",
+            "non_one_exit",
+            "missing_node_pid",
+            "missing_enclave_pid",
+            "empty_log",
             "wrong_cycle",
             "wrong_expiry",
         ] {
@@ -978,6 +1006,10 @@ mod tests {
                     bad.peers[2].headers.pop();
                 }
                 "wrong_exit" => bad.peers[2].exit_code = 0,
+                "non_one_exit" => bad.peers[2].exit_code = 2,
+                "missing_node_pid" => bad.peers[2].node_pid = 0,
+                "missing_enclave_pid" => bad.peers[2].enclave_pid = 0,
+                "empty_log" => bad.peers[2].log_bytes = 0,
                 "wrong_cycle" => bad.target.freeze += 1,
                 "wrong_expiry" => bad.expiry += 1,
                 _ => unreachable!(),

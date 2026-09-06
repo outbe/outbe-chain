@@ -1,15 +1,15 @@
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
-        sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor,
-        EndpointAddress, EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody,
-        OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
-        HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
+        AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor, EndpointAddress,
+        EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody, HANDLE_DEADLINE,
+        MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, OsRequestIds, PeerId, ReceiveOutcome,
+        SignedEndpointResponse, UNKNOWN_ANCHOR_TIMEOUT_MS, VerifiedEndpoint, sign_response,
     },
     manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
 };
 use alloy_primitives::Address;
-use commonware_cryptography::{bls12381, Signer as _};
+use commonware_cryptography::{Signer as _, bls12381};
 use commonware_p2p::{CheckedSender as _, LimitedSender, Receiver, Recipients};
 use commonware_runtime::IoBuf;
 use std::{
@@ -285,7 +285,13 @@ impl EndpointNetworkService {
             stop_actor(&self.handle, &mut actor).await
         };
         // Preserve a transport failure even if cleanup also fails.
-        let outcome = outcome.and(cleanup);
+        let outcome = match (outcome, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => Err(ManagerError::Task(format!(
+                "{error}; endpoint actor cleanup also failed: {cleanup}"
+            ))),
+        };
         if let Some(result) = shutdown_ack {
             let _ = result.send(outcome.clone());
         }
@@ -820,9 +826,11 @@ mod shutdown_tests {
     async fn shutdown_full_mailbox_waits_until_deadline() {
         let (commands, _receiver) = mpsc::channel(1);
         let (result, _response) = oneshot::channel();
-        assert!(commands
-            .try_send(NetworkCommand::Shutdown { result })
-            .is_ok());
+        assert!(
+            commands
+                .try_send(NetworkCommand::Shutdown { result })
+                .is_ok()
+        );
         let resolver = EndpointNetworkResolver { commands };
         let started = tokio::time::Instant::now();
         assert_eq!(

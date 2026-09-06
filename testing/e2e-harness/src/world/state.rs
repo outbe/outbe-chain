@@ -81,6 +81,14 @@ pub(crate) struct RestartIncarnation {
     pub enclave_log: crate::internal::launch_log::LaunchLog,
 }
 
+/// Cleanup evidence retained only after the complete DKG expiry assertion has
+/// revalidated the sealed halt witness and its original owned processes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DkgExpiryExpectedExit {
+    pub slot: usize,
+    pub node_pid: u32,
+}
+
 /// Public DKG identity retained across the completed-but-pending crash point.
 #[derive(Debug)]
 pub(crate) struct PendingDkgRestartState {
@@ -370,6 +378,7 @@ pub struct FixtureState {
     /// offline long enough for the protocol's documented share-reveal path.
     /// Every other reveal/fatal/alarm remains forbidden by the log audit.
     pub expected_dkg_reveal: Option<String>,
+    pub(crate) expected_dkg_expiry_exits: Vec<DkgExpiryExpectedExit>,
     /// One manual-lease scenario deliberately fail-stops this validator after
     /// its finalized lease expires. Only the exact two-sink Reth shutdown
     /// trailers causally bound to that guard are accepted by the log audit.
@@ -635,6 +644,7 @@ impl Default for FixtureState {
             voting_window: 6,
             allow_unsupported_update_fatal: false,
             expected_dkg_reveal: None,
+            expected_dkg_expiry_exits: Vec::new(),
             expected_tee_lease_guard_shutdown_validator: None,
             expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,

@@ -202,10 +202,19 @@ async fn supervise_epoch_loop_result<E>(
     ctx: &E,
     outcome: Result<EpochLoopOutcome>,
     engine: &mut commonware_runtime::Handle<()>,
+    application: &crate::application_shutdown::ApplicationDrain,
 ) -> Result<EpochLoopAction>
 where
     E: Clock + Spawner,
 {
+    if matches!(
+        &outcome,
+        Err(_) | Ok(EpochLoopOutcome::EngineExit(_) | EpochLoopOutcome::StackExit)
+    ) {
+        // The outer stack owner retains and reports this shared drain result.
+        // Even on failure, finish its bounded cleanup before stopping transport.
+        let _ = application.drain().await;
+    }
     match outcome {
         Ok(EpochLoopOutcome::RestartEpoch) => Ok(EpochLoopAction::RestartEpoch),
         Ok(EpochLoopOutcome::ReplaceSigner) => {
@@ -292,6 +301,7 @@ type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 /// point from growing one positional argument for every execution-side
 /// subsystem.
 pub struct ConsensusStackServices {
+    application_drain: crate::application_shutdown::ApplicationDrain,
     follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
@@ -304,6 +314,7 @@ pub struct ConsensusStackServices {
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
+        outbe_radicle::integration::EndpointTaskOwner,
     )>,
 }
 
@@ -317,6 +328,7 @@ impl ConsensusStackServices {
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ) -> Self {
         Self {
+            application_drain: crate::application_shutdown::ApplicationDrain::default(),
             projection_readiness,
             follower_shutdown: None,
             ocomp_readiness: None,
@@ -330,9 +342,22 @@ impl ConsensusStackServices {
         }
     }
 
+    /// Install the application pre-stop barrier shared with the runtime owner.
+    #[must_use]
+    pub fn with_application_drain(
+        mut self,
+        drain: crate::application_shutdown::ApplicationDrain,
+    ) -> Self {
+        self.application_drain = drain;
+        self
+    }
+
     /// Install the NodeHost-owned follower pre-stop handshake.
     #[must_use]
-    pub fn with_follower_shutdown(mut self, shutdown: crate::follower_shutdown::FollowerDrain) -> Self {
+    pub fn with_follower_shutdown(
+        mut self,
+        shutdown: crate::follower_shutdown::FollowerDrain,
+    ) -> Self {
         self.follower_shutdown = Some(shutdown);
         self
     }
@@ -351,9 +376,10 @@ impl ConsensusStackServices {
         status: outbe_radicle::integration::RadicleStatusHandle,
         endpoint: outbe_radicle::integration::EndpointNetworkService,
         local: outbe_radicle::integration::LocalEndpointIdentityHandle,
+        owner: outbe_radicle::integration::EndpointTaskOwner,
     ) -> Self {
         self.radicle_status = status;
-        self.radicle_endpoint = Some((endpoint, local));
+        self.radicle_endpoint = Some((endpoint, local, owner));
         self
     }
 }
@@ -3268,7 +3294,14 @@ where
         + Sync
         + 'static,
 {
-    run_consensus_stack_inner(ctx, args, node, bridge, services)
+    let application = services.application_drain.clone();
+    async move {
+        // Do not spawn the fallible body in a child supervision task: completing
+        // that task would abort its network before the application can drain.
+        application
+            .finish(run_consensus_stack_inner(ctx, args, node, bridge, services))
+            .await
+    }
 }
 
 async fn run_consensus_stack_inner<E>(
@@ -3292,6 +3325,7 @@ where
         + 'static,
 {
     let ConsensusStackServices {
+        application_drain,
         follower_shutdown,
         projection_readiness,
         ocomp_readiness,
@@ -3478,14 +3512,19 @@ where
     let mut network_handle = network.start();
     info!("P2P network started");
 
-    if let (Some((endpoint, local)), Some((sender, receiver))) = (radicle_endpoint, radicle_channel)
+    if let (Some((endpoint, local, owner)), Some((sender, receiver))) =
+        (radicle_endpoint, radicle_channel)
     {
         let signer = signing_key.clone();
-        tokio::spawn(async move {
-            if let Err(error) = endpoint.run(sender, receiver, signer, local).await {
+        if !owner.start(async move {
+            let result = endpoint.run(sender, receiver, signer, local).await;
+            if let Err(error) = &result {
                 tracing::warn!(%error, "Radicle endpoint actor stopped");
             }
-        });
+            result
+        })? {
+            return Ok(());
+        }
     }
 
     // -- 5. Create Muxers from physical channels ------------------------
@@ -6804,7 +6843,14 @@ where
         }
         .await;
 
-        match supervise_epoch_loop_result(&ctx, epoch_loop_result, &mut engine_handle_task).await? {
+        match supervise_epoch_loop_result(
+            &ctx,
+            epoch_loop_result,
+            &mut engine_handle_task,
+            &application_drain,
+        )
+        .await?
+        {
             EpochLoopAction::RestartEpoch => continue 'epoch_loop,
             EpochLoopAction::ReplaceSigner => {
                 replacement_epoch_subchannels = Some(
