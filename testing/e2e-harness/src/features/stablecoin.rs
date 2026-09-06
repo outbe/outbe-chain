@@ -250,13 +250,12 @@ fn create_and_approve_stablecoin(world: &mut World) {
         );
     }
     let deadline = wait_for_proposal_votes(world, STABLECOIN_PROPOSAL_ID, 3);
-    assert!(
-        world
-            .rpc
-            .wait_block_gt(world.validators.primary_port(), deadline, 80)
-            .is_some(),
-        "did not pass stablecoin proposal deadline {deadline}"
-    );
+    world
+        .rpc
+        .wait_block_gt(world.validators.primary_port(), deadline, 80)
+        .unwrap_or_else(|error| {
+            panic!("did not pass stablecoin proposal deadline {deadline}: {error:#}")
+        });
     assert!(
         world
             .rpc
@@ -779,12 +778,19 @@ fn restart_committee(world: &mut World) {
         .localnet
         .restart_committee_and_enclaves()
         .expect("restart stablecoin committee");
-    for port in ports(world) {
-        assert!(
-            world.rpc.wait_block(port, height, 90).is_some(),
-            "RPC {port} did not recover stablecoin height {height}"
-        );
-    }
+    let cohort = ports(world);
+    world
+        .rpc
+        .wait_finalized_checkpoint(&cohort, height, 90)
+        .expect("all stablecoin validators restore the finalized snapshot");
+    let target = world
+        .rpc
+        .fresh_finality_target(&cohort)
+        .expect("sample the complete restarted stablecoin committee");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&cohort, target, 90)
+        .expect("stablecoin committee finalizes two fresh blocks after restart");
 }
 
 #[then("stablecoin historical and current reads remain identical on every validator")]

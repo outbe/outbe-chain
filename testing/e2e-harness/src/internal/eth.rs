@@ -383,10 +383,15 @@ pub(crate) fn simulate_call<C: SolCall>(
 
 /// Head block number (`eth_blockNumber`).
 pub(crate) fn block_number(url: &str) -> Option<u64> {
+    block_number_result(url).ok()
+}
+
+/// Head block number, preserving transport, RPC and quantity-decoding failures.
+pub(crate) fn block_number_result(url: &str) -> Result<u64> {
     let url = url.to_string();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        provider.get_block_number().await.ok()
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        Ok(provider.get_block_number().await?)
     })
 }
 
@@ -1015,13 +1020,17 @@ pub(crate) fn pool_account_at_tip(url: &str, address: Address) -> Result<PoolAcc
 
 /// Current account balance.
 pub(crate) fn balance(url: &str, address: Address) -> Option<U256> {
+    balance_result(url, address).ok()
+}
+
+/// Read an account balance without erasing transport or decoding failures.
+pub(crate) fn balance_result(url: &str, address: Address) -> Result<U256> {
     let url = url.to_string();
     block_on(async move {
-        ProviderBuilder::new()
-            .connect_http(url.parse().ok()?)
+        Ok(ProviderBuilder::new()
+            .connect_http(url.parse()?)
             .get_balance(address)
-            .await
-            .ok()
+            .await?)
     })
 }
 

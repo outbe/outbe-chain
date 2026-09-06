@@ -3631,10 +3631,8 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .expect("restore the FullNode's exporter and V1 worker before proposal");
     for validator_index in 0..world.validators.size() {
         let port = world.validators.http_port(validator_index);
-        assert!(
-            world.rpc.wait_block(port, before_restart, 60).is_some(),
-            "validator-{validator_index} did not restore finality after successor preload"
-        );
+        world.rpc.wait_block(port, before_restart, 60)
+            .unwrap_or_else(|error| panic!("validator-{validator_index} did not restore finality after successor preload: {error:#}"));
     }
     let convergence_target = post_restart_convergence_target(
         world.validators.committee_ports().into_iter().map(|port| {
@@ -3766,10 +3764,8 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         "Update did not activate the OCOMP successor at the scheduled height"
     );
     for (validator_index, port) in world.validators.committee_ports().into_iter().enumerate() {
-        assert!(
-            world.rpc.wait_block(port, activation_height, 60).is_some(),
-            "validator-{validator_index} did not finalize the OCOMP activation height"
-        );
+        world.rpc.wait_block(port, activation_height, 60)
+            .unwrap_or_else(|error| panic!("validator-{validator_index} did not finalize the OCOMP activation height: {error:#}"));
         assert_eq!(
             world.rpc.active_ocomp_protocol_bundle_hash_on(port),
             Some(successor_bundle_hash),
@@ -7845,10 +7841,8 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         });
     for validator_index in 0..4 {
         let port = world.validators.http_port(validator_index);
-        assert!(
-            world.rpc.wait_block(port, before, 60).is_some(),
-            "validator-{validator_index} did not restore its preserved finalized head"
-        );
+        world.rpc.wait_block(port, before, 60)
+            .unwrap_or_else(|error| panic!("validator-{validator_index} did not restore its preserved finalized head: {error:#}"));
     }
 
     // A shared historical floor is not enough: require one fresh canonical

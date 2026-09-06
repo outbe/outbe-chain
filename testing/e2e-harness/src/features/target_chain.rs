@@ -95,13 +95,13 @@ fn router_may_mint(world: &mut World) {
 
 #[then("the committee is still producing blocks")]
 fn committee_still_producing(world: &mut World) {
-    let port = world.validators.primary_port();
-    let height = world
+    let ports = world.validators.committee_ports();
+    let target = world
         .rpc
-        .finalized(port)
-        .expect("committee finalized height before the target chain check");
-    assert!(
-        world.rpc.wait_block_gt(port, height, 30).is_some(),
-        "committee stopped finalizing while the target chain was running"
-    );
+        .fresh_finality_target(&ports)
+        .expect("sample committee finality before the target chain check");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 30)
+        .expect("committee finalizes two fresh blocks while the target chain runs");
 }
