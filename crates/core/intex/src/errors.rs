@@ -16,6 +16,8 @@ pub enum IntexError {
     ZeroIssuedAt,
     #[error("invalid lifecycle state: expected {expected}, actual {actual}")]
     InvalidState { expected: u8, actual: u8 },
+    #[error("expected lifecycle state {first} or {second}, actual {actual}")]
+    InvalidStateEither { first: u8, second: u8, actual: u8 },
     #[error("invalid stored lifecycle state value: {0}")]
     InvalidStateValue(u8),
     #[error("invalid contributor payout batch: {0}")]

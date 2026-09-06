@@ -120,6 +120,21 @@
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }

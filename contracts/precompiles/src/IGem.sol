@@ -13,11 +13,15 @@ interface IGem {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
+        uint256 callPrice;
+        uint64 calledAt;
+        uint32 callNoticePeriod;
     }
 
     // ERC-721
     function balanceOf(address owner) external view returns (uint256 balance);
     function ownerOf(uint256 gemId) external view returns (address);
+    // Declared for ERC-721 shape only: all four always revert NonTransferable.
     function transferFrom(address from, address to, uint256 gemId) external;
     function safeTransferFrom(address from, address to, uint256 gemId) external;
     function approve(address to, uint256 gemId) external;

@@ -81,8 +81,5 @@ pub const MAX_ADMISSION_WAIT_TICKS: usize = MAX_PIPELINE_WWDS;
 pub const MAX_ADMISSION_WAIT_HOURS: u64 =
     MAX_ADMISSION_WAIT_TICKS as u64 * WWD_ADVANCE_TICK_CADENCE_HOURS;
 
-/// UTC+14 offset in seconds (14 * 3600).
-pub const UTC_PLUS_14_OFFSET: u64 = 50_400;
-
 /// Seconds per hour.
 pub const SECONDS_PER_HOUR: u64 = 3600;
