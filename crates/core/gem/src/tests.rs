@@ -843,7 +843,6 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         // A slot pointing at a gem that is not there: forfeit errors every run.
         let ghost = U256::from(0xdeadu64);
         let deadline = T_NOW + 7 * 86_400;
-        // Same bucket, ghost first: the one behind it must still be reached.
         gem.push_called(ghost, deadline).unwrap();
         gem.mark_called(live, T_NOW).unwrap();
         let day = GemContract::deadline_bucket(deadline);
@@ -1065,8 +1064,6 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let deadline = T_NOW + 7 * 86_400;
         let bucket = GemContract::deadline_bucket(deadline);
 
-        // A deadline outside its own bucket can only come from a broken invariant,
-        // and it must not park the bucket at the front of the tree forever.
         gem.called_deadline
             .write(&gem_id, deadline + 400 * 86_400)
             .unwrap();
@@ -1097,7 +1094,6 @@ fn leaving_called_frees_the_expiry_slot() {
         let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
         assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 1);
 
-        // Back to Qualified: an entry outliving its state would pin the bucket.
         gem.set_state(gem_id, GemState::Qualified).unwrap();
         assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);

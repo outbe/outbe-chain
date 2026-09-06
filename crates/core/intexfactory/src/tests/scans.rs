@@ -641,7 +641,6 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         let far = WorldwideDay::new(20260101);
         let near = WorldwideDay::new(20260102);
 
-        // Called first, due last - the reverse of the order the sweep must use.
         f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[sid(1)])
             .unwrap();
         f.push_called_group(REFERENCE_ISO, near, now + DAY, &[sid(2)])
@@ -683,8 +682,6 @@ fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
         f.push_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
             .unwrap();
         let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
-        // A deadline outside its own bucket can only come from a broken invariant,
-        // and it must not park the day at the front of the tree forever.
         let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
         f.called_group_deadline
             .write(&key, now + 400 * DAY)
@@ -717,7 +714,6 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
         let deadline = now + DAY;
         let bucket = IntexFactoryContract::deadline_bucket(deadline);
 
-        // One bucket, more groups than a single block may retire.
         let queued = crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK + 44;
         for index in 0..queued {
             let day = 20260101 + index;
@@ -768,7 +764,6 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
 fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
-        // Midnight, so a day-wide bucket would hold this until the next one.
         let now = (ISSUED_AT as u64 / DAY) * DAY;
         let deadline = now + 600;
         let day = WorldwideDay::new(20260101);
@@ -819,8 +814,8 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
 
-        // A second member the registry never issued: expiring it errors, and a
-        // group-wide checkpoint would roll the healthy one back with it.
+        // A member the registry never issued: a group-wide checkpoint would roll the
+        // healthy one back with it.
         let day = WorldwideDay::new(7);
         let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
         let f = IntexFactoryContract::new(s.clone());

@@ -138,9 +138,7 @@ impl IntexFactoryContract<'_> {
         })
     }
 
-    /// Record the terms a newly issued series carries, widening the currency's
-    /// stored pair. Both bounds only move outwards, so the range they define can
-    /// never exclude a series that a narrower live profile would have covered.
+    /// Widen the currency's stored terms to cover a newly issued series.
     pub(crate) fn widen_call_terms(
         &mut self,
         reference_currency: u16,
@@ -148,14 +146,11 @@ impl IntexFactoryContract<'_> {
         call_threshold: u32,
     ) -> Result<()> {
         let secs_per_day = SECONDS_PER_DAY as u32;
-        // Bounded here rather than where it is read, so the search range is never
-        // silently narrower than what a series was issued with.
         let window = call_window.min(MAX_CALL_WINDOW_DAYS * secs_per_day);
         if window > self.max_call_window.read(&reference_currency)? {
             self.max_call_window.write(&reference_currency, window)?;
         }
-        // The scan counts whole days, and a threshold under one of them can never be
-        // met, so letting it in would latch the currency's range shut for good.
+        // A threshold under a day can never be met, and would latch the range shut.
         if call_threshold < secs_per_day {
             return Ok(());
         }
@@ -168,8 +163,7 @@ impl IntexFactoryContract<'_> {
     }
 
     /// Window and threshold, in days, the call scan must search to cover every live
-    /// series: the widest of the stored pair and the live profile. Both stored halves
-    /// are bounded on the way in, so nothing here needs to narrow them.
+    /// series: the widest of the stored pair and the live profile.
     pub(crate) fn scan_call_terms(
         &self,
         reference_currency: u16,
@@ -295,16 +289,12 @@ impl IntexFactoryContract<'_> {
         Ok(())
     }
 
-    /// Hour since the epoch a deadline falls in. Plain UTC, like the call scan's
-    /// quote window: a deadline is wall-clock time, not a WorldwideDay. Hours rather
-    /// than days so a group waits at most an hour past its deadline for the sweep,
-    /// which is what the target chain already shows as expired.
+    /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
     pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
         (deadline / 3_600) as u32
     }
 
-    /// First instant after the bucket. Every deadline bucketed under it is strictly
-    /// earlier, so a bucket that has closed holds only entries that are due.
+    /// First instant after the bucket, so a closed one holds only entries that are due.
     pub(crate) const fn bucket_end(day: u32) -> u64 {
         (day as u64 + 1) * 3_600
     }
@@ -377,8 +367,6 @@ impl IntexFactoryContract<'_> {
         self.called_group_count.clear(&key)?;
         self.called_group_deadline.clear(&key)?;
 
-        // The group's own record of where it waits, not the caller's: a slot passed in
-        // from a stale walk would free somebody else's, or nobody's.
         let packed = self.called_group_slot.read(&key)?;
         self.called_group_slot.clear(&key)?;
         if packed == 0 {
@@ -388,10 +376,7 @@ impl IntexFactoryContract<'_> {
         self.release_expiry_slot(day, slot, key)
     }
 
-    /// Drop whatever is left of a bucket the sweep believes it has finished, so a
-    /// day cannot outlive its entries. Only an entry that broke the "a deadline lies
-    /// inside its own day" invariant can reach this; without it a single such entry
-    /// would keep the day at the front of the tree and stall every later one.
+    /// Drop whatever is left of a bucket the sweep has finished.
     pub(crate) fn force_retire_bucket(&mut self, day: u32) -> Result<u32> {
         let len = self.expiry_bucket_len.read(&day)?;
         let mut dropped = 0u32;
@@ -405,7 +390,6 @@ impl IntexFactoryContract<'_> {
             self.remove_called_group(iso_code, worldwide_day)?;
             dropped += 1;
         }
-        // Whatever the slots said, the day itself must go.
         self.expiry_bucket_len.clear(&day)?;
         self.expiry_bucket_live.clear(&day)?;
         tree_math::remove(&ExpiryDayTree(&*self), day)?;
@@ -416,9 +400,7 @@ impl IntexFactoryContract<'_> {
         Ok(dropped)
     }
 
-    /// Free one bucket slot, retiring the whole bucket once nothing waits in it.
-    /// The slot is cleared only if it still holds this group, so a stale index
-    /// cannot evict a live one.
+    /// Free one bucket slot, retiring the bucket once nothing waits in it.
     pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, key: u64) -> Result<()> {
         let slot_key = Self::bucket_slot_key(day, slot);
         if self.expiry_bucket_at.read(&slot_key)? != key {
@@ -432,8 +414,6 @@ impl IntexFactoryContract<'_> {
             self.expiry_bucket_len.clear(&day)?;
             self.expiry_bucket_live.clear(&day)?;
             tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            // The cursor names a slot in a length that no longer exists; a refill of
-            // this day would otherwise resume past its new end.
             if self.expiry_sweep_day.read()? == day {
                 self.expiry_sweep_day.write(0)?;
                 self.expiry_cursor.write(0)?;
@@ -692,8 +672,7 @@ impl BinTreeStorage for UnqualifiedBinTree<'_, '_> {
 }
 
 /// The qualified (call-trigger) trie of one reference currency.
-/// Days holding a called group whose settlement window has not closed yet. One
-/// tree for the whole contract: a deadline is wall-clock time, not a currency's.
+/// Buckets holding a called group whose settlement window has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
 
 impl BinTreeStorage for ExpiryDayTree<'_, '_> {

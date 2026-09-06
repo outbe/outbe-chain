@@ -21,8 +21,7 @@ const DAY: u32 = 20_260_101;
 const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
-    // The id spells its currency in three digits, so a long queue wraps: these tests
-    // measure the walk, not who is in it.
+    // Three digits of currency, so a long queue wraps; these tests measure the walk.
     let index = index % 1000;
     let iso = [
         b'0' + (index / 100) as u8,
@@ -178,9 +177,6 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        // Each entry carries its own call time, so no two coalesce and every one costs
-        // a router call - the budget that binds when the call scan stamps a fresh time
-        // every block. The firing stops on it, well short of the entry cap.
         let queued = NOTIFY_MESSAGE_LIMIT + 5;
         assert!(
             queued < NOTIFY_CHUNK_LIMIT,

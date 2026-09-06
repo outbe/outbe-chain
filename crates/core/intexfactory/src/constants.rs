@@ -28,9 +28,8 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
-/// Ceiling on the days one call scan reads per currency. The search range widens
-/// with the terms ever issued, so a corrupt record must not turn into an unbounded
-/// oracle read; the Oracle backfills no further than a year anyway.
+/// Ceiling on the days one call scan reads per currency, so a corrupt record cannot
+/// turn into an unbounded oracle read. The Oracle backfills no further anyway.
 pub(crate) const MAX_CALL_WINDOW_DAYS: u32 = 366;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
@@ -87,12 +86,9 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 
-/// Deadline buckets one expiry sweep may open per block. Each costs a tree
-/// descent plus its own bookkeeping, so a long backlog of buckets spreads over blocks
-/// the same way a long bucket does.
+/// Deadline buckets one expiry sweep may open per block; each costs a tree descent.
 pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
 
-/// Bucket slots one expiry sweep may look at per block. An empty or not-yet-due
-/// slot still costs a read, so without its own budget one long bucket would be walked
-/// end to end in a single block.
+/// Bucket slots one expiry sweep may look at per block: an empty slot still costs a
+/// read, so the walk needs its own budget.
 pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 512;

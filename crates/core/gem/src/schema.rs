@@ -175,11 +175,9 @@ pub struct GemContract {
     #[attribute(order = 19)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
-    // --- Called gems, bucketed by the UTC day their notice period closes in.
-    // Calling is driven by price, expiry only by time, so the two stages keep
-    // separate structures - and a bucket makes call order irrelevant to expiry.
-    /// Hours since the epoch holding at least one called gem. Set semantics, so a
-    /// day leaves only once its bucket empties.
+    // --- Called gems, bucketed by the hour their notice period closes in. Calling is
+    // driven by price and expiry only by time, so the two stages stay separate.
+    /// Set semantics: a bucket leaves the tree only once it empties.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
@@ -198,9 +196,8 @@ pub struct GemContract {
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// Widest call window ever issued in a currency. The scan collects that many
-    /// days so a gem whose record outruns the current constant still sees its own
-    /// window; it only ever grows, which keeps the collected span a safe upper bound.
+    /// Widest window ever issued in a currency; it only grows, so the span the scan
+    /// collects always covers a gem whose record outruns the current constant.
     #[attribute(order = 26)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 

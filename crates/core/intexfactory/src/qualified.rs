@@ -83,9 +83,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(promoted)
 }
 
-/// Index of the currency the cursor names, or the head of the list when the
-/// registry no longer carries it. The cursor stores an ISO code, not a position:
-/// a registry edit must not silently move it onto another currency.
+/// Index of the currency the cursor names, or the head when the registry dropped it.
 pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
     u16::try_from(cursor)
         .ok()

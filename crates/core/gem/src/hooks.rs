@@ -29,8 +29,6 @@ impl BlockLifecycle for GemLifecycle {
         // A call sweep the daily trigger could not finish in one go carries on
         // here, block by block, rather than waiting a day for the next trigger.
         run_call_slice(ctx)?;
-        // Expiry is time-driven, so it runs every block too: a day of calls all
-        // mature together, and a daily pass would take months to work them off.
         sweep_expired(ctx)?;
         Ok(())
     }
@@ -74,9 +72,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Index of the currency the cursor names, or the head of the list when the
-/// registry no longer carries it. The cursor stores an ISO code, not a position:
-/// a registry edit must not silently move it onto another currency.
+/// Index of the currency the cursor names, or the head when the registry dropped it.
 pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
     u16::try_from(cursor)
         .ok()
@@ -332,21 +328,16 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     while budget > 0 && slots > 0 && buckets > 0 {
         let mut gem = GemContract::new(ctx.storage.clone());
-        // Always from the bottom: the tree makes restarting free, and a gem can
-        // land in a day the cursor has already passed.
         let Some(day) = gem.first_expiry_day()? else {
             break;
         };
-        // A deadline lies inside its own day by construction, so a day that has not
-        // closed yet holds nobody who is due - and no later day can be due either.
+        // A deadline lies inside its own bucket, so an open one holds nobody due.
         if now < GemContract::bucket_end(day) {
             break;
         }
         buckets -= 1;
 
         let len = gem.expiry_bucket_len.read(&day)?;
-        // A retired bucket clears its length, so a cursor left over from an earlier
-        // fill must not be trusted past the current end.
         let resume = match gem.expiry_sweep_day.read()? == day {
             true => gem.expiry_cursor.read()?.min(len),
             false => 0,
@@ -354,8 +345,6 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
         let mut slot = resume;
         while slot < len {
-            // Slots, not just forfeits: an empty or undue slot still costs a read, and
-            // without its own budget one long bucket walks unbounded in a single block.
             if budget == 0 || slots == 0 {
                 break;
             }
@@ -373,8 +362,6 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Ok(true) => burned = burned.saturating_add(1),
                 // Due and still not burning: the entry no longer matches its gem.
                 // Out of the bucket either way, so it cannot hold the day back.
-                // `remove_called`, not just the slot: leaving the reverse index behind
-                // would point a live gem at a slot it no longer owns.
                 Ok(false) => {
                     tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
                     gem.remove_called(gem_id)?;
@@ -394,9 +381,7 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         gem.expiry_sweep_day.write(0)?;
         gem.expiry_cursor.write(0)?;
-        // The day has closed and its whole bucket has been walked, so nothing in it can
-        // still be waiting. Anything left broke the bucketing invariant; retire it
-        // loudly rather than let it sit at the front of the tree forever.
+        // Anything left broke the invariant above; retiring it keeps the tree moving.
         if gem.expiry_bucket_live.read(&day)? != 0 {
             let dropped = gem.force_retire_bucket(day)?;
             tracing::warn!(target: "outbe::gem", day, dropped, "expiry sweep: bucket outlived its day, retiring it");
@@ -424,8 +409,6 @@ fn window_for(
     let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     let mut window = Vec::new();
     if pair_index != 0 {
-        // Widest window ever issued here, not the constant: a gem keeps the window it
-        // was issued with, and `trigger_call` takes its own days out of this span.
         let widest = gem.max_call_window.read(&iso_code)?.max(CALL_WINDOW);
         let window_days = (widest / 86_400).min(MAX_CALL_WINDOW_DAYS);
         window.reserve(window_days as usize);

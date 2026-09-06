@@ -15,9 +15,7 @@ use crate::constants::{
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
-/// Retire every group whose settlement window has closed, oldest deadline day
-/// first. Groups sit in the bucket of the day they expire in, so call order does
-/// not matter and one group nobody can retire never holds up another.
+/// Retire every group whose settlement window has closed, earliest bucket first.
 pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = &ctx.storage;
     let now = ctx.block.timestamp;
@@ -27,21 +25,16 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
 
     while budget > 0 && slots > 0 && buckets > 0 {
         let mut factory = IntexFactoryContract::new(storage.clone());
-        // Always from the bottom: a group can be re-bucketed into a day the cursor
-        // has already passed, and the tree makes restarting free anyway.
         let Some(day) = factory.first_expiry_day()? else {
             break;
         };
-        // A deadline lies inside its own day by construction, so a day that has not
-        // closed yet holds nobody who is due - and no later day can be due either.
+        // A deadline lies inside its own bucket, so an open one holds nobody due.
         if now < IntexFactoryContract::bucket_end(day) {
             break;
         }
         buckets -= 1;
 
         let len = factory.expiry_bucket_len.read(&day)?;
-        // A retired bucket clears its length, so a cursor left over from an earlier
-        // fill must not be trusted past the current end.
         let resume = match factory.expiry_sweep_day.read()? == day {
             true => factory.expiry_cursor.read()?.min(len),
             false => 0,
@@ -49,8 +42,6 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
 
         let mut slot = resume;
         while slot < len {
-            // Slots, not just actions: an empty or undue slot still costs a read, and
-            // without its own budget one long bucket walks unbounded in a single block.
             if budget == 0 || slots == 0 {
                 break;
             }
@@ -60,8 +51,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             };
             let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-            // Strictly after, like `settle`: a block hook runs before the block's
-            // transactions, so `>=` would count a unit still legally settleable.
+            // Strictly after, like `settle`: a hook runs before the block's transactions.
             if now <= factory.called_group_deadline.read(&key)? {
                 slot += 1;
                 continue;
@@ -77,9 +67,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         error = ?error,
                         "expiry sweep: retiring group without credit"
                     );
-                    // Dropped whole, not just out of the bucket: leaving its records
-                    // behind would refuse the pair a later call forever. Charged like
-                    // a retirement, because clearing the members costs the same.
+                    // Dropped whole: leftover records would refuse the pair a later call.
                     let dropped = storage.with_checkpoint(|| {
                         let mut factory = IntexFactoryContract::new(storage.clone());
                         let members =
@@ -105,9 +93,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // The day has closed and its whole bucket has been walked, so nothing in it
-        // can still be waiting. Anything left broke the bucketing invariant; retire
-        // it loudly rather than let it sit at the front of the tree forever.
+        // Anything left broke the invariant above; retiring it keeps the tree moving.
         if factory.expiry_bucket_live.read(&day)? != 0 {
             let dropped = factory.force_retire_bucket(day)?;
             tracing::warn!(
@@ -132,8 +118,7 @@ fn expire_group(
 
     let mut credit = U256::ZERO;
     for &series_id in &group.members {
-        // Per member: one series that cannot expire must not cost its group's whole
-        // credit, which a shared checkpoint would roll back along with it.
+        // Per member: a shared checkpoint would roll the whole group's credit back.
         let returned = storage.with_checkpoint(|| {
             let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
             let returned = forfeited
