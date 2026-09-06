@@ -37,7 +37,11 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 /// entries coalesce into marks of [`MAX_SERIES_PER_MARK`], each fanning out to the
 /// day's target chains, so bounding entries alone bounds nothing. An entry that
 /// costs no call still spends one, so the drain always moves.
-pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 256;
+///
+/// Sized from both ends: a day of calls has to reach its holders inside
+/// [`CALL_NOTICE_PERIOD`], and the firing runs inside CycleTick, which owes the
+/// block 20% headroom while every call fans out to each target chain.
+pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
