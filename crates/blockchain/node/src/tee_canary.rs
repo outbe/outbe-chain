@@ -6,14 +6,14 @@
 //! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
 //! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
 //!
-//! The probe shares the process-global enclave mutex with consensus traffic:
-//! one 1-offer batch per tick (~ms of compute) every `interval` - a ~1e-4 duty
-//! cycle. The blocking round-trip runs on `spawn_blocking`; an `in_flight`
+//! The probe uses a separate connection to the same pinned enclave identity;
+//! it never holds the execution session's mutex. The blocking round-trip runs
+//! on `spawn_blocking`; an `in_flight`
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use alloy_primitives::{Address, U256};
@@ -21,8 +21,8 @@ use metrics::{counter, gauge, histogram};
 use outbe_tee::canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{
-    inputs_canonical_hash, EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse,
-    EncryptedTributeOffer, TributeOfferStatus, WorldwideDay,
+    EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse, EncryptedTributeOffer,
+    TributeOfferStatus, WorldwideDay, inputs_canonical_hash,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -56,20 +56,16 @@ pub trait EnclaveRequester: Send + Sync + 'static {
     fn attestation_pub(&self) -> Option<[u8; 32]>;
 }
 
-/// The production requester: delegates to `outbe_tee::try_with_enclave`.
+/// The production requester uses the dedicated canary connection.
 pub struct GlobalEnclaveRequester;
 
 impl EnclaveRequester for GlobalEnclaveRequester {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        outbe_tee::try_with_enclave(|session| session.request(req)).unwrap_or_else(|| {
-            Err(TransportError::EnclaveError(
-                "enclave session is not configured".into(),
-            ))
-        })
+        outbe_tee::client_global::canary_request(req)
     }
 
     fn attestation_pub(&self) -> Option<[u8; 32]> {
-        outbe_tee::try_with_enclave(|session| session.attestation_pub())
+        outbe_tee::client_global::canary_attestation_pub()
     }
 }
 
@@ -172,7 +168,7 @@ pub fn run_canary_probe(
                 },
                 health_supported,
                 health_payload,
-            )
+            );
         }
         Err(error) => {
             return (
@@ -186,7 +182,7 @@ pub fn run_canary_probe(
                 },
                 health_supported,
                 health_payload,
-            )
+            );
         }
     };
 
@@ -207,7 +203,7 @@ pub fn run_canary_probe(
                 },
                 health_supported,
                 health_payload,
-            )
+            );
         }
     };
     let eph_pub =

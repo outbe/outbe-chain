@@ -28,6 +28,22 @@ use super::Localnet;
 
 const REAL_SGX_OFFER_READ_ATTEMPTS: usize = 3;
 
+/// Preserve catch-up as the primary failure while also reporting every cleanup
+/// failure. Authority can start only after all three operations succeed.
+fn finish_cold_catchup(catchup: Result<()>, stop: Result<()>, seal: Result<()>) -> Result<()> {
+    let mut result = catchup;
+    for (operation, cleanup) in [("stop follower", stop), ("seal follower log", seal)] {
+        if let Err(error) = cleanup {
+            let context = format!("{operation} failed: {error:#}");
+            result = match result {
+                Ok(()) => Err(error).wrap_err(operation),
+                Err(primary) => Err(primary).wrap_err(context),
+            };
+        }
+    }
+    result
+}
+
 fn registration_outcome(url: &str, transaction_hash: &str) -> Result<TxOutcome> {
     let receipt = eth::raw_json_result(
         url,
@@ -1109,9 +1125,9 @@ impl Localnet {
             }
         })();
         // Drop/interrupt reaps the sole writer before authority is launched.
-        self.stop_follower(&name)?;
-        log.seal()?;
-        result?;
+        let stopped = self.stop_follower(&name);
+        let sealed = log.seal();
+        finish_cold_catchup(result, stopped, sealed)?;
         self.spawn_joiner_with_args(index, argv)?;
         rpc.wait_finalized_checkpoint(
             &[primary, port],
@@ -1252,6 +1268,40 @@ impl Localnet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_catchup_retains_primary_and_all_cleanup_failures() {
+        for failures in 0..8 {
+            let outcome = |bit, message| {
+                if failures & bit != 0 {
+                    Err(eyre!("{message}"))
+                } else {
+                    Ok(())
+                }
+            };
+            let result = finish_cold_catchup(
+                outcome(1, "catchup checkpoint timeout"),
+                outcome(2, "shutdown timeout"),
+                outcome(4, "log seal failed"),
+            );
+            if failures == 0 {
+                result.expect("authority may start after complete success");
+                continue;
+            }
+            let error = result.expect_err("any failure must prevent authority startup");
+            let report = format!("{error:#}");
+            for (bit, message) in [
+                (1, "catchup checkpoint timeout"),
+                (2, "shutdown timeout"),
+                (4, "log seal failed"),
+            ] {
+                assert_eq!(report.contains(message), failures & bit != 0, "{report}");
+            }
+            if failures & 1 != 0 {
+                assert_eq!(error.root_cause().to_string(), "catchup checkpoint timeout");
+            }
+        }
+    }
 
     #[test]
     fn registration_receipt_requires_exact_successful_mined_transaction() {
