@@ -28,6 +28,7 @@ use outbe_primitives::tee_attestation_v1::{
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+use crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS;
 use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
@@ -1011,12 +1012,18 @@ impl Localnet {
             }
         }
 
+        let oracle = root
+            .entry("oracle")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed oracle is not an object"))?;
+        let config = oracle
+            .entry("config")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed oracle config is not an object"))?;
+        config.insert("vote_period".into(), json!(E2E_ORACLE_VOTE_PERIOD_BLOCKS));
         if let Some(pairs) = &profile.oracle_pairs {
-            let oracle = root
-                .entry("oracle")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or_else(|| eyre!("genesis seed oracle is not an object"))?;
             oracle.insert(
                 "pairs".into(),
                 serde_json::Value::Array(
@@ -1616,6 +1623,44 @@ mod tests {
                 "0".into(),
             )
         );
+    }
+
+    #[test]
+    fn scenario_seed_always_uses_eight_block_oracle_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            validators: 4,
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::create_dir_all(&cfg.dir).unwrap();
+        let localnet = Localnet::new(cfg);
+        for seed in [
+            json!({}),
+            json!({"oracle": {"config": {"vote_period": 2, "penalties_enabled": false}}}),
+            json!({"oracle": {"config": {"vote_period": 300}}}),
+        ] {
+            let original = serde_json::to_vec(&seed).unwrap();
+            fs::write(&localnet.cfg.seed, &original).unwrap();
+            for profile in [
+                BootstrapProfile::default(),
+                BootstrapProfile::default()
+                    .with_oracle_pairs(vec![("COEN".into(), "840".into(), "1000000".into())])
+                    .unwrap(),
+            ] {
+                let path = localnet.prepare_scenario_seed(&profile).unwrap();
+                let actual: serde_json::Value =
+                    serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+                assert_eq!(actual["oracle"]["config"]["vote_period"], 8);
+                if let Some(penalties) = seed.pointer("/oracle/config/penalties_enabled") {
+                    assert_eq!(&actual["oracle"]["config"]["penalties_enabled"], penalties);
+                }
+                assert_eq!(fs::read(&localnet.cfg.seed).unwrap(), original);
+            }
+        }
     }
 
     #[test]

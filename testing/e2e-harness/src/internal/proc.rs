@@ -158,7 +158,6 @@ impl ChildGuard {
     }
 
     /// Abrupt fault of this owned live child, without waiting for its peers.
-    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn signal_fault(&mut self) -> Result<()> {
         if self.exit_status()?.is_some() {
             bail!(
@@ -172,7 +171,6 @@ impl ChildGuard {
     }
 
     /// Observe a previously signalled fault without discarding wait errors.
-    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn reap_fault(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
@@ -186,6 +184,12 @@ impl ChildGuard {
         }
     }
 
+    /// Inject an abrupt fault into this live owned child and observe its exit.
+    pub(crate) fn fault_and_reap(&mut self) -> Result<ExitStatus> {
+        self.signal_fault()?;
+        self.reap_fault(GRACEFUL_STOP_TIMEOUT)
+    }
+
     /// Stop and synchronously reap this owned process. Idempotent after exit.
     ///
     /// SIGTERM first, SIGKILL only if the process will not leave. A node killed
@@ -197,6 +201,13 @@ impl ChildGuard {
     /// reproducible.
     pub(crate) fn stop(&mut self) {
         self.stop_with_signal("TERM");
+    }
+
+    /// Explicit restart evidence must observe reaping, not rely on best-effort Drop.
+    pub(crate) fn stop_and_reap(&mut self) -> Result<ExitStatus> {
+        self.stop();
+        self.exit_status()?
+            .ok_or_else(|| eyre::eyre!("owned child {} remained live after stop", self.label))
     }
 
     /// Stop through the operator Ctrl-C path. Reth and the outer node launcher
@@ -268,6 +279,29 @@ pub(crate) struct EnclaveGuard {
     docker: Option<DockerGuard>,
 }
 
+impl EnclaveGuard {
+    #[cfg(test)]
+    pub(crate) fn from_test_child(child: ChildGuard) -> Self {
+        Self {
+            child,
+            docker: None,
+        }
+    }
+
+    /// PID of the owned foreground launcher (Docker client for containerized SGX).
+    pub(crate) fn pid(&self) -> u32 {
+        self.child.pid()
+    }
+
+    pub(crate) fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
+        self.child.exit_status()
+    }
+
+    pub(crate) fn stop_and_reap(&mut self) -> Result<ExitStatus> {
+        self.child.stop_and_reap()
+    }
+}
+
 fn enclave_listener_ready(
     status: Option<ExitStatus>,
     log: &str,
@@ -307,7 +341,7 @@ pub(crate) fn spawn_enclave_ready(
     );
     match TcpStream::connect_timeout(&address, remaining.min(Duration::from_millis(100))) {
         Ok(_) => {
-            bail!("enclave endpoint {address} is already occupied; refusing to replace its owner")
+            bail!("enclave endpoint {address} is already occupied; refusing to replace its owner");
         }
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => return Err(error).wrap_err("probe enclave endpoint before launch"),
@@ -1271,6 +1305,36 @@ while True:
         child.interrupt();
 
         assert!(child.exited());
+    }
+
+    #[test]
+    fn restart_observation_reaps_the_same_owned_enclave_launcher() {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let child = ChildGuard::spawn("owned restart observation", command).unwrap();
+        let pid = child.pid();
+        let mut enclave = EnclaveGuard {
+            child,
+            docker: None,
+        };
+        assert_eq!(enclave.pid(), pid);
+        assert!(enclave.exit_status().unwrap().is_none());
+        let status = enclave.stop_and_reap().unwrap();
+        assert_eq!(enclave.exit_status().unwrap(), Some(status));
+        assert_eq!(enclave.stop_and_reap().unwrap(), status);
+        assert_eq!(enclave.pid(), pid);
+    }
+
+    #[test]
+    fn abrupt_owned_fault_is_reaped_and_cannot_be_repeated_as_a_live_fault() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let mut child = ChildGuard::spawn("owned fault observation", command).unwrap();
+        let status = child.fault_and_reap().unwrap();
+        assert_eq!(status.signal(), Some(9));
+        assert_eq!(child.exit_status().unwrap(), Some(status));
+        assert!(child.fault_and_reap().is_err());
     }
 
     #[test]

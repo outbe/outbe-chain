@@ -103,6 +103,11 @@ pub struct LogAudit {
 }
 
 impl LogAudit {
+    pub(crate) fn record_cleanup_failure(&mut self, error: eyre::Report) {
+        self.findings
+            .push(format!("scenario cleanup failed: {error:#}"));
+    }
+
     pub(crate) fn is_clean(&self) -> bool {
         self.findings.is_empty()
     }
@@ -455,6 +460,14 @@ fn is_runtime_log(path: &Path) -> bool {
             name == "node.log"
                 || name.starts_with("node.log.")
                 || name == "enclave.log"
+                || name == "radicle.log"
+                || name == "snapshot-exporter.log"
+                || name
+                    .strip_prefix("worker-")
+                    .and_then(|suffix| suffix.strip_suffix(".log"))
+                    .is_some_and(|ordinal| {
+                        !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
+                    })
                 || is_reth_runtime_log_name(name)
         })
 }
@@ -482,6 +495,12 @@ fn unexpected_log_line(line: &str) -> bool {
         || lower.contains("eagain")
         || lower.contains("resource temporarily unavailable")
         || (lower.contains("projection") && lower.contains("fatal"))
+        || lower.contains("radicle integration shutdown deadline exceeded")
+        || lower.contains("radicle integration shutdown failed")
+        || lower.contains("radicle observer join deadline exceeded")
+        || lower.contains("radicle drain failed before transport shutdown")
+        || lower.contains("radicle endpoint actor stopped")
+        || lower.contains("embedded ocomp requested node shutdown")
 }
 
 fn fatal_at_runtime_severity(line: &str) -> bool {
@@ -1073,8 +1092,7 @@ fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
 }
 
 fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
-    const PREFIX: &str =
-        "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const PREFIX: &str = "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();
@@ -1660,9 +1678,18 @@ mod tests {
         let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
         let shutdown = "INFO outbe_chain: consensus stack shutting down";
         vec![
-            (PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")), format!("{guard}\n{shutdown}\n")),
-            (PathBuf::from(format!("scenario-1/validator-{full_node}/logs/54322345/reth.log")),
-             format!("{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n")),
+            (
+                PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
+                format!("{guard}\n{shutdown}\n"),
+            ),
+            (
+                PathBuf::from(format!(
+                    "scenario-1/validator-{full_node}/logs/54322345/reth.log"
+                )),
+                format!(
+                    "{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n"
+                ),
+            ),
         ]
     }
 
@@ -1912,7 +1939,10 @@ mod tests {
             "INFO outbe_chain: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
         ] {
             let mut bad = baseline.clone();
-            bad[1].1 = bad[1].1.replace("INFO outbe_chain: consensus stack shutting down", replacement);
+            bad[1].1 = bad[1].1.replace(
+                "INFO outbe_chain: consensus stack shutting down",
+                replacement,
+            );
             assert!(!check(&bad));
         }
         let mut reordered = baseline.clone();
@@ -2000,6 +2030,9 @@ mod tests {
             "validator-0/node.log",
             "validator-0/node.log.1",
             "validator-0/enclave.log",
+            "validator-0/radicle.log",
+            "validator-0/ocomp/domain-v1/snapshot-exporter.log",
+            "validator-0/ocomp/domain-v1/worker-0.log",
             "validator-0/logs/54322345/reth.log",
             "validator-0/logs/54322345/reth.log.1",
         ] {
@@ -2008,5 +2041,18 @@ mod tests {
         assert!(!super::is_runtime_log(Path::new(
             "validator-0/data/rocksdb/000011.log"
         )));
+    }
+
+    #[test]
+    fn terminal_shutdown_and_body_failures_cannot_be_a_clean_audit() {
+        for message in [
+            "WARN Radicle integration shutdown deadline exceeded error=manager stopped",
+            "ERROR Radicle integration shutdown failed error=endpoint discovery failed",
+            "WARN Radicle endpoint actor stopped error=network closed",
+            "ERROR embedded OCOMP requested node shutdown failure_class=CorruptBody failure=body commitment mismatch",
+        ] {
+            let logs = vec![(PathBuf::from("validator-0/node.log"), message.to_owned())];
+            assert!(!audit_loaded_logs(&logs).is_clean(), "{message}");
+        }
     }
 }

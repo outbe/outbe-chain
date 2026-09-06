@@ -86,6 +86,72 @@ pub struct PriceOracleEvidenceV1 {
     pub canonical_publications: Vec<CanonicalPricePublicationV1>,
     pub quorum_loss_windows: Vec<QuorumLossEvidenceV1>,
     pub penalty_snapshots: Vec<PenaltySnapshotEvidenceV1>,
+    pub cohorts: Vec<OracleCohortEvidenceV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OracleCheckpointV1 {
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub state_root: alloy_primitives::B256,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OracleMemberV1 {
+    pub index: usize,
+    pub address: alloy_primitives::Address,
+    pub port: u16,
+    pub node_pid: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OracleCohortV1 {
+    pub checkpoint: OracleCheckpointV1,
+    pub members: Vec<OracleMemberV1>,
+    pub quorum: usize,
+    pub feeder_indices: Vec<usize>,
+    /// The fixed A/AB/AB/B negative fixture explicitly controls partial feeders.
+    pub overlapping_pairs: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OracleCohortEvidenceV1 {
+    /// First possible launch record for this cohort in append-only process history.
+    pub first_process_record: usize,
+    pub phase: OracleEvidencePhaseV1,
+    pub cohort: OracleCohortV1,
+    /// (owned validator index, launch attempt, PID), never signing material.
+    pub current_attempts: Vec<(usize, u32, u32)>,
+    /// Public observations, including unsuccessful polls before teardown.
+    pub observations: Vec<serde_json::Value>,
+}
+
+fn validate_live_feeder_indices(cohort: &OracleCohortV1, live: &[usize]) -> Result<()> {
+    let distinct = live
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    eyre::ensure!(
+        distinct.len() == live.len() && !live.is_empty(),
+        "empty or duplicate Oracle feeder owners"
+    );
+    if cohort.overlapping_pairs {
+        eyre::ensure!(
+            live.iter()
+                .all(|index| cohort.feeder_indices.contains(index)),
+            "unexpected overlapping-pair feeder"
+        );
+    } else {
+        eyre::ensure!(
+            live == cohort.feeder_indices,
+            "Oracle feeder cohort changed; stopped feeders must not be replenished implicitly"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -430,6 +496,54 @@ pub struct PriceOracleTopology {
 }
 
 impl PriceOracleTopology {
+    pub(crate) fn install_cohort(&mut self, phase: OracleEvidencePhaseV1, cohort: OracleCohortV1) {
+        self.evidence.cohorts.push(OracleCohortEvidenceV1 {
+            first_process_record: self.evidence.feeder_processes.len(),
+            phase,
+            cohort,
+            current_attempts: Vec::new(),
+            observations: Vec::new(),
+        });
+    }
+
+    pub(crate) fn cohort(&self) -> Result<OracleCohortV1> {
+        self.evidence
+            .cohorts
+            .last()
+            .map(|entry| entry.cohort.clone())
+            .ok_or_else(|| eyre!("Oracle cohort has not been resolved"))
+    }
+
+    pub(crate) fn record_cohort_observation(&mut self, observation: serde_json::Value) {
+        let process_history_len = self.evidence.feeder_processes.len();
+        if let Some(entry) = self.evidence.cohorts.last_mut() {
+            entry.observations.push(serde_json::json!({
+                "process_history_len": process_history_len,
+                "current_attempts": entry.current_attempts,
+                "observation": observation,
+            }));
+        }
+    }
+
+    pub(crate) fn ensure_cohort_feeders_alive(&mut self) -> Result<()> {
+        let cohort = self.cohort()?;
+        validate_live_feeder_indices(&cohort, &self.feeders.keys().copied().collect::<Vec<_>>())?;
+        self.ensure_feeder_alive()
+    }
+
+    fn refresh_cohort_attempts(&mut self) {
+        let attempts = self
+            .evidence
+            .feeder_processes
+            .iter()
+            .filter(|process| process.stopped_at_millis.is_none())
+            .map(|process| (process.validator_index, process.attempt, process.pid))
+            .collect();
+        if let Some(entry) = self.evidence.cohorts.last_mut() {
+            entry.current_attempts = attempts;
+        }
+    }
+
     pub(crate) fn new(cfg: Config) -> Self {
         Self {
             cfg,
@@ -608,6 +722,7 @@ impl PriceOracleTopology {
                     .map(|source| format!("{}:{}/{}", "mock_http", source.base, source.quote))
                     .collect(),
             });
+        self.refresh_cohort_attempts();
         let generation = self
             .mocks
             .get(&validator_index)
@@ -639,6 +754,7 @@ impl PriceOracleTopology {
             self.mark_latest_process_stopped(validator_index, stopped_at);
         }
         self.feeders.clear();
+        self.refresh_cohort_attempts();
     }
 
     pub fn stop_validator_feeder(&mut self, validator_index: usize) -> Result<()> {
@@ -646,6 +762,7 @@ impl PriceOracleTopology {
             .remove(&validator_index)
             .ok_or_else(|| eyre!("validator-{validator_index} price feeder is not running"))?;
         self.mark_latest_process_stopped(validator_index, unix_millis());
+        self.refresh_cohort_attempts();
         Ok(())
     }
 
@@ -896,6 +1013,102 @@ pub(crate) fn verify_price_oracle_evidence(
     }
 
     eyre::ensure!(
+        !evidence.cohorts.is_empty(),
+        "used Oracle evidence has no finalized cohort"
+    );
+    for (ordinal, entry) in evidence.cohorts.iter().enumerate() {
+        let end = evidence
+            .cohorts
+            .get(ordinal + 1)
+            .map_or(evidence.feeder_processes.len(), |next| {
+                next.first_process_record
+            });
+        eyre::ensure!(
+            entry.first_process_record <= end && end <= evidence.feeder_processes.len(),
+            "Oracle cohort process intervals are invalid"
+        );
+        let mut previous = entry.first_process_record;
+        for observation in &entry.observations {
+            let captured: usize =
+                serde_json::from_value(observation["process_history_len"].clone())?;
+            eyre::ensure!(
+                captured >= previous && captured <= end,
+                "Oracle observation process history regressed or crossed cohorts"
+            );
+            previous = captured;
+        }
+        let cohort = &entry.cohort;
+        let members = &cohort.members;
+        eyre::ensure!(
+            members.len() == validator_count
+                && cohort.quorum == validator_count - validator_count / 3
+                && cohort.checkpoint.block_hash != alloy_primitives::B256::ZERO
+                && cohort.checkpoint.state_root != alloy_primitives::B256::ZERO,
+            "Oracle cohort lacks canonical membership/checkpoint"
+        );
+        let identities = members
+            .iter()
+            .map(|member| member.address)
+            .collect::<std::collections::BTreeSet<_>>();
+        let ports = members
+            .iter()
+            .map(|member| member.port)
+            .collect::<std::collections::BTreeSet<_>>();
+        let indices = members
+            .iter()
+            .map(|member| member.index)
+            .collect::<std::collections::BTreeSet<_>>();
+        eyre::ensure!(
+            identities.len() == members.len()
+                && ports.len() == members.len()
+                && indices.len() == members.len()
+                && !identities.contains(&alloy_primitives::Address::ZERO),
+            "Oracle cohort duplicates an identity or endpoint"
+        );
+        eyre::ensure!(
+            members
+                .iter()
+                .all(|member| member.node_pid > 0 && member.port > 0)
+                && members.windows(2).all(|pair| pair[0].index < pair[1].index),
+            "Oracle cohort owners are invalid or unordered"
+        );
+        let selected = members
+            .iter()
+            .take(if cohort.overlapping_pairs {
+                members.len()
+            } else {
+                cohort.quorum
+            })
+            .map(|member| member.index)
+            .collect::<Vec<_>>();
+        eyre::ensure!(
+            cohort.feeder_indices == selected,
+            "Oracle cohort has the wrong planned feeders"
+        );
+        for &(index, attempt, pid) in &entry.current_attempts {
+            let member = members
+                .iter()
+                .find(|member| member.index == index)
+                .ok_or_else(|| eyre!("Oracle feeder is not in its cohort"))?;
+            eyre::ensure!(
+                cohort.feeder_indices.contains(&index)
+                    && evidence
+                        .feeder_processes
+                        .iter()
+                        .any(|process| process.validator_index == index
+                            && process.attempt == attempt
+                            && process.pid == pid
+                            && process
+                                .validator_address
+                                .parse::<alloy_primitives::Address>()
+                                .ok()
+                                == Some(member.address)),
+                "Oracle cohort attempt has no matching public process identity"
+            );
+        }
+    }
+
+    eyre::ensure!(
         !evidence.controlled_sources.is_empty(),
         "Oracle evidence has no independently recorded controlled sources"
     );
@@ -923,6 +1136,7 @@ pub(crate) fn verify_price_oracle_evidence(
                 && publication.oracle_block > 0
                 && publication.oracle_block <= publication.finalized_height
                 && publication.oracle_timestamp > 0
+                && publication.oracle_timestamp <= publication.finalized_timestamp
                 && publication.age_seconds
                     == publication
                         .finalized_timestamp
@@ -939,12 +1153,119 @@ pub(crate) fn verify_price_oracle_evidence(
             )),
             "Oracle evidence contains a duplicate publication"
         );
+        verify_publication_cohort(evidence, publication)?;
     }
     eyre::ensure!(
         !evidence.canonical_publications.is_empty(),
         "Oracle evidence has no canonical publications"
     );
 
+    Ok(())
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn verify_publication_cohort(
+    evidence: &PriceOracleEvidenceV1,
+    publication: &CanonicalPricePublicationV1,
+) -> Result<()> {
+    let phase = serde_json::to_value(publication.phase)?;
+    let mut matched = 0;
+    for entry in &evidence.cohorts {
+        for wrapper in &entry.observations {
+            let observation = &wrapper["observation"];
+            if observation["kind"].as_str() != Some("publication_verified")
+                || observation["phase"] != phase
+                || observation["base"].as_str() != Some(publication.base.as_str())
+                || observation["quote"].as_str() != Some(publication.quote.as_str())
+                || observation["oracle_block"].as_u64() != Some(publication.oracle_block)
+            {
+                continue;
+            }
+            matched += 1;
+            let checkpoint: OracleCheckpointV1 =
+                serde_json::from_value(observation["checkpoint"].clone())?;
+            let after = observation["strictly_after_block"]
+                .as_u64()
+                .ok_or_else(|| eyre!("Oracle proof has no publication lower bound"))?;
+            eyre::ensure!(
+                checkpoint.height == publication.finalized_height
+                    && checkpoint.height >= entry.cohort.checkpoint.height
+                    && after >= entry.cohort.checkpoint.height
+                    && checkpoint.block_hash != alloy_primitives::B256::ZERO
+                    && checkpoint.state_root != alloy_primitives::B256::ZERO
+                    && publication.oracle_block > after,
+                "Oracle proof checkpoint/advance mismatch"
+            );
+            let attempts: Vec<(usize, u32, u32)> =
+                serde_json::from_value(wrapper["current_attempts"].clone())?;
+            let history_len: usize =
+                serde_json::from_value(wrapper["process_history_len"].clone())?;
+            eyre::ensure!(
+                entry.first_process_record <= history_len
+                    && history_len <= evidence.feeder_processes.len(),
+                "Oracle proof has invalid process history bounds"
+            );
+            validate_live_feeder_indices(
+                &entry.cohort,
+                &attempts.iter().map(|attempt| attempt.0).collect::<Vec<_>>(),
+            )?;
+            for (index, attempt, pid) in attempts {
+                let member = entry
+                    .cohort
+                    .members
+                    .iter()
+                    .find(|member| member.index == index)
+                    .ok_or_else(|| eyre!("Oracle proof has an unknown feeder owner"))?;
+                let (record_index, process) = evidence.feeder_processes[..history_len]
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, process)| process.validator_index == index)
+                    .ok_or_else(|| eyre!("Oracle proof feeder has no captured launch record"))?;
+                eyre::ensure!(
+                    record_index >= entry.first_process_record
+                        && process.attempt == attempt
+                        && process.pid == pid
+                        && process
+                            .validator_address
+                            .parse::<alloy_primitives::Address>()?
+                            == member.address,
+                    "Oracle proof feeder is not the captured cohort incarnation"
+                );
+            }
+            let reads = observation["reads"]
+                .as_array()
+                .ok_or_else(|| eyre!("Oracle proof has no pinned peer reads"))?;
+            eyre::ensure!(
+                reads.len() == entry.cohort.members.len(),
+                "Oracle proof omitted a cohort peer"
+            );
+            for (read, member) in reads.iter().zip(&entry.cohort.members) {
+                let point: OracleCheckpointV1 = serde_json::from_value(read["checkpoint"].clone())?;
+                let rate: alloy_primitives::U256 = serde_json::from_value(read["rate"].clone())?;
+                let volume: alloy_primitives::U256 =
+                    serde_json::from_value(read["volume"].clone())?;
+                eyre::ensure!(
+                    read["port"].as_u64() == Some(u64::from(member.port))
+                        && read["finalized"]
+                            .as_u64()
+                            .is_some_and(|height| height >= point.height)
+                        && point == checkpoint
+                        && rate == publication.rate.parse::<alloy_primitives::U256>()?
+                        && volume == publication.volume.parse::<alloy_primitives::U256>()?
+                        && read["oracle_block"].as_u64() == Some(publication.oracle_block)
+                        && read["oracle_timestamp"].as_u64() == Some(publication.oracle_timestamp)
+                        && read["finalized_timestamp"].as_u64()
+                            == Some(publication.finalized_timestamp),
+                    "Oracle proof peer state/finality does not match publication"
+                );
+            }
+        }
+    }
+    eyre::ensure!(
+        matched == 1,
+        "Oracle publication requires exactly one complete cohort proof"
+    );
     Ok(())
 }
 
@@ -1040,6 +1361,198 @@ fn sha256_file(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cohort_fixture(overlapping_pairs: bool) -> OracleCohortV1 {
+        OracleCohortV1 {
+            checkpoint: OracleCheckpointV1 {
+                height: 20,
+                block_hash: alloy_primitives::B256::repeat_byte(1),
+                state_root: alloy_primitives::B256::repeat_byte(2),
+            },
+            members: (0..4)
+                .map(|index| OracleMemberV1 {
+                    index,
+                    address: alloy_primitives::Address::repeat_byte(
+                        u8::try_from(index + 1).unwrap(),
+                    ),
+                    port: 8000 + u16::try_from(index).unwrap(),
+                    node_pid: 100 + u32::try_from(index).unwrap(),
+                })
+                .collect(),
+            quorum: 3,
+            feeder_indices: if overlapping_pairs {
+                vec![0, 1, 2, 3]
+            } else {
+                vec![0, 1, 2]
+            },
+            overlapping_pairs,
+        }
+    }
+
+    #[test]
+    fn stopped_feeder_is_not_replenished_by_publication_checks() {
+        let cohort = cohort_fixture(false);
+        assert!(validate_live_feeder_indices(&cohort, &[0, 1, 2]).is_ok());
+        assert!(validate_live_feeder_indices(&cohort, &[0, 1]).is_err());
+        assert!(validate_live_feeder_indices(&cohort, &[0, 1, 1]).is_err());
+        assert!(validate_live_feeder_indices(&cohort, &[0, 1, 3]).is_err());
+        let overlap = cohort_fixture(true);
+        assert!(validate_live_feeder_indices(&overlap, &[0, 1, 3]).is_ok());
+        assert!(validate_live_feeder_indices(&overlap, &[0, 1, 2, 3]).is_ok());
+        assert!(validate_live_feeder_indices(&overlap, &[0, 1, 4]).is_err());
+    }
+
+    #[test]
+    fn public_cohort_retains_partial_observations_and_exact_attempts() {
+        let evidence = OracleCohortEvidenceV1 {
+            first_process_record: 3,
+            phase: OracleEvidencePhaseV1::ClockRestart,
+            cohort: cohort_fixture(false),
+            current_attempts: vec![(0, 2, 101), (1, 2, 102)],
+            observations: vec![serde_json::json!({"kind": "publication_error", "port": 8002})],
+        };
+        let encoded = serde_json::to_value(&evidence).unwrap();
+        assert_eq!(
+            serde_json::from_value::<OracleCohortEvidenceV1>(encoded).unwrap(),
+            evidence
+        );
+        assert_eq!(evidence.current_attempts.len(), 2); // incomplete launch is retained, not fabricated as quorum
+    }
+
+    #[test]
+    fn evidence_requires_the_mandatory_cohort_field() {
+        let mut encoded = serde_json::to_value(PriceOracleEvidenceV1::default()).unwrap();
+        assert_eq!(encoded["cohorts"], serde_json::json!([]));
+        encoded.as_object_mut().unwrap().remove("cohorts");
+        assert!(serde_json::from_value::<PriceOracleEvidenceV1>(encoded).is_err());
+    }
+
+    #[test]
+    fn publication_proof_requires_cohort_attempts_and_every_pinned_peer() {
+        let cohort = cohort_fixture(false);
+        let publication = CanonicalPricePublicationV1 {
+            phase: OracleEvidencePhaseV1::Initial,
+            validator_count: 4,
+            base: format!("{:#x}", alloy_primitives::Address::ZERO),
+            quote: format!("{:#x}", alloy_primitives::Address::repeat_byte(9)),
+            rate: "1000000".into(),
+            volume: "3000000000".into(),
+            oracle_block: 21,
+            oracle_timestamp: 100,
+            finalized_height: 22,
+            finalized_timestamp: 102,
+            age_seconds: 2,
+        };
+        let checkpoint = OracleCheckpointV1 {
+            height: 22,
+            ..cohort.checkpoint.clone()
+        };
+        let processes = cohort
+            .members
+            .iter()
+            .take(3)
+            .map(|member| FeederProcessEvidenceV1 {
+                validator_index: member.index,
+                validator_address: format!("{:#x}", member.address),
+                rpc_endpoint: format!("http://127.0.0.1:{}", member.port),
+                vote_period: crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS,
+                attempt: 1,
+                pid: 1000 + u32::try_from(member.index).unwrap(),
+                log: format!("validator-{}-feeder-attempt-1.log", member.index),
+                started_at_millis: 1,
+                stopped_at_millis: None,
+                oracle_pairs: vec!["COEN/840".into()],
+                source_markets: vec!["mock_http:COEN/840".into()],
+            })
+            .collect::<Vec<_>>();
+        let attempts = processes
+            .iter()
+            .map(|process| (process.validator_index, process.attempt, process.pid))
+            .collect::<Vec<_>>();
+        let reads = cohort.members.iter().map(|member| serde_json::json!({
+            "port": member.port, "finalized": 22, "checkpoint": checkpoint,
+            "rate": alloy_primitives::U256::from(1_000_000), "volume": alloy_primitives::U256::from(3_000_000_000u64),
+            "oracle_block": 21, "oracle_timestamp": 100, "finalized_timestamp": 102,
+        })).collect::<Vec<_>>();
+        let proof = serde_json::json!({
+            "process_history_len": 3,
+            "current_attempts": attempts,
+            "observation": {"kind": "publication_verified", "phase": publication.phase,
+                "base": publication.base, "quote": publication.quote, "oracle_block": 21,
+                "strictly_after_block": 20, "checkpoint": checkpoint, "reads": reads},
+        });
+        let evidence = PriceOracleEvidenceV1 {
+            feeder_processes: processes,
+            cohorts: vec![OracleCohortEvidenceV1 {
+                first_process_record: 0,
+                phase: OracleEvidencePhaseV1::Initial,
+                cohort,
+                current_attempts: attempts,
+                observations: vec![proof.clone()],
+            }],
+            ..PriceOracleEvidenceV1::default()
+        };
+        assert!(verify_publication_cohort(&evidence, &publication).is_ok());
+        for field in 0..12 {
+            let mut bad = evidence.clone();
+            match field {
+                0 => bad.cohorts.clear(),
+                1 => bad.cohorts[0].observations.clear(),
+                2 => bad.cohorts[0].observations.push(proof.clone()),
+                3 => {
+                    bad.cohorts[0].observations[0]["observation"]["reads"]
+                        .as_array_mut()
+                        .unwrap()
+                        .pop();
+                }
+                4 => {
+                    bad.cohorts[0].observations[0]["observation"]["reads"][3]["finalized"] =
+                        serde_json::json!(21)
+                }
+                5 => bad.cohorts[0].observations[0]["current_attempts"] = serde_json::json!([]),
+                6 => {
+                    bad.cohorts[0].observations[0]["observation"]["strictly_after_block"] =
+                        serde_json::json!(21)
+                }
+                7 => {
+                    bad.cohorts[0].observations[0]["observation"]["reads"][3]["checkpoint"]
+                        ["state_root"] = serde_json::json!(alloy_primitives::B256::ZERO)
+                }
+                8 => {
+                    bad.cohorts[0].observations[0]["observation"]["strictly_after_block"] =
+                        serde_json::json!(19)
+                }
+                9 => {
+                    bad.cohorts[0].observations[0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("process_history_len");
+                }
+                10 => bad.cohorts[0].observations[0]["process_history_len"] = serde_json::json!(4),
+                _ => bad.cohorts[0].first_process_record = 1,
+            }
+            assert!(
+                verify_publication_cohort(&bad, &publication).is_err(),
+                "field {field}"
+            );
+        }
+        let mut restarted = evidence.clone();
+        let mut next = restarted.feeder_processes[0].clone();
+        next.attempt = 2;
+        next.pid += 100;
+        restarted.feeder_processes[0].stopped_at_millis = Some(2);
+        restarted.feeder_processes.push(next);
+        // Later teardown/appends cannot invalidate an earlier capture.
+        assert!(verify_publication_cohort(&restarted, &publication).is_ok());
+        restarted.cohorts[0].observations[0]["process_history_len"] = serde_json::json!(4);
+        // A later capture cannot claim that the previous incarnation is current.
+        assert!(verify_publication_cohort(&restarted, &publication).is_err());
+        restarted.cohorts[0].observations[0]["current_attempts"][0] =
+            serde_json::json!([0, 2, 1100]);
+        assert!(verify_publication_cohort(&restarted, &publication).is_ok());
+        restarted.cohorts[0].observations[0]["process_history_len"] = serde_json::json!(3);
+        assert!(verify_publication_cohort(&restarted, &publication).is_err());
+    }
 
     fn coen_book(generation: u64, price: &str, volume: &str) -> PriceBook {
         PriceBook {

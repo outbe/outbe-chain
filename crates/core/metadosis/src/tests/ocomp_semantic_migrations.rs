@@ -65,6 +65,236 @@ fn close_completed_response_window(
     })
 }
 
+/// Retire the completed fixture's V1 through the production Registry lifecycle.
+/// Clear the fixture-only authority copy so it cannot hide the missing V1.
+fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
+    use outbe_ocompregistry::{OcompProtocolAuthorityV1, OcompRegistry, OcompSuccessorV1};
+
+    let proposal_id = U256::from(7);
+    let promotion_height = StorageHandle::enter(&mut fixture.provider, |storage| {
+        let contract = MetadosisContract::new(storage.clone());
+        let initial = OcompProtocolAuthorityV1 {
+            request_profile: contract
+                .read_ocomp_request_profile(&fixture.limits)
+                .unwrap()
+                .unwrap(),
+            protocol_bundle: contract
+                .read_ocomp_activation_authority(&fixture.limits)
+                .unwrap()
+                .unwrap()
+                .bundle,
+        };
+        let height = storage.block_number().unwrap();
+        let mut registry = OcompRegistry::new(storage);
+        registry
+            .initialize_genesis_authority(
+                &initial,
+                B256::repeat_byte(0x99),
+                height,
+                height,
+                &fixture.limits,
+            )
+            .unwrap();
+        let mut successor = initial.clone();
+        successor.protocol_bundle.protocol_version += 1;
+        successor.protocol_bundle.request_semantics_version += 1;
+        successor.protocol_bundle.fork_id = B256::repeat_byte(0xA1);
+        successor.protocol_bundle.lysis_program_semantics_hash = B256::repeat_byte(0xA2);
+        successor.request_profile.fork_id = successor.protocol_bundle.fork_id;
+        successor.request_profile.protocol_bundle_hash = successor
+            .protocol_bundle
+            .protocol_bundle_hash(&fixture.limits)
+            .unwrap();
+        registry
+            .stage_successor(
+                proposal_id,
+                &OcompSuccessorV1 {
+                    activation_height: height + 1,
+                    predecessor_protocol_bundle_hash: initial.request_profile.protocol_bundle_hash,
+                    authority: successor,
+                },
+                &fixture.limits,
+            )
+            .unwrap();
+        height + 1
+    });
+    fixture.provider.set_block_number(promotion_height);
+    let bundle_hash = fixture.result.protocol_bundle_hash;
+    let retirement_height = StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut registry = OcompRegistry::new(storage.clone());
+        registry
+            .promote_staged_successor(proposal_id, promotion_height, &fixture.limits)
+            .unwrap();
+        assert!(registry
+            .authority_by_bundle_hash(bundle_hash, &fixture.limits)
+            .unwrap()
+            .is_some());
+        assert!(!registry
+            .try_retire_predecessor(promotion_height, &fixture.limits)
+            .unwrap());
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+        registry.retention_until.read(&bundle_hash).unwrap()
+    });
+    fixture.provider.set_block_number(retirement_height);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut registry = OcompRegistry::new(storage.clone());
+        assert!(registry
+            .try_retire_predecessor(retirement_height, &fixture.limits)
+            .unwrap());
+        assert!(MetadosisContract::new(storage)
+            .read_ocomp_activation_authority_for_bundle(bundle_hash, &fixture.limits)
+            .unwrap()
+            .is_none());
+    });
+    retirement_height
+}
+
+#[test]
+fn completed_vote_replay_after_authority_retirement_is_a_noop() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    retire_completed_vote_authority(&mut fixture);
+    let before = fixture.rollback_snapshot();
+
+    assert_eq!(fixture.dispatch_current().unwrap(), Bytes::new());
+    assert_eq!(fixture.rollback_snapshot(), before);
+}
+
+#[test]
+fn fourth_timely_vote_after_authority_retirement_preserves_completed_lysis() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    let height = retire_completed_vote_authority(&mut fixture);
+    let before = fixture.semantic_snapshot();
+    let vote = fixture.signed_result_vote(3);
+    let quorum_before = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .quorum
+    });
+
+    assert_eq!(
+        submit_vote_result(&mut fixture, &vote, height + 1).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.semantic_snapshot(), before);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let accountability = MetadosisContract::new(storage)
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accountability.quorum, quorum_before);
+        assert_eq!(accountability.slots.iter().flatten().count(), 4);
+    });
+}
+
+#[test]
+fn invalid_votes_after_authority_retirement_revert_without_blocking_valid_votes() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    let height = retire_completed_vote_authority(&mut fixture);
+    let valid = fixture.signed_result_vote(2);
+    let before = fixture.rollback_snapshot();
+    let mut wrong_signature = valid.clone();
+    wrong_signature.signature_rs[0] ^= 1;
+    let mut wrong_binding = valid.clone();
+    wrong_binding.result_ocomp_binding_hash = B256::repeat_byte(0xEE);
+    let mut wrong_signer = valid.clone();
+    wrong_signer.ocomp_key_hash = B256::repeat_byte(0xEF);
+    for vote in [wrong_signature, wrong_binding, wrong_signer] {
+        assert!(matches!(
+            submit_vote_result(&mut fixture, &vote, height + 1),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+        assert_eq!(fixture.rollback_snapshot(), before);
+    }
+    assert_eq!(
+        submit_vote_result(&mut fixture, &valid, height + 2).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+}
+
+#[test]
+fn completed_vote_after_authority_retirement_still_obeys_exclusive_deadline() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    retire_completed_vote_authority(&mut fixture);
+    let vote = fixture.signed_result_vote(2);
+    let deadline = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+            .deadline_height
+    });
+    let before = fixture.rollback_snapshot();
+    assert_eq!(
+        submit_vote_result(&mut fixture, &vote, deadline - 1).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &vote, deadline),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+    assert_eq!(fixture.rollback_snapshot(), before);
+
+    fixture.seed_ocomp_recovery_stake_for_test();
+    close_completed_response_window(&mut fixture, deadline).unwrap();
+    let after_close = fixture.rollback_snapshot();
+    let error = submit_vote_result(&mut fixture, &vote, deadline + 1).unwrap_err();
+    assert!(crate::ocomp::vote::is_deadline_passed_result_vote_revert(
+        &error
+    ));
+    assert_eq!(fixture.rollback_snapshot(), after_close);
+}
+
+#[test]
+fn subquorum_vote_without_activation_authority_remains_fatal_and_atomic() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+    });
+    let before = fixture.rollback_snapshot();
+    // Repeating one of the two existing votes does not form quorum.
+    let vote = fixture.signed_result_vote(0);
+    assert!(
+        matches!(submit_vote_result(&mut fixture, &vote, 20), Err(PrecompileError::Fatal(message))
+        if message == "OCOMP activation authority is not installed")
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert_open_job_after_activation_rejection(&mut fixture);
+}
+
+#[test]
+fn first_quorum_without_activation_authority_remains_fatal_and_atomic() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+    });
+    let before = fixture.rollback_snapshot();
+    assert!(
+        matches!(fixture.apply(), Err(PrecompileError::Fatal(message))
+        if message == "OCOMP activation authority is not installed")
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert_open_job_after_activation_rejection(&mut fixture);
+}
+
 fn transition_validator_to_status_for_test(
     validators: &mut ValidatorSet<'_>,
     validator: Address,

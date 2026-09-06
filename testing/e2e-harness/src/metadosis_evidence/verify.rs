@@ -581,30 +581,57 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
         "fresh-devnet Oracle evidence requires four validators"
     );
     let quorum = validator_count - validator_count / 3;
-    let mut validator_indexes = BTreeSet::new();
-    let mut validator_addresses = BTreeSet::new();
-    let mut pids = BTreeSet::new();
-    for process in &evidence.feeder_processes {
-        let address = process
-            .validator_address
-            .parse::<alloy_primitives::Address>()
-            .wrap_err("decode fresh-devnet Oracle validator address")?;
+    ensure!(
+        evidence.feeder_processes.len() == quorum * 3,
+        "fresh-devnet Oracle requires the initial quorum and two clock restarts"
+    );
+    let mut identities = BTreeMap::new();
+    let mut previous_stops = BTreeMap::new();
+    for attempt in 1..=3 {
+        let mut validator_indexes = BTreeSet::new();
+        let mut validator_addresses = BTreeSet::new();
+        let mut pids = BTreeSet::new();
+        for process in evidence
+            .feeder_processes
+            .iter()
+            .filter(|row| row.attempt == attempt)
+        {
+            let address = process
+                .validator_address
+                .parse::<alloy_primitives::Address>()
+                .wrap_err("decode fresh-devnet Oracle validator address")?;
+            ensure!(
+                (attempt == 3) == process.stopped_at_millis.is_none()
+                    && process.oracle_pairs == ["COEN/840"]
+                    && process.source_markets == ["mock_http:COEN/840"]
+                    && !address.is_zero()
+                    && validator_indexes.insert(process.validator_index)
+                    && validator_addresses.insert(address)
+                    && pids.insert(process.pid),
+                "fresh-devnet Oracle evidence does not identify independent quorum feeders"
+            );
+            let identity = (address, process.rpc_endpoint.as_str(), process.vote_period);
+            if attempt == 1 {
+                identities.insert(process.validator_index, identity);
+            } else {
+                ensure!(
+                    identities.get(&process.validator_index) == Some(&identity)
+                        && previous_stops
+                            .get(&process.validator_index)
+                            .is_some_and(|stop| *stop <= process.started_at_millis),
+                    "fresh-devnet Oracle restart changed identity or overlapped its old process"
+                );
+            }
+            if let Some(stop) = process.stopped_at_millis {
+                previous_stops.insert(process.validator_index, stop);
+            }
+        }
         ensure!(
-            process.attempt == 1
-                && process.stopped_at_millis.is_none()
-                && process.oracle_pairs == ["COEN/840"]
-                && process.source_markets == ["mock_http:COEN/840"]
-                && !address.is_zero()
-                && validator_indexes.insert(process.validator_index)
-                && validator_addresses.insert(address)
-                && pids.insert(process.pid),
-            "fresh-devnet Oracle evidence does not identify independent quorum feeders"
+            validator_indexes == (0..quorum).collect(),
+            "fresh-devnet Oracle attempt has the wrong independent quorum"
         );
     }
-    ensure!(
-        evidence.feeder_processes.len() == quorum,
-        "fresh-devnet Oracle evidence has the wrong feeder quorum"
-    );
+    let validator_indexes = identities.keys().copied().collect::<BTreeSet<_>>();
 
     let source_rows = evidence
         .controlled_sources
@@ -622,8 +649,8 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
         })
         .collect::<BTreeSet<_>>();
     ensure!(
-        evidence.controlled_sources.len() == quorum * 2
-            && source_rows.len() == quorum * 2
+        evidence.controlled_sources.len() == quorum * 4
+            && source_rows.len() == quorum * 3
             && validator_indexes.iter().all(|validator_index| {
                 source_rows.contains(&(
                     *validator_index,
@@ -637,6 +664,28 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
             }),
         "fresh-devnet Oracle evidence is not bound to the initial controlled sources"
     );
+    for validator_index in &validator_indexes {
+        let restarts = evidence
+            .controlled_sources
+            .iter()
+            .filter(|source| {
+                source.validator_index == *validator_index
+                    && source.phase
+                        == crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            restarts.len() == 2
+                && restarts.iter().all(|source| {
+                    source.generation == 1
+                        && source.oracle_pair == "COEN/840"
+                        && source.source_market == "mock_http:COEN/840"
+                        && source.price == "1.000000"
+                        && source.volume == "1000.000000"
+                }),
+            "fresh-devnet Oracle sources do not cover both clock restarts"
+        );
+    }
     let updates = evidence
         .controlled_sources
         .iter()
@@ -677,6 +726,18 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
     ];
     let expected_base = format!("{:#x}", alloy_primitives::Address::ZERO);
     let expected_quote = format!("{:#x}", outbe_primitives::asset_type::currency_address(840));
+    ensure!(
+        evidence.cohorts.len() == 3,
+        "fresh-devnet Oracle needs exactly three launch cohorts"
+    );
+    for (index, entry) in evidence.cohorts.iter().enumerate() {
+        ensure!(
+            entry.first_process_record == index * quorum
+                && entry.phase == expected_phases[index]
+                && !entry.cohort.overlapping_pairs,
+            "fresh-devnet Oracle cohort does not match its launch stage"
+        );
+    }
     let mut previous_oracle_block = 0;
     ensure!(
         evidence.canonical_publications.len() == expected_phases.len(),
@@ -698,6 +759,29 @@ fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
             "fresh-devnet Oracle evidence has a divergent canonical publication"
         );
         previous_oracle_block = publication.oracle_block;
+        let cohort_index = index.min(2);
+        let entry = &evidence.cohorts[cohort_index];
+        let matching = entry
+            .observations
+            .iter()
+            .find(|wrapper| {
+                let observation = &wrapper["observation"];
+                observation["kind"].as_str() == Some("publication_verified")
+                    && observation["oracle_block"].as_u64() == Some(publication.oracle_block)
+                    && observation["phase"] == serde_json::json!(publication.phase)
+                    && observation["base"].as_str() == Some(publication.base.as_str())
+                    && observation["quote"].as_str() == Some(publication.quote.as_str())
+            })
+            .ok_or_else(|| eyre::eyre!("fresh-devnet publication has no matching launch cohort"))?;
+        let attempts: Vec<(usize, u32, u32)> =
+            serde_json::from_value(matching["current_attempts"].clone())?;
+        ensure!(
+            attempts.len() == quorum
+                && attempts.iter().all(|(_, attempt, _)| {
+                    usize::try_from(*attempt).ok() == Some(cohort_index + 1)
+                }),
+            "fresh-devnet publication references the wrong feeder restart"
+        );
     }
     ensure!(
         evidence.quorum_loss_windows.is_empty() && evidence.penalty_snapshots.is_empty(),
@@ -1349,26 +1433,26 @@ mod tests {
         let scenario_path = fresh.join("evidence/scenario-001.json");
         let oracle_base = format!("{:#x}", alloy_primitives::Address::ZERO);
         let oracle_quote = format!("{:#x}", outbe_primitives::asset_type::currency_address(840));
-        let oracle_processes = (0..3)
-            .map(|validator_index| {
+        let oracle_processes = (1..=3_u32)
+            .flat_map(|attempt| (0..3).map(move |validator_index| {
                 crate::world::price_oracle::FeederProcessEvidenceV1 {
                     validator_index,
                     validator_address: format!("0x{:040x}", validator_index + 1),
                     rpc_endpoint: format!("http://127.0.0.1:{}", 18_545 + validator_index),
                     vote_period: 8,
-                    attempt: 1,
-                    pid: 12_345 + u32::try_from(validator_index).unwrap(),
+                    attempt,
+                    pid: 12_345 + 100 * attempt + u32::try_from(validator_index).unwrap(),
                     log: format!(
-                        "fresh-devnet/evidence/price-oracle/validator-{validator_index}-feeder-attempt-1.log"
+                        "fresh-devnet/evidence/price-oracle/validator-{validator_index}-feeder-attempt-{attempt}.log"
                     ),
-                    started_at_millis: 1,
-                    stopped_at_millis: None,
+                    started_at_millis: u64::from(attempt) * 100,
+                    stopped_at_millis: (attempt < 3).then_some(u64::from(attempt) * 100 + 10),
                     oracle_pairs: vec!["COEN/840".to_owned()],
                     source_markets: vec!["mock_http:COEN/840".to_owned()],
                 }
-            })
+            }))
             .collect::<Vec<_>>();
-        let oracle_sources = (0..3)
+        let mut oracle_sources = (0..3)
             .flat_map(|validator_index| {
                 [
                     crate::world::price_oracle::ControlledSourceEvidenceV1 {
@@ -1392,6 +1476,19 @@ mod tests {
                 ]
             })
             .collect::<Vec<_>>();
+        oracle_sources.extend((0..3).flat_map(|validator_index| {
+            (0..2).map(
+                move |_| crate::world::price_oracle::ControlledSourceEvidenceV1 {
+                    phase: crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
+                    generation: 1,
+                    validator_index,
+                    oracle_pair: "COEN/840".to_owned(),
+                    source_market: "mock_http:COEN/840".to_owned(),
+                    price: "1.000000".to_owned(),
+                    volume: "1000.000000".to_owned(),
+                },
+            )
+        }));
         let oracle_publication = |phase, rate: &str, block, timestamp| {
             crate::world::price_oracle::CanonicalPricePublicationV1 {
                 phase,
@@ -1407,7 +1504,7 @@ mod tests {
                 age_seconds: 0,
             }
         };
-        let price_oracle = crate::world::price_oracle::PriceOracleEvidenceV1 {
+        let mut price_oracle = crate::world::price_oracle::PriceOracleEvidenceV1 {
             feeder_binary: artifacts.join("outbe-feeder").display().to_string(),
             feeder_binary_sha256: exact_binaries["outbe_feeder"]["sha256"]
                 .as_str()
@@ -1445,7 +1542,79 @@ mod tests {
             ],
             quorum_loss_windows: Vec::new(),
             penalty_snapshots: Vec::new(),
+            cohorts: Vec::new(),
         };
+        // The fixture models the initial launch and both real feeder restarts.
+        // Every publication carries the same mandatory cohort proof as a run.
+        for (attempt, publication_indexes) in [(1, vec![0]), (2, vec![1]), (3, vec![2, 3])] {
+            use crate::world::price_oracle::{
+                OracleCheckpointV1, OracleCohortEvidenceV1, OracleCohortV1, OracleMemberV1,
+            };
+            let first = &price_oracle.canonical_publications[publication_indexes[0]];
+            let members = (0..4)
+                .map(|index| OracleMemberV1 {
+                    index,
+                    address: format!("0x{:040x}", index + 1).parse().unwrap(),
+                    port: 18_545 + u16::try_from(index).unwrap(),
+                    node_pid: 10_000 + 100 * attempt + u32::try_from(index).unwrap(),
+                })
+                .collect::<Vec<_>>();
+            let attempts = price_oracle
+                .feeder_processes
+                .iter()
+                .filter(|process| process.attempt == attempt)
+                .map(|process| (process.validator_index, process.attempt, process.pid))
+                .collect::<Vec<_>>();
+            let cohort = OracleCohortV1 {
+                checkpoint: OracleCheckpointV1 {
+                    height: first.oracle_block - 1,
+                    block_hash: alloy_primitives::B256::repeat_byte(0x44),
+                    state_root: alloy_primitives::B256::repeat_byte(0x45),
+                },
+                members,
+                quorum: 3,
+                feeder_indices: vec![0, 1, 2],
+                overlapping_pairs: false,
+            };
+            let observations = publication_indexes
+                .into_iter()
+                .map(|index| {
+                    let publication = &price_oracle.canonical_publications[index];
+                    let checkpoint = OracleCheckpointV1 {
+                        height: publication.finalized_height,
+                        block_hash: alloy_primitives::B256::repeat_byte(0x55),
+                        state_root: alloy_primitives::B256::repeat_byte(0x56),
+                    };
+                    let reads = cohort.members.iter().map(|member| serde_json::json!({
+                    "port": member.port, "finalized": checkpoint.height,
+                    "checkpoint": checkpoint,
+                    "rate": publication.rate.parse::<alloy_primitives::U256>().unwrap(),
+                    "volume": publication.volume.parse::<alloy_primitives::U256>().unwrap(),
+                    "oracle_block": publication.oracle_block,
+                    "oracle_timestamp": publication.oracle_timestamp,
+                    "finalized_timestamp": publication.finalized_timestamp,
+                })).collect::<Vec<_>>();
+                    serde_json::json!({
+                        "process_history_len": attempt * 3,
+                        "current_attempts": attempts,
+                        "observation": {
+                            "kind": "publication_verified", "phase": publication.phase,
+                            "base": publication.base, "quote": publication.quote,
+                            "oracle_block": publication.oracle_block,
+                            "strictly_after_block": publication.oracle_block - 1,
+                            "checkpoint": checkpoint, "reads": reads,
+                        },
+                    })
+                })
+                .collect();
+            price_oracle.cohorts.push(OracleCohortEvidenceV1 {
+                first_process_record: usize::try_from((attempt - 1) * 3).unwrap(),
+                phase: first.phase,
+                cohort,
+                current_attempts: if attempt == 3 { attempts } else { Vec::new() },
+                observations,
+            });
+        }
         let mut scenario = serde_json::json!({
             "source": {
                 "sha": source.sha,
@@ -1594,6 +1763,37 @@ mod tests {
             process_artifacts: Vec::new(),
         };
         verify_fresh_devnet_process(root.path(), &receipt).unwrap();
+
+        // Verify capture ordering through the complete verifier, not only the
+        // publication helper: a proof cannot borrow another launch's history.
+        for defect in 0..4 {
+            let mut wrong = scenario.clone();
+            let cohorts = &mut wrong["price_oracle"]["cohorts"];
+            match defect {
+                0 => cohorts[0]["observations"][0]["process_history_len"] = serde_json::json!(4),
+                1 => {
+                    cohorts[2]["observations"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!({
+                            "process_history_len": 8,
+                            "current_attempts": [],
+                            "observation": {"kind": "diagnostic"},
+                        }));
+                }
+                2 => {
+                    cohorts[1]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("first_process_record");
+                }
+                _ => cohorts[1]["first_process_record"] = serde_json::json!(0),
+            }
+            assert!(
+                verify_price_oracle_evidence(&wrong).is_err(),
+                "accepted history defect {defect}"
+            );
+        }
 
         scenario["ocomp"]["topology"]["processes"]
             .as_array_mut()

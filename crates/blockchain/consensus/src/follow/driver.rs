@@ -40,6 +40,19 @@ const TIP_REFRESH_EVERY: u32 = 4;
 /// idempotent - a height already finalized locally is skipped by the marshal.
 const HINT_WINDOW: u64 = 64;
 
+fn hint_range(
+    processed: Option<Height>,
+    tip: Height,
+    ceiling: Option<Height>,
+) -> Option<std::ops::RangeInclusive<u64>> {
+    let processed = processed?.get();
+    let end = tip
+        .get()
+        .min(processed.saturating_add(HINT_WINDOW))
+        .min(ceiling?.get());
+    (end > processed).then(|| processed.saturating_add(1)..=end)
+}
+
 /// A stub target peer for `hint_finalized`. The follower has no real consensus
 /// peers; the resolver ignores targets and serves from the upstream regardless,
 /// but `hint_finalized` requires a non-empty target set.
@@ -80,6 +93,17 @@ where
 
     async fn run(mut self) {
         info!("follow driver started");
+        // Cancellation covers pending upstream and marshal queries as well as
+        // the polling sleep. A stopped marshal must never be polled for work.
+        let stopped = self.context.stopped();
+        tokio::select! {
+            biased;
+            _ = stopped => info!("follow driver stopped"),
+            _ = self.drive() => {},
+        }
+    }
+
+    async fn drive(&mut self) {
         // Last successfully discovered upstream tip. A fresh tip query can fail
         // transiently (e.g. the upstream RPC rate-limits our poll with HTTP 429);
         // we keep driving the marshal toward the last known tip rather than
@@ -116,40 +140,30 @@ where
     /// without ever leaving a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {
         // Marshal's processed floor (genesis anchor = height 0 on a fresh node).
-        let processed = self
-            .config
-            .marshal
-            .get_processed_height()
-            .await
-            .map_or(0, |h| h.get());
-        if processed >= tip.get() {
-            return; // caught up
-        }
-
-        let window_end = tip.get().min(processed.saturating_add(HINT_WINDOW));
-        let hint_end = self
-            .config
-            .epocher
-            .supported_ceiling()
-            .map_or(processed, |height| window_end.min(height.get()));
-        if hint_end <= processed {
+        let processed = self.config.marshal.get_processed_height().await;
+        let Some(range) = hint_range(processed, tip, self.config.epocher.supported_ceiling())
+        else {
             debug!(
                 tip = tip.get(),
-                processed, "follow driver waits for an authenticated epoch boundary"
+                processed = ?processed,
+                "follow driver has no eligible hint range"
             );
+            // Missing progress is not genesis or rollback. The engine supervises
+            // marshal termination; this driver must not fabricate new work.
             return;
-        }
+        };
 
         let targets = stub_targets();
-        let hint_start = processed.saturating_add(1);
-        for height in hint_start..=hint_end {
+        let hint_start = *range.start();
+        let hint_end = *range.end();
+        for height in range {
             self.config
                 .marshal
                 .hint_finalized(Height::new(height), targets.clone());
         }
         debug!(
             tip = tip.get(),
-            processed,
+            processed = ?processed,
             hint_start,
             hint_end,
             observed_ceiling = hint_end,
@@ -157,3 +171,7 @@ where
         );
     }
 }
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;

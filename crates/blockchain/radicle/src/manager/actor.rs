@@ -8,7 +8,10 @@ use super::{
 };
 use crate::endpoint::{EndpointAddress, VerifiedEndpoint};
 use alloy_primitives::Address;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 use tokio::{
     sync::{oneshot, watch},
     time::Instant,
@@ -99,7 +102,40 @@ impl RadicleManagerHandle {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
-        self.join.await.map_err(|_| ManagerError::Stopped)
+        (&mut self.join)
+            .await
+            .map_err(|error| ManagerError::Task(format!("manager: {error}")))
+    }
+
+    /// Own the task through graceful shutdown and bounded cancellation. Reserve
+    /// up to one second of `deadline` for joining after aborting a stalled task.
+    pub(crate) async fn shutdown_bounded(mut self, deadline: Duration) -> Result<(), ManagerError> {
+        let end = Instant::now() + deadline;
+        let drain_end = end - (deadline / 2).min(Duration::from_secs(1));
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        match tokio::time::timeout_at(drain_end, &mut self.join).await {
+            Ok(result) => result.map_err(|error| ManagerError::Task(format!("manager: {error}"))),
+            Err(_) => {
+                self.join.abort();
+                match tokio::time::timeout_at(end, &mut self.join).await {
+                    Ok(Err(error)) if !error.is_cancelled() => {
+                        Err(ManagerError::Task(format!("manager: {error}")))
+                    }
+                    Ok(_) => Err(ManagerError::ShutdownDeadline("manager")),
+                    Err(_) => Err(ManagerError::ShutdownDeadline("manager cancellation")),
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RadicleManagerHandle {
+    fn drop(&mut self) {
+        // An outer cancellation can only request abort here. The bounded shutdown
+        // path retains this handle and awaits completion before returning.
+        self.join.abort();
     }
 }
 
@@ -512,5 +548,197 @@ impl Runtime {
 
     fn publish(&self) {
         self.status_tx.send_replace(self.status.clone());
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use crate::integration::shutdown_bounded;
+
+    fn handle(join: tokio::task::JoinHandle<()>) -> RadicleManagerHandle {
+        let (_, status) = watch::channel(ManagerStatus::default());
+        RadicleManagerHandle {
+            status,
+            shutdown: None,
+            join,
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_preserves_manager_panic() {
+        let manager = handle(tokio::spawn(async { panic!("manager panic witness") }));
+        let error = manager.shutdown().await.unwrap_err();
+        assert!(
+            matches!(error, ManagerError::Task(ref message) if message.contains("manager panic witness"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_timeout_reaps_owned_manager_before_endpoint_cleanup() {
+        let (alive, mut dropped) = oneshot::channel::<()>();
+        let (started, ready) = oneshot::channel();
+        let manager = handle(tokio::spawn(async move {
+            let _alive = alive;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        }));
+        let task = manager.join.abort_handle();
+        ready.await.unwrap();
+        let error = shutdown_bounded(Duration::from_secs(2), manager, async {
+            assert!(
+                task.is_finished(),
+                "manager must finish before endpoint cleanup"
+            );
+            assert_eq!(
+                dropped.try_recv(),
+                Err(oneshot::error::TryRecvError::Closed)
+            );
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error, ManagerError::ShutdownDeadline("manager"));
+        assert!(task.is_finished());
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_owned_manager_before_endpoint() {
+        let (shutdown, requested) = oneshot::channel();
+        let (request, mut requests) = tokio::sync::mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        let endpoint = tokio::spawn(async move {
+            // The draining manager still needs a live endpoint to finish its task.
+            requests.recv().await.unwrap().send(()).unwrap();
+            assert!(requests.recv().await.is_none());
+        });
+        let mut manager = handle(tokio::spawn(async move {
+            requested.await.unwrap();
+            let (response, received) = oneshot::channel();
+            request.send(response).unwrap();
+            received.await.unwrap();
+        }));
+        manager.shutdown = Some(shutdown);
+        let task = manager.join.abort_handle();
+        shutdown_bounded(Duration::from_secs(2), manager, async {
+            assert!(task.is_finished());
+            endpoint.await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_preserves_manager_panic_and_still_cleans_endpoint() {
+        let manager = handle(tokio::spawn(async { panic!("manager panic witness") }));
+        let task = manager.join.abort_handle();
+        let error = shutdown_bounded(Duration::from_secs(2), manager, async {
+            assert!(task.is_finished());
+            Err(ManagerError::Endpoint("transport closed witness".into()))
+        })
+        .await
+        .unwrap_err();
+        let ManagerError::Shutdown { manager, endpoint } = error else {
+            panic!("both shutdown failures must be retained");
+        };
+        assert!(
+            matches!(*manager, ManagerError::Task(ref message) if message.contains("manager panic witness"))
+        );
+        assert_eq!(
+            *endpoint,
+            ManagerError::Endpoint("transport closed witness".into())
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_preserves_manager_destructor_panic() {
+        struct PanicOnDrop;
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                panic!("manager cancellation panic witness");
+            }
+        }
+        let (started, ready) = oneshot::channel();
+        let manager = handle(tokio::spawn(async move {
+            let _guard = PanicOnDrop;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        }));
+        ready.await.unwrap();
+        let task = manager.join.abort_handle();
+        let error = shutdown_bounded(Duration::from_secs(2), manager, async { Ok(()) })
+            .await
+            .unwrap_err();
+        assert!(task.is_finished());
+        assert!(
+            matches!(error, ManagerError::Task(ref message) if message.contains("manager cancellation panic witness"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_bounds_both_stages_and_cleans_endpoint_after_manager_timeout() {
+        let manager = handle(tokio::spawn(std::future::pending::<()>()));
+        let task = manager.join.abort_handle();
+        let start = Instant::now();
+        let error = shutdown_bounded(Duration::from_secs(2), manager, async {
+            assert!(task.is_finished());
+            std::future::pending::<Result<(), ManagerError>>().await
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error,
+            ManagerError::Shutdown {
+                manager: Box::new(ManagerError::ShutdownDeadline("manager")),
+                endpoint: Box::new(ManagerError::ShutdownDeadline("endpoint")),
+            }
+        );
+        assert!(start.elapsed() <= Duration::from_secs(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unreapable_manager_returns_cancellation_deadline() {
+        // A running blocking task cannot be cancelled. Keep a release channel so
+        // the test itself always cleans it up, including if an assertion fails.
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, ready) = oneshot::channel();
+        let (finished, done) = oneshot::channel();
+        let manager = handle(tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = blocked.recv();
+            let _ = finished.send(());
+        }));
+        ready.await.unwrap();
+        let task = manager.join.abort_handle();
+        let stopped = shutdown_bounded(Duration::from_secs(2), manager, async { Ok(()) });
+        tokio::pin!(stopped);
+        assert!(futures::poll!(&mut stopped).is_pending());
+        tokio::time::advance(Duration::from_secs(2)).await;
+        let error = stopped.await.unwrap_err();
+        let was_finished = task.is_finished();
+        release.send(()).unwrap();
+        done.await.unwrap();
+        assert_eq!(
+            error,
+            ManagerError::ShutdownDeadline("manager cancellation")
+        );
+        assert!(
+            !was_finished,
+            "an unreaped task must not be reported as reaped"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_manager_aborts_owned_task() {
+        let (alive, dropped) = oneshot::channel::<()>();
+        let manager = handle(tokio::spawn(async move {
+            let _alive = alive;
+            std::future::pending::<()>().await;
+        }));
+        drop(manager);
+        assert!(tokio::time::timeout(Duration::from_secs(1), dropped)
+            .await
+            .expect("manager must be dropped with handle")
+            .is_err());
     }
 }

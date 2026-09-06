@@ -844,6 +844,17 @@ impl ExecutionScope {
         self.opened_parent_tree().map(|tree| tree.parent_root())
     }
 
+    /// Best-effort context for a failed body check; never selects a different tree.
+    pub(crate) fn diagnostic_parent_binding(&self) -> String {
+        format!(
+            "binding={:?} rpc_read_only={}",
+            self.parent_identity_without_root
+                .lock()
+                .map(|binding| *binding),
+            self.rpc_read_only.load(Ordering::Acquire),
+        )
+    }
+
     /// Returns the exact root prepared from all CE mutations currently staged
     /// in the active block without closing the execution scope.
     pub fn provisional_sealed_root(&self) -> Result<B256> {

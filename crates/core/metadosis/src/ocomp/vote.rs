@@ -400,14 +400,6 @@ impl MetadosisContract<'_> {
                     "OCOMP result vote does not match pinned job binding",
                 ));
             }
-            let authority = self
-                .read_ocomp_activation_authority_for_bundle(
-                    record.intent.protocol_bundle_hash,
-                    limits,
-                )?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP activation authority is not installed")
-                })?;
             let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
                 storage.clone(),
                 record.intent.result_validator_set_epoch,
@@ -458,6 +450,17 @@ impl MetadosisContract<'_> {
             let quorum = accountability.quorum.clone();
 
             if !had_quorum {
+                // Uncertified jobs still require their installed authority.
+                // Completed jobs may receive verified votes after retirement;
+                // those votes must not require or reapply that authority.
+                let authority = self
+                    .read_ocomp_activation_authority_for_bundle(
+                        record.intent.protocol_bundle_hash,
+                        limits,
+                    )?
+                    .ok_or_else(|| {
+                        storage_corruption_message("OCOMP activation authority is not installed")
+                    })?;
                 if let Some(formed) = &quorum {
                     if record.status != OcompJobStatus::VotingOpen {
                         return Err(storage_corruption_message(

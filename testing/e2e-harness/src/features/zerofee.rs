@@ -189,17 +189,19 @@ fn restart_validator(world: &mut World, validator: String) {
         .kill_validator(index)
         .expect("kill validator");
     world.localnet.restart().expect("restart validator");
-    assert!(
-        world
-            .rpc
-            .wait_block(
-                world.validators.http_port(index),
-                before.saturating_add(1),
-                60,
-            )
-            .is_some(),
-        "restarted validator did not resume block sync"
-    );
+    let ports = world.validators.committee_ports();
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, before, 60)
+        .expect("restarted validator restores the committee finalized checkpoint");
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("sample the complete restored committee");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 60)
+        .expect("restored committee finalizes two fresh blocks");
 }
 
 #[when("the entire committee restarts after quota exhaustion")]
@@ -212,17 +214,19 @@ fn restart_committee(world: &mut World) {
         .localnet
         .restart_committee_and_enclaves()
         .expect("restart committee and enclaves");
-    assert!(
-        world
-            .rpc
-            .wait_block(
-                world.validators.primary_port(),
-                before.saturating_add(1),
-                90
-            )
-            .is_some(),
-        "committee did not resume after restart"
-    );
+    let ports = world.validators.committee_ports();
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, before, 90)
+        .expect("committee restores its finalized checkpoint after restart");
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("sample every restarted validator");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 90)
+        .expect("restarted committee finalizes two fresh blocks");
 }
 
 #[then("the exhausted ZeroFee state is identical on every validator")]

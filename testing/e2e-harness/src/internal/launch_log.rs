@@ -2,7 +2,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, SeekFrom};
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
 use eyre::{ensure, Result, WrapErr as _};
@@ -23,8 +23,30 @@ impl LaunchLog {
             .read(true)
             .append(true)
             .create(true)
+            .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
-        let start = file.metadata()?.len();
+        Self::capture(path, file)
+    }
+
+    /// Observe a new phase of an already running process. Unlike `arm`, this
+    /// must not create a missing log or accept messages written before the phase.
+    pub(crate) fn checkpoint(path: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .wrap_err_with(|| format!("open required phase log {}", path.display()))?;
+        Self::capture(path, file)
+    }
+
+    fn capture(path: &Path, file: File) -> Result<Self> {
+        let metadata = file.metadata()?;
+        ensure!(
+            metadata.is_file(),
+            "log is not a regular file: {}",
+            path.display()
+        );
+        let start = metadata.len();
         Ok(Self {
             path: path.to_owned(),
             file,
@@ -77,6 +99,54 @@ impl LaunchLog {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[test]
+    fn phase_log_requires_an_existing_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.log");
+        assert!(LaunchLog::checkpoint(&path).is_err());
+        assert!(!path.exists());
+        assert!(LaunchLog::checkpoint(dir.path()).is_err());
+        fs::write(&path, "").unwrap();
+        assert_eq!(LaunchLog::checkpoint(&path).unwrap().read().unwrap(), "");
+    }
+
+    #[test]
+    fn fifo_logs_are_rejected_without_waiting_for_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fifo.log");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(LaunchLog::checkpoint(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+        assert!(LaunchLog::arm(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+    }
+
+    #[test]
+    fn phase_log_excludes_earlier_messages_and_rejects_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.log");
+        fs::write(&path, "old phase success\n").unwrap();
+        let mut log = LaunchLog::checkpoint(&path).unwrap();
+        assert_eq!(log.read().unwrap(), "");
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(writer, "new phase").unwrap();
+        assert_eq!(log.read().unwrap(), "new phase\n");
+        log.seal().unwrap();
+        writeln!(writer, "later phase").unwrap();
+        assert_eq!(log.read().unwrap(), "new phase\n");
+        fs::rename(&path, dir.path().join("old.log")).unwrap();
+        fs::write(&path, "old phase success\nnew phase\nlater phase\n").unwrap();
+        assert!(log.read().is_err());
+    }
 
     #[test]
     fn launch_log_excludes_previous_and_subsequent_processes() {

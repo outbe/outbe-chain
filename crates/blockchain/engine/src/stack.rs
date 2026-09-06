@@ -203,10 +203,19 @@ async fn supervise_epoch_loop_result<E>(
     ctx: &E,
     outcome: Result<EpochLoopOutcome>,
     engine: &mut commonware_runtime::Handle<()>,
+    application: &crate::application_shutdown::ApplicationDrain,
 ) -> Result<EpochLoopAction>
 where
     E: Clock + Spawner,
 {
+    if matches!(
+        &outcome,
+        Err(_) | Ok(EpochLoopOutcome::EngineExit(_) | EpochLoopOutcome::StackExit)
+    ) {
+        // The outer stack owner retains and reports this shared drain result.
+        // Even on failure, finish its bounded cleanup before stopping transport.
+        let _ = application.drain().await;
+    }
     match outcome {
         Ok(EpochLoopOutcome::RestartEpoch) => Ok(EpochLoopAction::RestartEpoch),
         Ok(EpochLoopOutcome::ReplaceSigner) => {
@@ -293,6 +302,8 @@ type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 /// point from growing one positional argument for every execution-side
 /// subsystem.
 pub struct ConsensusStackServices {
+    application_drain: crate::application_shutdown::ApplicationDrain,
+    follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     retained_tribute_writer: Arc<RetainedTributeWriter>,
@@ -304,6 +315,7 @@ pub struct ConsensusStackServices {
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
+        outbe_radicle::integration::EndpointTaskOwner,
     )>,
 }
 
@@ -317,7 +329,9 @@ impl ConsensusStackServices {
         ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ) -> Self {
         Self {
+            application_drain: crate::application_shutdown::ApplicationDrain::default(),
             projection_readiness,
+            follower_shutdown: None,
             ocomp_readiness: None,
             retained_tribute_writer,
             projection_retention_fence,
@@ -327,6 +341,26 @@ impl ConsensusStackServices {
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             radicle_endpoint: None,
         }
+    }
+
+    /// Install the application pre-stop barrier shared with the runtime owner.
+    #[must_use]
+    pub fn with_application_drain(
+        mut self,
+        drain: crate::application_shutdown::ApplicationDrain,
+    ) -> Self {
+        self.application_drain = drain;
+        self
+    }
+
+    /// Install the NodeHost-owned follower pre-stop handshake.
+    #[must_use]
+    pub fn with_follower_shutdown(
+        mut self,
+        shutdown: crate::follower_shutdown::FollowerDrain,
+    ) -> Self {
+        self.follower_shutdown = Some(shutdown);
+        self
     }
 
     /// Installs the FullNode-only OCOMP execution barrier. Validator callers
@@ -343,9 +377,10 @@ impl ConsensusStackServices {
         status: outbe_radicle::integration::RadicleStatusHandle,
         endpoint: outbe_radicle::integration::EndpointNetworkService,
         local: outbe_radicle::integration::LocalEndpointIdentityHandle,
+        owner: outbe_radicle::integration::EndpointTaskOwner,
     ) -> Self {
         self.radicle_status = status;
-        self.radicle_endpoint = Some((endpoint, local));
+        self.radicle_endpoint = Some((endpoint, local, owner));
         self
     }
 }
@@ -2442,6 +2477,7 @@ async fn run_follow_stack<E>(
     retention_selector: Arc<SharedOcompRetentionSelector>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    follower_shutdown: crate::follower_shutdown::FollowerDrain,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -2529,6 +2565,7 @@ where
         finalized_ce_committer,
         ce_startup_recovery,
         ocomp_storage_root,
+        follower_shutdown,
     )
     .await
 }
@@ -2690,6 +2727,7 @@ async fn run_certified_follow_stack<E>(
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
     ocomp_storage_root: std::path::PathBuf,
+    follower_shutdown: crate::follower_shutdown::FollowerDrain,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -2860,8 +2898,7 @@ where
     let archive_block_tip =
         marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
     ensure!(
-        archive_finalization_tip == replay_suffix_upper
-            && archive_block_tip == replay_suffix_upper,
+        archive_finalization_tip == replay_suffix_upper && archive_block_tip == replay_suffix_upper,
         "certified follower replay normalization did not pair archive tips at height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
     );
     let preselected_anchor_height = archive_finalization_tip
@@ -3125,7 +3162,12 @@ where
         Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
         None => executor_actor,
     };
-    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let Some(executor_reporter) = follower_shutdown.install(executor_mailbox)? else {
+        // Shutdown won the startup race. No execution delivery was accepted.
+        return Ok(());
+    };
+    let observer_ingress = executor_reporter.clone();
+    let executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
@@ -3139,6 +3181,7 @@ where
     let observer_store = finalized_parent_cert_store.clone();
     let observer_bridge = bridge.clone();
     let finality_observer = async move {
+        let mut last_persisted = None;
         while let Some(height) = execution_finalized_height_rx.recv().await {
             if !follower_height_has_certified_finalization(height) {
                 continue;
@@ -3152,10 +3195,25 @@ where
             )
             .await?;
             observer_bridge.set_last_finalized_block_number(height);
+            last_persisted = Some(height);
         }
-        Err(eyre::eyre!(
-            "certified FullNode finality observer stopped before the follower engine"
-        ))
+        ensure!(
+            observer_ingress.is_quiescing()?,
+            "certified FullNode finality observer stopped before ingress quiesced"
+        );
+        if let Some(height) = last_persisted {
+            let processed = observer_mailbox
+                .get_processed_height()
+                .await
+                .ok_or_else(|| {
+                    eyre::eyre!("marshal unavailable before follower proof drain completed")
+                })?;
+            ensure!(
+                processed.get() >= height,
+                "marshal has not acknowledged follower proof drain: processed {processed}, persisted {height}"
+            );
+        }
+        Ok::<(), eyre::Report>(())
     };
     let follow_engine = run_follow_engine(
         ctx.child("follow_engine"),
@@ -3163,9 +3221,7 @@ where
             marshal_actor,
             marshal_mailbox,
             recovered_height: last_consensus_finalized,
-            executor_reporter: crate::marshal_update_reporter::MarshalUpdateReporter::new(
-                executor_mailbox,
-            ),
+            executor_reporter,
             upstream: upstream_client,
             local,
             tip: tip_client,
@@ -3175,12 +3231,16 @@ where
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
         },
     );
-    tokio::pin!(finality_observer);
-    tokio::pin!(follow_engine);
-    tokio::select! {
-        result = &mut follow_engine => result,
-        result = &mut finality_observer => result,
-    }
+    let executor_exit = async move {
+        executor_handle
+            .await
+            .map_err(|error| eyre::eyre!("certified follower executor task failed: {error:?}"))?
+    };
+    // A clean marshal stop must not hide an executor error observed while its
+    // mailbox drains, nor discard a queued finality reconciliation.
+    let accepted_work = follower_shutdown.finish(executor_exit, finality_observer);
+    futures::try_join!(follow_engine, accepted_work)?;
+    Ok(())
 }
 
 fn validate_testnet_only_flags(
@@ -3235,7 +3295,14 @@ where
         + Sync
         + 'static,
 {
-    run_consensus_stack_inner(ctx, args, node, bridge, services)
+    let application = services.application_drain.clone();
+    async move {
+        // Do not spawn the fallible body in a child supervision task: completing
+        // that task would abort its network before the application can drain.
+        application
+            .finish(run_consensus_stack_inner(ctx, args, node, bridge, services))
+            .await
+    }
 }
 
 async fn run_consensus_stack_inner<E>(
@@ -3259,6 +3326,8 @@ where
         + 'static,
 {
     let ConsensusStackServices {
+        application_drain,
+        follower_shutdown,
         projection_readiness,
         ocomp_readiness,
         retained_tribute_writer,
@@ -3303,6 +3372,8 @@ where
             retention_selector,
             finalized_ce_committer,
             ce_startup_recovery,
+            follower_shutdown
+                .ok_or_else(|| eyre::eyre!("follower pre-stop handshake is not installed"))?,
         )
         .await;
     }
@@ -3442,14 +3513,19 @@ where
     let mut network_handle = network.start();
     info!("P2P network started");
 
-    if let (Some((endpoint, local)), Some((sender, receiver))) = (radicle_endpoint, radicle_channel)
+    if let (Some((endpoint, local, owner)), Some((sender, receiver))) =
+        (radicle_endpoint, radicle_channel)
     {
         let signer = signing_key.clone();
-        tokio::spawn(async move {
-            if let Err(error) = endpoint.run(sender, receiver, signer, local).await {
+        if !owner.start(async move {
+            let result = endpoint.run(sender, receiver, signer, local).await;
+            if let Err(error) = &result {
                 tracing::warn!(%error, "Radicle endpoint actor stopped");
             }
-        });
+            result
+        })? {
+            return Ok(());
+        }
     }
 
     // -- 5. Create Muxers from physical channels ------------------------
@@ -6768,7 +6844,14 @@ where
         }
         .await;
 
-        match supervise_epoch_loop_result(&ctx, epoch_loop_result, &mut engine_handle_task).await? {
+        match supervise_epoch_loop_result(
+            &ctx,
+            epoch_loop_result,
+            &mut engine_handle_task,
+            &application_drain,
+        )
+        .await?
+        {
             EpochLoopAction::RestartEpoch => continue 'epoch_loop,
             EpochLoopAction::ReplaceSigner => {
                 replacement_epoch_subchannels = Some(

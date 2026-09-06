@@ -38,9 +38,6 @@ ocomp-integration = [
     "dep:outbe-tee-enclave",
     "dep:reth-provider",
 ]
-# Real MongoDB tests spawn Docker. Keep them out of workspace-wide unit and
-# coverage runs even when `ocomp-integration` is enabled by feature unification.
-managed-mongodb-integration = ["ocomp-integration"]
 release-sgx-e2e = []
 
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
@@ -66,7 +63,6 @@ serde_yaml_ng.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
 tempfile.workspace = true
-mongodb.workspace = true
 hex.workspace = true
 multibase.workspace = true
 libc.workspace = true
@@ -177,7 +173,7 @@ required-features = ["ocomp-integration"]
 [[test]]
 name = "ocomp_checkpoint_handoff"
 path = "tests/ocomp_checkpoint_handoff.rs"
-required-features = ["managed-mongodb-integration"]
+required-features = ["ocomp-integration"]
 
 [lints]
 workspace = true

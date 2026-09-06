@@ -75,7 +75,8 @@ pub(crate) fn read(
         }
         PendingWord::Deleted => Ok(None),
         PendingWord::Untouched => {
-            let Some(commitment) = scope.read_parent_leaf_verified(entity, state.root()?)? else {
+            let parent_root = state.root()?;
+            let Some(commitment) = scope.read_parent_leaf_verified(entity, parent_root)? else {
                 return Ok(None);
             };
             let stored = parent
@@ -87,7 +88,20 @@ pub(crate) fn read(
                     ))
                 })?;
             charge_body_read(&storage, scope, stored.encode().len())?;
-            verify_stored(entity, stored, commitment, BodyOrigin::Parent).map(Some)
+            verify_stored(entity, stored, commitment, BodyOrigin::Parent)
+                .map(Some)
+                .map_err(|error| match error {
+                    PrecompileError::BodyReadCorruption(message) => {
+                        PrecompileError::BodyReadCorruption(format!(
+                            "{message}; [CE_BODY_DIAGNOSTIC] evm_block={:?} evm_ce_root={parent_root} parent_root={:?} {} thread={:?}",
+                            storage.block_number(),
+                            scope.parent_root(),
+                            scope.diagnostic_parent_binding(),
+                            std::thread::current().id(),
+                        ))
+                    }
+                    other => other,
+                })
         }
     }
 }
@@ -400,7 +414,17 @@ fn verify_stored(
     let actual = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
         .map_err(|error| origin.invalid(error.to_string()))?;
     if actual != expected {
-        return Err(origin.invalid(format!("body commitment mismatch for {entity_id}")));
+        // Preserve the exact authenticated input, not a re-encoded replacement.
+        // Bodies are canonical on-chain event payloads, never enclave key material.
+        return Err(origin.invalid(format!(
+            "body commitment mismatch for {entity_id}; [CE_BODY_DIAGNOSTIC] entity={entity:?} origin={origin:?} scheme={ACTIVE_COMMITMENT_SCHEME} schema={} expected=0x{} actual=0x{} payload_len={} payload_hex={} stored_body_hex={} decoded={verified_payload:?}",
+            stored_body.schema_version(),
+            hex::encode(expected.as_bytes()),
+            hex::encode(actual.as_bytes()),
+            payload.len(),
+            hex::encode(payload),
+            hex::encode(stored_body.encode()),
+        )));
     }
     Ok(VerifiedBody {
         entity,
@@ -702,7 +726,7 @@ fn input_error(error: impl core::fmt::Display) -> PrecompileError {
     revert(error.to_string())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum BodyOrigin {
     Overlay,
     Parent,

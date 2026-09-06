@@ -527,6 +527,37 @@ fn test_activate_deactivate() {
     });
 }
 
+#[test]
+fn deactivation_rejection_reasons_preserve_validator_state() {
+    let validator = address!("0x4444444444444444444444444444444444444444");
+    let outsider = address!("0x9999999999999999999999999999999999999999");
+    with_vs_configured(10, |vs| {
+        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(4))
+            .unwrap();
+        activate_staked_for_test(vs, validator);
+        let active = vs.validator_state(validator).unwrap();
+        let pending = vs.pending_set_change.read().unwrap();
+        assert!(matches!(
+            vs.deactivate_validator(outsider, validator),
+            Err(PrecompileError::Revert(reason))
+                if reason == "unauthorized: caller must be owner or validator itself"
+        ));
+        assert_eq!(vs.validator_state(validator).unwrap(), active);
+        assert_eq!(vs.pending_set_change.read().unwrap(), pending);
+
+        vs.deactivate_validator(validator, validator).unwrap();
+        let exiting = vs.validator_state(validator).unwrap();
+        let pending = vs.pending_set_change.read().unwrap();
+        assert!(matches!(
+            vs.deactivate_validator(validator, validator),
+            Err(PrecompileError::Revert(reason))
+                if reason == "can only deactivate an active validator"
+        ));
+        assert_eq!(vs.validator_state(validator).unwrap(), exiting);
+        assert_eq!(vs.pending_set_change.read().unwrap(), pending);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // 6. test_force_exit
 // ---------------------------------------------------------------------------
