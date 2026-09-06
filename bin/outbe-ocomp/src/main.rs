@@ -25,7 +25,7 @@ use outbe_ocomp::supervisor::DiscoveryRecord;
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_observability::SnapshotExporterObservabilityServerV1;
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
-use outbe_offchain_storage::MongoStorageConfig;
+use outbe_offchain_storage::StorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
 
 #[derive(Debug, Parser)]
@@ -79,7 +79,6 @@ const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const OCOMP_RPC_MAX_RESPONSE_BYTES: usize = 33_554_432;
 const EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const OCOMP_TRIBUTE_PAGE_LIMIT: usize = 256;
-const PROJECTION_START_BLOCK: u64 = 1;
 const PROTOCOL_BUNDLE_HASHES_ENV: &str = "OCOMP_PROTOCOL_BUNDLE_HASHES";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -330,10 +329,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     let bundle_hashes = required_protocol_bundle_hashes()?;
     install_consensus_domain(chain_id)?;
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
-    let mongo = MongoStorageConfig {
-        uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
-        database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
-    };
+    let storage = StorageConfig::load(required_env("OUTBE_OCOMP_STORAGE_CONFIG")?)?;
     let mut lanes = BTreeMap::new();
     for protocol_bundle_hash in bundle_hashes {
         let protocol_bundle = PinnedProtocolBundle::decode(
@@ -347,8 +343,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         let exporter_config = RpcInputExporterConfigV1 {
             rpc_url: rpc_url.clone(),
             rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-            mongo: mongo.clone(),
-            projection_start_block: PROJECTION_START_BLOCK,
+            storage: storage.clone(),
             tribute_page_limit: OCOMP_TRIBUTE_PAGE_LIMIT,
             chain_id,
             genesis_hash,

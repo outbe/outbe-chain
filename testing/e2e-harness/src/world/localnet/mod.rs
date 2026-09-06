@@ -418,14 +418,7 @@ impl Localnet {
             .collect::<Vec<_>>();
         ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
-        cmd.env(
-            "OUTBE_PROJECTION_MONGODB_URI",
-            &self.cfg.projection_mongodb_uri,
-        )
-        .env(
-            "OUTBE_PROJECTION_MONGODB_DATABASE",
-            self.projection_database_name(&node_slot_projection_identity(index)),
-        );
+        crate::world::projection::configure_node_command(&self.cfg, index, &mut cmd)?;
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
             let rest: Vec<String> = cmd
@@ -441,13 +434,6 @@ impl Localnet {
             eprintln!("[localnet] {label} pid {}", guard.pid());
         }
         Ok(guard)
-    }
-
-    fn projection_database_name(&self, identity: &str) -> String {
-        format!(
-            "{}_scenario_{}_{}",
-            self.cfg.projection_database_prefix, self.cfg.scenario, identity
-        )
     }
 
     // ---- teardown ------------------------------------------------------------
@@ -529,10 +515,6 @@ impl Localnet {
     pub fn stop(&mut self) -> Result<()> {
         self.shutdown()
     }
-}
-
-fn node_slot_projection_identity(index: usize) -> String {
-    format!("validator-{index}")
 }
 
 fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
@@ -681,16 +663,6 @@ mod tests {
         assert_eq!(configured_timeout(TeeMode::SgxNoAttest), expected);
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::GramineDirect), None);
-    }
-
-    #[test]
-    fn projection_identity_is_bound_to_the_node_slot_not_its_runtime_role() {
-        assert_eq!(node_slot_projection_identity(4), "validator-4");
-        assert_ne!(
-            node_slot_projection_identity(4),
-            Localnet::joiner_full_node_name(4),
-            "the FullNode process label must not select its durable Mongo projection"
-        );
     }
 
     #[test]

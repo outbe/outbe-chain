@@ -2557,7 +2557,7 @@ fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
             .expect("last capacity transaction"),
     ] {
         world
-            .mongodb
+            .projection
             .wait_for_tribute_projection(transaction_hash, 60)
             .unwrap_or_else(|error| {
                 panic!(
@@ -3264,7 +3264,7 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         "V2-era Tribute transaction failed: {tribute_tx}"
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(&tribute_tx, 240)
         .expect("all exporters project the V2-era Tribute");
 
@@ -5952,7 +5952,7 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
         "independent next-day Tribute transaction failed: {tribute_tx}"
     );
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(&tribute_tx, 240)
         .expect("all exporters project the independent next-day Tribute");
     world.state.tribute_tx_hash = Some(tribute_tx);
@@ -6122,7 +6122,7 @@ fn pause_projection_mongodb(world: &mut World) {
             .expect("finalized height before projection outage"),
     );
     world
-        .mongodb
+        .projection
         .pause_managed()
         .expect("pause scenario-owned projection MongoDB");
 }
@@ -6145,7 +6145,7 @@ fn finality_survives_projection_mongodb_outage(world: &mut World) {
         .finalized(primary)
         .expect("finality during outage");
     world
-        .mongodb
+        .projection
         .resume_managed()
         .expect("resume scenario-owned projection MongoDB");
     assert!(

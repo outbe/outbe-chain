@@ -27,8 +27,6 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("zero shares received from vault")]
-    ZeroSharesReceived,
     #[error("payment token has unsupported decimals {0}")]
     UnsupportedPaymentDecimals(u8),
     #[error("payment token {0} has no registered vault")]
@@ -66,6 +64,18 @@ pub enum IntexFactoryError {
     GroupAlreadyIndexed {
         iso: u16,
         worldwide_day: outbe_primitives::time::WorldwideDay,
+    },
+
+    #[error("PayNote proof names spender {actual}, expected {expected}")]
+    PayNoteSpenderMismatch {
+        expected: alloy_primitives::Address,
+        actual: alloy_primitives::Address,
+    },
+
+    #[error("PayNote spends {covered}, settlement costs {required}")]
+    PayNoteUndercoversCost {
+        covered: u128,
+        required: alloy_primitives::U256,
     },
 }
 

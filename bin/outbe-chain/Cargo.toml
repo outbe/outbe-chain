@@ -25,6 +25,7 @@ outbe-evm.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
+outbe-offchain-storage.workspace = true
 outbe-ocomp.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-ocompregistry.workspace = true

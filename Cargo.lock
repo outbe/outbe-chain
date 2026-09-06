@@ -8161,6 +8161,7 @@ dependencies = [
  "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
+ "outbe-offchain-storage",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
@@ -8726,6 +8727,7 @@ dependencies = [
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
+ "outbe-paynote",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
@@ -8733,6 +8735,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultrouter",
+ "outbe-zkproof",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8802,10 +8805,12 @@ dependencies = [
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",
+ "outbe-paynote",
  "outbe-primitives",
  "outbe-promisfactory",
  "outbe-promislimit",
  "outbe-vaultrouter",
+ "outbe-zkproof",
  "ring",
  "thiserror 2.0.18",
  "tracing",
@@ -9166,7 +9171,11 @@ dependencies = [
  "hex",
  "mongodb",
  "parking_lot",
+ "rocksdb",
+ "serde",
+ "tempfile",
  "thiserror 2.0.18",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -9827,7 +9836,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-cca",
  "outbe-macros",
+ "outbe-oracle",
  "outbe-primitives",
  "thiserror 2.0.18",
 ]

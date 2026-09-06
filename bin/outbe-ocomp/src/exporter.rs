@@ -1,6 +1,6 @@
 //! Bounded, authenticated Tribute body stream for the LYSIS_V1 exporter.
 //!
-//! Mongo is used only to discover candidate identities and transport canonical
+//! Projection storage is used only to discover candidate identities and transport canonical
 //! body bytes. Every candidate is reconciled with the exact CE partition view,
 //! and final completeness closes against CE count plus JobIntent nominal total.
 

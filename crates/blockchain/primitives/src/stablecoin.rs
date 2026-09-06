@@ -12,8 +12,10 @@
 //! || ticker bytes
 //! ```
 
+use crate::error::PrecompileError;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Canonical proposal version encoded in the JSON payload.
 pub const STABLECOIN_CREATE_VERSION: u8 = 1;
@@ -79,6 +81,26 @@ pub fn iso_4217_alpha(iso_code: u16) -> Option<[u8; 3]> {
         .binary_search(&iso_code)
         .ok()
         .map(|index| ISO_4217_ALPHA[index])
+}
+
+pub fn validate_currency_code(iso_code: u16) -> Result<(), CurrencyCodeError> {
+    if iso_4217_alpha(iso_code).is_none() {
+        return Err(CurrencyCodeError::InvalidCurrency { currency: iso_code });
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum CurrencyCodeError {
+    #[error("Invalid currency code {currency}")]
+    InvalidCurrency { currency: u16 },
+}
+
+impl From<CurrencyCodeError> for PrecompileError {
+    fn from(value: CurrencyCodeError) -> Self {
+        PrecompileError::Revert(value.to_string())
+    }
 }
 
 /// Validated fields carried by a canonical stablecoin-creation proposal.

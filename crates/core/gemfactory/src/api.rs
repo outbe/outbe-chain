@@ -49,9 +49,9 @@ pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
-    asset: Address,
+    paynote_proof: &[u8],
 ) -> Result<()> {
-    runtime::settle_gem(storage, caller, gem_id, asset)
+    runtime::settle_gem(storage, caller, gem_id, paynote_proof)
 }
 
 pub fn mine_promis(

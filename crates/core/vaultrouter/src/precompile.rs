@@ -175,6 +175,27 @@ fn dispatch_local(
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
+
+            // --- rebalance (CCA-gated; caller supplies the destination asset) ---
+            rebalance(c) => mutate(c, caller, |sender, c| {
+                runtime::rebalance(
+                    storage.clone(),
+                    sender,
+                    c.vaultFrom,
+                    c.vaultTo,
+                    c.assetsAmount,
+                    c.maxAmountTo,
+                )
+            }),
+            previewRebalance(c) => view(c, |c| {
+                let (asset_from, asset_to, amount_to) =
+                    runtime::preview_rebalance(&storage, c.vaultFrom, c.vaultTo, c.assetsAmount)?;
+                Ok(IVaultRouter::previewRebalanceReturn {
+                    assetFrom: asset_from,
+                    assetTo: asset_to,
+                    amountTo: amount_to,
+                })
+            }),
         }
     })
 }
