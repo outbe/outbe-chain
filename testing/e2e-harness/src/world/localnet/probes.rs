@@ -3,8 +3,6 @@
 
 use std::fs;
 use std::fs::File;
-#[cfg(feature = "ocomp-integration")]
-use std::io::{BufRead as _, BufReader};
 use std::io::{Read as _, Seek as _, SeekFrom};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::os::unix::fs::MetadataExt as _;
@@ -14,12 +12,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use eyre::bail;
 use eyre::{ensure, Result, WrapErr};
 use serde::Serialize;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
 
 use crate::internal::proc::{first_hex, run_capture, ChildGuard};
 
@@ -397,118 +392,6 @@ impl Localnet {
         &self.cfg.dir
     }
 
-    /// Returns the real Reth processing duration for one exact canonical block
-    /// on one validator. This observes the runtime record emitted by the block
-    /// import path; it does not re-execute the block through debug RPC.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn validator_block_processing_micros(
-        &self,
-        validator_index: usize,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Result<u64> {
-        ensure!(
-            validator_index < self.committee_size(),
-            "validator index {validator_index} is outside the committee"
-        );
-        let mut observed = None;
-        let root = self.cfg.validator_dir(validator_index).join("logs");
-        for path in reth_log_paths(&root)? {
-            let file = File::open(&path)
-                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line
-                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
-                let Some(micros) =
-                    parse_canonical_block_processing_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse canonical block record in {}", path.display())
-                        })?
-                else {
-                    continue;
-                };
-                ensure!(
-                    observed.replace(micros).is_none(),
-                    "validator {validator_index} has multiple canonical block records for \
-                     {block_number}/{block_hash:#x}"
-                );
-            }
-        }
-        observed.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no canonical block record for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })
-    }
-
-    /// Returns the observed wall-clock latency between canonical application
-    /// and finalization acknowledgement for one exact block on one validator.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn validator_finality_latency_micros(
-        &self,
-        validator_index: usize,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Result<u64> {
-        ensure!(
-            validator_index < self.committee_size(),
-            "validator index {validator_index} is outside the committee"
-        );
-        let mut canonical_at = None;
-        let mut finalized_at = None;
-        let root = self.cfg.validator_dir(validator_index).join("logs");
-        for path in reth_log_paths(&root)? {
-            let file = File::open(&path)
-                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line
-                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
-                if let Some(observed_at) =
-                    parse_canonical_block_observed_at_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse canonical block timestamp in {}", path.display())
-                        })?
-                {
-                    ensure!(
-                        canonical_at.replace(observed_at).is_none(),
-                        "validator {validator_index} has multiple canonical timestamps for \
-                         {block_number}/{block_hash:#x}"
-                    );
-                }
-                if let Some(observed_at) =
-                    parse_finalized_block_observed_at_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse finalized block timestamp in {}", path.display())
-                        })?
-                {
-                    ensure!(
-                        finalized_at.replace(observed_at).is_none(),
-                        "validator {validator_index} has multiple finalization timestamps for \
-                         {block_number}/{block_hash:#x}"
-                    );
-                }
-            }
-        }
-        let canonical_at = canonical_at.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no canonical timestamp for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })?;
-        let finalized_at = finalized_at.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no finalization timestamp for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })?;
-        let latency = finalized_at
-            .checked_sub(canonical_at)
-            .ok_or_else(|| eyre::eyre!("finalization timestamp precedes canonical application"))?;
-        ensure!(latency > 0, "observed finality latency must be positive");
-        Ok(latency)
-    }
-
     /// Forces one validator to reconstruct CE from preserved canonical Reth
     /// history and returns the exact successful replay span emitted by the
     /// testnet startup gate.
@@ -824,98 +707,6 @@ fn collect_reth_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_canonical_block_processing_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("Block added to canonical chain") {
-        return Ok(None);
-    }
-    let Some(number) = structured_field(line, "number") else {
-        bail!("canonical block record has no number");
-    };
-    let number = number
-        .parse::<u64>()
-        .wrap_err("canonical block number is not u64")?;
-    let Some(hash) = structured_field(line, "hash") else {
-        bail!("canonical block record has no hash");
-    };
-    let hash = hash
-        .parse::<B256>()
-        .wrap_err("canonical block hash is not B256")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    let Some(elapsed) = structured_field(line, "elapsed") else {
-        bail!("canonical block record has no elapsed duration");
-    };
-    Ok(Some(parse_duration_micros_ceil(elapsed)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_canonical_block_observed_at_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("Block added to canonical chain") {
-        return Ok(None);
-    }
-    let number = required_log_u64_field(line, "number", "canonical block")?;
-    let hash = required_log_hash_field(line, "hash", "canonical block")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    Ok(Some(parse_log_timestamp_micros(line)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_finalized_block_observed_at_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("marshal-delivered block finalized and acked") {
-        return Ok(None);
-    }
-    let number = required_log_u64_field(line, "height", "finalized block")?;
-    let hash = required_log_hash_field(line, "digest", "finalized block")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    Ok(Some(parse_log_timestamp_micros(line)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn required_log_u64_field(line: &str, name: &str, record: &str) -> Result<u64> {
-    structured_field(line, name)
-        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
-        .parse::<u64>()
-        .wrap_err_with(|| format!("{record} {name} is not u64"))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn required_log_hash_field(line: &str, name: &str, record: &str) -> Result<B256> {
-    structured_field(line, name)
-        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
-        .parse::<B256>()
-        .wrap_err_with(|| format!("{record} {name} is not B256"))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_log_timestamp_micros(line: &str) -> Result<u64> {
-    let timestamp = line
-        .split_ascii_whitespace()
-        .next()
-        .ok_or_else(|| eyre::eyre!("runtime log record has no timestamp"))?;
-    let timestamp = OffsetDateTime::parse(timestamp, &Rfc3339)
-        .wrap_err("runtime log timestamp is not RFC3339")?;
-    let micros = timestamp.unix_timestamp_nanos() / 1_000;
-    u64::try_from(micros).wrap_err("runtime log timestamp is before Unix epoch or exceeds u64")
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn parse_ce_startup_replay(
     line: &str,
     validator_index: u8,
@@ -967,60 +758,6 @@ fn structured_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
         .find_map(|(field, value)| (field == name).then_some(value))
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
-    let (number, nanos_per_unit) = [
-        ("ms", 1_000_000_u128),
-        ("us", 1_000_u128),
-        ("\u{00b5}s", 1_000_u128),
-        ("ns", 1_u128),
-        ("s", 1_000_000_000_u128),
-    ]
-    .into_iter()
-    .find_map(|(suffix, scale)| encoded.strip_suffix(suffix).map(|value| (value, scale)))
-    .ok_or_else(|| eyre::eyre!("unsupported duration unit in {encoded}"))?;
-    let decimal = number.split_once('.');
-    let (whole, fraction) = decimal.unwrap_or((number, ""));
-    ensure!(
-        !whole.is_empty()
-            && whole.bytes().all(|byte| byte.is_ascii_digit())
-            && (decimal.is_none() || !fraction.is_empty())
-            && fraction.bytes().all(|byte| byte.is_ascii_digit())
-            && fraction.len() <= 18,
-        "malformed duration {encoded}"
-    );
-    let whole = whole.parse::<u128>().wrap_err("duration whole overflow")?;
-    let whole_nanos = whole
-        .checked_mul(nanos_per_unit)
-        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
-    let fraction_nanos = if fraction.is_empty() {
-        0
-    } else {
-        let numerator = fraction
-            .parse::<u128>()
-            .wrap_err("duration fraction overflow")?
-            .checked_mul(nanos_per_unit)
-            .ok_or_else(|| eyre::eyre!("duration fraction nanoseconds overflow"))?;
-        let denominator = 10_u128
-            .checked_pow(u32::try_from(fraction.len()).wrap_err("duration precision overflow")?)
-            .ok_or_else(|| eyre::eyre!("duration denominator overflow"))?;
-        numerator
-            .checked_add(denominator - 1)
-            .ok_or_else(|| eyre::eyre!("duration fraction rounding overflow"))?
-            / denominator
-    };
-    let nanos = whole_nanos
-        .checked_add(fraction_nanos)
-        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
-    let micros = nanos
-        .checked_add(999)
-        .ok_or_else(|| eyre::eyre!("duration microsecond rounding overflow"))?
-        / 1_000;
-    let micros = u64::try_from(micros).wrap_err("duration exceeds u64 microseconds")?;
-    ensure!(micros > 0, "duration must be positive");
-    Ok(micros)
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1031,9 +768,7 @@ mod tests {
     use crate::internal::{config::Config, proc::ChildGuard};
 
     use super::{
-        has_required_signing_share, parse_canonical_block_observed_at_micros,
-        parse_canonical_block_processing_micros, parse_ce_startup_replay,
-        parse_finalized_block_observed_at_micros, read_required_node_log,
+        has_required_signing_share, parse_ce_startup_replay, read_required_node_log,
         validator_slot_node_log_path, CeStartupReplayObservationV1, RethLogTail,
     };
 
@@ -1265,80 +1000,6 @@ mod tests {
         assert!(error
             .to_string()
             .contains("read OCOMP runtime trace for follower from owned log"));
-    }
-
-    #[test]
-    fn exact_canonical_block_record_reports_conservative_processing_micros() {
-        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
-            .parse()
-            .unwrap();
-        let record = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
-            Block added to canonical chain number=162 \
-            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
-            peers=3 txs=11 elapsed=590.757245ms";
-
-        assert_eq!(
-            parse_canonical_block_processing_micros(record, 162, block_hash).unwrap(),
-            Some(590_758)
-        );
-        assert_eq!(
-            parse_canonical_block_processing_micros(record, 163, block_hash).unwrap(),
-            None
-        );
-        for (duration, expected) in [
-            ("47.731\u{00b5}s", 48),
-            ("47.731us", 48),
-            ("1ns", 1),
-            ("1001ns", 2),
-            ("0.001ms", 1),
-            ("1s", 1_000_000),
-        ] {
-            let observed = record.replace("590.757245ms", duration);
-            assert_eq!(
-                parse_canonical_block_processing_micros(&observed, 162, block_hash).unwrap(),
-                Some(expected),
-                "duration {duration} must round up without changing units"
-            );
-            assert_eq!(
-                parse_canonical_block_processing_micros(&observed, 163, block_hash).unwrap(),
-                None,
-                "a valid duration must not admit a different block"
-            );
-        }
-        for duration in ["1.s", "1.ms", "0ns", "-1us", "1.2.3ms", "1fortnight"] {
-            let observed = record.replace("590.757245ms", duration);
-            assert!(
-                parse_canonical_block_processing_micros(&observed, 162, block_hash).is_err(),
-                "malformed duration {duration} must not produce evidence"
-            );
-        }
-    }
-
-    #[test]
-    fn exact_runtime_records_report_positive_q_block_finality_latency() {
-        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
-            .parse()
-            .unwrap();
-        let canonical = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
-            Block added to canonical chain number=162 \
-            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
-            peers=3 txs=11 elapsed=590.757245ms";
-        let finalized = "2026-07-27T10:42:12.707842Z INFO \
-            outbe_consensus::executor::actor: marshal-delivered block finalized and acked \
-            height=162 \
-            digest=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7";
-
-        let canonical_at = parse_canonical_block_observed_at_micros(canonical, 162, block_hash)
-            .unwrap()
-            .unwrap();
-        let finalized_at = parse_finalized_block_observed_at_micros(finalized, 162, block_hash)
-            .unwrap()
-            .unwrap();
-        assert_eq!(finalized_at - canonical_at, 535_443);
-        assert_eq!(
-            parse_finalized_block_observed_at_micros(finalized, 163, block_hash).unwrap(),
-            None
-        );
     }
 
     #[test]

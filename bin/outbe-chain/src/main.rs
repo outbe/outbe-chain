@@ -9,8 +9,8 @@ use clap::Parser;
 use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    ACTIVE_COMMITMENT_SCHEME, CandidateCacheLimits, CeMdbx, CompressedTreeService,
+    EnvironmentIdentity, FinalizedMarker, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_consensus::executor::actor::FinalizedCeCommitter;
 use outbe_engine::args::ConsensusArgs;
@@ -23,25 +23,25 @@ use outbe_engine::ce_recovery::{
 };
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
+    OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
     compressed_storage::{
-        validate_compressed_storage_runtime_config, CompressedStorageRuntimeConfig,
+        CompressedStorageRuntimeConfig, validate_compressed_storage_runtime_config,
     },
     ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
     projection::{
-        prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
         OffchainDataProjectionConfig, ProjectionRetentionFence,
+        prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
     },
-    OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 use outbe_operator::tee::{
-    inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
-    record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
-    UpgradeJournalStateV1,
-};
-use outbe_primitives::projection::{
-    projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
+    NodeBindingSelectorV1, UpgradeJournalStateV1, inspect_upgrade_journal_v1,
+    read_finalized_registry_view_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
+    record_upgrade_promoted_v1,
 };
 use outbe_primitives::OutbeHeader;
+use outbe_primitives::projection::{
+    ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus, projection_readiness,
+};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
@@ -84,7 +84,7 @@ fn load_installed_ocomp_bundles(
                 initial_hash,
                 bundles,
                 configured_hashes,
-            )
+            );
         }
         Err(error) => return Err(error).wrap_err("inspect OCOMP bundle catalog"),
     };
@@ -956,6 +956,23 @@ where
     output
 }
 
+// Manager and endpoint each have a five-second drain budget; leave time for
+// acknowledgement and task reaping before shutting down their transport.
+const RADICLE_DRAIN_DEADLINE: Duration = Duration::from_secs(12);
+
+async fn await_radicle_drain(
+    completion: Option<oneshot::Receiver<()>>,
+    deadline: Duration,
+) -> eyre::Result<()> {
+    let Some(completion) = completion else {
+        return Ok(());
+    };
+    tokio::time::timeout(deadline, completion)
+        .await
+        .map_err(|_| eyre::eyre!("Radicle drain deadline exceeded before transport shutdown"))?
+        .map_err(|_| eyre::eyre!("Radicle observer exited without completing its drain"))
+}
+
 async fn abort_and_wait_supervised<T>(
     handle: &mut commonware_runtime::Handle<T>,
 ) -> Result<Option<T>, commonware_runtime::Error>
@@ -1334,6 +1351,7 @@ fn run_node() -> eyre::Result<()> {
             outbe_radicle::integration::LocalEndpointIdentityHandle,
             outbe_radicle::integration::RadicleStatusHandle,
         )>,
+        Option<oneshot::Receiver<()>>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -1354,6 +1372,7 @@ fn run_node() -> eyre::Result<()> {
             finalized_ce_committer,
             ce_startup_recovery,
             radicle,
+            radicle_drained,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -1475,6 +1494,14 @@ fn run_node() -> eyre::Result<()> {
                 commonware_macros::select! {
                     _ = shutdown_token_clone.cancelled() => {
                         info!("consensus stack shutting down");
+                        // The manager may still be using endpoint discovery. Keep
+                        // Commonware transport alive until both owners have drained.
+                        let radicle_result = await_radicle_drain(
+                            radicle_drained, RADICLE_DRAIN_DEADLINE,
+                        ).await;
+                        if let Err(error) = &radicle_result {
+                            tracing::error!(%error, "Radicle drain failed before transport shutdown");
+                        }
                         // Close follower delivery ingress and persist all accepted
                         // proofs while Marshal can still answer certificate reads.
                         let follower_result = follower_drain.drain(Duration::from_secs(5)).await;
@@ -1496,7 +1523,7 @@ fn run_node() -> eyre::Result<()> {
                             (Err(error), _) | (_, Err(error)) => Err(error),
                             (Ok(()), Ok(())) => Ok(()),
                         };
-                        consensus_shutdown_result(stop_result, stack_result)
+                        radicle_result.and(consensus_shutdown_result(stop_result, stack_result))
                     },
                     result = &mut stack_handle => {
                         let result = result.map_err(|error| {
@@ -2225,7 +2252,7 @@ fn run_node() -> eyre::Result<()> {
             let _ = tee_lease_exit_tx.send(Ok(reason));
         }));
 
-        let (radicle_consensus, radicle_observer) = if let Some((
+        let (radicle_consensus, radicle_observer, radicle_drained) = if let Some((
             validator,
             sidecar,
             publisher,
@@ -2340,7 +2367,12 @@ fn run_node() -> eyre::Result<()> {
             let observer_resolver = resolver.clone();
             let observer_status = radicle_status.clone();
             let observer_outcome = shutdown.clone();
-            let observer = tokio::spawn(shutdown.track_task("Radicle observer", async move {
+            let observer_tracker = shutdown.clone();
+            let (drained_tx, drained_rx) = oneshot::channel();
+            // Register with Reth's graceful drain before returning to its
+            // cancellable launcher. Dropping the launcher must not abort cleanup.
+            let observer = node.task_executor.spawn_with_graceful_shutdown_signal(async move |guard| {
+                observer_tracker.track_task("Radicle observer", async move {
                 let manager = manager;
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
                 let mut local_endpoint_interval = tokio::time::interval(
@@ -2355,11 +2387,11 @@ fn run_node() -> eyre::Result<()> {
                         _ = observer_shutdown.cancelled() => {
                             if let Err(error) = outbe_radicle::integration::shutdown_bounded(
                                 std::time::Duration::from_secs(5),
-                                manager.shutdown(),
+                                manager,
                                 observer_resolver.shutdown(),
                             ).await {
-                                tracing::warn!(%error, "Radicle integration shutdown deadline exceeded");
-                                observer_outcome.record_failure(eyre::eyre!(error).wrap_err("Radicle integration shutdown deadline exceeded"));
+                                tracing::error!(%error, "Radicle integration shutdown failed");
+                                observer_outcome.record_failure(eyre::eyre!(error).wrap_err("Radicle integration shutdown failed"));
                             }
                             break;
                         }
@@ -2369,10 +2401,14 @@ fn run_node() -> eyre::Result<()> {
                             metrics.record(&observer_status.snapshot());
                         }
                         _ = local_endpoint_interval.tick() => {
-                            match outbe_radicle::integration::query_sidecar(
-                                &radicle_control_socket,
-                                std::time::Duration::from_secs(5),
-                            ).await {
+                            let sidecar = tokio::select! {
+                                _ = observer_shutdown.cancelled() => continue,
+                                result = outbe_radicle::integration::query_sidecar(
+                                    &radicle_control_socket,
+                                    std::time::Duration::from_secs(5),
+                                ) => result,
+                            };
+                            match sidecar {
                                 Ok(sidecar) if sidecar.node_id == pinned_node_id => {
                                     let _ = local_endpoint_publisher.update(
                                         sidecar.node_id,
@@ -2398,13 +2434,17 @@ fn run_node() -> eyre::Result<()> {
                         }
                     }
                 }
-            }));
+                    let _ = drained_tx.send(());
+                }).await;
+                drop(guard);
+            });
             (
                 Some((endpoint, local_endpoint, radicle_status.clone())),
                 Some(observer),
+                Some(drained_rx),
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         // Periodic enclave canary (signal only): known-plaintext decrypt +
@@ -2494,6 +2534,7 @@ fn run_node() -> eyre::Result<()> {
                 finalized_ce_committer,
                 ce_startup_recovery,
                 radicle_consensus,
+                radicle_drained,
             ));
 
             let exit_cause = tokio::select! {
@@ -2591,13 +2632,19 @@ fn run_node() -> eyre::Result<()> {
         if let Err(error) = tee_lease_guard_handle.await {
             shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE lease guard panicked"));
         }
-        if let Some(handle) = radicle_observer {
-            match tokio::time::timeout(std::time::Duration::from_secs(6), handle).await {
+        if let Some(mut handle) = radicle_observer {
+            match tokio::time::timeout(RADICLE_DRAIN_DEADLINE, &mut handle).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => shutdown.record_failure(eyre::eyre!(error).wrap_err("Radicle observer panicked")),
                 Err(error) => {
                     tracing::warn!("Radicle observer join deadline exceeded");
                     shutdown.record_failure(eyre::eyre!(error).wrap_err("Radicle observer join deadline exceeded"));
+                    handle.abort();
+                    if let Err(error) = handle.await {
+                        if !error.is_cancelled() {
+                            shutdown.record_failure(eyre::eyre!(error).wrap_err("Radicle observer failed while reaping"));
+                        }
+                    }
                 }
             }
         }
@@ -2696,9 +2743,43 @@ const OUTBE_TXPOOL_DISABLE_BACKUP: bool = true;
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn radicle_transport_waits_for_drain_completion() {
+        use futures::FutureExt as _;
+        let (done, completion) = tokio::sync::oneshot::channel();
+        let waiting =
+            super::await_radicle_drain(Some(completion), std::time::Duration::from_secs(1));
+        tokio::pin!(waiting);
+        assert!(waiting.as_mut().now_or_never().is_none());
+        done.send(()).unwrap();
+        waiting.await.unwrap();
+        super::await_radicle_drain(None, std::time::Duration::ZERO)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn radicle_lost_observer_is_not_a_clean_drain() {
+        let (done, completion) = tokio::sync::oneshot::channel();
+        drop(done);
+        let error = super::await_radicle_drain(Some(completion), std::time::Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("without completing its drain"));
+    }
+
+    #[tokio::test]
+    async fn radicle_drain_deadline_is_distinct_from_lost_observer() {
+        let (_done, completion) = tokio::sync::oneshot::channel();
+        let error = super::await_radicle_drain(Some(completion), std::time::Duration::ZERO)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("deadline exceeded"));
+    }
+
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     };
 
     struct ThreadDropRecorder {
@@ -2789,9 +2870,10 @@ mod tests {
         ] {
             let anchor = full_node_admission_anchor();
             let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
-            assert!(gate
-                .validate_and_arm(anchor.finalized_hash, admission)
-                .is_err());
+            assert!(
+                gate.validate_and_arm(anchor.finalized_hash, admission)
+                    .is_err()
+            );
             assert!(!gate.is_armed());
         }
     }
@@ -2943,15 +3025,17 @@ mod tests {
             expected_enclave_id: Some(alloy_primitives::B256::repeat_byte(0x48)),
             ..identity
         };
-        assert!(super::validator_admission_anchor_from_durable_v1(
-            durable,
-            676,
-            durable.genesis_hash,
-            wrong_enclave,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("enclave"));
+        assert!(
+            super::validator_admission_anchor_from_durable_v1(
+                durable,
+                676,
+                durable.genesis_hash,
+                wrong_enclave,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("enclave")
+        );
     }
 
     #[test]
@@ -2979,9 +3063,11 @@ mod tests {
         let error = super::ordered_installed_ocomp_bundle_hashes(v1, &installed, None)
             .expect_err("hash order must be explicit after genesis V1 is retired");
 
-        assert!(error
-            .to_string()
-            .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required"));
+        assert!(
+            error
+                .to_string()
+                .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required")
+        );
     }
 
     #[test]
@@ -2998,12 +3084,14 @@ mod tests {
                 .to_string()
                 .contains("duplicate")
         );
-        assert!(super::parse_ocomp_bundle_hashes(
-            "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
-        )
-        .expect_err("uppercase must fail")
-        .to_string()
-        .contains("lowercase"));
+        assert!(
+            super::parse_ocomp_bundle_hashes(
+                "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+            )
+            .expect_err("uppercase must fail")
+            .to_string()
+            .contains("lowercase")
+        );
     }
 
     impl Drop for ExecutionTeardownSentinel {
@@ -3086,10 +3174,12 @@ mod tests {
             });
             started_rx.await.expect("child started");
 
-            assert!(super::abort_and_wait_supervised(&mut stack)
-                .await
-                .unwrap()
-                .is_none());
+            assert!(
+                super::abort_and_wait_supervised(&mut stack)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
             assert!(observed.load(Ordering::SeqCst));
         });
         assert!(dropped.load(Ordering::SeqCst));

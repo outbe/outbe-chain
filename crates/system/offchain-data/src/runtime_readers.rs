@@ -101,6 +101,7 @@ impl Drop for ExecutionReadBudgetGuard {
 struct BudgetedStorageReader {
     inner: StorageReaderHandle,
     budgets: Arc<ExecutionReadBudgets>,
+    last_body_read: Arc<Mutex<Option<(Namespace, Key, Option<StoredValue>)>>>,
 }
 
 impl BudgetedStorageReader {
@@ -159,7 +160,18 @@ impl StorageReader for BudgetedStorageReader {
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError> {
         let key = key.clone();
-        self.run(move |inner| inner.get_record(namespace, &key))
+        let diagnostic = self.last_body_read.clone();
+        self.run(move |inner| {
+            let result = inner.get_record(namespace.clone(), &key);
+            if matches!(namespace.as_str(), "nods" | "nod_buckets" | "tributes") {
+                if let Ok(value) = &result {
+                    if let Ok(mut last) = diagnostic.lock() {
+                        *last = Some((namespace, key, value.clone()));
+                    }
+                }
+            }
+            result
+        })
     }
 
     fn get_records(
@@ -198,6 +210,7 @@ pub struct RuntimeBodyReaders {
     nod: NodRepositoryReader,
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     budgets: Arc<ExecutionReadBudgets>,
+    last_body_read: Arc<Mutex<Option<(Namespace, Key, Option<StoredValue>)>>>,
 }
 
 impl RuntimeBodyReaders {
@@ -205,10 +218,12 @@ impl RuntimeBodyReaders {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         let budgets = Arc::new(ExecutionReadBudgets::default());
+        let last_body_read = Arc::new(Mutex::new(None));
         let raw_storage = storage.clone();
         let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
             inner: storage,
             budgets: budgets.clone(),
+            last_body_read: last_body_read.clone(),
         });
         Self {
             storage: raw_storage,
@@ -216,6 +231,7 @@ impl RuntimeBodyReaders {
             nod: NodRepositoryReader::new(storage),
             failure_sender: None,
             budgets,
+            last_body_read,
         }
     }
 
@@ -226,10 +242,12 @@ impl RuntimeBodyReaders {
         failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
     ) -> Self {
         let budgets = Arc::new(ExecutionReadBudgets::default());
+        let last_body_read = Arc::new(Mutex::new(None));
         let raw_storage = storage.clone();
         let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
             inner: storage,
             budgets: budgets.clone(),
+            last_body_read: last_body_read.clone(),
         });
         Self {
             storage: raw_storage,
@@ -237,6 +255,7 @@ impl RuntimeBodyReaders {
             nod: NodRepositoryReader::new(storage),
             failure_sender: Some(failure_sender),
             budgets,
+            last_body_read,
         }
     }
 
@@ -244,9 +263,11 @@ impl RuntimeBodyReaders {
     #[must_use]
     pub fn fork_execution(&self) -> Self {
         let budgets = Arc::new(ExecutionReadBudgets::default());
+        let last_body_read = Arc::new(Mutex::new(None));
         let storage: StorageReaderHandle = Arc::new(BudgetedStorageReader {
             inner: self.storage.clone(),
             budgets: budgets.clone(),
+            last_body_read: last_body_read.clone(),
         });
         Self {
             storage: self.storage.clone(),
@@ -254,6 +275,7 @@ impl RuntimeBodyReaders {
             nod: NodRepositoryReader::new(storage),
             failure_sender: self.failure_sender.clone(),
             budgets,
+            last_body_read,
         }
     }
 
@@ -322,7 +344,46 @@ impl RuntimeBodyReaders {
                 self.report_unavailable();
             }
             outbe_primitives::error::PrecompileError::BodyReadCorruption(message) => {
-                self.report_fatal(ProjectionFailureClass::CorruptBody, message.clone());
+                let body_observation = self.last_body_read.lock().map(|last| {
+                    last.as_ref().map(|(namespace, key, record)| {
+                        format!(
+                            "namespace={} key=0x{} record={:?}",
+                            namespace.as_str(),
+                            alloy_primitives::hex::encode(key.as_bytes()),
+                            record.as_ref().map(|record| (
+                                alloy_primitives::hex::encode(record.value.as_bytes()),
+                                &record.metadata,
+                            )),
+                        )
+                    })
+                });
+                let body_observation = format!("{body_observation:?}");
+                // This is a post-detection observation, not proof of the checkpoint
+                // at the preceding body read. Keep the original failure even if
+                // collecting this bounded diagnostic fails.
+                let diagnostic = BudgetedStorageReader {
+                    inner: self.storage.clone(),
+                    budgets: self.budgets.clone(),
+                    last_body_read: self.last_body_read.clone(),
+                }
+                .run(|storage| {
+                    let namespace = crate::state_namespace()
+                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
+                    let key = crate::state_key()
+                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
+                    Ok(storage.get_record(namespace, &key)?.map(|record| {
+                        format!(
+                            "state={:?} raw_state=0x{} metadata={:?}",
+                            crate::decode_state(record.value.as_bytes()),
+                            alloy_primitives::hex::encode(record.value.as_bytes()),
+                            record.metadata,
+                        )
+                    }))
+                });
+                self.report_fatal(
+                    ProjectionFailureClass::CorruptBody,
+                    format!("{message}; [CE_BODY_DIAGNOSTIC] last_body_read={body_observation} projection_after_detection={diagnostic:?}"),
+                );
             }
             _ => {}
         }

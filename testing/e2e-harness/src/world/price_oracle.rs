@@ -1455,7 +1455,7 @@ mod tests {
                 validator_index: member.index,
                 validator_address: format!("{:#x}", member.address),
                 rpc_endpoint: format!("http://127.0.0.1:{}", member.port),
-                vote_period: 2,
+                vote_period: crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS,
                 attempt: 1,
                 pid: 1000 + u32::try_from(member.index).unwrap(),
                 log: format!("validator-{}-feeder-attempt-1.log", member.index),

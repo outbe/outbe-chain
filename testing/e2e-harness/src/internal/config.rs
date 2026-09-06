@@ -17,6 +17,9 @@ use sha2::{Digest as _, Sha256};
 use crate::env::{Environment, TeeMode};
 use crate::internal::ports::{Ports, Service};
 
+/// Shared Price Oracle voting window for every generated E2E network.
+pub(crate) const E2E_ORACLE_VOTE_PERIOD_BLOCKS: u64 = 8;
+
 /// The exact pathname passed to reth, without relocating persistent node data.
 pub(crate) fn node_ipc_path(node_dir: &Path) -> PathBuf {
     node_dir.join("data/reth.ipc")

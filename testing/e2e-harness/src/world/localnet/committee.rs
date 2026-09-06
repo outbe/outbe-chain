@@ -10,11 +10,11 @@ use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eyre::ensure;
-use eyre::{bail, Result, WrapErr};
+use eyre::{Result, WrapErr, bail};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
-use crate::internal::proc::{self, args, attach_log, SealSpec};
+use crate::internal::proc::{self, SealSpec, args, attach_log};
 
 use super::{Localnet, StartOpts};
 
@@ -309,7 +309,13 @@ impl Localnet {
         // Stop only this owned node. A process-name backstop can kill a node
         // from another concurrently running scenario using the same slot.
         child.interrupt();
-        ensure!(child.exit_status()?.is_some(), "validator-{i} did not stop");
+        let status = child
+            .exit_status()?
+            .ok_or_else(|| eyre::eyre!("validator-{i} did not stop"))?;
+        ensure!(
+            status.success(),
+            "validator-{i} failed during planned restart: {status}"
+        );
         self.validators.remove(&i);
         self.spawn_validator_with_argv(i, argv)?;
         sleep(Duration::from_secs(2));
@@ -338,7 +344,12 @@ impl Localnet {
         before_launch: impl FnOnce(&Self) -> Result<()>,
     ) -> Result<()> {
         for validator in self.validators.values_mut() {
-            validator.stop_and_reap()?;
+            let status = validator.stop_and_reap()?;
+            ensure!(
+                status.success(),
+                "validator PID {} failed during committee restart: {status}",
+                validator.pid()
+            );
         }
         for enclave in self.enclaves.values_mut() {
             enclave.stop_and_reap()?;
@@ -909,7 +920,7 @@ mod owned_committee_tests {
     use crate::internal::config::Config;
     use crate::internal::proc::{ChildGuard, DockerImageId};
 
-    use super::{quiesce_and_terminate_committee_with, start_prepared_cohort, Localnet};
+    use super::{Localnet, quiesce_and_terminate_committee_with, start_prepared_cohort};
 
     #[test]
     fn founder_cohort_waits_for_all_authenticated_preparations_before_launch() {
@@ -1200,18 +1211,22 @@ mod owned_committee_tests {
                 observed = true;
                 Err(eyre::eyre!("injected observation failure"))
             });
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("injected observation failure"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("injected observation failure")
+        );
         assert!(observed);
-        assert!(localnet
-            .validators
-            .get_mut(&1)
-            .unwrap()
-            .exit_status()
-            .unwrap()
-            .is_none());
+        assert!(
+            localnet
+                .validators
+                .get_mut(&1)
+                .unwrap()
+                .exit_status()
+                .unwrap()
+                .is_none()
+        );
         assert!(!localnet.validators.contains_key(&0));
         assert!(!localnet.enclaves.contains_key(&0));
     }
@@ -1460,10 +1475,12 @@ mod tests {
                     command.get_args().collect::<Vec<_>>(),
                     [std::ffi::OsStr::new(role)]
                 );
-                assert!(command
-                    .get_envs()
-                    .any(|(key, value)| key == "RUST_MIN_STACK"
-                        && value == Some(std::ffi::OsStr::new("16777216"))));
+                assert!(
+                    command
+                        .get_envs()
+                        .any(|(key, value)| key == "RUST_MIN_STACK"
+                            && value == Some(std::ffi::OsStr::new("16777216")))
+                );
             }
         }
     }

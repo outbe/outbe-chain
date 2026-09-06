@@ -208,9 +208,6 @@ pub struct OcompPublicCapacityObservationV1 {
     pub block_bytes: u64,
     pub gas: u64,
     pub internal_work: u64,
-    pub block_processing_micros_by_validator: Vec<u64>,
-    pub block_processing_micros: u64,
-    pub finality_latency_micros: u64,
 }
 
 /// Public outcome recovered after one validator discards only its derived CE
@@ -333,6 +330,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub restart_replay_verified: Option<bool>,
+    pub replay_receipts: Vec<serde_json::Value>,
     pub full_node_deadline_barrier_height: Option<u64>,
     pub full_node_resumed_finalized_height: Option<u64>,
     pub full_node_local_first_digest: Option<alloy_primitives::B256>,
@@ -509,6 +507,7 @@ pub struct FixtureState {
     pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
     pub ocomp_restart_replay_verified: Option<bool>,
+    pub ocomp_replay_receipts: Vec<serde_json::Value>,
     /// FullNode-only lifecycle evidence captured by the Citadel closure lane.
     pub ocomp_full_node_deadline_barrier_height: Option<u64>,
     pub ocomp_full_node_resumed_finalized_height: Option<u64>,
@@ -713,6 +712,7 @@ impl Default for FixtureState {
             metadosis_fresh_initial_unix_time_offset_secs: None,
             ocomp_execution_trace_observation: None,
             ocomp_restart_replay_verified: None,
+            ocomp_replay_receipts: Vec::new(),
             ocomp_full_node_deadline_barrier_height: None,
             ocomp_full_node_resumed_finalized_height: None,
             ocomp_full_node_local_result_before_restart: None,
@@ -791,6 +791,7 @@ impl FixtureState {
             metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             restart_replay_verified: self.ocomp_restart_replay_verified,
+            replay_receipts: self.ocomp_replay_receipts.clone(),
             full_node_deadline_barrier_height: self.ocomp_full_node_deadline_barrier_height,
             full_node_resumed_finalized_height: self.ocomp_full_node_resumed_finalized_height,
             full_node_local_first_digest: self.ocomp_full_node_local_first_digest,

@@ -36,12 +36,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use eyre::{bail, Result, WrapErr};
+use eyre::{Result, WrapErr, bail};
 
 use crate::internal::config::Config;
 use crate::internal::launch_log::LaunchLog;
 use crate::internal::proc::{
-    self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
+    self, ChildGuard, DockerImageId, EnclaveGuard, args, redact_args_for_log,
 };
 use crate::internal::shell::Sh;
 
@@ -275,7 +275,7 @@ impl Localnet {
 
     /// Committee size (`--validators`). Not derivable from the port map: the
     /// joiner and followers own blocks past the committee's.
-    fn committee_size(&self) -> usize {
+    pub(crate) fn committee_size(&self) -> usize {
         self.cfg.validators
     }
 
@@ -531,13 +531,53 @@ impl Localnet {
     /// run's unique data subdir + enclave run tag, so it never touches another
     /// run's nodes/containers.
     fn shutdown(&mut self) -> Result<()> {
+        self.shutdown_with_expected_exits(&[])
+    }
+
+    fn stop_owned_nodes(&mut self, expected_failed_slots: &[usize]) -> Result<()> {
+        let mut failures = Vec::new();
+        for child in self
+            .validators
+            .values_mut()
+            .chain(self.followers.values_mut())
+        {
+            let pid = child.pid();
+            let expected = self.node_launch_logs.iter().any(|(slot, (owned_pid, _))| {
+                *owned_pid == pid && expected_failed_slots.contains(slot)
+            });
+            let result = (|| -> Result<()> {
+                let before = child.exit_status()?;
+                let status = child.stop_and_reap()?;
+                // An intentional protocol rejection must have happened before
+                // cleanup. The after-hook independently requires its exact
+                // cause in both runtime log sinks; this is not a log waiver.
+                eyre::ensure!(
+                    status.success() || (expected && before.is_some() && status.code() == Some(1)),
+                    "owned node PID {pid} exited with {status}"
+                );
+                Ok(())
+            })();
+            if let Err(error) = result {
+                failures.push(format!("{error:#}"));
+            }
+        }
+        self.clear_owned_nodes();
+        eyre::ensure!(
+            failures.is_empty(),
+            "node teardown failed: {}",
+            failures.join("; ")
+        );
+        Ok(())
+    }
+
+    fn shutdown_with_expected_exits(&mut self, expected_failed_slots: &[usize]) -> Result<()> {
         // Stateless signal-path backstop for the harness-owned price feeder.
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
         // Nodes first (release MDBX locks), then their enclaves - matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
-        self.clear_owned_nodes();
+        let node_result = self.stop_owned_nodes(expected_failed_slots);
         self.radicle_sidecars.clear();
         self.user_radicle = None;
         self.enclaves.clear();
@@ -563,7 +603,8 @@ impl Localnet {
             );
             self.sh().sudo_best_effort("bash", &["-c", &tee_sweep]);
         }
-        self.cleanup_radicle_runtime()
+        let runtime_result = self.cleanup_radicle_runtime();
+        node_result.and(runtime_result)
     }
 
     /// Remove `cfg.dir` (this localnet's scenario dir, or the whole run dir when
@@ -593,6 +634,11 @@ impl Localnet {
     /// cucumber `after` hook (and the SIGINT handler).
     pub fn teardown(&mut self) -> Result<()> {
         self.shutdown()
+    }
+
+    /// Expected exit-1 slots still require the after-hook's exact fault audit.
+    pub(crate) fn teardown_with_expected_exits(&mut self, slots: &[usize]) -> Result<()> {
+        self.shutdown_with_expected_exits(slots)
     }
 
     /// Stop the localnet (alias for [`teardown`](Self::teardown)).
@@ -735,6 +781,41 @@ mod tests {
     }
 
     #[test]
+    fn owned_node_cleanup_rejects_silent_failure_and_checks_expected_slot() {
+        for (code, expected_slots, accepted) in [
+            (0, vec![], true),
+            (1, vec![], false),
+            (1, vec![0], true),
+            (1, vec![1], false),
+            (2, vec![0], false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let env = Environment {
+                data_dir: dir.path().to_owned(),
+                ..Environment::default()
+            };
+            let mut localnet = Localnet::new(Config::resolve(&env));
+            let node_dir = localnet.cfg.validator_dir(0);
+            fs::create_dir_all(&node_dir).unwrap();
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!("exit {code}")]);
+            proc::attach_log(&mut command, &node_dir).unwrap();
+            let mut child = localnet
+                .spawn_node("exit-fixture", 0, &node_dir, command)
+                .unwrap();
+            child.reap_fault(std::time::Duration::from_secs(2)).unwrap();
+            localnet.validators.insert(0, child);
+            assert_eq!(
+                localnet.stop_owned_nodes(&expected_slots).is_ok(),
+                accepted,
+                "exit {code}, expected {expected_slots:?}"
+            );
+            assert!(localnet.validators.is_empty());
+            assert!(localnet.node_launch_logs.is_empty());
+        }
+    }
+
+    #[test]
     fn node_launch_log_excludes_prior_incarnation_and_rejects_stale_pid() {
         let dir = tempfile::tempdir().unwrap();
         let env = Environment {
@@ -799,14 +880,16 @@ mod tests {
         let pid = launch_log_fixture(&mut localnet, 0, "previous launch");
         localnet.validators.remove(&0);
         let node_dir = localnet.cfg.validator_dir(0);
-        assert!(localnet
-            .spawn_node(
-                "missing-node",
-                0,
-                &node_dir,
-                Command::new(dir.path().join("nonexistent-node"))
-            )
-            .is_err());
+        assert!(
+            localnet
+                .spawn_node(
+                    "missing-node",
+                    0,
+                    &node_dir,
+                    Command::new(dir.path().join("nonexistent-node"))
+                )
+                .is_err()
+        );
         assert!(localnet.node_launch_log(0, pid).is_err());
         assert!(localnet.node_launch_logs.is_empty());
     }
@@ -918,9 +1001,11 @@ mod tests {
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
         let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
 
-        assert!(args
-            .windows(2)
-            .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
+        assert!(
+            args.windows(2).any(|pair| {
+                pair[0] == "--tee-session-mode" && pair[1] == "production-node-host"
+            })
+        );
     }
 
     #[test]
@@ -999,9 +1084,10 @@ mod tests {
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
         let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
 
-        assert!(args
-            .windows(2)
-            .any(|pair| pair[0] == "--color" && pair[1] == "never"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--color" && pair[1] == "never")
+        );
     }
 
     #[test]

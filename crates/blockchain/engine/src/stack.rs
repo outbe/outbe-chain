@@ -18,14 +18,14 @@
 //!    c. Monitor for reshare triggers (pending_set_change in EVM state)
 //!    d. On reshare: run DKG in parallel, then abort engine + restart at new epoch
 
-use alloy_primitives::{Address as EthAddress, Bytes, B256};
+use alloy_primitives::{Address as EthAddress, B256, Bytes};
 use commonware_codec::{Encode as _, Read as _};
 use commonware_consensus::{
-    simplex,
+    Reporters, simplex,
     types::{Epoch, Height, Round, ViewDelta},
-    Reporters,
 };
 use commonware_cryptography::{
+    Signer as _,
     bls12381::{
         self,
         dkg::feldman_desmedt::Output,
@@ -35,18 +35,17 @@ use commonware_cryptography::{
             variant::MinSig,
         },
     },
-    Signer as _,
 };
 use commonware_p2p::{
-    authenticated::lookup, utils::mux::Muxer, Address, AddressableManager, Receiver as P2pReceiver,
-    Sender as P2pSender,
+    Address, AddressableManager, Receiver as P2pReceiver, Sender as P2pSender,
+    authenticated::lookup, utils::mux::Muxer,
 };
 use commonware_runtime::{
-    buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
-    Storage,
+    BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner, Storage,
+    buffer::paged::CacheRef,
 };
-use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
-use eyre::{ensure, Result, WrapErr};
+use commonware_utils::{NZU32, TryCollect as _, ordered::Map};
+use eyre::{Result, WrapErr, ensure};
 use rand_core::CryptoRngCore;
 use reth_ethereum::chainspec::EthChainSpec as _;
 use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
@@ -68,9 +67,9 @@ use crate::validators;
 use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
     application::{
+        ApplicationEpochFence,
         actor::OutbeApplication,
         handler::{ApplicationDeps, ApplicationHandler},
-        ApplicationEpochFence,
     },
     bls,
     committee_provider::CommitteeProvider,
@@ -85,8 +84,8 @@ use outbe_consensus::{
         state::new_finalization_view,
     },
     hybrid::{
-        election::{HybridElectorConfigProvider, HybridRandom},
         HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
+        election::{HybridElectorConfigProvider, HybridRandom},
     },
     ocomp_retention::OcompRetentionHook,
     reporter::{OutbeReporter, ReporterContinuity},
@@ -273,14 +272,14 @@ async fn wait_for_radicle_role_change(
 use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
+    OutbeHeader, OutbePayloadTypes,
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::{ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome},
     reshare_artifact::{
-        decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
-        ConsensusHeaderArtifact,
+        ConsensusHeaderArtifact, decode_boundary_artifact, decode_outbe_block_artifacts,
+        encode_boundary_artifact,
     },
     system_tx::OcompLifecycleActivation,
-    OutbeHeader, OutbePayloadTypes,
 };
 use reth_ethereum::storage::{BlockIdReader, BlockNumReader, BlockReader, TransactionVariant};
 
@@ -2720,7 +2719,7 @@ where
     use commonware_cryptography::certificate::Scheme as _;
     use commonware_storage::archive::immutable;
     use outbe_consensus::follow::{
-        run_follow_engine, CommitteeChain, FinalizedSource as _, FollowEngineConfig,
+        CommitteeChain, FinalizedSource as _, FollowEngineConfig, run_follow_engine,
     };
     use outbe_consensus::hybrid::{HybridScheme, HybridSchemeProvider};
     use std::sync::{Arc, Mutex};
@@ -2872,8 +2871,7 @@ where
     let archive_block_tip =
         marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
     ensure!(
-        archive_finalization_tip == replay_suffix_upper
-            && archive_block_tip == replay_suffix_upper,
+        archive_finalization_tip == replay_suffix_upper && archive_block_tip == replay_suffix_upper,
         "certified follower replay normalization did not pair archive tips at height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
     );
     let preselected_anchor_height = archive_finalization_tip
@@ -3595,7 +3593,7 @@ where
     // part of the genesis-formation proof; without it a crash-restart with
     // execution height 0 could incorrectly start DKG round 0.
     use commonware_consensus::marshal;
-    use commonware_cryptography::{certificate::Scheme as CertScheme, Signer as _};
+    use commonware_cryptography::{Signer as _, certificate::Scheme as CertScheme};
     use commonware_storage::archive::immutable;
 
     let certificate_scheme_provider = HybridSchemeProvider::<MinSig>::new();
@@ -7494,20 +7492,22 @@ fn restore_pending_dkg_activation(
 ) -> Result<RestoredPendingDkgActivation> {
     let output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG output during runtime restore")?;
-    let (validator_set, tee_expired_target_exclusions) =
-        match refresh_validator_set_at_height(node, snapshot.artifact.freeze_height)? {
-            FrozenValidatorSetRefresh::Ready {
-                validator_set,
-                tee_expired_target_exclusions,
-                ..
-            } => (validator_set, tee_expired_target_exclusions),
-            FrozenValidatorSetRefresh::PendingBlockHash => {
-                return Err(eyre::eyre!(
+    let (validator_set, tee_expired_target_exclusions) = match refresh_validator_set_at_height(
+        node,
+        snapshot.artifact.freeze_height,
+    )? {
+        FrozenValidatorSetRefresh::Ready {
+            validator_set,
+            tee_expired_target_exclusions,
+            ..
+        } => (validator_set, tee_expired_target_exclusions),
+        FrozenValidatorSetRefresh::PendingBlockHash => {
+            return Err(eyre::eyre!(
                 "pending DKG freeze-height state unavailable at height {} during runtime restore",
                 snapshot.artifact.freeze_height
             ));
-            }
-        };
+        }
+    };
     let activated_validator_set = validator_set_for_dkg_output_players(&output, &validator_set)
         .wrap_err("pending DKG output does not match its frozen validator set")?;
     let participants = participants_from_validator_set(&activated_validator_set)?;

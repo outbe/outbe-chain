@@ -13,7 +13,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-004
   # PFS-TEST-ID: PFS-011-01
   Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
-    Given a fresh four-validator Metadosis capacity localnet at FORMING
+    Given a fresh four-validator Metadosis capacity localnet at FORMING with a 600-block OCOMP vote window
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
@@ -73,7 +73,9 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
 
-  @ocomp-capacity
+  # Temporarily ignored at the owner's request; keep the complete 257-Tribute
+  # scenario for a later run. @todo is the runner's unconditional skip tag.
+  @ocomp-capacity @todo
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
     When all 257 capacity owners submit one encrypted Tribute each

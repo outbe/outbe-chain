@@ -11,7 +11,7 @@ use outbe_primitives::runtime_audit_v1::{
     BODY_READ_REQUEST_DEADLINE, EVENT_FIELD, FAILURE_KIND_FIELD, PAYLOAD_EXECUTION_FAILED,
     PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_FIELD, SCHEMA_VERSION,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::Localnet;
 use crate::world::state::TeeLeaseShutdownV1;
@@ -103,6 +103,11 @@ pub struct LogAudit {
 }
 
 impl LogAudit {
+    pub(crate) fn record_cleanup_failure(&mut self, error: eyre::Report) {
+        self.findings
+            .push(format!("scenario cleanup failed: {error:#}"));
+    }
+
     pub(crate) fn is_clean(&self) -> bool {
         self.findings.is_empty()
     }
@@ -455,6 +460,14 @@ fn is_runtime_log(path: &Path) -> bool {
             name == "node.log"
                 || name.starts_with("node.log.")
                 || name == "enclave.log"
+                || name == "radicle.log"
+                || name == "snapshot-exporter.log"
+                || name
+                    .strip_prefix("worker-")
+                    .and_then(|suffix| suffix.strip_suffix(".log"))
+                    .is_some_and(|ordinal| {
+                        !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
+                    })
                 || is_reth_runtime_log_name(name)
         })
 }
@@ -482,6 +495,12 @@ fn unexpected_log_line(line: &str) -> bool {
         || lower.contains("eagain")
         || lower.contains("resource temporarily unavailable")
         || (lower.contains("projection") && lower.contains("fatal"))
+        || lower.contains("radicle integration shutdown deadline exceeded")
+        || lower.contains("radicle integration shutdown failed")
+        || lower.contains("radicle observer join deadline exceeded")
+        || lower.contains("radicle drain failed before transport shutdown")
+        || lower.contains("radicle endpoint actor stopped")
+        || lower.contains("embedded ocomp requested node shutdown")
 }
 
 fn fatal_at_runtime_severity(line: &str) -> bool {
@@ -1073,8 +1092,7 @@ fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
 }
 
 fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
-    const PREFIX: &str =
-        "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const PREFIX: &str = "outbe_chain: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();
@@ -1473,14 +1491,16 @@ mod tests {
         assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 
         let other = "0x46aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
-        assert!(!audit_loaded_logs_with_expectations(
-            &legacy_deadline_bundle(hash, other),
-            4,
-            None,
-            None,
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_expectations(
+                &legacy_deadline_bundle(hash, other),
+                4,
+                None,
+                None,
+                None,
+            )
+            .is_clean()
+        );
     }
 
     #[test]
@@ -1603,14 +1623,10 @@ mod tests {
         unrelated_fatal[0]
             .1
             .push_str("\nERROR outbe_chain: unrelated fatal condition");
-        assert!(!audit_loaded_logs_with_expectations(
-            &unrelated_fatal,
-            4,
-            None,
-            None,
-            Some(job_id),
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_expectations(&unrelated_fatal, 4, None, None, Some(job_id),)
+                .is_clean()
+        );
 
         let reordered = expected
             .iter()
@@ -1660,9 +1676,18 @@ mod tests {
         let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
         let shutdown = "INFO outbe_chain: consensus stack shutting down";
         vec![
-            (PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")), format!("{guard}\n{shutdown}\n")),
-            (PathBuf::from(format!("scenario-1/validator-{full_node}/logs/54322345/reth.log")),
-             format!("{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n")),
+            (
+                PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
+                format!("{guard}\n{shutdown}\n"),
+            ),
+            (
+                PathBuf::from(format!(
+                    "scenario-1/validator-{full_node}/logs/54322345/reth.log"
+                )),
+                format!(
+                    "{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n"
+                ),
+            ),
         ]
     }
 
@@ -1734,29 +1759,33 @@ mod tests {
         assert!(!wrong_validator.is_clean());
 
         let missing_sink = vec![expected[0].clone()];
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &missing_sink,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &missing_sink,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
 
         let mut duplicate_sink = expected.clone();
         duplicate_sink.push(expected[0].clone());
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &duplicate_sink,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &duplicate_sink,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
 
         let reordered = expected
             .iter()
@@ -1765,16 +1794,18 @@ mod tests {
                 (path.clone(), format!("{}\n{}", lines[1], lines[0]))
             })
             .collect::<Vec<_>>();
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &reordered,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &reordered,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
 
         let process_epoch_crossing = expected
             .iter()
@@ -1789,46 +1820,52 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &process_epoch_crossing,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &process_epoch_crossing,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
 
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
             .push_str("\nERROR outbe_chain: unrelated fatal condition");
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &extra_fatal,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &extra_fatal,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
 
         let mut duplicate_fatal_trailer = expected.clone();
         duplicate_fatal_trailer[0]
             .1
             .push_str("\nERROR engine::tree: Fatal error");
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &duplicate_fatal_trailer,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(
+            !audit_loaded_logs_with_all_expectations(
+                &duplicate_fatal_trailer,
+                4,
+                None,
+                None,
+                None,
+                Some(3),
+                None,
+            )
+            .is_clean()
+        );
     }
 
     #[test]
@@ -1912,7 +1949,10 @@ mod tests {
             "INFO outbe_chain: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
         ] {
             let mut bad = baseline.clone();
-            bad[1].1 = bad[1].1.replace("INFO outbe_chain: consensus stack shutting down", replacement);
+            bad[1].1 = bad[1].1.replace(
+                "INFO outbe_chain: consensus stack shutting down",
+                replacement,
+            );
             assert!(!check(&bad));
         }
         let mut reordered = baseline.clone();
@@ -1951,21 +1991,9 @@ mod tests {
         for (_, log) in &mut appended {
             log.push_str("INFO reth::cli: Starting Reth version=new\n");
         }
-        assert!(audit_loaded_logs_with_all_expectations(
-            &appended,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(&proof)
-        )
-        .is_clean());
-        for changed in ["", "INFO replaced process\n"] {
-            let mut bad = baseline.clone();
-            bad[1].1 = changed.to_owned();
-            assert!(!audit_loaded_logs_with_all_expectations(
-                &bad,
+        assert!(
+            audit_loaded_logs_with_all_expectations(
+                &appended,
                 4,
                 None,
                 None,
@@ -1973,7 +2001,23 @@ mod tests {
                 None,
                 Some(&proof)
             )
-            .is_clean());
+            .is_clean()
+        );
+        for changed in ["", "INFO replaced process\n"] {
+            let mut bad = baseline.clone();
+            bad[1].1 = changed.to_owned();
+            assert!(
+                !audit_loaded_logs_with_all_expectations(
+                    &bad,
+                    4,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&proof)
+                )
+                .is_clean()
+            );
         }
         let mut previous = baseline.clone();
         let mut shifted = proof.clone();
@@ -1982,16 +2026,18 @@ mod tests {
             shifted.sinks[index].start += 22;
             shifted.sinks[index].end += 22;
         }
-        assert!(audit_loaded_logs_with_all_expectations(
-            &previous,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(&shifted)
-        )
-        .is_clean());
+        assert!(
+            audit_loaded_logs_with_all_expectations(
+                &previous,
+                4,
+                None,
+                None,
+                None,
+                None,
+                Some(&shifted)
+            )
+            .is_clean()
+        );
     }
 
     #[test]
@@ -2000,6 +2046,9 @@ mod tests {
             "validator-0/node.log",
             "validator-0/node.log.1",
             "validator-0/enclave.log",
+            "validator-0/radicle.log",
+            "validator-0/ocomp/domain-v1/snapshot-exporter.log",
+            "validator-0/ocomp/domain-v1/worker-0.log",
             "validator-0/logs/54322345/reth.log",
             "validator-0/logs/54322345/reth.log.1",
         ] {
@@ -2008,5 +2057,18 @@ mod tests {
         assert!(!super::is_runtime_log(Path::new(
             "validator-0/data/rocksdb/000011.log"
         )));
+    }
+
+    #[test]
+    fn terminal_shutdown_and_body_failures_cannot_be_a_clean_audit() {
+        for message in [
+            "WARN Radicle integration shutdown deadline exceeded error=manager stopped",
+            "ERROR Radicle integration shutdown failed error=endpoint discovery failed",
+            "WARN Radicle endpoint actor stopped error=network closed",
+            "ERROR embedded OCOMP requested node shutdown failure_class=CorruptBody failure=body commitment mismatch",
+        ] {
+            let logs = vec![(PathBuf::from("validator-0/node.log"), message.to_owned())];
+            assert!(!audit_loaded_logs(&logs).is_clean(), "{message}");
+        }
     }
 }

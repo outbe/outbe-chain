@@ -290,24 +290,38 @@ fn fresh_ocomp_dynamic_membership_localnet(world: &mut World) {
 
 #[given("a fresh four-validator Metadosis capacity localnet at FORMING")]
 fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
-    bootstrap_localnet(
-        world,
-        6,
-        &[
-            (
-                "TESTNET_EPOCH_LENGTH_BLOCKS",
-                OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
-            ),
-            (
-                "TESTNET_METADOSIS_FORMING_SECONDS",
-                METADOSIS_FRESH_FORMING_SECONDS.to_string(),
-            ),
-            (
-                "TESTNET_METADOSIS_OFFERING_SECONDS",
-                METADOSIS_CAPACITY_OFFERING_SECONDS.to_string(),
-            ),
-        ],
-    );
+    fresh_metadosis_capacity_localnet_with_window(world, None);
+}
+
+#[given(
+    expr = "a fresh four-validator Metadosis capacity localnet at FORMING with a {int}-block OCOMP vote window"
+)]
+fn fresh_metadosis_replay_localnet_at_forming(world: &mut World, window: u64) {
+    fresh_metadosis_capacity_localnet_with_window(world, Some(window));
+}
+
+fn fresh_metadosis_capacity_localnet_with_window(world: &mut World, window: Option<u64>) {
+    let mut tuning = vec![
+        (
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
+        ),
+        (
+            "TESTNET_METADOSIS_FORMING_SECONDS",
+            METADOSIS_FRESH_FORMING_SECONDS.to_string(),
+        ),
+        (
+            "TESTNET_METADOSIS_OFFERING_SECONDS",
+            METADOSIS_CAPACITY_OFFERING_SECONDS.to_string(),
+        ),
+    ];
+    // This scenario completes two jobs, retires V1 and restarts the entire
+    // cohort before repeating its vote. Keep both positive replays inside
+    // the immutable genesis window; do not weaken the production deadline.
+    if let Some(window) = window {
+        tuning.push(("TESTNET_OCOMP_VOTE_WINDOW_BLOCKS", window.to_string()));
+    }
+    bootstrap_localnet(world, 6, &tuning);
     let wwd = world
         .state
         .wwd
@@ -3603,6 +3617,7 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .rpc
         .finalized(world.validators.primary_port())
         .expect("finality before successor preload restart");
+    let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
     let ocomp_resume = stop_ocomp_roles_before_committee_time_change(world);
     world
         .localnet
@@ -3662,6 +3677,13 @@ fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
         .rpc
         .wait_finalized_checkpoint(&pre_proposal_ports, before_restart, 120)
         .expect("all five nodes recover exact pre-restart finality before the proposal");
+    if let Some(pending) =
+        crate::features::price_oracle::resume_after_clock_restart(world, price_publication)
+    {
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            sleep(Duration::from_millis(250));
+        }
+    }
     let (pre_proposal_pid, pre_proposal_status) = world
         .localnet
         .owned_full_node_process(full_node)
@@ -5051,50 +5073,6 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
                     .block_hash(primary, finalized_height)
                     .and_then(|value| value.parse::<B256>().ok())
                     .expect("finalized capacity capture block hash");
-                let finality_latency_micros = ports
-                    .iter()
-                    .enumerate()
-                    .map(|(validator_index, _)| {
-                        world
-                            .localnet
-                            .validator_finality_latency_micros(
-                                validator_index,
-                                q_forming.block_number,
-                                q_forming.block_hash,
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "observe q-forming capacity finality on validator \
-                                     {validator_index}: {error:#}"
-                                )
-                            })
-                    })
-                    .max()
-                    .expect("four validator finality observations");
-                let block_processing_micros_by_validator = ports
-                    .iter()
-                    .enumerate()
-                    .map(|(validator_index, _)| {
-                        world
-                            .localnet
-                            .validator_block_processing_micros(
-                                validator_index,
-                                q_forming.block_number,
-                                q_forming.block_hash,
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "observe q-forming capacity block on validator \
-                                     {validator_index}: {error:#}"
-                                )
-                            })
-                    })
-                    .collect::<Vec<_>>();
-                let block_processing_micros = block_processing_micros_by_validator
-                    .iter()
-                    .copied()
-                    .max()
-                    .expect("four validator block-processing timings");
                 let block_commitments = ports
                     .iter()
                     .copied()
@@ -5199,9 +5177,7 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
                             .expect("q-forming block length fits u64"),
                         gas: q_forming.gas_used,
                         internal_work,
-                        block_processing_micros_by_validator,
-                        block_processing_micros,
-                        finality_latency_micros,
+
                     });
             }
 
@@ -5494,6 +5470,7 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
         .ocomp_delegate_private_key_for_vote(&vote)
         .expect("q-forming vote OCOMP delegate key");
 
+    assert_completed_replay_window_open(world);
     let retry_hash = world
         .rpc
         .submit_ocomp_result_vote_bytes(primary, &delegate_key, vote_bytes)
@@ -5502,13 +5479,7 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
         .rpc
         .transaction_receipt(&retry_hash, primary)
         .expect("exact retry receipt");
-    assert_eq!(
-        retry_receipt
-            .get("status")
-            .and_then(serde_json::Value::as_str),
-        Some("0x1"),
-        "exact completed-vote retry must be idempotently accepted"
-    );
+    observe_timely_completed_replay(world, "after-retirement", &retry_hash, &retry_receipt);
     world.state.ocomp_exact_completed_retry_succeeded = Some(true);
 
     let mut mutated = vote;
@@ -5556,12 +5527,61 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
         .receipt_block_number(&retry_hash, primary)
         .expect("exact retry block");
     let finality_target = mutation_block.map_or(retry_block, |height| retry_block.max(height));
+    wait_for_common_finalized_checkpoint(world, finality_target, "public retry/mutation receipts");
+}
+
+fn assert_completed_replay_window_open(world: &World) {
+    let request = world.state.ocomp_job_request.as_ref().expect("replay job");
+    let head = world
+        .rpc
+        .head(world.validators.primary_port())
+        .expect("head before replay");
     assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, finality_target, 60),
-        "public retry/mutation receipts did not finalize"
+        head.checked_add(1).is_some_and(|next| next < request.deadline_height),
+        "positive replay has no admissible next block: head={head}, deadline={}; fix the scenario genesis window",
+        request.deadline_height
     );
+}
+
+fn timely_replay_receipt_height(receipt: &serde_json::Value, deadline: u64) -> eyre::Result<u64> {
+    let block = receipt
+        .get("blockNumber")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre!("replay receipt omitted blockNumber: {receipt}"))?;
+    let height = u64::from_str_radix(
+        block
+            .strip_prefix("0x")
+            .ok_or_else(|| eyre!("invalid replay block: {block}"))?,
+        16,
+    )?;
+    ensure!(
+        height < deadline,
+        "replay included at {height}, outside exclusive deadline {deadline}: {receipt}"
+    );
+    ensure!(
+        receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x1"),
+        "timely replay reverted: {receipt}"
+    );
+    Ok(height)
+}
+
+fn observe_timely_completed_replay(
+    world: &mut World,
+    phase: &str,
+    hash: &str,
+    receipt: &serde_json::Value,
+) {
+    let request = world.state.ocomp_job_request.as_ref().expect("replay job");
+    let deadline = request.deadline_height;
+    let observation = serde_json::json!({
+        "phase": phase, "job_id": request.job_id, "open_height": request.open_height,
+        "deadline_height": deadline, "transaction_hash": hash, "receipt": receipt
+    });
+    eprintln!("OCOMP_REPLAY_RECEIPT {observation}");
+    world.state.ocomp_replay_receipts.push(observation);
+    let height = timely_replay_receipt_height(receipt, deadline)
+        .unwrap_or_else(|error| panic!("{phase} replay {hash}: {error:#}"));
+    wait_for_common_finalized_checkpoint(world, height, phase);
 }
 
 #[then("the completed job and Nod generation are unchanged by both transactions")]
@@ -7828,6 +7848,7 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         .rpc
         .finalized(primary)
         .expect("finality before restart");
+    let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
 
     // External clients depend on node RPC and projection storage. Stop the
     // complete cohort before taking down any validator, exactly as the initial
@@ -7857,6 +7878,13 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     );
     let _ = finalized_points_at_common_height(world, convergence_target);
     restart_ocomp_roles_after_committee_time_change(world, ocomp_resume);
+    if let Some(pending) =
+        crate::features::price_oracle::resume_after_clock_restart(world, price_publication)
+    {
+        while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+            sleep(Duration::from_millis(250));
+        }
+    }
 }
 
 #[then("the completed generation and exact vote replay remain identical")]
@@ -7920,6 +7948,7 @@ fn completed_generation_survives_restart_and_replay(world: &mut World) {
         .ocomp
         .ocomp_delegate_private_key_for_vote(&vote)
         .expect("q-forming vote OCOMP delegate key after restart");
+    assert_completed_replay_window_open(world);
     let replay_hash = world
         .rpc
         .submit_ocomp_result_vote_bytes(primary, &delegate_key, vote_bytes)
@@ -7928,13 +7957,7 @@ fn completed_generation_survives_restart_and_replay(world: &mut World) {
         .rpc
         .transaction_receipt(&replay_hash, primary)
         .expect("exact post-restart replay receipt");
-    assert_eq!(
-        replay_receipt
-            .get("status")
-            .and_then(serde_json::Value::as_str),
-        Some("0x1"),
-        "exact full-result replay after restart was not idempotently accepted"
-    );
+    observe_timely_completed_replay(world, "after-restart", &replay_hash, &replay_receipt);
     let after = world
         .rpc
         .finalized_ocomp_activation_on(primary, request.request_height, request.intent_id)
@@ -8124,6 +8147,36 @@ mod tests {
     use crate::world::rpc::OcompPublicVoteAccountabilityV1;
     use alloy_primitives::{Address, Bytes, B256, U256};
     use alloy_sol_types::SolEvent;
+
+    #[test]
+    fn replay_receipt_requires_success_inside_exclusive_deadline() {
+        let receipt = serde_json::json!({"blockNumber": "0xc4", "status": "0x1"});
+        assert_eq!(
+            super::timely_replay_receipt_height(&receipt, 197).unwrap(),
+            196
+        );
+        for height in [197_u64, 212] {
+            let receipt =
+                serde_json::json!({"blockNumber": format!("0x{height:x}"), "status": "0x1"});
+            assert!(super::timely_replay_receipt_height(&receipt, 197).is_err());
+        }
+        let failed_run = serde_json::json!({"blockNumber": "0xd4", "status": "0x0"});
+        let error = super::timely_replay_receipt_height(&failed_run, 197).unwrap_err();
+        assert!(error.to_string().contains("outside exclusive deadline 197"));
+    }
+
+    #[test]
+    fn replay_receipt_rejects_reverts_and_missing_or_malformed_evidence() {
+        for receipt in [
+            serde_json::json!({"blockNumber": "0xc4", "status": "0x0"}),
+            serde_json::json!({"blockNumber": "0xc4"}),
+            serde_json::json!({"status": "0x1"}),
+            serde_json::json!({"blockNumber": "196", "status": "0x1"}),
+            serde_json::json!({"blockNumber": "0xinvalid", "status": "0x1"}),
+        ] {
+            assert!(super::timely_replay_receipt_height(&receipt, 197).is_err());
+        }
+    }
 
     #[test]
     fn case_one_dispatch_marker_requires_exact_job_and_production_event() {

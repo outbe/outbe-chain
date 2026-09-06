@@ -4,7 +4,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
-use eyre::{bail, ensure, eyre, Result};
+use eyre::{Result, bail, ensure, eyre};
 
 use crate::env::TeeMode;
 use crate::internal::{
@@ -48,7 +48,9 @@ fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
                         .is_some_and(|suffix| suffix.starts_with('='))
             })
     }) {
-        bail!("validator recovery follower command contains forbidden authority/bypass option {option}");
+        bail!(
+            "validator recovery follower command contains forbidden authority/bypass option {option}"
+        );
     }
     Ok(())
 }
@@ -523,15 +525,31 @@ impl Localnet {
 
     /// Stop all follower nodes (drop owned handles -> kill + reap).
     pub fn stop_followers(&mut self) -> Result<()> {
-        self.followers.clear();
+        let names = self.followers.keys().cloned().collect::<Vec<_>>();
+        let mut failures = Vec::new();
+        for name in names {
+            if let Err(error) = self.stop_follower(&name) {
+                failures.push(format!("{name}: {error:#}"));
+            }
+        }
+        ensure!(
+            failures.is_empty(),
+            "follower shutdown failed: {}",
+            failures.join("; ")
+        );
         Ok(())
     }
 
     /// Stop one follower while preserving its durable datadir for restart/catch-up tests.
     pub fn stop_follower(&mut self, name: &str) -> Result<()> {
-        if let Some(mut follower) = self.followers.remove(name) {
+        if let Some(follower) = self.followers.get_mut(name) {
             follower.interrupt();
+            let status = follower
+                .exit_status()?
+                .ok_or_else(|| eyre!("follower {name} remained live after stop"))?;
+            ensure!(status.success(), "follower {name} exited with {status}");
         }
+        self.followers.remove(name);
         Ok(())
     }
 }

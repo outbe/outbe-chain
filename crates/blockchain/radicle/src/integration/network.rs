@@ -6,7 +6,7 @@ use crate::{
         OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
         HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
-    manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError},
+    manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
 };
 use alloy_primitives::Address;
 use commonware_cryptography::{bls12381, Signer as _};
@@ -18,7 +18,10 @@ use std::{
     sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::{
+    sync::{mpsc, oneshot, watch},
+    task::JoinSet,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalEndpointIdentity {
@@ -171,13 +174,17 @@ impl EndpointNetwork {
 impl EndpointNetworkResolver {
     pub async fn shutdown(&self) -> Result<(), ManagerError> {
         let (result, response) = oneshot::channel();
-        self.commands
-            .try_send(NetworkCommand::Shutdown { result })
-            .map_err(|_| ManagerError::Stopped)?;
-        tokio::time::timeout(HANDLE_DEADLINE, response)
-            .await
-            .map_err(|_| ManagerError::Stopped)?
-            .map_err(|_| ManagerError::Stopped)?
+        tokio::time::timeout(HANDLE_DEADLINE, async {
+            self.commands
+                .send(NetworkCommand::Shutdown { result })
+                .await
+                .map_err(|_| ManagerError::Endpoint("shutdown mailbox closed".into()))?;
+            response
+                .await
+                .map_err(|_| ManagerError::Endpoint("shutdown acknowledgement closed".into()))?
+        })
+        .await
+        .map_err(|_| ManagerError::ShutdownDeadline("endpoint"))?
     }
 }
 
@@ -215,7 +222,9 @@ impl EndpointNetworkService {
         R: Receiver<PublicKey = bls12381::PublicKey> + Send + 'static,
         R::Error: std::fmt::Display,
     {
-        let actor = tokio::spawn(
+        // Dropping or unwinding the network service also aborts its owned actor.
+        let mut actor = JoinSet::new();
+        actor.spawn(
             self.actor
                 .take()
                 .expect("endpoint service may only run once")
@@ -223,8 +232,15 @@ impl EndpointNetworkService {
         );
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
-        loop {
+        let mut shutdown_ack = None;
+        let outcome = loop {
             tokio::select! {
+                joined = actor.join_next() => {
+                    break Err(match joined {
+                        Some(Err(error)) => ManagerError::Task(format!("endpoint actor: {error}")),
+                        _ => ManagerError::Endpoint("endpoint actor stopped unexpectedly".into()),
+                    });
+                }
                 command = self.commands.recv() => {
                     match command {
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
@@ -238,32 +254,42 @@ impl EndpointNetworkService {
                             let _ = result.send(refreshed);
                         }
                         Some(NetworkCommand::Shutdown { result }) => {
-                            let stopped = self.handle.shutdown().await
-                                .map_err(|error| ManagerError::Endpoint(error.to_string()));
-                            let _ = result.send(stopped);
-                            break;
+                            shutdown_ack = Some(result);
+                            break Ok(());
                         }
-                        None => break,
+                        None => break Ok(()),
                     }
                 }
                 received = receiver.recv() => {
-                    let (peer, bytes) = received
-                        .map_err(|error| ManagerError::Endpoint(error.to_string()))?;
-                    self.receive(
+                    let (peer, bytes) = match received {
+                        Ok(received) => received,
+                        Err(error) => break Err(ManagerError::Endpoint(error.to_string())),
+                    };
+                    if let Err(error) = self.receive(
                         &mut sender,
                         &signer,
                         &local,
                         current.as_ref(),
                         &mut queued,
                         (peer, bytes),
-                    ).await?;
+                    ).await {
+                        break Err(error);
+                    }
                 }
             }
+        };
+        self.commands.close();
+        let cleanup = if actor.is_empty() {
+            Ok(())
+        } else {
+            stop_actor(&self.handle, &mut actor).await
+        };
+        // Preserve a transport failure even if cleanup also fails.
+        let outcome = outcome.and(cleanup);
+        if let Some(result) = shutdown_ack {
+            let _ = result.send(outcome.clone());
         }
-        actor
-            .await
-            .map_err(|error| ManagerError::Endpoint(error.to_string()))?;
-        Ok(())
+        outcome
     }
 
     async fn refresh<S>(
@@ -446,22 +472,69 @@ impl EndpointNetworkService {
     }
 }
 
-pub async fn shutdown_bounded<M, E>(
+/// Drain the manager before closing its endpoint dependency. Each stage gets
+/// `deadline`, including endpoint cleanup after a manager failure or timeout.
+/// The manager reserves up to one second within its budget for abort-and-join.
+pub async fn shutdown_bounded<E>(
     deadline: Duration,
-    manager: M,
+    manager: RadicleManagerHandle,
     endpoint: E,
 ) -> Result<(), ManagerError>
 where
-    M: Future<Output = Result<(), ManagerError>>,
     E: Future<Output = Result<(), ManagerError>>,
 {
-    tokio::time::timeout(deadline, async move {
-        let (manager, endpoint) = tokio::join!(manager, endpoint);
-        manager?;
-        endpoint
-    })
-    .await
-    .map_err(|_| ManagerError::Stopped)?
+    let manager = manager.shutdown_bounded(deadline).await;
+    let endpoint = tokio::time::timeout(deadline, endpoint)
+        .await
+        .unwrap_or(Err(ManagerError::ShutdownDeadline("endpoint")));
+    match (manager, endpoint) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(manager), Err(endpoint)) => Err(ManagerError::Shutdown {
+            manager: Box::new(manager),
+            endpoint: Box::new(endpoint),
+        }),
+    }
+}
+
+async fn stop_actor(handle: &EndpointHandle, actor: &mut JoinSet<()>) -> Result<(), ManagerError> {
+    let end = tokio::time::Instant::now() + HANDLE_DEADLINE;
+    let drain_end = end - Duration::from_secs(1);
+    let stopped = tokio::time::timeout_at(drain_end, handle.shutdown())
+        .await
+        .map_err(|_| ManagerError::ShutdownDeadline("endpoint actor"))
+        .and_then(|result| {
+            result.map_err(|error| match error {
+                crate::endpoint::HandleError::Deadline => {
+                    ManagerError::ShutdownDeadline("endpoint actor")
+                }
+                error => ManagerError::Endpoint(error.to_string()),
+            })
+        });
+    if stopped.is_err() {
+        actor.abort_all();
+    }
+    let join_end = if stopped.is_err() { end } else { drain_end };
+    match tokio::time::timeout_at(join_end, actor.join_next()).await {
+        Ok(Some(Ok(()))) => stopped,
+        // Keep the failure that required cancellation, including a closed ACK.
+        Ok(Some(Err(error))) if error.is_cancelled() && stopped.is_err() => stopped,
+        // A panic carries more information than the closed ACK it caused.
+        Ok(Some(Err(error))) => Err(ManagerError::Task(format!("endpoint actor: {error}"))),
+        Ok(None) => Err(ManagerError::Endpoint("endpoint actor join missing".into())),
+        Err(_) => {
+            actor.abort_all();
+            match tokio::time::timeout_at(end, actor.join_next()).await {
+                Ok(Some(Err(error))) if !error.is_cancelled() => {
+                    Err(ManagerError::Task(format!("endpoint actor: {error}")))
+                }
+                Ok(_) => Err(ManagerError::ShutdownDeadline("endpoint actor")),
+                Err(_) => Err(ManagerError::ShutdownDeadline(
+                    "endpoint actor cancellation",
+                )),
+            }
+        }
+    }
 }
 
 fn anchor(snapshot: &FinalizedSnapshot) -> Result<AnchorSnapshot, ManagerError> {
@@ -515,4 +588,258 @@ fn now_millis() -> u64 {
         .unwrap_or(Duration::ZERO)
         .as_millis()
         .min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use crate::{endpoint::HandleError, integration::RadicleStatusChannel};
+    use alloy_primitives::B256;
+    use commonware_actor::{Feedback, Unreliable};
+    use commonware_p2p::CheckedSender;
+    use commonware_runtime::IoBufs;
+
+    #[derive(Clone)]
+    struct NoSend;
+
+    impl LimitedSender for NoSend {
+        type PublicKey = bls12381::PublicKey;
+        type Checked<'a> = NoSend;
+
+        fn check(
+            &mut self,
+            _: Recipients<Self::PublicKey>,
+        ) -> Result<Self::Checked<'_>, SystemTime> {
+            Err(SystemTime::now())
+        }
+    }
+
+    impl CheckedSender for NoSend {
+        type PublicKey = bls12381::PublicKey;
+
+        fn recipients(&self) -> Vec<Self::PublicKey> {
+            vec![]
+        }
+
+        fn send(self, _: impl Into<IoBufs> + Send, _: bool) -> Unreliable<Feedback> {
+            panic!("sender is never admitted")
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestReceiver(mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>);
+
+    impl Receiver for TestReceiver {
+        type PublicKey = bls12381::PublicKey;
+        type Error = std::io::Error;
+
+        async fn recv(&mut self) -> Result<(Self::PublicKey, IoBuf), Self::Error> {
+            self.0.recv().await.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed witness")
+            })
+        }
+    }
+
+    struct Running {
+        task: tokio::task::JoinHandle<Result<(), ManagerError>>,
+        resolver: EndpointNetworkResolver,
+        handle: EndpointHandle,
+        incoming: mpsc::UnboundedSender<(bls12381::PublicKey, IoBuf)>,
+    }
+
+    fn network() -> Running {
+        let (_, status) = RadicleStatusChannel::enabled(Address::ZERO, [1; 32]);
+        let (service, resolver, _) = EndpointNetwork::build(
+            ChainIdentity {
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+            },
+            status,
+        );
+        let handle = service.handle.clone();
+        let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+            validator: Address::ZERO,
+            node_id: [1; 32],
+            addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+        });
+        let (incoming, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(service.run(
+            NoSend,
+            TestReceiver(receiver),
+            bls12381::PrivateKey::from_seed(1),
+            local,
+        ));
+        Running {
+            task,
+            resolver,
+            handle,
+            incoming,
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_shutdown_ack_follows_actor_cleanup() {
+        let running = network();
+        running.handle.stats().await.unwrap();
+        running.resolver.shutdown().await.unwrap();
+        assert_eq!(running.handle.stats().await, Err(HandleError::Closed));
+        running.task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn transport_failure_is_preserved_and_actor_reaped() {
+        let running = network();
+        running.handle.stats().await.unwrap();
+        drop(running.incoming);
+        assert_eq!(
+            running.task.await.unwrap(),
+            Err(ManagerError::Endpoint("transport closed witness".into()))
+        );
+        assert_eq!(running.handle.stats().await, Err(HandleError::Closed));
+        assert!(running.resolver.shutdown().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn closing_network_commands_reaps_actor() {
+        let running = network();
+        running.handle.stats().await.unwrap();
+        drop(running.resolver);
+        tokio::time::timeout(Duration::from_secs(1), running.task)
+            .await
+            .expect("command closure must terminate the actor")
+            .unwrap()
+            .unwrap();
+        assert_eq!(running.handle.stats().await, Err(HandleError::Closed));
+    }
+
+    #[tokio::test]
+    async fn network_cancellation_aborts_actor() {
+        let running = network();
+        running.handle.stats().await.unwrap();
+        running.task.abort();
+        assert!(running.task.await.unwrap_err().is_cancelled());
+        assert_eq!(running.handle.stats().await, Err(HandleError::Closed));
+    }
+
+    #[tokio::test]
+    async fn actor_panic_after_ack_is_not_success() {
+        let (actor, handle) = EndpointActor::new(EndpointProtocol::new(
+            ChainIdentity {
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+            },
+            OsRequestIds,
+        ));
+        let mut tasks = JoinSet::new();
+        tasks.spawn(async move {
+            actor.run().await;
+            panic!("actor panic after ack witness");
+        });
+        let error = stop_actor(&handle, &mut tasks).await.unwrap_err();
+        assert!(
+            matches!(error, ManagerError::Task(ref message) if message.contains("actor panic after ack witness"))
+        );
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_actor_is_aborted_and_reaped_after_ack() {
+        let (actor, handle) = EndpointActor::new(EndpointProtocol::new(
+            ChainIdentity {
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+            },
+            OsRequestIds,
+        ));
+        let (alive, mut dropped) = oneshot::channel::<()>();
+        let mut tasks = JoinSet::new();
+        tasks.spawn(async move {
+            let _alive = alive;
+            actor.run().await;
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(
+            stop_actor(&handle, &mut tasks).await,
+            Err(ManagerError::ShutdownDeadline("endpoint actor"))
+        );
+        assert!(tasks.is_empty());
+        assert_eq!(
+            dropped.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn actor_cancellation_panic_is_not_a_deadline() {
+        struct PanicOnDrop;
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                panic!("actor cancellation panic witness");
+            }
+        }
+        let (actor, handle) = EndpointActor::new(EndpointProtocol::new(
+            ChainIdentity {
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+            },
+            OsRequestIds,
+        ));
+        let mut tasks = JoinSet::new();
+        tasks.spawn(async move {
+            actor.run().await;
+            let _guard = PanicOnDrop;
+            std::future::pending::<()>().await;
+        });
+        let error = stop_actor(&handle, &mut tasks).await.unwrap_err();
+        assert!(tasks.is_empty());
+        assert!(
+            matches!(error, ManagerError::Task(ref message) if message.contains("actor cancellation panic witness"))
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_preserves_closed_acknowledgement() {
+        let (commands, mut receiver) = mpsc::channel(1);
+        let resolver = EndpointNetworkResolver { commands };
+        let responder = tokio::spawn(async move {
+            let Some(NetworkCommand::Shutdown { result }) = receiver.recv().await else {
+                panic!("expected shutdown");
+            };
+            drop(result);
+        });
+        assert_eq!(
+            resolver.shutdown().await,
+            Err(ManagerError::Endpoint(
+                "shutdown acknowledgement closed".into()
+            ))
+        );
+        responder.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_full_mailbox_waits_until_deadline() {
+        let (commands, _receiver) = mpsc::channel(1);
+        let (result, _response) = oneshot::channel();
+        assert!(commands
+            .try_send(NetworkCommand::Shutdown { result })
+            .is_ok());
+        let resolver = EndpointNetworkResolver { commands };
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            resolver.shutdown().await,
+            Err(ManagerError::ShutdownDeadline("endpoint"))
+        );
+        assert_eq!(started.elapsed(), HANDLE_DEADLINE);
+    }
+
+    #[tokio::test]
+    async fn shutdown_closed_mailbox_is_not_deadline() {
+        let (commands, receiver) = mpsc::channel(1);
+        drop(receiver);
+        let resolver = EndpointNetworkResolver { commands };
+        assert_eq!(
+            resolver.shutdown().await,
+            Err(ManagerError::Endpoint("shutdown mailbox closed".into()))
+        );
+    }
 }

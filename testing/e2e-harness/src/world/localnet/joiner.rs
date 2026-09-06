@@ -6,18 +6,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{hex, Address, Bytes, B256};
-use eyre::{bail, eyre, Result, WrapErr as _};
-use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use alloy_primitives::{Address, B256, Bytes, hex};
+use eyre::{Result, WrapErr as _, bail, eyre};
 use outbe_tee::TransportError;
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use serde::Deserialize;
 
 use crate::internal::{
     addresses,
     eth::{self, IValidatorSet},
     proc::{
-        self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed, wait_tcp,
-        SealSpec,
+        self, SealSpec, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed,
+        wait_tcp,
     },
     shell::Sh,
 };
@@ -234,6 +234,10 @@ impl Localnet {
             .ok_or_else(|| eyre!("FullNode {index} owner disappeared"))?
             .stop_and_reap()?;
         self.followers.remove(&name);
+        eyre::ensure!(
+            status.success(),
+            "FullNode {index} PID {expected_pid} failed during planned stop: {status}"
+        );
         Ok(status)
     }
 
@@ -1217,7 +1221,8 @@ impl Localnet {
     /// `e2e_stop_joiner`.
     pub fn stop_joiner(&mut self, index: usize) -> Result<()> {
         if let Some(node) = self.validators.get_mut(&index) {
-            node.stop_and_reap()?;
+            let status = node.stop_and_reap()?;
+            eyre::ensure!(status.success(), "joiner {index} exited with {status}");
         }
         self.validators.remove(&index);
         Ok(())
@@ -1346,11 +1351,12 @@ mod tests {
                 vec!["--testnet.unix-time-offset-secs", "12"],
                 vec!["--testnet.unix-time-offset-secs=12"],
             ] {
-                assert!(net
-                    .joiner_validator_args(4, &extra)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("shared StartOpts"));
+                assert!(
+                    net.joiner_validator_args(4, &extra)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("shared StartOpts")
+                );
                 assert!(!net.cfg.validator_dir(4).exists());
             }
         }
@@ -1363,14 +1369,27 @@ mod tests {
         let mut cfg = crate::internal::config::Config::resolve(&env);
         cfg.dir = root.path().to_owned();
         let mut net = Localnet::new(cfg);
-        for index in [4, 5] {
-            let mut command = Command::new("sleep");
-            command.arg("60");
+        for index in [4, 5, 6] {
+            // Model a node's signal handler, not sleep's default SIGTERM exit.
+            // The marker is published only after the handler is installed.
+            let ready = root.path().join(format!("ready-{index}"));
+            let exit_code = if index == 6 { 1 } else { 0 };
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!("trap 'exit {exit_code}' TERM INT; printf ready > \"$1\"; while :; do sleep 0.05; done"), "node-stop-fixture"]);
+            command.arg(&ready);
             let name = Localnet::joiner_full_node_name(index);
             net.followers.insert(
                 name.clone(),
                 proc::ChildGuard::spawn(&name, command).unwrap(),
             );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while fs::read_to_string(&ready).ok().as_deref() != Some("ready") {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "signal handler not ready"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
         let original = net.owned_full_node_process(4).unwrap();
         assert!(net.stop_joiner_full_node_owned(4, 0).is_err());
@@ -1386,6 +1405,8 @@ mod tests {
         let exited = net.owned_full_node_process(5).unwrap();
         assert!(exited.1.is_some());
         assert!(net.stop_joiner_full_node_owned(5, exited.0).is_err());
+        let failed = net.owned_full_node_process(6).unwrap();
+        assert!(net.stop_joiner_full_node_owned(6, failed.0).is_err());
     }
 
     #[test]
@@ -1428,11 +1449,13 @@ mod tests {
         log.seal().unwrap();
         let proof = log.read().unwrap();
         assert_eq!(proof, "controlled exit\n");
-        assert!(localnet
-            .wait_selected_upstream_admission(index, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("still owned"));
+        assert!(
+            localnet
+                .wait_selected_upstream_admission(index, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("still owned")
+        );
         localnet.stop_follower(&name).unwrap();
         assert!(localnet.owned_full_node_process(index).is_err());
         let error = localnet
@@ -1447,11 +1470,13 @@ mod tests {
         let child = proc::ChildGuard::spawn(&name, command).unwrap();
         localnet.followers.insert(name, child);
         assert!(localnet.owned_full_node_process(index).unwrap().1.is_none());
-        assert!(localnet
-            .wait_selected_upstream_admission(index, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("still owned"));
+        assert!(
+            localnet
+                .wait_selected_upstream_admission(index, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("still owned")
+        );
     }
 
     #[test]
@@ -1528,10 +1553,12 @@ mod tests {
         assert!(!follower.contains(&"--validator.evm-key".to_owned()));
         let mut command = std::process::Command::new("outbe-chain");
         super::super::configure_node_protocol_environment(&localnet.start_opts, &mut command);
-        assert!(command
-            .get_envs()
-            .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
-                && value == Some(std::ffi::OsStr::new("42"))));
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
+                    && value == Some(std::ffi::OsStr::new("42")))
+        );
         assert_eq!(
             fs::read_to_string(vd.join("reth-p2p-secret.hex")).unwrap(),
             "11".repeat(32)
@@ -1656,15 +1683,18 @@ mod tests {
         ] {
             assert!(!args.iter().any(|arg| arg == forbidden), "{forbidden}");
         }
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--upstream", "http://127.0.0.1:35000"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--upstream", "http://127.0.0.1:35000"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"])
+        );
     }
 
     #[test]

@@ -167,6 +167,15 @@ pub enum ManagerError {
     Status(String),
     #[error("manager stopped")]
     Stopped,
+    #[error("{0} shutdown deadline exceeded")]
+    ShutdownDeadline(&'static str),
+    #[error("Radicle task failed: {0}")]
+    Task(String),
+    #[error("manager shutdown failed: {manager}; endpoint shutdown failed: {endpoint}")]
+    Shutdown {
+        manager: Box<ManagerError>,
+        endpoint: Box<ManagerError>,
+    },
 }
 
 pub trait FinalizedFeed: Send + Sync + 'static {
