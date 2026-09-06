@@ -234,9 +234,9 @@ impl Ports {
     pub(crate) fn from_block_starts(starts: &[u16]) -> Result<Self> {
         for (index, &start) in starts.iter().enumerate() {
             fits(u64::from(start))?;
-            let end = start + BLOCK - 1;
+            let end = start + (BLOCK - 1);
             for (previous_index, &previous) in starts[..index].iter().enumerate() {
-                let previous_end = previous + BLOCK - 1;
+                let previous_end = previous + (BLOCK - 1);
                 if start <= previous_end && previous <= end {
                     bail!(
                         "persisted validator-{index} port block {start}..={end} overlaps validator-{previous_index} block {previous}..={previous_end}"
@@ -259,7 +259,7 @@ impl Ports {
                 radicle_cursor: u64::from(RADICLE_BASE),
                 issued: starts
                     .iter()
-                    .map(|&start| (start, start + BLOCK - 1))
+                    .map(|&start| (start, start + (BLOCK - 1)))
                     .collect(),
                 // Only CORE spans were persisted. Fresh sidecar/joiner ports
                 // still need the normal OS collision and ephemeral checks.
@@ -372,7 +372,7 @@ impl Resolver {
             let start = fits(candidate)?;
             if !self.overlaps_issued(start, BLOCK) && (!self.scan || window_free(start)) {
                 self.cursor = u64::from(start) + u64::from(BLOCK);
-                self.issued.push((start, start + BLOCK - 1));
+                self.issued.push((start, start + (BLOCK - 1)));
                 return Ok(start);
             }
             candidate = u64::from(start) + 1;
@@ -393,7 +393,7 @@ impl Resolver {
         loop {
             let start = fits_width(candidate, RADICLE_BLOCK)?;
             if let Some((low, high)) = ephemeral {
-                if ranges_overlap((start, start + RADICLE_BLOCK - 1), (low, high)) {
+                if ranges_overlap((start, start + (RADICLE_BLOCK - 1)), (low, high)) {
                     candidate = u64::from(high) + 1;
                     continue;
                 }
@@ -402,7 +402,7 @@ impl Resolver {
                 && (!self.scan || radicle_window_free(start))
             {
                 self.radicle_cursor = u64::from(start) + u64::from(RADICLE_BLOCK);
-                self.issued.push((start, start + RADICLE_BLOCK - 1));
+                self.issued.push((start, start + (RADICLE_BLOCK - 1)));
                 return Ok(start);
             }
             candidate = u64::from(start) + 1;
@@ -412,7 +412,7 @@ impl Resolver {
     fn overlaps_issued(&self, start: u16, width: u16) -> bool {
         self.issued
             .iter()
-            .any(|&span| ranges_overlap((start, start + width - 1), span))
+            .any(|&span| ranges_overlap((start, start + (width - 1)), span))
     }
 }
 
@@ -818,6 +818,31 @@ mod tests {
             resolver.alloc().is_err(),
             "last core span overlaps issued Radicle ports"
         );
+    }
+
+    #[test]
+    fn last_core_window_ends_at_maximum_port_and_is_not_reissued() {
+        let ports = Ports::new(false);
+        let mut resolver = lock(&ports.inner);
+        let start = u16::MAX - (BLOCK - 1);
+        resolver.cursor = u64::from(start);
+        assert_eq!(resolver.alloc().unwrap(), start);
+        assert_eq!(resolver.issued, vec![(start, u16::MAX)]);
+        assert_eq!(resolver.cursor, u64::from(u16::MAX) + 1);
+        assert!(resolver.alloc().is_err());
+    }
+
+    #[test]
+    fn persisted_final_core_window_round_trips_in_either_order() {
+        let last = u16::MAX - (BLOCK - 1);
+        for starts in [[NODE_BASE, last], [last, NODE_BASE]] {
+            let ports = Ports::from_block_starts(&starts).unwrap();
+            assert_eq!(ports.block_starts(2).unwrap(), starts);
+            let mut resolver = lock(&ports.inner);
+            assert_eq!(resolver.cursor, u64::from(u16::MAX) + 1);
+            assert!(resolver.alloc().is_err());
+        }
+        assert!(Ports::from_block_starts(&[last, last]).is_err());
     }
 
     #[test]
