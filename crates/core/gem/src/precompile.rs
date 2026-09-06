@@ -16,10 +16,8 @@ sol!(
     "../../../contracts/precompiles/src/IGem.sol"
 );
 
-// A gem's call sweep counts breach days from its issuance day forward, and a
-// scenario seeds closed days rather than living through them. Moving the stamp
-// back is the one thing it cannot do from outside; this exists only in a
-// throwaway build.
+// A gem is stamped live, so only a throwaway build can move its issuance back
+// behind the closed days a scenario seeds for the call sweep.
 #[cfg(feature = "e2e-test")]
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]

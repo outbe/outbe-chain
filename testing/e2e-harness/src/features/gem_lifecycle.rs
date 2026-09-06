@@ -38,9 +38,7 @@ const QUALIFIED: u8 = 1;
 const CALLED: u8 = 2;
 /// DEV calls a gem once the VWAP held above its Call Price on two of three days.
 const CALL_THRESHOLD_DAYS: u32 = 2;
-/// How far back the gem's issuance is stamped, so the days the sweep counts lie
-/// after it. The gem is issued live, so this is the one thing a scenario cannot
-/// arrange from outside.
+/// How far back the gem's issuance is stamped, so the seeded days lie after it.
 const CALL_LOOKBACK_DAYS: u64 = 3;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
@@ -116,9 +114,8 @@ fn issue_source_series(world: &mut World) {
 
     let series = *series.first().expect("one series was issued");
 
-    // Issuance reaches the collection as its own message, so the units appear a
-    // block or more after the call returns. Parking before they land reverts
-    // with NonexistentToken.
+    // Issuance reaches the collection as its own message; parking before the
+    // units land reverts with NonexistentToken.
     let nft = intex_nft(world);
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {
@@ -299,8 +296,7 @@ fn settle_and_mine(world: &mut World) {
     let asset = settlement_asset(world);
     let load = read_gem(&url, gem_id).promisLoad;
 
-    // The cost is derived, so what to fund is the factory's own quote - already
-    // in the settlement asset's units, which the load never was.
+    // The cost is derived, so the note covers the factory's own quote.
     let payable = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
@@ -422,10 +418,8 @@ fn call_trigger_holds(world: &mut World) {
     )
     .expect("backdate the gem's issuance stamp");
 
-    // Seed the days rather than living through them: the Oracle's arithmetic is
-    // not what this scenario is about, and the sweep still walks its own index,
-    // checks the watermark and counts the days itself. The Call Price is a fixed
-    // markup over entry, so a rate far above entry clears it by any margin.
+    // Seed the days rather than live through them; the sweep still counts them
+    // itself. A rate far above entry clears the derived Call Price by any margin.
     test_issuance::seed_day_vwaps(
         &url,
         DEPLOYER_KEY,
