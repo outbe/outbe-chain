@@ -645,7 +645,7 @@ pub(super) fn assert_retained(world: &mut World) -> Result<()> {
 mod tests {
     use std::os::unix::process::ExitStatusExt;
 
-    use outbe_primitives::reshare_artifact::{OutbeBlockArtifacts, encode_outbe_block_artifacts};
+    use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
 
     use super::*;
 
@@ -770,22 +770,18 @@ mod tests {
         let good = log(&proof.peers[0].headers);
         let propagated = format!("{good}   1: {EXPIRED}1, height 66, deadline 66\n");
         telemetry(&propagated, &proof.target, proof.expiry).unwrap();
-        assert!(
-            telemetry(
-                &format!("{good}   1: {EXPIRED}2, height 66, deadline 66\n"),
-                &proof.target,
-                proof.expiry
-            )
-            .is_err()
-        );
-        assert!(
-            telemetry(
-                &format!("   1: {EXPIRED}1, height 66, deadline 66\n"),
-                &proof.target,
-                proof.expiry
-            )
-            .is_err()
-        );
+        assert!(telemetry(
+            &format!("{good}   1: {EXPIRED}2, height 66, deadline 66\n"),
+            &proof.target,
+            proof.expiry
+        )
+        .is_err());
+        assert!(telemetry(
+            &format!("   1: {EXPIRED}1, height 66, deadline 66\n"),
+            &proof.target,
+            proof.expiry
+        )
+        .is_err());
     }
 
     #[test]
@@ -971,13 +967,11 @@ mod tests {
         assert!(retained_proof(&[]).is_err());
         assert!(retained_proof(&[json!({"phase": PHASE, "proof": {}})]).is_err());
         // A tag/height or generic error record is not a completed halt proof.
-        assert!(
-            retained_proof(&[json!({
-                "phase": PHASE,
-                "proof": {"expiry": 66, "exit_code": 1, "error": "consensus failed"}
-            })])
-            .is_err()
-        );
+        assert!(retained_proof(&[json!({
+            "phase": PHASE,
+            "proof": {"expiry": 66, "exit_code": 1, "error": "consensus failed"}
+        })])
+        .is_err());
         let row = json!({"phase": PHASE, "proof": proof});
         assert!(retained_proof(&[row.clone(), row]).is_err());
         for path in [

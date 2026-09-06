@@ -862,7 +862,9 @@ fn source_control_response<T: serde::de::DeserializeOwned + Send + 'static>(
         );
         match decoded {
             radicle::node::CommandResult::Okay(value) => Ok(value),
-            radicle::node::CommandResult::Error { reason } => bail!("source control: {reason}"),
+            radicle::node::CommandResult::Error { reason } => {
+                bail!("source control: {reason}");
+            }
         }
     })
 }

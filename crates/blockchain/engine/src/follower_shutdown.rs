@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use commonware_actor::Feedback;
-use commonware_consensus::{Reporter, marshal::Update};
+use commonware_consensus::{marshal::Update, Reporter};
 use commonware_utils::acknowledgement::Exact;
-use eyre::{Result, ensure, eyre};
+use eyre::{ensure, eyre, Result};
 use outbe_consensus::{executor::Mailbox, marshal_types::MarshalUpdate};
 use tokio::sync::oneshot;
 
@@ -116,7 +116,7 @@ impl FollowerDrain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
+    use futures::{channel::mpsc, FutureExt as _, StreamExt as _};
 
     #[tokio::test]
     async fn drain_closes_ingress_but_waits_for_both_execution_and_proofs() {
@@ -178,12 +178,11 @@ mod tests {
             } else {
                 "store write failed"
             }));
-            assert!(
-                wait.await
-                    .unwrap_err()
-                    .to_string()
-                    .contains("without completion")
-            );
+            assert!(wait
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("without completion"));
         }
     }
 
@@ -191,7 +190,7 @@ mod tests {
     async fn post_quiesce_delivery_is_neither_executed_nor_falsely_acknowledged() {
         use commonware_utils::acknowledgement::Acknowledgement as _;
         use outbe_consensus::block::ConsensusBlock;
-        use reth_ethereum::{Block, primitives::SealedBlock};
+        use reth_ethereum::{primitives::SealedBlock, Block};
         let (control, drain) = follower_drain_pair();
         let (tx, mut rx) = mpsc::unbounded();
         let mut reporter = drain.install(Mailbox::from_sender(tx)).unwrap().unwrap();

@@ -6,18 +6,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{Address, B256, Bytes, hex};
-use eyre::{Result, WrapErr as _, bail, eyre};
-use outbe_tee::TransportError;
+use alloy_primitives::{hex, Address, Bytes, B256};
+use eyre::{bail, eyre, Result, WrapErr as _};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use outbe_tee::TransportError;
 use serde::Deserialize;
 
 use crate::internal::{
     addresses,
     eth::{self, IValidatorSet},
     proc::{
-        self, SealSpec, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed,
-        wait_tcp,
+        self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed, wait_tcp,
+        SealSpec,
     },
     shell::Sh,
 };
@@ -1351,12 +1351,11 @@ mod tests {
                 vec!["--testnet.unix-time-offset-secs", "12"],
                 vec!["--testnet.unix-time-offset-secs=12"],
             ] {
-                assert!(
-                    net.joiner_validator_args(4, &extra)
-                        .unwrap_err()
-                        .to_string()
-                        .contains("shared StartOpts")
-                );
+                assert!(net
+                    .joiner_validator_args(4, &extra)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("shared StartOpts"));
                 assert!(!net.cfg.validator_dir(4).exists());
             }
         }
@@ -1449,13 +1448,11 @@ mod tests {
         log.seal().unwrap();
         let proof = log.read().unwrap();
         assert_eq!(proof, "controlled exit\n");
-        assert!(
-            localnet
-                .wait_selected_upstream_admission(index, 0)
-                .unwrap_err()
-                .to_string()
-                .contains("still owned")
-        );
+        assert!(localnet
+            .wait_selected_upstream_admission(index, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("still owned"));
         localnet.stop_follower(&name).unwrap();
         assert!(localnet.owned_full_node_process(index).is_err());
         let error = localnet
@@ -1470,13 +1467,11 @@ mod tests {
         let child = proc::ChildGuard::spawn(&name, command).unwrap();
         localnet.followers.insert(name, child);
         assert!(localnet.owned_full_node_process(index).unwrap().1.is_none());
-        assert!(
-            localnet
-                .wait_selected_upstream_admission(index, 0)
-                .unwrap_err()
-                .to_string()
-                .contains("still owned")
-        );
+        assert!(localnet
+            .wait_selected_upstream_admission(index, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("still owned"));
     }
 
     #[test]
@@ -1553,12 +1548,10 @@ mod tests {
         assert!(!follower.contains(&"--validator.evm-key".to_owned()));
         let mut command = std::process::Command::new("outbe-chain");
         super::super::configure_node_protocol_environment(&localnet.start_opts, &mut command);
-        assert!(
-            command
-                .get_envs()
-                .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
-                    && value == Some(std::ffi::OsStr::new("42")))
-        );
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
+                && value == Some(std::ffi::OsStr::new("42"))));
         assert_eq!(
             fs::read_to_string(vd.join("reth-p2p-secret.hex")).unwrap(),
             "11".repeat(32)
@@ -1683,18 +1676,15 @@ mod tests {
         ] {
             assert!(!args.iter().any(|arg| arg == forbidden), "{forbidden}");
         }
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--upstream", "http://127.0.0.1:35000"])
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"])
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"])
-        );
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--upstream", "http://127.0.0.1:35000"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--tee-enclave-socket", "127.0.0.1:34000"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"]));
     }
 
     #[test]

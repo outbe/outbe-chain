@@ -19,8 +19,8 @@ use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::vec::NonEmptyVec;
 use tracing::{debug, info};
 
-use crate::follow::FollowerEpocher;
 use crate::follow::upstream::TipSource;
+use crate::follow::FollowerEpocher;
 use crate::marshal_types::MarshalMailbox;
 
 /// How often the driver wakes to re-hint the marshal's pull window.

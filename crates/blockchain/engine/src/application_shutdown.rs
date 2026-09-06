@@ -4,8 +4,8 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 
 use eyre::Result;
 use futures::{
-    FutureExt as _,
     future::{BoxFuture, Shared},
+    FutureExt as _,
 };
 
 /// Keeps application dependencies alive until their owners have stopped using

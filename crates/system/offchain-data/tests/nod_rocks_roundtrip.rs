@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, NodItemBodyV1, StoredBody, WwdEntityId,
-    body_commitment, decode_nod_item_v1, encode_nod_item_v1,
+    body_commitment, decode_nod_item_v1, encode_nod_item_v1, NodItemBodyV1, StoredBody,
+    WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_storage::{Key, Namespace, RocksDbStorage, StorageReader, StorageWriter, Value};
 use outbe_primitives::time::WorldwideDay;

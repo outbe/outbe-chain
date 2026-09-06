@@ -24,7 +24,7 @@ pub mod tee_bootstrap;
 pub mod validators;
 
 pub use args::ConsensusArgs;
-pub use stack::{ConsensusStackServices, run_consensus_stack};
+pub use stack::{run_consensus_stack, ConsensusStackServices};
 
 /// Read the exact offer-key commitment from the selected certified upstream.
 /// Full-node startup uses this narrow adapter before launching execution.

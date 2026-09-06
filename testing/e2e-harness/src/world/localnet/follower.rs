@@ -4,7 +4,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
-use eyre::{Result, bail, ensure, eyre};
+use eyre::{bail, ensure, eyre, Result};
 
 use crate::env::TeeMode;
 use crate::internal::{

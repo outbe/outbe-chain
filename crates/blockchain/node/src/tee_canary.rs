@@ -12,8 +12,8 @@
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use alloy_primitives::{Address, U256};
@@ -21,8 +21,8 @@ use metrics::{counter, gauge, histogram};
 use outbe_tee::canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 use outbe_tee::errors::TransportError;
 use outbe_tee::protocol::{
-    EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse, EncryptedTributeOffer,
-    TributeOfferStatus, WorldwideDay, inputs_canonical_hash,
+    inputs_canonical_hash, EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse,
+    EncryptedTributeOffer, TributeOfferStatus, WorldwideDay,
 };
 use tokio_util::sync::CancellationToken;
 

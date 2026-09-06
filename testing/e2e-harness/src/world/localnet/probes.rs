@@ -15,7 +15,6 @@ use alloy_primitives::B256;
 use eyre::{ensure, Result, WrapErr};
 use serde::Serialize;
 
-
 use crate::internal::proc::{first_hex, run_capture, ChildGuard};
 
 use super::Localnet;

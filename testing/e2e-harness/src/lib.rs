@@ -37,10 +37,10 @@ mod evidence;
 mod internal;
 mod validator_evidence;
 
-use cucumber::World as _;
 use cucumber::cli;
 use cucumber::tag::Ext as _;
 use cucumber::writer::Stats;
+use cucumber::World as _;
 use futures::FutureExt as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -48,10 +48,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::artifacts::ArtifactLedger;
-use crate::env::{Decision, EnvCli, Environment, decide, unmet};
+use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
-use crate::world::World;
 use crate::world::localnet::Localnet;
+use crate::world::World;
 
 #[derive(Default)]
 struct RunCounters {
@@ -186,7 +186,7 @@ fn watchdog_loop(
 async fn teardown_on_signal(env: Environment) {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::signal::unix::{signal, SignalKind};
         let mut term = match signal(SignalKind::terminate()) {
             Ok(s) => s,
             // If we can't install the SIGTERM handler, still honour Ctrl-C.

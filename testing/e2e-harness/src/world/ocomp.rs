@@ -16,9 +16,9 @@ use alloy_consensus::TxEip1559;
 #[cfg(feature = "ocomp-integration")]
 use alloy_eips::eip2718::Encodable2718 as _;
 #[cfg(feature = "ocomp-integration")]
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 #[cfg(feature = "ocomp-integration")]
-use k256::ecdsa::{Signature, SigningKey, signature::hazmat::PrehashSigner as _};
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
 use outbe_chain_constants::GENESIS_CONFIG_KEY;
 #[cfg(feature = "ocomp-integration")]
@@ -33,25 +33,25 @@ use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 use outbe_metadosis::{WwdDayType, WwdStatus};
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
-    PreparedVoteTransactionV1,
     activation::SignOncePurpose,
     committee::{
-        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
-        RESULT_SIGNATURE_PURPOSE_BITMAP, validator_identity_hash_v1,
+        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::BoundedBytes,
     profile::{CapacityProfileV1, ProtocolBundleV1},
     registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
     vote::{ResultVoteSigningSubjectV1, ResultVoteV1},
+    PreparedVoteTransactionV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::time::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    OutbeHeader,
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
-    storage::{StorageHandle, hashmap::HashMapStorageProvider},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    OutbeHeader,
 };
 #[cfg(feature = "ocomp-integration")]
 use std::fs::{self, File, OpenOptions};
@@ -2782,7 +2782,7 @@ impl OcompTopology {
         &mut self,
         evidence: &mut crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
     ) -> Result<()> {
-        use crate::internal::ocomp_worker_outage::{WorkerStopEvidence, terminate_cohort};
+        use crate::internal::ocomp_worker_outage::{terminate_cohort, WorkerStopEvidence};
         eyre::ensure!(
             self.domains.len() == 4 && self.faults.len() + 4 <= OCOMP_MAX_FAULT_RECORDS,
             "worker fault requires the complete four-validator cohort"
@@ -3330,7 +3330,9 @@ impl OcompTopology {
             match fs::symlink_metadata(&path) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
-                Ok(_) => eyre::bail!("history follower slot is not cold: {}", path.display()),
+                Ok(_) => {
+                    eyre::bail!("history follower slot is not cold: {}", path.display());
+                }
             }
         }
         let initial = self
@@ -3887,7 +3889,9 @@ fn seed_followup_public_day(
             })?;
         let volume = U256::from(1_000_000_u64);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-        oracle.config_vote_period.write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
+        oracle
+            .config_vote_period
+            .write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
         oracle.write_snapshot(snapshot_time, &[(pair, price, volume)])?;
         let pair_index = oracle.pair_index_of(pair)?;
         if pair_index == 0 {
@@ -3934,7 +3938,9 @@ fn seed_followup_public_day(
                 );
                 account_key
             }
-            None => eyre::bail!("generated genesis has no {label} account"),
+            None => {
+                eyre::bail!("generated genesis has no {label} account");
+            }
         };
         let words = alloc
             .get_mut(&account_key)
@@ -4264,7 +4270,9 @@ fn seed_fresh_metadosis_oracle_input(
         // Allow independent production feeders eight blocks to collect quorum.
         // Clock-restart barriers still require a fresh finalized publication;
         // this fixture does not change the production freshness bound.
-        oracle.config_vote_period.write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
+        oracle
+            .config_vote_period
+            .write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
         if oracle.pair_index_of(pair)? == 0 {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "fresh Metadosis Oracle pair is not registered".into(),
@@ -5093,14 +5101,14 @@ mod tests {
     {
         use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
         use outbe_ocomp_protocol::{
-            HashDomain,
             hash::hash_framed,
             intent::DayType,
             result::{
-                CarryOverCreditActionV1, CarryOverReason, CompletionStatus, ConservationTotalsV1,
-                ExactCountsV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
-                lysis_v1_empty_semantic_event_root,
+                lysis_v1_empty_semantic_event_root, CarryOverCreditActionV1, CarryOverReason,
+                CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisResultV1,
+                MetadosisCompletionSummaryV1, ResultRootsV1,
             },
+            HashDomain,
         };
 
         let topology = completed_job_topology();
@@ -5316,19 +5324,15 @@ mod tests {
                 proof.result.job_id
             ),
         );
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_none()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_none());
         fs::write(path, b"restored-voter-journal").unwrap();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_some()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_some());
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -5349,12 +5353,10 @@ mod tests {
         topology
             .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
             .unwrap();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_none()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_none());
         for invalid in [
             valid.replace(
                 &format!("{:#x}", proof.result.job_id),
@@ -5379,12 +5381,10 @@ mod tests {
             );
         }
         append_artifact_fixture_log(&topology, 3, &valid);
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_some()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_some());
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -5403,97 +5403,71 @@ mod tests {
             .join(&digest[..2])
             .join(&digest[2..]);
         fs::remove_file(&path).unwrap();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_none()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_none());
         fs::write(&path, &bytes).unwrap();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_some()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_some());
         let mut corrupt = bytes;
         *corrupt.last_mut().unwrap() ^= 1;
         fs::write(&path, corrupt).unwrap();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap_err()
-                .to_string()
-                .contains("digest mismatch")
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap_err()
+            .to_string()
+            .contains("digest mismatch"));
     }
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
     fn canonical_artifacts_preserve_incarnation_job_quorum_and_deadline_guards() {
         let (mut topology, mut proof, pids) = canonical_artifact_fixture();
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .is_err()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .is_err());
         topology
             .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
             .unwrap();
-        assert!(
-            topology
-                .arm_completed_artifact_phase(
-                    proof.bundle_hash,
-                    pids.clone(),
-                    Duration::from_secs(60)
-                )
-                .is_err()
-        );
+        assert!(topology
+            .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::from_secs(60))
+            .is_err());
         let mut replacement = pids.clone();
         replacement.insert(3, 2_003);
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &replacement)
-                .is_err()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &replacement)
+            .is_err());
         for voters in [vec![0, 1], vec![0, 1, 1], vec![0, 1, 4]] {
             proof.voters = voters;
-            assert!(
-                topology
-                    .verify_completed_artifacts_canonical(&proof, &pids)
-                    .is_err()
-            );
+            assert!(topology
+                .verify_completed_artifacts_canonical(&proof, &pids)
+                .is_err());
         }
         proof.voters = vec![0, 1, 2];
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap()
-                .is_some()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap()
+            .is_some());
         proof.result.job_id = B256::repeat_byte(99);
-        assert!(
-            topology
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .is_err()
-        );
+        assert!(topology
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .is_err());
 
         let (mut expired, proof, pids) = canonical_artifact_fixture();
         expired
             .arm_completed_artifact_phase(proof.bundle_hash, pids.clone(), Duration::ZERO)
             .unwrap();
-        assert!(
-            expired
-                .verify_completed_artifacts_canonical(&proof, &pids)
-                .unwrap_err()
-                .to_string()
-                .contains("deadline elapsed")
-        );
-        assert!(
-            expired
-                .arm_completed_artifact_phase(proof.bundle_hash, pids, Duration::from_secs(60))
-                .is_err()
-        );
+        assert!(expired
+            .verify_completed_artifacts_canonical(&proof, &pids)
+            .unwrap_err()
+            .to_string()
+            .contains("deadline elapsed"));
+        assert!(expired
+            .arm_completed_artifact_phase(proof.bundle_hash, pids, Duration::from_secs(60))
+            .is_err());
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -5514,11 +5488,9 @@ mod tests {
                 fs::rename(&path, path.with_extension("previous")).unwrap();
             }
             fs::write(&path, b"").unwrap();
-            assert!(
-                topology
-                    .verify_completed_artifacts_canonical(&proof, &pids)
-                    .is_err()
-            );
+            assert!(topology
+                .verify_completed_artifacts_canonical(&proof, &pids)
+                .is_err());
         }
     }
 
@@ -5552,20 +5524,16 @@ mod tests {
                     topology
                         .attach_keyless_full_node_owned(index, role, ordinal, guard)
                         .unwrap();
-                    assert!(
-                        topology
-                            .attach_keyless_full_node_owned(index, role, ordinal, child_guard())
-                            .is_err()
-                    );
+                    assert!(topology
+                        .attach_keyless_full_node_owned(index, role, ordinal, child_guard())
+                        .is_err());
                 } else {
                     topology
                         .attach_owned(Some(index), role, ordinal, guard)
                         .unwrap();
-                    assert!(
-                        topology
-                            .attach_owned(Some(index), role, ordinal, child_guard())
-                            .is_err()
-                    );
+                    assert!(topology
+                        .attach_owned(Some(index), role, ordinal, child_guard())
+                        .is_err());
                 }
                 assert_eq!(topology.records.len(), 66);
                 let process = {
@@ -5625,11 +5593,9 @@ mod tests {
         let operational_key = fs::read(staged.join("ocomp-evm-key.hex")).unwrap();
         assert_eq!(operational_key.len(), 65);
         assert_eq!(operational_key[64], b'\n');
-        assert!(
-            operational_key[..64]
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-        );
+        assert!(operational_key[..64]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
         assert!(topology.domain_root(4).is_err());
     }
 
@@ -5787,11 +5753,9 @@ mod tests {
         assert!(topology
             .attach_keyless_full_node_owned(4, OcompProcessRole::Worker, Some(1), child_guard(),)
             .is_err());
-        assert!(
-            topology
-                .attach_keyless_full_node_owned(4, OcompProcessRole::Worker, None, child_guard(),)
-                .is_err()
-        );
+        assert!(topology
+            .attach_keyless_full_node_owned(4, OcompProcessRole::Worker, None, child_guard(),)
+            .is_err());
         assert!(topology
             .attach_keyless_full_node_owned(4, OcompProcessRole::Worker, Some(2), child_guard(),)
             .is_err());
@@ -5855,24 +5819,20 @@ mod tests {
         let topology = topology_with_validators(4);
         let node = topology.cfg.validator_dir(14);
         fs::create_dir_all(node.join("data")).unwrap();
-        assert!(
-            topology
-                .stage_cold_history_follower_bundles(14)
-                .unwrap_err()
-                .to_string()
-                .contains("not cold")
-        );
+        assert!(topology
+            .stage_cold_history_follower_bundles(14)
+            .unwrap_err()
+            .to_string()
+            .contains("not cold"));
         assert!(!node.join("ocomp").exists());
         let other = topology.cfg.validator_dir(15);
         fs::create_dir_all(&other).unwrap();
         std::os::unix::fs::symlink(other.join("missing"), other.join("data")).unwrap();
-        assert!(
-            topology
-                .stage_cold_history_follower_bundles(15)
-                .unwrap_err()
-                .to_string()
-                .contains("not cold")
-        );
+        assert!(topology
+            .stage_cold_history_follower_bundles(15)
+            .unwrap_err()
+            .to_string()
+            .contains("not cold"));
         assert!(!other.join("ocomp").exists());
     }
 
@@ -5960,11 +5920,9 @@ mod tests {
                 post_fork_rejoined_height: 36,
             })
             .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("requires the exact OCOMP launch identity")
-        );
+        assert!(error
+            .to_string()
+            .contains("requires the exact OCOMP launch identity"));
     }
 
     #[test]
@@ -6037,11 +5995,9 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("does not match the launch identity")
-        );
+        assert!(error
+            .to_string()
+            .contains("does not match the launch identity"));
     }
 
     #[test]
@@ -6062,18 +6018,14 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("does not prove fail-closed isolation")
-        );
-        assert!(
-            topology
-                .evidence_snapshot()
-                .unwrap()
-                .fork_mismatch
-                .is_none()
-        );
+        assert!(error
+            .to_string()
+            .contains("does not prove fail-closed isolation"));
+        assert!(topology
+            .evidence_snapshot()
+            .unwrap()
+            .fork_mismatch
+            .is_none());
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -6351,11 +6303,9 @@ mod tests {
         fs::remove_dir_all(topology.domain_root(0).unwrap()).unwrap();
 
         let error = topology.prepare_bootstrapped_runtime().unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("result-signing key does not match its genesis registration")
-        );
+        assert!(error
+            .to_string()
+            .contains("result-signing key does not match its genesis registration"));
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -6369,11 +6319,9 @@ mod tests {
         let error = topology
             .ensure_validator_domain_material_before_node_start()
             .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("partial OCOMP validator domain material")
-        );
+        assert!(error
+            .to_string()
+            .contains("partial OCOMP validator domain material"));
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -6408,8 +6356,8 @@ mod tests {
         let genesis_path = topology.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
-        genesis["config"][outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY]["layoutHash"] =
-            serde_json::json!(alloy_primitives::B256::repeat_byte(0x44));
+        genesis["config"][outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY]
+            ["layoutHash"] = serde_json::json!(alloy_primitives::B256::repeat_byte(0x44));
         replace_json_atomically(&genesis_path, &genesis).unwrap();
 
         let mismatched = parse_outbe_chain_spec(&genesis_path).unwrap();
@@ -6804,11 +6752,9 @@ mod tests {
             .prepare_dynamic_membership_fork_install()
             .unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("must be configured before ValidatorSet genesis is seeded")
-        );
+        assert!(error
+            .to_string()
+            .contains("must be configured before ValidatorSet genesis is seeded"));
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -7216,11 +7162,9 @@ mod tests {
         assert_eq!(resume.snapshot_exporters, vec![0, 1, 2, 3, 4]);
         assert_eq!(resume.workers, vec![(0, 0), (1, 0), (4, 0)]);
         assert_eq!(topology.faults, faults_before);
-        assert!(
-            topology
-                .domains
-                .iter()
-                .all(|domain| { domain.snapshot_exporter.is_none() && domain.workers.is_empty() })
-        );
+        assert!(topology
+            .domains
+            .iter()
+            .all(|domain| { domain.snapshot_exporter.is_none() && domain.workers.is_empty() }));
     }
 }

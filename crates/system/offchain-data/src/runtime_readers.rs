@@ -98,10 +98,12 @@ impl Drop for ExecutionReadBudgetGuard {
     }
 }
 
+type BodyReadObservation = (Namespace, Key, Option<StoredValue>);
+
 struct BudgetedStorageReader {
     inner: StorageReaderHandle,
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<(Namespace, Key, Option<StoredValue>)>>>,
+    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
 }
 
 impl BudgetedStorageReader {
@@ -210,7 +212,7 @@ pub struct RuntimeBodyReaders {
     nod: NodRepositoryReader,
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<(Namespace, Key, Option<StoredValue>)>>>,
+    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
 }
 
 impl RuntimeBodyReaders {

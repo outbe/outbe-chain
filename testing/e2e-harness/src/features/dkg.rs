@@ -10,17 +10,17 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256};
 use cucumber::{given, then, when};
-use eyre::{Result, ensure, eyre};
+use eyre::{ensure, eyre, Result};
 use outbe_primitives::consensus::DkgBoundaryArtifact;
-use outbe_primitives::reshare_artifact::{ConsensusHeaderArtifact, decode_outbe_block_artifacts};
+use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::features::common::boot_localnet;
 use crate::internal::{addresses, eth, launch_log::LaunchLog};
-use crate::world::World;
 use crate::world::rpc::{FinalizedCheckpoint, TxOutcome};
 use crate::world::state::RestartIncarnation;
+use crate::world::World;
 
 mod expiry;
 
@@ -1026,15 +1026,13 @@ mod tests {
             "public-key",
         )
         .unwrap();
-        assert!(
-            validate_reveal_interval(
-                &format!("{freeze}\n{reveal}\n{activated}"),
-                &target,
-                0,
-                "public-key",
-            )
-            .is_err()
-        );
+        assert!(validate_reveal_interval(
+            &format!("{freeze}\n{reveal}\n{activated}"),
+            &target,
+            0,
+            "public-key",
+        )
+        .is_err());
         for log in [
             format!("{reveal}\n{freeze}\n{activated}"),
             format!("{freeze}\n{activated}\n{reveal}"),

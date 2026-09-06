@@ -1490,11 +1490,15 @@ mod tests {
             wrong_amount,
             serde_json::json!({}),
         ] {
-            assert!(std::panic::catch_unwind(|| assert_receipt_event(&invalid, emitter, &event)).is_err());
+            assert!(
+                std::panic::catch_unwind(|| assert_receipt_event(&invalid, emitter, &event))
+                    .is_err()
+            );
         }
         assert!(std::panic::catch_unwind(|| {
             assert_receipt_event(&valid, Address::repeat_byte(2), &event)
-        }).is_err());
+        })
+        .is_err());
     }
 
     fn delivery_fixture(gem_id: U256) -> (serde_json::Value, serde_json::Value, serde_json::Value) {

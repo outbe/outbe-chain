@@ -1,17 +1,17 @@
 use super::*;
 use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 use std::sync::{
-    Arc,
     atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 use commonware_consensus::{marshal, types::ViewDelta};
 use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
 use commonware_parallel::Sequential;
-use commonware_runtime::{Runner as _, Supervisor as _, buffer::paged::CacheRef, deterministic};
+use commonware_runtime::{buffer::paged::CacheRef, deterministic, Runner as _, Supervisor as _};
 use commonware_storage::archive::immutable;
 use futures::FutureExt as _;
-use reth_ethereum::{Block, primitives::SealedBlock};
+use reth_ethereum::{primitives::SealedBlock, Block};
 
 use crate::{
     block::ConsensusBlock,

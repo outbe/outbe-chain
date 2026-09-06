@@ -5,12 +5,11 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    ACTIVE_COMMITMENT_SCHEME, CeMdbx, CeWorkConfig, EntityRef, EnvironmentIdentity,
-    ExactParentIdentity, ExecutionScope, FinalizedMarker, LOCAL_STORAGE_SCHEMA_VERSION,
-    MdbxAuthenticatedTree, WwdEntityId, begin_block, derive_poseidon_entity_id, encode_nod_item_v1,
-    end_block,
+    begin_block, derive_poseidon_entity_id, encode_nod_item_v1, end_block, CeMdbx, CeWorkConfig,
+    EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope, FinalizedMarker,
+    MdbxAuthenticatedTree, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_nod::{NodContract, NodItemState, api, canonical_item};
+use outbe_nod::{api, canonical_item, NodContract, NodItemState};
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
     RuntimeBodyReaders,
@@ -18,7 +17,7 @@ use outbe_offchain_data::{
 use outbe_offchain_storage::RocksDbStorage;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
-    storage::{StorageHandle, hashmap::HashMapStorageProvider},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
 
@@ -91,15 +90,14 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         parent_root: B256::ZERO,
         new_root: empty_root,
     };
-    let ce = Arc::new(CeMdbx::open(&ce_path, environment.clone(), genesis_marker.clone()).unwrap());
+    let ce = Arc::new(CeMdbx::open(&ce_path, environment.clone(), genesis_marker).unwrap());
     let rocks = Arc::new(RocksDbStorage::open(&rocks_path).unwrap());
     let config = ProjectionConfig {
         chain_id: 91,
         genesis_hash: genesis,
         start_block: 1,
     };
-    let mut projector =
-        OffchainDataProjection::open(config.clone(), rocks.clone(), rocks.clone()).unwrap();
+    let mut projector = OffchainDataProjection::open(config, rocks.clone(), rocks.clone()).unwrap();
     let readers = RuntimeBodyReaders::new(rocks.clone());
     let mut evm = HashMapStorageProvider::new_with_chain_identity(91, genesis);
     // Seed only the empty genesis CE state; all later roots/leaves come from end_block.

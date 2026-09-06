@@ -10,11 +10,11 @@ use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eyre::ensure;
-use eyre::{Result, WrapErr, bail};
+use eyre::{bail, Result, WrapErr};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
-use crate::internal::proc::{self, SealSpec, args, attach_log};
+use crate::internal::proc::{self, args, attach_log, SealSpec};
 
 use super::{Localnet, StartOpts};
 
@@ -101,7 +101,9 @@ fn verify_pre_dkg_public_identity(
             );
             Ok(())
         }
-        _ => bail!("fresh founder preparation requires authenticated keyless PublicKeys"),
+        _ => {
+            bail!("fresh founder preparation requires authenticated keyless PublicKeys");
+        }
     }
 }
 
@@ -920,7 +922,7 @@ mod owned_committee_tests {
     use crate::internal::config::Config;
     use crate::internal::proc::{ChildGuard, DockerImageId};
 
-    use super::{Localnet, quiesce_and_terminate_committee_with, start_prepared_cohort};
+    use super::{quiesce_and_terminate_committee_with, start_prepared_cohort, Localnet};
 
     #[test]
     fn founder_cohort_waits_for_all_authenticated_preparations_before_launch() {
@@ -1211,22 +1213,18 @@ mod owned_committee_tests {
                 observed = true;
                 Err(eyre::eyre!("injected observation failure"))
             });
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("injected observation failure")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("injected observation failure"));
         assert!(observed);
-        assert!(
-            localnet
-                .validators
-                .get_mut(&1)
-                .unwrap()
-                .exit_status()
-                .unwrap()
-                .is_none()
-        );
+        assert!(localnet
+            .validators
+            .get_mut(&1)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
         assert!(!localnet.validators.contains_key(&0));
         assert!(!localnet.enclaves.contains_key(&0));
     }
@@ -1475,12 +1473,10 @@ mod tests {
                     command.get_args().collect::<Vec<_>>(),
                     [std::ffi::OsStr::new(role)]
                 );
-                assert!(
-                    command
-                        .get_envs()
-                        .any(|(key, value)| key == "RUST_MIN_STACK"
-                            && value == Some(std::ffi::OsStr::new("16777216")))
-                );
+                assert!(command
+                    .get_envs()
+                    .any(|(key, value)| key == "RUST_MIN_STACK"
+                        && value == Some(std::ffi::OsStr::new("16777216"))));
             }
         }
     }

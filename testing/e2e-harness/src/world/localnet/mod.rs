@@ -36,12 +36,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use eyre::{Result, WrapErr, bail};
+use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
 use crate::internal::launch_log::LaunchLog;
 use crate::internal::proc::{
-    self, ChildGuard, DockerImageId, EnclaveGuard, args, redact_args_for_log,
+    self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
 };
 use crate::internal::shell::Sh;
 use crate::world::state::DkgExpiryExpectedExit;
@@ -1035,16 +1035,14 @@ mod tests {
         let pid = launch_log_fixture(&mut localnet, 0, "previous launch");
         localnet.validators.remove(&0);
         let node_dir = localnet.cfg.validator_dir(0);
-        assert!(
-            localnet
-                .spawn_node(
-                    "missing-node",
-                    0,
-                    &node_dir,
-                    Command::new(dir.path().join("nonexistent-node"))
-                )
-                .is_err()
-        );
+        assert!(localnet
+            .spawn_node(
+                "missing-node",
+                0,
+                &node_dir,
+                Command::new(dir.path().join("nonexistent-node"))
+            )
+            .is_err());
         assert!(localnet.node_launch_log(0, pid).is_err());
         assert!(localnet.node_launch_logs.is_empty());
     }
@@ -1156,11 +1154,9 @@ mod tests {
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
         let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
 
-        assert!(
-            args.windows(2).any(|pair| {
-                pair[0] == "--tee-session-mode" && pair[1] == "production-node-host"
-            })
-        );
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
     }
 
     #[test]
@@ -1239,10 +1235,9 @@ mod tests {
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
         let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
 
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "--color" && pair[1] == "never")
-        );
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "--color" && pair[1] == "never"));
     }
 
     #[test]

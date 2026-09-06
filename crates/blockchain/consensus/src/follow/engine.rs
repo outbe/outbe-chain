@@ -29,17 +29,17 @@ use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
 use commonware_storage::archive::Identifier;
-use eyre::{Result, ensure, eyre};
+use eyre::{ensure, eyre, Result};
 use futures::FutureExt as _;
 use rand::{CryptoRng, RngCore};
 use tracing::info;
 
 use crate::digest::Digest;
-use crate::follow::FollowerEpocher;
 use crate::follow::driver::{self, Driver};
 use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
-use crate::follow::{CommitteeChain, stubs};
+use crate::follow::FollowerEpocher;
+use crate::follow::{stubs, CommitteeChain};
 use crate::hybrid::HybridScheme;
 use crate::marshal_types::{FollowMarshalActor, MarshalMailbox};
 
@@ -185,60 +185,6 @@ async fn await_marshal_exit(
         Some(Ok(_)) => Ok(()),
         Some(Err(error)) => Err(eyre!("follower shutdown signal failed: {error:?}")),
         None => Err(eyre!("follower marshal exited unexpectedly")),
-    }
-}
-
-#[cfg(test)]
-mod shutdown_tests {
-    use super::await_marshal_exit;
-    use commonware_runtime::{Error, signal::Signaler};
-    use futures::FutureExt as _;
-
-    #[tokio::test]
-    async fn requested_stop_waits_for_actual_marshal_completion() {
-        let (signaler, signal) = Signaler::new();
-        let (done, completed) = tokio::sync::oneshot::channel();
-        let drain = await_marshal_exit(signal, async { completed.await.unwrap() });
-        tokio::pin!(drain);
-        assert!(drain.as_mut().now_or_never().is_none());
-        let stopped = signaler.signal(0);
-        assert!(drain.as_mut().now_or_never().is_none());
-        done.send(Ok(())).unwrap();
-        drain.await.unwrap();
-        stopped.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn clean_marshal_completion_without_stop_is_an_error() {
-        let (_signaler, signal) = Signaler::new();
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("marshal exited unexpectedly"));
-    }
-
-    #[tokio::test]
-    async fn requested_stop_never_hides_marshal_panic_or_closed_result() {
-        for failure in [Error::Exited, Error::Closed] {
-            let (signaler, signal) = Signaler::new();
-            let stopped = signaler.signal(0);
-            let expected = format!("{failure:?}");
-            let error = await_marshal_exit(signal, std::future::ready(Err(failure)))
-                .await
-                .unwrap_err();
-            assert!(error.to_string().contains(&expected));
-            stopped.await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn lost_shutdown_sender_is_not_a_requested_stop() {
-        let (signaler, signal) = Signaler::new();
-        drop(signaler);
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("shutdown signal failed"));
     }
 }
 
@@ -852,4 +798,58 @@ where
         "committee chain anchored at trusted network identity"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::await_marshal_exit;
+    use commonware_runtime::{signal::Signaler, Error};
+    use futures::FutureExt as _;
+
+    #[tokio::test]
+    async fn requested_stop_waits_for_actual_marshal_completion() {
+        let (signaler, signal) = Signaler::new();
+        let (done, completed) = tokio::sync::oneshot::channel();
+        let drain = await_marshal_exit(signal, async { completed.await.unwrap() });
+        tokio::pin!(drain);
+        assert!(drain.as_mut().now_or_never().is_none());
+        let stopped = signaler.signal(0);
+        assert!(drain.as_mut().now_or_never().is_none());
+        done.send(Ok(())).unwrap();
+        drain.await.unwrap();
+        stopped.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn clean_marshal_completion_without_stop_is_an_error() {
+        let (_signaler, signal) = Signaler::new();
+        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("marshal exited unexpectedly"));
+    }
+
+    #[tokio::test]
+    async fn requested_stop_never_hides_marshal_panic_or_closed_result() {
+        for failure in [Error::Exited, Error::Closed] {
+            let (signaler, signal) = Signaler::new();
+            let stopped = signaler.signal(0);
+            let expected = format!("{failure:?}");
+            let error = await_marshal_exit(signal, std::future::ready(Err(failure)))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(&expected));
+            stopped.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn lost_shutdown_sender_is_not_a_requested_stop() {
+        let (signaler, signal) = Signaler::new();
+        drop(signaler);
+        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("shutdown signal failed"));
+    }
 }

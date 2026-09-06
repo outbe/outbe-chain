@@ -433,7 +433,7 @@ fn parse_ephemeral_port_range(value: &str) -> Result<(u16, u16)> {
         .map(str::parse::<u16>)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let [low, high] = ports.as_slice() else {
-        bail!("ephemeral port range must contain exactly two ports")
+        bail!("ephemeral port range must contain exactly two ports");
     };
     if *low == 0 || low > high {
         bail!("invalid ephemeral port range {low}..={high}");

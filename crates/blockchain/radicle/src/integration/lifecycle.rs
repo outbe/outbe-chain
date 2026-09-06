@@ -148,11 +148,9 @@ mod tests {
         let (_service, resolver) = endpoint();
         let owner = EndpointTaskOwner::default();
         owner.shutdown(&resolver).await.unwrap();
-        assert!(
-            !owner
-                .start(async { panic!("must not run after closure") })
-                .unwrap()
-        );
+        assert!(!owner
+            .start(async { panic!("must not run after closure") })
+            .unwrap());
     }
 
     #[tokio::test]
@@ -195,11 +193,9 @@ mod tests {
         })
         .await
         .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("shutdown acknowledgement closed")
-        );
+        assert!(error
+            .to_string()
+            .contains("shutdown acknowledgement closed"));
     }
 
     #[tokio::test(start_paused = true)]

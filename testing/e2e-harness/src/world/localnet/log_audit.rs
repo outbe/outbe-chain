@@ -11,7 +11,7 @@ use outbe_primitives::runtime_audit_v1::{
     BODY_READ_REQUEST_DEADLINE, EVENT_FIELD, FAILURE_KIND_FIELD, PAYLOAD_EXECUTION_FAILED,
     PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_FIELD, SCHEMA_VERSION,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::Localnet;
 use crate::world::state::TeeLeaseShutdownV1;
@@ -1491,16 +1491,14 @@ mod tests {
         assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 
         let other = "0x46aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
-        assert!(
-            !audit_loaded_logs_with_expectations(
-                &legacy_deadline_bundle(hash, other),
-                4,
-                None,
-                None,
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_expectations(
+            &legacy_deadline_bundle(hash, other),
+            4,
+            None,
+            None,
+            None,
+        )
+        .is_clean());
     }
 
     #[test]
@@ -1623,10 +1621,14 @@ mod tests {
         unrelated_fatal[0]
             .1
             .push_str("\nERROR outbe_chain: unrelated fatal condition");
-        assert!(
-            !audit_loaded_logs_with_expectations(&unrelated_fatal, 4, None, None, Some(job_id),)
-                .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_expectations(
+            &unrelated_fatal,
+            4,
+            None,
+            None,
+            Some(job_id),
+        )
+        .is_clean());
 
         let reordered = expected
             .iter()
@@ -1759,33 +1761,29 @@ mod tests {
         assert!(!wrong_validator.is_clean());
 
         let missing_sink = vec![expected[0].clone()];
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &missing_sink,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &missing_sink,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let mut duplicate_sink = expected.clone();
         duplicate_sink.push(expected[0].clone());
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &duplicate_sink,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &duplicate_sink,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let reordered = expected
             .iter()
@@ -1794,18 +1792,16 @@ mod tests {
                 (path.clone(), format!("{}\n{}", lines[1], lines[0]))
             })
             .collect::<Vec<_>>();
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &reordered,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &reordered,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let process_epoch_crossing = expected
             .iter()
@@ -1820,52 +1816,46 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &process_epoch_crossing,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &process_epoch_crossing,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
             .push_str("\nERROR outbe_chain: unrelated fatal condition");
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &extra_fatal,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &extra_fatal,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
 
         let mut duplicate_fatal_trailer = expected.clone();
         duplicate_fatal_trailer[0]
             .1
             .push_str("\nERROR engine::tree: Fatal error");
-        assert!(
-            !audit_loaded_logs_with_all_expectations(
-                &duplicate_fatal_trailer,
-                4,
-                None,
-                None,
-                None,
-                Some(3),
-                None,
-            )
-            .is_clean()
-        );
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &duplicate_fatal_trailer,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+            None,
+        )
+        .is_clean());
     }
 
     #[test]
@@ -1991,9 +1981,21 @@ mod tests {
         for (_, log) in &mut appended {
             log.push_str("INFO reth::cli: Starting Reth version=new\n");
         }
-        assert!(
-            audit_loaded_logs_with_all_expectations(
-                &appended,
+        assert!(audit_loaded_logs_with_all_expectations(
+            &appended,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(&proof)
+        )
+        .is_clean());
+        for changed in ["", "INFO replaced process\n"] {
+            let mut bad = baseline.clone();
+            bad[1].1 = changed.to_owned();
+            assert!(!audit_loaded_logs_with_all_expectations(
+                &bad,
                 4,
                 None,
                 None,
@@ -2001,23 +2003,7 @@ mod tests {
                 None,
                 Some(&proof)
             )
-            .is_clean()
-        );
-        for changed in ["", "INFO replaced process\n"] {
-            let mut bad = baseline.clone();
-            bad[1].1 = changed.to_owned();
-            assert!(
-                !audit_loaded_logs_with_all_expectations(
-                    &bad,
-                    4,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(&proof)
-                )
-                .is_clean()
-            );
+            .is_clean());
         }
         let mut previous = baseline.clone();
         let mut shifted = proof.clone();
@@ -2026,18 +2012,16 @@ mod tests {
             shifted.sinks[index].start += 22;
             shifted.sinks[index].end += 22;
         }
-        assert!(
-            audit_loaded_logs_with_all_expectations(
-                &previous,
-                4,
-                None,
-                None,
-                None,
-                None,
-                Some(&shifted)
-            )
-            .is_clean()
-        );
+        assert!(audit_loaded_logs_with_all_expectations(
+            &previous,
+            4,
+            None,
+            None,
+            None,
+            None,
+            Some(&shifted)
+        )
+        .is_clean());
     }
 
     #[test]

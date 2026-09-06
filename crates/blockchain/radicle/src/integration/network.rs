@@ -1,15 +1,15 @@
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
-        AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor, EndpointAddress,
-        EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody, HANDLE_DEADLINE,
-        MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, OsRequestIds, PeerId, ReceiveOutcome,
-        SignedEndpointResponse, UNKNOWN_ANCHOR_TIMEOUT_MS, VerifiedEndpoint, sign_response,
+        sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor,
+        EndpointAddress, EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody,
+        OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
+        HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
     manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
 };
 use alloy_primitives::Address;
-use commonware_cryptography::{Signer as _, bls12381};
+use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::{CheckedSender as _, LimitedSender, Receiver, Recipients};
 use commonware_runtime::IoBuf;
 use std::{
@@ -826,11 +826,9 @@ mod shutdown_tests {
     async fn shutdown_full_mailbox_waits_until_deadline() {
         let (commands, _receiver) = mpsc::channel(1);
         let (result, _response) = oneshot::channel();
-        assert!(
-            commands
-                .try_send(NetworkCommand::Shutdown { result })
-                .is_ok()
-        );
+        assert!(commands
+            .try_send(NetworkCommand::Shutdown { result })
+            .is_ok());
         let resolver = EndpointNetworkResolver { commands };
         let started = tokio::time::Instant::now();
         assert_eq!(

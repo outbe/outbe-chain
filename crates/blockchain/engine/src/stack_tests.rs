@@ -1,17 +1,17 @@
 use super::*;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use commonware_actor::{Feedback, Unreliable};
 use commonware_consensus::{
-    Reporter,
-    marshal::{self, Start, Update, core::Buffer, resolver::handler},
+    marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::{
-        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
         elector::{Config as _, Elector as _, RoundRobin},
         types::{Activity, Finalization, Finalize, Proposal, Subject},
+        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
     },
     types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
+    Reporter,
 };
-use commonware_cryptography::bls12381::{PrivateKey, primitives::variant::MinSig};
+use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};
 use commonware_cryptography::certificate::{Provider as _, Scheme as _};
 use commonware_cryptography::sha256::Digest as Sha256Digest;
 use commonware_cryptography::{Hasher as _, Sha256};
@@ -21,15 +21,15 @@ use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
 use commonware_runtime::{
-    IoBufs, Runner as _, Supervisor as _, buffer::paged::CacheRef, tokio as commonware_tokio,
+    buffer::paged::CacheRef, tokio as commonware_tokio, IoBufs, Runner as _, Supervisor as _,
 };
 use commonware_storage::archive::immutable;
 use commonware_utils::{
-    NZUsize,
     acknowledgement::Acknowledgement,
     channel::oneshot,
     ordered::{Quorum as _, Set},
     vec::NonEmptyVec,
+    NZUsize,
 };
 use futures::FutureExt as _;
 use outbe_consensus::{
@@ -38,13 +38,13 @@ use outbe_consensus::{
     committee_provider::CommitteeProvider,
     hybrid::{HybridScheme, HybridSchemeProvider, VrfMaterialProvider},
     reporter::ReporterContinuity,
-    test_harness::{MockAutomaton, MockRelay, MockReporter, mock_genesis},
+    test_harness::{mock_genesis, MockAutomaton, MockRelay, MockReporter},
 };
 use outbe_primitives::OutbeHeader;
 use outbe_radicle::integration::{RadicleStatusChannel, RadicleVotingGate, RadicleVotingGateError};
 use reth_ethereum::{
-    Block,
     primitives::{Header, SealedBlock, SealedHeader},
+    Block,
 };
 use reth_provider::ProviderResult;
 use std::{
@@ -53,9 +53,8 @@ use std::{
     marker::PhantomData,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        Arc, Barrier, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
-        mpsc,
+        mpsc, Arc, Barrier, Mutex as StdMutex,
     },
     time::{Duration, SystemTime},
 };
@@ -182,11 +181,9 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                                             ],
                                         },
                                     );
-                                    assert!(
-                                        endpoint_owner
-                                            .start(endpoint.run(sender, receiver, signer, local))
-                                            .unwrap()
-                                    );
+                                    assert!(endpoint_owner
+                                        .start(endpoint.run(sender, receiver, signer, local))
+                                        .unwrap());
                                     match outcome {
                                         0 => {
                                             let mut engine =
@@ -267,9 +264,10 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                     0 => {
                         assert!(format!("{:#}", result.unwrap_err()).contains("VRF expiry witness"))
                     }
-                    1 => assert!(
-                        format!("{:#}", result.unwrap_err()).contains("startup failure witness")
-                    ),
+                    1 => {
+                        assert!(format!("{:#}", result.unwrap_err())
+                            .contains("startup failure witness"))
+                    }
                     2 => assert!(
                         format!("{:#}", result.unwrap_err()).contains("protocol panic witness")
                     ),
@@ -2731,7 +2729,7 @@ fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
 #[test]
 fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
     use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
-    use outbe_primitives::projection::{ProjectionStatus, WaitOutcome, projection_readiness};
+    use outbe_primitives::projection::{projection_readiness, ProjectionStatus, WaitOutcome};
     use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
 
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
@@ -3405,19 +3403,15 @@ fn test_pending_dkg_material_alone_does_not_restore_boundary() {
     // alone; the pending-boundary file remains absent and DkgManager has no
     // pending artifact to verify/drain.
     save_pending_dkg_state(dir.path(), &share, &polynomial, &output, &backend).unwrap();
-    assert!(
-        load_pending_dkg_state(dir.path(), &backend)
-            .unwrap()
-            .is_some()
-    );
+    assert!(load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .is_some());
     assert!(load_pending_dkg_boundary(dir.path()).unwrap().is_none());
 
     let manager = DkgManagerMailbox::new();
-    assert!(
-        commonware_runtime::tokio::Runner::default()
-            .start(|_| async move { manager.pending_boundary_artifact(Epoch::new(7)).await })
-            .is_none()
-    );
+    assert!(commonware_runtime::tokio::Runner::default()
+        .start(|_| async move { manager.pending_boundary_artifact(Epoch::new(7)).await })
+        .is_none());
 }
 
 #[test]
@@ -3534,12 +3528,10 @@ fn test_pending_boundary_commit_requires_matching_finalized_artifact_then_clears
             Some(artifact.clone())
         );
         assert_eq!(manager.take_committed_boundary_artifact().await, None);
-        assert!(
-            manager
-                .pending_boundary_artifact(Epoch::new(7))
-                .await
-                .is_none()
-        );
+        assert!(manager
+            .pending_boundary_artifact(Epoch::new(7))
+            .await
+            .is_none());
     });
 }
 
@@ -4391,11 +4383,9 @@ fn dkg_recovery_provider_gap_preserves_existing_ceremony() {
     )
     .unwrap_err();
 
-    assert!(
-        error
-            .to_string()
-            .contains("missing finalized header at height 80")
-    );
+    assert!(error
+        .to_string()
+        .contains("missing finalized header at height 80"));
     assert_eq!(manager.canonical_output(Epoch::new(0)), Some(expected));
     assert!(
         finalized_log_rx.try_recv().is_err(),
@@ -4541,27 +4531,23 @@ fn active_vrf_material_and_local_share_status_change_together() {
         Some(share),
     );
     assert!(bridge.has_threshold_shares());
-    assert!(
-        HybridScheme::<MinSig>::signer_with_vrf_provider(
-            &config::outbe_app_namespace(),
-            participants.clone(),
-            keys[0].clone(),
-            vrf_materials.clone(),
-        )
-        .is_some()
-    );
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants.clone(),
+        keys[0].clone(),
+        vrf_materials.clone(),
+    )
+    .is_some());
 
     activate_vrf_material_and_publish_local_share(&bridge, &vrf_materials, 2, polynomial, None);
     assert!(!bridge.has_threshold_shares());
-    assert!(
-        HybridScheme::<MinSig>::signer_with_vrf_provider(
-            &config::outbe_app_namespace(),
-            participants,
-            keys[0].clone(),
-            vrf_materials,
-        )
-        .is_none()
-    );
+    assert!(HybridScheme::<MinSig>::signer_with_vrf_provider(
+        &config::outbe_app_namespace(),
+        participants,
+        keys[0].clone(),
+        vrf_materials,
+    )
+    .is_none());
 }
 
 #[test]
@@ -4753,15 +4739,15 @@ fn ordered_set_index_shift_on_prefix_join() {
 #[cfg(test)]
 mod muxer_contract {
     use commonware_consensus::types::Epoch;
-    use commonware_cryptography::Signer as _;
     use commonware_cryptography::ed25519::{PrivateKey as Ed25519PrivateKey, PublicKey};
+    use commonware_cryptography::Signer as _;
     use commonware_p2p::{
-        Channel, Receiver as _, Recipients, Sender as _,
         simulated::{self, Link, Network, Oracle},
         utils::mux::{Builder as _, Muxer},
+        Channel, Receiver as _, Recipients, Sender as _,
     };
     use commonware_runtime::{
-        Clock as _, IoBuf, Quota, Runner, Spawner as _, Supervisor as _, deterministic,
+        deterministic, Clock as _, IoBuf, Quota, Runner, Spawner as _, Supervisor as _,
     };
     use std::{num::NonZeroU32, time::Duration};
 
@@ -5075,7 +5061,7 @@ mod muxer_contract {
 #[test]
 fn epoch_transition_finalizes_view_one() {
     use commonware_consensus::types::{Epoch, View};
-    use commonware_runtime::{Runner, deterministic};
+    use commonware_runtime::{deterministic, Runner};
     use std::time::Duration;
 
     let runner = deterministic::Runner::timed(Duration::from_secs(30));
@@ -5106,7 +5092,7 @@ fn epoch_transition_finalizes_view_one() {
 #[test]
 fn cross_node_race_stalls_under_lazy_registration() {
     use commonware_consensus::types::Epoch;
-    use commonware_runtime::{Runner, deterministic};
+    use commonware_runtime::{deterministic, Runner};
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -5165,7 +5151,7 @@ fn cross_node_race_stalls_under_lazy_registration() {
 #[test]
 fn pre_register_helper_avoids_cross_node_race() {
     use commonware_consensus::types::Epoch;
-    use commonware_runtime::{Runner, deterministic};
+    use commonware_runtime::{deterministic, Runner};
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -5222,7 +5208,7 @@ fn pre_register_helper_avoids_cross_node_race() {
 #[test]
 fn repeated_dkg_cycles_no_stall() {
     use commonware_consensus::types::{Epoch, View};
-    use commonware_runtime::{Runner, deterministic};
+    use commonware_runtime::{deterministic, Runner};
     use std::collections::HashMap;
     use std::time::Duration;
 

@@ -9,8 +9,8 @@ use clap::Parser;
 use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
-    ACTIVE_COMMITMENT_SCHEME, CandidateCacheLimits, CeMdbx, CompressedTreeService,
-    EnvironmentIdentity, FinalizedMarker, LOCAL_STORAGE_SCHEMA_VERSION,
+    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_consensus::executor::actor::FinalizedCeCommitter;
 use outbe_engine::args::ConsensusArgs;
@@ -23,25 +23,25 @@ use outbe_engine::ce_recovery::{
 };
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
-    OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
     compressed_storage::{
-        CompressedStorageRuntimeConfig, validate_compressed_storage_runtime_config,
+        validate_compressed_storage_runtime_config, CompressedStorageRuntimeConfig,
     },
     ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
     projection::{
-        OffchainDataProjectionConfig, ProjectionRetentionFence,
         prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
+        OffchainDataProjectionConfig, ProjectionRetentionFence,
     },
+    OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 use outbe_operator::tee::{
-    NodeBindingSelectorV1, UpgradeJournalStateV1, inspect_upgrade_journal_v1,
-    read_finalized_registry_view_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
-    record_upgrade_promoted_v1,
+    inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
+    record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
+    UpgradeJournalStateV1,
+};
+use outbe_primitives::projection::{
+    projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
 };
 use outbe_primitives::OutbeHeader;
-use outbe_primitives::projection::{
-    ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus, projection_readiness,
-};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
@@ -2815,8 +2815,8 @@ mod tests {
     }
 
     use std::sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     };
 
     struct ThreadDropRecorder {
@@ -2907,10 +2907,9 @@ mod tests {
         ] {
             let anchor = full_node_admission_anchor();
             let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
-            assert!(
-                gate.validate_and_arm(anchor.finalized_hash, admission)
-                    .is_err()
-            );
+            assert!(gate
+                .validate_and_arm(anchor.finalized_hash, admission)
+                .is_err());
             assert!(!gate.is_armed());
         }
     }
@@ -3062,17 +3061,15 @@ mod tests {
             expected_enclave_id: Some(alloy_primitives::B256::repeat_byte(0x48)),
             ..identity
         };
-        assert!(
-            super::validator_admission_anchor_from_durable_v1(
-                durable,
-                676,
-                durable.genesis_hash,
-                wrong_enclave,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("enclave")
-        );
+        assert!(super::validator_admission_anchor_from_durable_v1(
+            durable,
+            676,
+            durable.genesis_hash,
+            wrong_enclave,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("enclave"));
     }
 
     #[test]
@@ -3100,11 +3097,9 @@ mod tests {
         let error = super::ordered_installed_ocomp_bundle_hashes(v1, &installed, None)
             .expect_err("hash order must be explicit after genesis V1 is retired");
 
-        assert!(
-            error
-                .to_string()
-                .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required")
-        );
+        assert!(error
+            .to_string()
+            .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required"));
     }
 
     #[test]
@@ -3121,14 +3116,12 @@ mod tests {
                 .to_string()
                 .contains("duplicate")
         );
-        assert!(
-            super::parse_ocomp_bundle_hashes(
-                "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
-            )
-            .expect_err("uppercase must fail")
-            .to_string()
-            .contains("lowercase")
-        );
+        assert!(super::parse_ocomp_bundle_hashes(
+            "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+        )
+        .expect_err("uppercase must fail")
+        .to_string()
+        .contains("lowercase"));
     }
 
     impl Drop for ExecutionTeardownSentinel {
@@ -3211,12 +3204,10 @@ mod tests {
             });
             started_rx.await.expect("child started");
 
-            assert!(
-                super::abort_and_wait_supervised(&mut stack)
-                    .await
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(super::abort_and_wait_supervised(&mut stack)
+                .await
+                .unwrap()
+                .is_none());
             assert!(observed.load(Ordering::SeqCst));
         });
         assert!(dropped.load(Ordering::SeqCst));
@@ -3277,10 +3268,8 @@ mod tests {
                 "shutdown must not abort a pending result"
             );
             release.send(()).unwrap();
-            assert!(
-                format!("{:#}", wait.await.unwrap_err())
-                    .contains("original terminal error after drain")
-            );
+            assert!(format!("{:#}", wait.await.unwrap_err())
+                .contains("original terminal error after drain"));
         });
     }
 

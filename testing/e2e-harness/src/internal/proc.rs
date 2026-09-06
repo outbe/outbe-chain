@@ -341,7 +341,7 @@ pub(crate) fn spawn_enclave_ready(
     );
     match TcpStream::connect_timeout(&address, remaining.min(Duration::from_millis(100))) {
         Ok(_) => {
-            bail!("enclave endpoint {address} is already occupied; refusing to replace its owner")
+            bail!("enclave endpoint {address} is already occupied; refusing to replace its owner");
         }
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => return Err(error).wrap_err("probe enclave endpoint before launch"),

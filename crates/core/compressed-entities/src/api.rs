@@ -848,7 +848,9 @@ impl ExecutionScope {
     pub(crate) fn diagnostic_parent_binding(&self) -> String {
         format!(
             "binding={:?} rpc_read_only={}",
-            self.parent_identity_without_root.lock().map(|binding| *binding),
+            self.parent_identity_without_root
+                .lock()
+                .map(|binding| *binding),
             self.rpc_read_only.load(Ordering::Acquire),
         )
     }
