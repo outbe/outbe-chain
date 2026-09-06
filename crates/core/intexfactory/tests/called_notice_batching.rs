@@ -21,6 +21,9 @@ const DAY: u32 = 20_260_101;
 const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
+    // The id spells its currency in three digits, so a long queue wraps: these tests
+    // measure the walk, not who is in it.
+    let index = index % 1000;
     let iso = [
         b'0' + (index / 100) as u8,
         b'0' + ((index / 10) % 10) as u8,
@@ -175,30 +178,27 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        // Each entry carries its own call time, so no two coalesce and every one costs a router
-        // call. A qualified entry at 27 leaves the next Called run starting at 28, so the firing
-        // would reach 40 if nothing stopped it - eight entries past its budget of router calls.
-        for index in 0..27 {
+        // Each entry carries its own call time, so no two coalesce and every one costs
+        // a router call - the budget that binds when the call scan stamps a fresh time
+        // every block. The firing stops on it, well short of the entry cap.
+        let queued = NOTIFY_MESSAGE_LIMIT + 5;
+        assert!(
+            queued < NOTIFY_CHUNK_LIMIT,
+            "the call budget must bind first"
+        );
+        for index in 0..queued {
             push_called(&handle, index, CALLED_AT + index);
         }
-        push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
-        for index in 28..40 {
-            push_called(&handle, index, CALLED_AT + index);
-        }
-
-        // The qualified entry resolves to an empty group, so it leaves without a router call:
-        // the firing spends its budget over one more entry than the budget itself.
-        let consumed = NOTIFY_MESSAGE_LIMIT + 1;
 
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (consumed, 40),
-            "the run stops at the limit"
+            (NOTIFY_MESSAGE_LIMIT, queued),
+            "the firing stops on its router-call budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in consumed..40 {
+        for index in NOTIFY_MESSAGE_LIMIT..queued {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

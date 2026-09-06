@@ -320,8 +320,17 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     while index < stop && messages < NOTIFY_MESSAGE_LIMIT {
         let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
+        let calls_left = NOTIFY_MESSAGE_LIMIT - messages;
         let consumed = if kind == NOTICE_CALLED {
-            drain_called_run(&factory, &storage, index, stop, entry, &mut messages)?
+            drain_called_run(
+                &factory,
+                &storage,
+                index,
+                stop,
+                entry,
+                &mut messages,
+                calls_left,
+            )?
         } else {
             factory.notify_at.clear(&index)?;
             factory.notify_kind.clear(&index)?;
@@ -353,6 +362,7 @@ fn drain_called_run(
     stop: u32,
     first: U256,
     messages: &mut u32,
+    calls_left: u32,
 ) -> Result<u32> {
     let (first_id, iso_code, called_at) = unpack_called_notice(first);
     // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
@@ -371,8 +381,11 @@ fn drain_called_run(
     let mut run = vec![first_id];
     let mut groups = vec![iso_code];
 
+    // The run is what one message carries, so it is cut to the calls still budgeted
+    // rather than to the whole firing's window.
+    let run_cap = (calls_left as usize).saturating_mul(MAX_SERIES_PER_MARK);
     let mut index = at.saturating_add(1);
-    while index < stop {
+    while index < stop && run.len() < run_cap {
         if factory.notify_kind.read(&index)? != NOTICE_CALLED {
             break;
         }
@@ -392,33 +405,32 @@ fn drain_called_run(
         factory.notify_kind.clear(&slot)?;
     }
     *messages = messages.saturating_add(router_calls(run.len()));
-    // Best-effort, like the Qualified branch: a batch that cannot be sent is dropped, never left to
-    // wedge the drain and with it the whole cycle trigger.
-    if let Err(error) = storage
+    // The entries are gone either way - a batch left in the queue would wedge the
+    // drain and with it the whole cycle trigger. A batch the router refused is
+    // answered by holding its groups' settlement windows open, not by retrying.
+    let refused = storage
         .with_checkpoint(|| crate::called::notify_called(storage, worldwide_day, called_at, &run))
-    {
-        tracing::warn!(
-            target: "outbe::intexfactory",
-            worldwide_day = worldwide_day.value(),
-            called_at,
-            series = ?run.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-            error = ?error,
-            "called notice: undelivered"
-        );
-        // The holders behind this batch cannot learn they were called, so their
-        // groups keep their load until the notice lands or the grace runs out.
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                worldwide_day = worldwide_day.value(),
+                called_at,
+                error = ?error,
+                "called notice: send failed"
+            );
+            router_calls(run.len())
+        });
+    if refused > 0 {
+        let now = storage.timestamp()?.to::<u64>();
         let mut factory = IntexFactoryContract::new(storage.clone());
         for iso in groups {
-            factory.mark_notice_undelivered(
-                iso,
-                worldwide_day,
-                storage.timestamp()?.to::<u64>(),
-            )?;
-        }
-    } else {
-        let mut factory = IntexFactoryContract::new(storage.clone());
-        for iso in groups {
-            factory.clear_notice_undelivered(iso, worldwide_day)?;
+            // Isolated: a group the hold cannot be applied to must not take the drain
+            // down, and with it every later trigger in this block.
+            if let Err(error) = storage
+                .with_checkpoint(|| factory.hold_for_undelivered_notice(iso, worldwide_day, now))
+            {
+                tracing::warn!(target: "outbe::intexfactory", iso, error = ?error, "called notice: hold failed");
+            }
         }
     }
     Ok(index - at)
@@ -449,6 +461,8 @@ fn send_notice(
     if members.is_empty() {
         return Ok(());
     }
+    // Charged before the send, and a group wider than the budget still goes whole:
+    // it has no cursor to resume from, so the overshoot is one group at most.
     *messages = messages.saturating_add(router_calls(members.len()));
     notify_qualified(storage, worldwide_day, &members)
 }

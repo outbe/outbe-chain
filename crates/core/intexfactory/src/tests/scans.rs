@@ -678,29 +678,51 @@ fn a_group_whose_notice_never_left_keeps_its_window_until_the_grace_runs_out() {
         let mut f = IntexFactoryContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let day = WorldwideDay::new(20260101);
+        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
 
         f.push_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
             .unwrap();
-        f.mark_notice_undelivered(REFERENCE_ISO, day, now).unwrap();
         let bucket = IntexFactoryContract::deadline_day(now + DAY);
 
-        let sweep = |at: u64| {
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
-        };
-
-        sweep(now + 2 * DAY);
+        f.hold_for_undelivered_notice(REFERENCE_ISO, day, now)
+            .unwrap();
+        let held = now + u64::from(crate::constants::NOTICE_GRACE_PERIOD);
         assert_eq!(
-            f.expiry_bucket_live.read(&bucket).unwrap(),
-            1,
-            "holders who were never told still hold their window"
+            f.called_group_deadline.read(&key).unwrap(),
+            held,
+            "holders who were never told get their window extended"
         );
-
-        sweep(now + u64::from(crate::constants::NOTICE_GRACE_PERIOD) + 2 * DAY);
         assert_eq!(
             f.expiry_bucket_live.read(&bucket).unwrap(),
             0,
+            "and the group leaves the bucket it can no longer expire in"
+        );
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            Some(IntexFactoryContract::deadline_day(held)),
+            "waiting instead in the bucket of the day the hold ends"
+        );
+
+        f.hold_for_undelivered_notice(REFERENCE_ISO, day, now + DAY)
+            .unwrap();
+        assert_eq!(
+            f.called_group_deadline.read(&key).unwrap(),
+            held,
+            "a second failure does not extend it again"
+        );
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                1,
+                IntexFactoryContract::day_end(IntexFactoryContract::deadline_day(held)),
+                CHAIN_ID,
+            ),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            None,
             "a route nobody repaired does not strand the load forever"
         );
     });

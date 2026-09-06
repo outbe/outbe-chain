@@ -418,13 +418,16 @@ pub(crate) fn try_call_group(
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did.
+/// travels so every target derives the same deadline the origin did. Returns how
+/// many chunks the router refused: a batch that never left means holders who were
+/// never told, and the caller has to hold their window open.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
-) -> Result<()> {
+) -> Result<u32> {
+    let mut refused = 0u32;
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
         // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
         let sent = storage.with_checkpoint(|| {
@@ -449,9 +452,10 @@ pub(crate) fn notify_called(
                 called_at,
                 series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                 error = ?error,
-                "called notice: dropping"
+                "called notice: refused by the router"
             );
+            refused += 1;
         }
     }
-    Ok(())
+    Ok(refused)
 }

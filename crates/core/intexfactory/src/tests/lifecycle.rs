@@ -542,6 +542,12 @@ mod call_sweep {
             .unwrap()
     }
 
+    /// First instant a group with this deadline can be retired: the sweep works a
+    /// deadline day only once that day has closed.
+    fn due(deadline: u64) -> u64 {
+        IntexFactoryContract::day_end(IntexFactoryContract::deadline_day(deadline))
+    }
+
     fn sweep_at(s: &StorageHandle<'_>, now: u64) {
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(2, now, CHAIN_ID), s.clone());
@@ -586,7 +592,7 @@ mod call_sweep {
                 outbe_intex::IntexState::Called
             );
 
-            sweep_at(&s, deadline + 1);
+            sweep_at(&s, due(deadline));
             assert_eq!(
                 unallocated(&s),
                 U256::from(100u64) * U256::from(1_000_000_000_000_000_000u128)
@@ -606,7 +612,7 @@ mod call_sweep {
             outbe_intex::api::record_parked_units(&s, series_id, 25).unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
-            sweep_at(&s, deadline + 1);
+            sweep_at(&s, due(deadline));
 
             assert_eq!(
                 unallocated(&s),
@@ -655,7 +661,7 @@ mod call_sweep {
                 .unwrap();
 
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
-            sweep_at(&s, deadline + 1);
+            sweep_at(&s, due(deadline));
 
             assert_eq!(
                 unallocated(&s),
@@ -681,9 +687,9 @@ mod call_sweep {
             seed_called_candidate(&s, 20260101);
             let deadline = call_and_deadline(&s, 20260101, scan_ts);
 
-            sweep_at(&s, deadline + 1);
+            sweep_at(&s, due(deadline));
             let after_first = unallocated(&s);
-            sweep_at(&s, deadline + 2);
+            sweep_at(&s, due(deadline) + 1);
             assert_eq!(unallocated(&s), after_first);
 
             // The bucket emptied, so its day left the tree rather than being handed
@@ -714,13 +720,13 @@ mod call_sweep {
             let deadline = scan_ts + 7 * DAY;
             let per_group = U256::from(100u64) * U256::from(1_000_000_000_000_000_000u128);
 
-            sweep_at(&s, deadline + 1);
+            sweep_at(&s, due(deadline));
             assert_eq!(
                 unallocated(&s),
                 per_group * U256::from(MAX_SERIES_ACTIONS_PER_BLOCK)
             );
 
-            sweep_at(&s, deadline + 2);
+            sweep_at(&s, due(deadline) + 1);
             assert_eq!(unallocated(&s), per_group * U256::from(groups));
         });
     }

@@ -9,7 +9,9 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::constants::{MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK};
+use crate::constants::{
+    MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_EXPIRY_SLOTS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK,
+};
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
@@ -20,49 +22,47 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = &ctx.storage;
     let now = ctx.block.timestamp;
     let mut budget = MAX_SERIES_ACTIONS_PER_BLOCK;
+    let mut slots = MAX_EXPIRY_SLOTS_PER_BLOCK;
     let mut buckets = MAX_EXPIRY_BUCKETS_PER_BLOCK;
 
-    while budget > 0 && buckets > 0 {
+    while budget > 0 && slots > 0 && buckets > 0 {
         let mut factory = IntexFactoryContract::new(storage.clone());
-        // Always from the bottom: a short notice can drop a group into a day the
-        // cursor has already passed, and the tree makes restarting free anyway.
+        // Always from the bottom: a group can be re-bucketed into a day the cursor
+        // has already passed, and the tree makes restarting free anyway.
         let Some(day) = factory.first_expiry_day()? else {
             break;
         };
-        if now <= factory.expiry_bucket_min.read(&day)? {
+        // A deadline lies inside its own day by construction, so a day that has not
+        // closed yet holds nobody who is due - and no later day can be due either.
+        if now < IntexFactoryContract::day_end(day) {
             break;
         }
         buckets -= 1;
 
         let len = factory.expiry_bucket_len.read(&day)?;
-        let resume = (factory.expiry_sweep_day.read()? == day)
-            .then(|| factory.expiry_cursor.read())
-            .transpose()?
-            .unwrap_or(0);
+        // A retired bucket clears its length, so a cursor left over from an earlier
+        // fill must not be trusted past the current end.
+        let resume = match factory.expiry_sweep_day.read()? == day {
+            true => factory.expiry_cursor.read()?.min(len),
+            false => 0,
+        };
 
-        let mut earliest = u64::MAX;
         let mut slot = resume;
         while slot < len {
-            // Not checked against the group's size: one larger than the whole
-            // budget must still make progress.
-            if budget == 0 {
+            // Slots, not just actions: an empty or undue slot still costs a read, and
+            // without its own budget one long bucket walks unbounded in a single block.
+            if budget == 0 || slots == 0 {
                 break;
             }
+            slots -= 1;
             let Some((iso_code, worldwide_day)) = factory.expiry_slot(day, slot)? else {
                 slot += 1;
                 continue;
             };
             let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-            let mut deadline = factory.called_group_deadline.read(&key)?;
-            // Holders whose call notice never left cannot settle, so their window
-            // stays open until it does or the grace runs out.
-            if let Some(grace_until) = factory.notice_grace_until(iso_code, worldwide_day)? {
-                deadline = deadline.max(grace_until);
-            }
             // Strictly after, like `settle`: a block hook runs before the block's
             // transactions, so `>=` would count a unit still legally settleable.
-            if now <= deadline {
-                earliest = earliest.min(deadline);
+            if now <= factory.called_group_deadline.read(&key)? {
                 slot += 1;
                 continue;
             }
@@ -77,11 +77,11 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         iso_code,
                         worldwide_day = worldwide_day.value(),
                         error = ?error,
-                        "expiry sweep: quarantining group"
+                        "expiry sweep: retiring group without credit"
                     );
-                    // Out of the bucket, not retried forever: its members keep their
-                    // records, and the day behind it must still drain.
-                    factory.release_expiry_slot(day, slot, key)?;
+                    // Dropped whole, not just out of the bucket: leaving its records
+                    // behind would refuse the pair a later call forever.
+                    factory.remove_called_group(iso_code, worldwide_day, day, slot)?;
                 }
             }
             slot += 1;
@@ -94,10 +94,10 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         factory.expiry_sweep_day.write(0)?;
         factory.expiry_cursor.write(0)?;
-        // Everything left in the day is still waiting, so nothing here is due until
-        // the earliest of them; without this the tree would hand it back every block.
+        // A closed day whose entries all stayed put would otherwise be handed back
+        // every block; nothing here can become due later, so it is done.
         if factory.expiry_bucket_live.read(&day)? != 0 {
-            factory.expiry_bucket_min.write(&day, earliest)?;
+            break;
         }
     }
     Ok(())

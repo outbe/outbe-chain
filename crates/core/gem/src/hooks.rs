@@ -12,8 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
-    MAX_GEM_FORFEITS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_WINDOW, MAX_CALL_WINDOW_DAYS, MAX_EXPIRY_BUCKETS_PER_BLOCK, MAX_EXPIRY_SLOTS_PER_BLOCK,
+    MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -326,40 +326,45 @@ pub(crate) fn call_currency(
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let now = ctx.block.timestamp;
     let mut budget = MAX_GEM_FORFEITS_PER_BLOCK;
+    let mut slots = MAX_EXPIRY_SLOTS_PER_BLOCK;
     let mut buckets = MAX_EXPIRY_BUCKETS_PER_BLOCK;
     let mut burned: u32 = 0;
 
-    while budget > 0 && buckets > 0 {
+    while budget > 0 && slots > 0 && buckets > 0 {
         let mut gem = GemContract::new(ctx.storage.clone());
         // Always from the bottom: the tree makes restarting free, and a gem can
         // land in a day the cursor has already passed.
         let Some(day) = gem.first_expiry_day()? else {
             break;
         };
-        if now <= gem.expiry_bucket_min.read(&day)? {
+        // A deadline lies inside its own day by construction, so a day that has not
+        // closed yet holds nobody who is due - and no later day can be due either.
+        if now < GemContract::day_end(day) {
             break;
         }
         buckets -= 1;
 
         let len = gem.expiry_bucket_len.read(&day)?;
-        let resume = (gem.expiry_sweep_day.read()? == day)
-            .then(|| gem.expiry_cursor.read())
-            .transpose()?
-            .unwrap_or(0);
+        // A retired bucket clears its length, so a cursor left over from an earlier
+        // fill must not be trusted past the current end.
+        let resume = match gem.expiry_sweep_day.read()? == day {
+            true => gem.expiry_cursor.read()?.min(len),
+            false => 0,
+        };
 
-        let mut earliest = u64::MAX;
         let mut slot = resume;
         while slot < len {
-            if budget == 0 {
+            // Slots, not just forfeits: an empty or undue slot still costs a read, and
+            // without its own budget one long bucket walks unbounded in a single block.
+            if budget == 0 || slots == 0 {
                 break;
             }
+            slots -= 1;
             let Some(gem_id) = gem.expiry_slot(day, slot)? else {
                 slot += 1;
                 continue;
             };
-            let deadline = gem.called_deadline.read(&gem_id)?;
-            if now <= deadline {
-                earliest = earliest.min(deadline);
+            if now <= gem.called_deadline.read(&gem_id)? {
                 slot += 1;
                 continue;
             }
@@ -387,10 +392,10 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         gem.expiry_sweep_day.write(0)?;
         gem.expiry_cursor.write(0)?;
-        // Everything left in the day is still waiting, so nothing here is due until
-        // the earliest of them; without this the tree would hand it back every block.
+        // A closed day whose entries all stayed put would otherwise be handed back
+        // every block; nothing here can become due later, so it is done.
         if gem.expiry_bucket_live.read(&day)? != 0 {
-            gem.expiry_bucket_min.write(&day, earliest)?;
+            break;
         }
     }
     Ok(burned)

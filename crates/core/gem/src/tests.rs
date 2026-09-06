@@ -842,15 +842,17 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         let mut gem = GemContract::new(storage.clone());
         // A slot pointing at a gem that is not there: forfeit errors every run.
         let ghost = U256::from(0xdeadu64);
-        gem.push_called(ghost, T_NOW).unwrap();
+        let deadline = T_NOW + 7 * 86_400;
+        // Same bucket, ghost first: the one behind it must still be reached.
+        gem.push_called(ghost, deadline).unwrap();
         gem.mark_called(live, T_NOW).unwrap();
-        let day = GemContract::deadline_day(T_NOW);
+        let day = GemContract::deadline_day(deadline);
         let load = api::get_gem(storage, live)
             .unwrap()
             .unwrap()
             .promis_load_minor;
 
-        let ctx = block_ctx_at(storage, T_NOW + 7 * 86_400 + 1);
+        let ctx = block_ctx_at(storage, GemContract::day_end(day));
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 
@@ -871,7 +873,10 @@ fn a_due_entry_that_cannot_burn_credits_nothing() {
         let mut gem = GemContract::new(storage.clone());
         gem.push_called(gem_id, T_NOW).unwrap();
 
-        let ctx = block_ctx_at(storage, T_NOW + 1);
+        let ctx = block_ctx_at(
+            storage,
+            GemContract::day_end(GemContract::deadline_day(T_NOW)),
+        );
         <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
             .unwrap();
 

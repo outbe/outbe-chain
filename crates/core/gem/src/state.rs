@@ -300,10 +300,7 @@ impl GemContract<'_> {
         self.expiry_bucket_live
             .write(&day, live.saturating_add(1))?;
         if live == 0 {
-            self.expiry_bucket_min.write(&day, deadline)?;
             tree_math::add(&ExpiryDayTree(&*self), day)?;
-        } else if deadline < self.expiry_bucket_min.read(&day)? {
-            self.expiry_bucket_min.write(&day, deadline)?;
         }
         Ok(())
     }
@@ -334,8 +331,13 @@ impl GemContract<'_> {
         if live == 0 {
             self.expiry_bucket_len.clear(&day)?;
             self.expiry_bucket_live.clear(&day)?;
-            self.expiry_bucket_min.clear(&day)?;
             tree_math::remove(&ExpiryDayTree(&*self), day)?;
+            // The cursor names a slot in a length that no longer exists; a refill of
+            // this day would otherwise resume past its new end.
+            if self.expiry_sweep_day.read()? == day {
+                self.expiry_sweep_day.write(0)?;
+                self.expiry_cursor.write(0)?;
+            }
         }
         Ok(())
     }
@@ -344,6 +346,12 @@ impl GemContract<'_> {
     /// quote window: a deadline is wall-clock time, not a WorldwideDay.
     pub(crate) const fn deadline_day(deadline: u64) -> u32 {
         (deadline / 86_400) as u32
+    }
+
+    /// First instant after `day`. Every deadline bucketed under it is strictly
+    /// earlier, so a day that has closed holds only gems that are due.
+    pub(crate) const fn day_end(day: u32) -> u64 {
+        (day as u64 + 1) * 86_400
     }
 
     const fn packed_slot(day: u32, slot: u32) -> u64 {

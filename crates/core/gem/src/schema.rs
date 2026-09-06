@@ -214,10 +214,6 @@ pub struct GemContract {
     /// `keccak256(day_be32 ++ slot_be32)` -> gem id; zero marks a slot already retired.
     #[attribute(order = 29)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Day -> earliest deadline still waiting in it, so a bucket nobody is due in
-    /// costs one read to skip.
-    #[attribute(order = 30)]
-    pub expiry_bucket_min: outbe_primitives::storage::dsl::Map<u32, u64>,
     /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
     #[attribute(order = 31)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,

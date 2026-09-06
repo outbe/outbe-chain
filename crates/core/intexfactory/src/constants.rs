@@ -61,13 +61,17 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
 /// Queue entries drained per `intex_notify` firing. A day of calls enqueues one entry per series and
 /// can run to tens of thousands, while the call deadline runs from the origin's stamp - so a backlog
-/// spends the holder's notice window rather than deferring it, and the drain has to keep up.
-pub const NOTIFY_CHUNK_LIMIT: u32 = 256;
+/// spends the holder's notice window rather than deferring it, and the drain has to keep up. Sized
+/// above [`NOTIFY_MESSAGE_LIMIT`] x [`MAX_SERIES_PER_MARK`] so coalesced entries are not held back by
+/// a cap that costs nothing to raise; the router-call budget is what actually bounds a firing.
+pub const NOTIFY_CHUNK_LIMIT: u32 = 2048;
 
 /// Router calls one firing may make. This is the cost that matters: entries coalesce into marks of
 /// [`MAX_SERIES_PER_MARK`], each fanning out to the day's target chains, so bounding entries alone
-/// bounds nothing. Paired with the poll period it sets the drain's daily capacity.
-pub const NOTIFY_MESSAGE_LIMIT: u32 = 32;
+/// bounds nothing. Paired with the poll period it sets the drain's daily capacity - and the shape
+/// the call scan produces is one run per block, so the fragmented case is the one that has to fit:
+/// entries that never coalesce still get a call each.
+pub const NOTIFY_MESSAGE_LIMIT: u32 = 256;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
@@ -113,3 +117,8 @@ pub(crate) const MAX_EXPIRY_BUCKETS_PER_BLOCK: u32 = 8;
 /// was never told cannot settle, so the window is held open while the route is
 /// repaired - and bounded, so a route nobody repairs cannot strand the load.
 pub const NOTICE_GRACE_PERIOD: u32 = CALL_NOTICE_PERIOD;
+
+/// Bucket slots one expiry sweep may look at per block. An empty or not-yet-due
+/// slot still costs a read, so without its own budget one long day would be walked
+/// end to end in a single block.
+pub(crate) const MAX_EXPIRY_SLOTS_PER_BLOCK: u32 = 512;

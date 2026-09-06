@@ -173,10 +173,11 @@ pub struct IntexFactoryContract {
     /// a slot already retired.
     #[attribute(order = 38)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// Day -> earliest deadline still waiting in it, so a bucket nobody is due in
-    /// costs one read to skip.
+    /// `scoped(iso, day)` -> `(bucket day << 32) | slot` the group waits in, so it
+    /// can be moved between buckets and released without walking them. 0 = not queued;
+    /// no deadline lands on epoch day 0.
     #[attribute(order = 39)]
-    pub expiry_bucket_min: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     /// Bucket a sweep left unfinished, with the slot it stopped at. 0 = none.
     #[attribute(order = 40)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,

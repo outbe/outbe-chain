@@ -147,9 +147,17 @@ impl IntexFactoryContract<'_> {
         call_window: u32,
         call_threshold: u32,
     ) -> Result<()> {
-        if call_window > self.max_call_window.read(&reference_currency)? {
-            self.max_call_window
-                .write(&reference_currency, call_window)?;
+        let secs_per_day = SECONDS_PER_DAY as u32;
+        // Bounded here rather than where it is read, so the search range is never
+        // silently narrower than what a series was issued with.
+        let window = call_window.min(MAX_CALL_WINDOW_DAYS * secs_per_day);
+        if window > self.max_call_window.read(&reference_currency)? {
+            self.max_call_window.write(&reference_currency, window)?;
+        }
+        // The scan counts whole days, and a threshold under one of them can never be
+        // met, so letting it in would latch the currency's range shut for good.
+        if call_threshold < secs_per_day {
+            return Ok(());
         }
         let min = self.min_call_threshold.read(&reference_currency)?;
         if min == 0 || call_threshold < min {
@@ -159,9 +167,9 @@ impl IntexFactoryContract<'_> {
         Ok(())
     }
 
-    /// Window and threshold, in days, the call scan must search to cover every
-    /// live series: the widest of the stored pair and the live profile, capped so
-    /// a corrupt record cannot turn into an unbounded oracle read.
+    /// Window and threshold, in days, the call scan must search to cover every live
+    /// series: the widest of the stored pair and the live profile. Both stored halves
+    /// are bounded on the way in, so nothing here needs to narrow them.
     pub(crate) fn scan_call_terms(
         &self,
         reference_currency: u16,
@@ -170,7 +178,7 @@ impl IntexFactoryContract<'_> {
     ) -> Result<(u32, u32)> {
         let secs_per_day = SECONDS_PER_DAY as u32;
         let stored_window = self.max_call_window.read(&reference_currency)?;
-        let days = (stored_window.max(live_window) / secs_per_day).min(MAX_CALL_WINDOW_DAYS);
+        let days = stored_window.max(live_window) / secs_per_day;
 
         let stored_threshold = self.min_call_threshold.read(&reference_currency)?;
         let threshold = if stored_threshold == 0 {
@@ -275,62 +283,89 @@ impl IntexFactoryContract<'_> {
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), key)?;
         self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
+        self.called_group_slot
+            .write(&key, Self::packed_slot(day, slot))?;
 
         let live = self.expiry_bucket_live.read(&day)?;
         self.expiry_bucket_live
             .write(&day, live.saturating_add(1))?;
         if live == 0 {
-            self.expiry_bucket_min.write(&day, deadline)?;
             tree_math::add(&ExpiryDayTree(&*self), day)?;
-        } else if deadline < self.expiry_bucket_min.read(&day)? {
-            self.expiry_bucket_min.write(&day, deadline)?;
         }
         Ok(())
     }
 
-    /// Record that a group's call notice could not be sent, keeping the first
-    /// failure's time: the grace runs from when holders stopped being reachable.
-    pub(crate) fn mark_notice_undelivered(
+    /// Hold a group's settlement window open because its call notice could not be
+    /// sent: holders who were never told cannot settle. The deadline moves out by the
+    /// grace and the group moves to the bucket of its new day, so the sweep needs to
+    /// know nothing about notices. Bounded, so a route nobody repairs cannot strand
+    /// the load; only the first failure extends it.
+    pub(crate) fn hold_for_undelivered_notice(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
         now: u64,
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
-        if self.notice_undelivered_at.read(&key)? == 0 {
-            self.notice_undelivered_at.write(&key, now)?;
+        if self.called_group_count.read(&key)? == 0 || self.notice_undelivered_at.read(&key)? != 0 {
+            return Ok(());
         }
-        Ok(())
+        self.notice_undelivered_at.write(&key, now)?;
+
+        let held = now.saturating_add(u64::from(NOTICE_GRACE_PERIOD));
+        if held <= self.called_group_deadline.read(&key)? {
+            return Ok(());
+        }
+        self.called_group_deadline.write(&key, held)?;
+        self.move_to_bucket(key, Self::deadline_day(held))
     }
 
-    pub(crate) fn clear_notice_undelivered(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        if self.notice_undelivered_at.read(&key)? != 0 {
-            self.notice_undelivered_at.clear(&key)?;
+    /// Move a queued group to another day's bucket, leaving its old slot empty.
+    fn move_to_bucket(&mut self, key: u64, day: u32) -> Result<()> {
+        let packed = self.called_group_slot.read(&key)?;
+        if packed == 0 {
+            return Ok(());
+        }
+        let (old_day, old_slot) = Self::unpack_slot(packed);
+        if old_day == day {
+            return Ok(());
+        }
+        self.release_expiry_slot(old_day, old_slot, key)?;
+
+        let slot = self.expiry_bucket_len.read(&day)?;
+        self.expiry_bucket_at
+            .write(&Self::bucket_slot_key(day, slot), key)?;
+        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
+        self.called_group_slot
+            .write(&key, Self::packed_slot(day, slot))?;
+
+        let live = self.expiry_bucket_live.read(&day)?;
+        self.expiry_bucket_live
+            .write(&day, live.saturating_add(1))?;
+        if live == 0 {
+            tree_math::add(&ExpiryDayTree(&*self), day)?;
         }
         Ok(())
-    }
-
-    /// When a group may be forfeited despite its notice never leaving, or `None`
-    /// while the notice is out.
-    pub(crate) fn notice_grace_until(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Option<u64>> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        let since = self.notice_undelivered_at.read(&key)?;
-        Ok((since != 0).then(|| since.saturating_add(u64::from(NOTICE_GRACE_PERIOD))))
     }
 
     /// Day since the epoch a deadline falls in. Plain UTC, like the call scan's
     /// quote window: a deadline is wall-clock time, not a WorldwideDay.
     pub(crate) const fn deadline_day(deadline: u64) -> u32 {
         (deadline / SECONDS_PER_DAY) as u32
+    }
+
+    /// First instant after `day`. Every deadline bucketed under it is strictly
+    /// earlier, so a day that has closed holds only entries that are due.
+    pub(crate) const fn day_end(day: u32) -> u64 {
+        (day as u64 + 1) * SECONDS_PER_DAY
+    }
+
+    const fn packed_slot(day: u32, slot: u32) -> u64 {
+        ((day as u64) << 32) | slot as u64
+    }
+
+    const fn unpack_slot(packed: u64) -> (u32, u32) {
+        ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
     }
 
     /// `keccak256(day_be32 ++ slot_be32)`.
@@ -394,6 +429,8 @@ impl IntexFactoryContract<'_> {
         }
         self.called_group_count.clear(&key)?;
         self.called_group_deadline.clear(&key)?;
+        self.notice_undelivered_at.clear(&key)?;
+        self.called_group_slot.clear(&key)?;
         self.release_expiry_slot(day, slot, key)
     }
 
@@ -412,8 +449,13 @@ impl IntexFactoryContract<'_> {
         if live == 0 {
             self.expiry_bucket_len.clear(&day)?;
             self.expiry_bucket_live.clear(&day)?;
-            self.expiry_bucket_min.clear(&day)?;
             tree_math::remove(&ExpiryDayTree(&*self), day)?;
+            // The cursor names a slot in a length that no longer exists; a refill of
+            // this day would otherwise resume past its new end.
+            if self.expiry_sweep_day.read()? == day {
+                self.expiry_sweep_day.write(0)?;
+                self.expiry_cursor.write(0)?;
+            }
         }
         Ok(())
     }
