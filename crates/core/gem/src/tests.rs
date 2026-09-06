@@ -1055,3 +1055,51 @@ fn a_wider_window_than_the_constant_widens_the_span_the_scan_collects() {
         );
     });
 }
+
+#[test]
+fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+        let deadline = T_NOW + 7 * 86_400;
+        let bucket = GemContract::deadline_bucket(deadline);
+
+        // A deadline outside its own bucket can only come from a broken invariant,
+        // and it must not park the bucket at the front of the tree forever.
+        gem.called_deadline
+            .write(&gem_id, deadline + 400 * 86_400)
+            .unwrap();
+
+        let ctx = block_ctx_at(storage, GemContract::bucket_end(bucket));
+        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
+            .unwrap();
+
+        assert_eq!(
+            gem.first_expiry_day().unwrap(),
+            None,
+            "the bucket leaves the tree instead of blocking every later one"
+        );
+        assert_eq!(
+            gem.called_bucket_slot.read(&gem_id).unwrap(),
+            0,
+            "and the gem stops pointing at a slot it no longer owns"
+        );
+    });
+}
+
+#[test]
+fn leaving_called_frees_the_expiry_slot() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+        let bucket = GemContract::deadline_bucket(T_NOW + 7 * 86_400);
+        assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 1);
+
+        // Back to Qualified: an entry outliving its state would pin the bucket.
+        gem.set_state(gem_id, GemState::Qualified).unwrap();
+        assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 0);
+        assert_eq!(gem.first_expiry_day().unwrap(), None);
+    });
+}

@@ -1,6 +1,7 @@
 use super::*;
 
 use super::lifecycle::{fill_days, list_reference, qualify_series, setup_pair};
+use outbe_primitives::storage::types::Storable as _;
 
 #[test]
 fn scan_and_qualify_promotes_aged_series() {
@@ -704,6 +705,150 @@ fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
             f.called_group_count.read(&key).unwrap(),
             0,
             "and takes its group's records with it"
+        );
+    });
+}
+
+#[test]
+fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        let now = ISSUED_AT as u64;
+        let deadline = now + DAY;
+        let bucket = IntexFactoryContract::deadline_bucket(deadline);
+
+        // One bucket, more groups than a single block may retire.
+        let queued = crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK + 44;
+        for index in 0..queued {
+            let day = 20260101 + index;
+            f.push_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[sid(day)])
+                .unwrap();
+        }
+        assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), queued);
+
+        let sweep = |at: u64| {
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        };
+        let due = IntexFactoryContract::bucket_end(bucket);
+
+        sweep(due);
+        let left = f.expiry_bucket_live.read(&bucket).unwrap();
+        assert!(
+            left > 0 && left < queued,
+            "one block takes what it is budgeted for and no more, got {left} of {queued}"
+        );
+        assert_eq!(
+            f.expiry_sweep_day.read().unwrap(),
+            bucket,
+            "the unfinished bucket is remembered"
+        );
+        assert!(
+            f.expiry_cursor.read().unwrap() > 0,
+            "along with the slot it stopped at"
+        );
+
+        sweep(due + 1);
+        assert_eq!(
+            f.expiry_bucket_live.read(&bucket).unwrap(),
+            0,
+            "the next block finishes the tail rather than re-walking the head"
+        );
+        assert_eq!(f.first_expiry_day().unwrap(), None);
+        assert_eq!(
+            f.expiry_cursor.read().unwrap(),
+            0,
+            "and the cursor is released with the bucket"
+        );
+    });
+}
+
+#[test]
+fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        // Midnight, so a day-wide bucket would hold this until the next one.
+        let now = (ISSUED_AT as u64 / DAY) * DAY;
+        let deadline = now + 600;
+        let day = WorldwideDay::new(20260101);
+
+        f.push_called_group(REFERENCE_ISO, day, deadline, &[sid(20260101)])
+            .unwrap();
+
+        let sweep = |at: u64| {
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        };
+
+        sweep(deadline + 1);
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            Some(IntexFactoryContract::deadline_bucket(deadline)),
+            "still waiting while its own bucket is open"
+        );
+
+        sweep(now + 3600);
+        assert_eq!(
+            f.first_expiry_day().unwrap(),
+            None,
+            "and retired an hour in, not a day"
+        );
+    });
+}
+
+#[test]
+fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
+    with_factory(|s| {
+        let _f = qualify_series(&s, 7, sample(7));
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_days(
+            &oracle,
+            last_closed_day,
+            pair,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+
+        // A second member the registry never issued: expiring it errors, and a
+        // group-wide checkpoint would roll the healthy one back with it.
+        let day = WorldwideDay::new(7);
+        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+        let f = IntexFactoryContract::new(s.clone());
+        f.called_group_members
+            .write(
+                &IntexFactoryContract::group_member_key(REFERENCE_ISO, day, 1),
+                sid(20260999).to_word(),
+            )
+            .unwrap();
+        f.called_group_count.write(&key, 2).unwrap();
+
+        let deadline = f.called_group_deadline.read(&key).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                1,
+                IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline)),
+                CHAIN_ID,
+            ),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        assert!(
+            !outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap()
+                .is_zero(),
+            "the member that could expire still returns its load"
         );
     });
 }
