@@ -10,17 +10,17 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, B256};
 use cucumber::{given, then, when};
-use eyre::{ensure, eyre, Result};
+use eyre::{Result, ensure, eyre};
 use outbe_primitives::consensus::DkgBoundaryArtifact;
-use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
+use outbe_primitives::reshare_artifact::{ConsensusHeaderArtifact, decode_outbe_block_artifacts};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::features::common::boot_localnet;
 use crate::internal::{addresses, eth, launch_log::LaunchLog};
+use crate::world::World;
 use crate::world::rpc::{FinalizedCheckpoint, TxOutcome};
 use crate::world::state::RestartIncarnation;
-use crate::world::World;
 
 mod expiry;
 
@@ -418,12 +418,22 @@ fn retained_frozen_target(world: &World) -> Result<FrozenTarget> {
     Ok(serde_json::from_value(row["target"].clone())?)
 }
 
+fn dkg_activation_anchor(boundary_commit_height: u64) -> Result<u64> {
+    // The boundary artifact is carried by the first block of the new epoch,
+    // one block after the activation anchor used by the rotation schedule.
+    boundary_commit_height
+        .checked_sub(1)
+        .ok_or_else(|| eyre!("DKG boundary commit height cannot be zero"))
+}
+
 fn validate_dkg_activation(
     boundary: &BoundaryWitness,
     target: &FrozenTarget,
     members: &[Address],
     old_epoch: u64,
+    require_delayed: bool,
 ) -> Result<()> {
+    let anchor = dkg_activation_anchor(boundary.height)?;
     let mut actual = boundary.members.clone();
     let mut expected = members.to_vec();
     actual.sort_unstable();
@@ -432,7 +442,7 @@ fn validate_dkg_activation(
         boundary.cycle == target.cycle
             && boundary.freeze == target.freeze
             && boundary.planned == target.planned
-            && boundary.height >= target.planned
+            && anchor >= target.planned
             && boundary.target_hash != B256::ZERO
             && boundary.epoch
                 == old_epoch
@@ -441,19 +451,23 @@ fn validate_dkg_activation(
             && actual == expected,
         "activation does not match the frozen DKG target"
     );
+    ensure!(
+        !require_delayed || anchor > target.planned,
+        "activation was not delayed beyond its planned anchor"
+    );
     Ok(())
 }
 
 fn validate_reveal_interval(
     log: &str,
     target: &FrozenTarget,
-    activation: u64,
+    boundary_commit_height: u64,
     expected: &str,
 ) -> Result<()> {
     let mut inside = false;
     let mut revealed = false;
     let cycle = target.cycle.to_string();
-    let height = activation.to_string();
+    let height = dkg_activation_anchor(boundary_commit_height)?.to_string();
     for line in log.lines() {
         if line.contains("freezing validator set and starting DKG rotation") {
             inside = log_field(line, "dkg_cycle") == Some(cycle.as_str());
@@ -533,13 +547,7 @@ fn wait_recovered_dkg(
                 }
                 if boundary.cycle == target.cycle {
                     ensure!(activated.is_none(), "frozen DKG target activated twice");
-                    validate_dkg_activation(&boundary, &target, &members, old_epoch)?;
-                    if off_grid {
-                        ensure!(
-                            boundary.height > target.planned,
-                            "activation was not delayed beyond its planned boundary"
-                        );
-                    }
+                    validate_dkg_activation(&boundary, &target, &members, old_epoch, off_grid)?;
                     let at = world.rpc.checkpoint_at(ports[0], next)?;
                     dkg_membership_at(world, &ports, at, &members, members[4], 2)?;
                     world
@@ -964,7 +972,17 @@ mod tests {
             target_hash: B256::repeat_byte(1),
             members: members.clone(),
         };
-        validate_dkg_activation(&boundary, &target, &members, 3).unwrap();
+        validate_dkg_activation(&boundary, &target, &members, 3, false).unwrap();
+        validate_dkg_activation(&boundary, &target, &members, 3, true).unwrap();
+        let mut on_time = boundary.clone();
+        on_time.height = 181;
+        validate_dkg_activation(&on_time, &target, &members, 3, false).unwrap();
+        assert!(validate_dkg_activation(&on_time, &target, &members, 3, true).is_err());
+        for height in [0, 179, 180] {
+            let mut early = boundary.clone();
+            early.height = height;
+            assert!(validate_dkg_activation(&early, &target, &members, 3, false).is_err());
+        }
         for defect in 0..7 {
             let mut wrong = boundary.clone();
             match defect {
@@ -978,7 +996,7 @@ mod tests {
                     wrong.members.pop();
                 }
             }
-            assert!(validate_dkg_activation(&wrong, &target, &members, 3).is_err());
+            assert!(validate_dkg_activation(&wrong, &target, &members, 3, false).is_err());
         }
     }
 
@@ -996,16 +1014,45 @@ mod tests {
         validate_reveal_interval(
             &format!("{freeze}\n{reveal}\n{activated}"),
             &target,
-            193,
+            194,
             "public-key",
         )
         .unwrap();
+        // Captured scenario 8: anchor 180 is committed in boundary block 181.
+        validate_reveal_interval(
+            &format!("{freeze}\n{reveal}\n{}", activated.replace("193", "180")),
+            &target,
+            181,
+            "public-key",
+        )
+        .unwrap();
+        assert!(
+            validate_reveal_interval(
+                &format!("{freeze}\n{reveal}\n{activated}"),
+                &target,
+                0,
+                "public-key",
+            )
+            .is_err()
+        );
         for log in [
             format!("{reveal}\n{freeze}\n{activated}"),
             format!("{freeze}\n{activated}\n{reveal}"),
             format!("{freeze}\n{reveal}\n{}", activated.replace("193", "194")),
+            format!(
+                "{freeze}\n{}\n{activated}",
+                reveal.replace("public-key", "foreign-key")
+            ),
+            format!(
+                "{freeze}\n{reveal}\n{}",
+                activated.replace("dkg_cycle=7", "dkg_cycle=8")
+            ),
+            format!(
+                "{}\n{reveal}\n{activated}",
+                freeze.replace("dkg_cycle=7", "dkg_cycle=8")
+            ),
         ] {
-            assert!(validate_reveal_interval(&log, &target, 193, "public-key").is_err());
+            assert!(validate_reveal_interval(&log, &target, 194, "public-key").is_err());
         }
     }
 }
