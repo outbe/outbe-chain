@@ -395,10 +395,10 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
 fn four_active_validators_with_shares(world: &mut World) {
     boot_profiled_localnet(world, Some(0));
     let primary = world.validators.primary_port();
-    assert!(
-        world.rpc.wait_block(primary, 5, 30).is_some(),
-        "committee did not reach a usable height"
-    );
+    world
+        .rpc
+        .wait_block(primary, 5, 30)
+        .unwrap_or_else(|error| panic!("committee did not reach a usable height: {error:#}"));
 
     for index in 0..4 {
         let address = validator_address(world, &format!("validator-{index}"));

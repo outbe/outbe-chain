@@ -1,4 +1,4 @@
-//! Evidence for a post-export worker fault, never an alternative compute path.
+//! Evidence for a pre-open worker fault followed by real export observation.
 use alloy_primitives::B256;
 use serde::Serialize;
 
@@ -217,10 +217,46 @@ fn now_millis() -> u64 {
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
+pub(crate) fn require_stopped_cohort(
+    stops: &[WorkerStopEvidence],
+    worker_counts: &[usize],
+) -> eyre::Result<()> {
+    eyre::ensure!(
+        stops.len() == 4
+            && worker_counts.len() == 4
+            && worker_counts.iter().all(|count| *count == 0),
+        "worker outage requires four stopped workers and no current workers"
+    );
+    let last_signal = stops
+        .iter()
+        .map(|stop| stop.signal_at_millis)
+        .max()
+        .unwrap();
+    for (index, stop) in stops.iter().enumerate() {
+        eyre::ensure!(
+            usize::from(stop.validator_index) == index
+                && stop.worker_ordinal == 0
+                && stop.pid != 0
+                && !stops[..index].iter().any(|prior| prior.pid == stop.pid)
+                && stop.signal_at_millis > 0
+                && stop.signal_error.is_none()
+                && stop.wait_error.is_none()
+                && stop.exit_code.is_none()
+                && stop.exit_signal == Some(9)
+                && stop
+                    .reaped_at_millis
+                    .is_some_and(|reaped| reaped >= last_signal),
+            "validator-{index} lacks a complete ordered owned worker stop"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
 pub(crate) fn require_pre_open_cut(heads: &[u64], open: u64) -> eyre::Result<()> {
     eyre::ensure!(
         heads.len() == 4 && heads.iter().all(|height| *height < open),
-        "post-export worker fault missed the pre-open boundary: heads={heads:?}, open={open}"
+        "worker fault missed the pre-open boundary: heads={heads:?}, open={open}"
     );
     Ok(())
 }
@@ -228,6 +264,76 @@ pub(crate) fn require_pre_open_cut(heads: &[u64], open: u64) -> eyre::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn completed_stops() -> Vec<WorkerStopEvidence> {
+        (0..4)
+            .map(|index| WorkerStopEvidence {
+                validator_index: index,
+                worker_ordinal: 0,
+                pid: 100 + u32::from(index),
+                signal_at_millis: 10 + u64::from(index),
+                signal_error: None,
+                reaped_at_millis: Some(20 + u64::from(index)),
+                exit_code: None,
+                exit_signal: Some(9),
+                wait_error: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stopped_cohort_requires_every_domain_absent_even_after_an_earlier_valid_check() {
+        let stops = completed_stops();
+        require_stopped_cohort(&stops, &[0; 4]).unwrap();
+        for index in 0..4 {
+            let mut inventory = [0; 4];
+            inventory[index] = 1;
+            assert!(require_stopped_cohort(&stops, &inventory).is_err());
+        }
+        assert!(require_stopped_cohort(&stops, &[0; 3]).is_err());
+        assert!(require_stopped_cohort(&stops, &[0; 5]).is_err());
+    }
+
+    #[test]
+    fn stopped_cohort_rejects_missing_or_ambiguous_owner_evidence() {
+        let stops = completed_stops();
+        assert!(require_stopped_cohort(&[], &[0; 4]).is_err());
+        assert!(require_stopped_cohort(&stops[..3], &[0; 4]).is_err());
+        let mut wrong = stops.clone();
+        wrong[3].validator_index = 2;
+        assert!(require_stopped_cohort(&wrong, &[0; 4]).is_err());
+        wrong = stops.clone();
+        wrong[3].pid = wrong[2].pid;
+        assert!(require_stopped_cohort(&wrong, &[0; 4]).is_err());
+        wrong = stops.clone();
+        wrong[3].worker_ordinal = 1;
+        assert!(require_stopped_cohort(&wrong, &[0; 4]).is_err());
+        wrong = stops;
+        wrong[3].pid = 0;
+        assert!(require_stopped_cohort(&wrong, &[0; 4]).is_err());
+    }
+
+    #[test]
+    fn stopped_cohort_rejects_partial_faults_and_reap_before_last_signal() {
+        let stops = completed_stops();
+        for mutation in 0..7 {
+            let mut wrong = stops.clone();
+            match mutation {
+                0 => wrong[0].signal_error = Some("signal failed".into()),
+                1 => wrong[0].wait_error = Some("reap failed".into()),
+                2 => wrong[0].reaped_at_millis = None,
+                3 => wrong[0].exit_signal = Some(15),
+                4 => wrong[0].exit_code = Some(0),
+                5 => wrong[0].signal_at_millis = 0,
+                6 => wrong[0].reaped_at_millis = Some(12),
+                _ => unreachable!(),
+            }
+            assert!(
+                require_stopped_cohort(&wrong, &[0; 4]).is_err(),
+                "mutation {mutation}"
+            );
+        }
+    }
 
     #[test]
     fn cutoff_requires_all_four_successfully_observed_heads_strictly_before_open() {

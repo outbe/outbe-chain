@@ -252,22 +252,19 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
             "outbe-feeder",
         ]));
     }
-    if matches!(
-        lane,
-        BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
-    ) {
-        commands.push(strings(&[
-            "build",
-            "--locked",
-            "--release",
-            "-j",
-            &jobs,
-            "-p",
-            "outbe-radicle-sidecar",
-            "--bin",
-            "outbe-radicle",
-        ]));
-    }
+    // Every validator launches this host sidecar, independently of TEE mode
+    // and whether a scenario exercises repository publication.
+    commands.push(strings(&[
+        "build",
+        "--locked",
+        "--release",
+        "-j",
+        &jobs,
+        "-p",
+        "outbe-radicle-sidecar",
+        "--bin",
+        "outbe-radicle",
+    ]));
     commands.push(strings(&[
         "build",
         "--locked",
@@ -362,6 +359,7 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
         artifact("outbe_chain", release.join("outbe-chain"), true),
         artifact("outbe_cli", release.join("outbe-cli"), true),
         artifact("outbe_keygen", release.join("outbe-keygen"), true),
+        artifact("outbe_radicle", release.join("outbe-radicle"), true),
         artifact(
             "genesis_seed",
             repo.join("scripts/seed-testnet-lowstake.json"),
@@ -391,7 +389,6 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
             .unwrap_or(repo)
             .join("outbe-heartwood/target/release");
         artifacts.extend([
-            artifact("outbe_radicle", release.join("outbe-radicle"), true),
             artifact("rad", heartwood.join("rad"), true),
             artifact("git_remote_rad", heartwood.join("git-remote-rad"), true),
         ]);
@@ -411,6 +408,11 @@ fn required_artifacts(
         artifact("outbe_cli", env.cli_bin.clone(), true),
         artifact("outbe_keygen", env.keygen_bin.clone(), true),
         artifact(
+            "outbe_radicle",
+            env.repo.join("target/release/outbe-radicle"),
+            true,
+        ),
+        artifact(
             if env.tee_mode.uses_mock_binary() {
                 "outbe_tee_enclave_mock"
             } else {
@@ -428,14 +430,12 @@ fn required_artifacts(
         artifacts.push(artifact("outbe_feeder", env.feeder_bin.clone(), true));
     }
     if tagged(feature, scenario, "radicle") {
-        let release = env.repo.join("target/release");
         let heartwood = env
             .repo
             .parent()
             .unwrap_or(&env.repo)
             .join("outbe-heartwood/target/release");
         artifacts.extend([
-            artifact("outbe_radicle", release.join("outbe-radicle"), true),
             artifact("rad", heartwood.join("rad"), true),
             artifact("git_remote_rad", heartwood.join("git-remote-rad"), true),
         ]);
@@ -630,6 +630,157 @@ mod tests {
     }
 
     #[test]
+    fn every_lane_builds_and_records_the_validator_sidecar() {
+        for &lane in BuildLane::value_variants() {
+            let commands = build_commands(lane, 4);
+            assert_eq!(
+                commands
+                    .iter()
+                    .filter(|args| args
+                        .windows(2)
+                        .any(|pair| pair == ["--bin", "outbe-radicle"]))
+                    .count(),
+                1,
+                "{lane:?} must build the sidecar exactly once"
+            );
+            let artifacts = lane_artifacts(Path::new("/fixture/repo"), lane);
+            assert_eq!(
+                artifacts
+                    .iter()
+                    .filter(|spec| spec.name == "outbe_radicle")
+                    .count(),
+                1,
+                "{lane:?} must record the sidecar exactly once"
+            );
+            let repository_tools = matches!(
+                lane,
+                BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
+            );
+            for name in ["rad", "git_remote_rad"] {
+                assert_eq!(
+                    artifacts.iter().any(|spec| spec.name == name),
+                    repository_tools,
+                    "{lane:?} repository tool {name}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_scenarios_require_the_configured_sidecar_but_not_repository_tools() {
+        let (_directory, mut env, mut feature, _) = manifest_fixture();
+        for tee in [
+            TeeMode::Mock,
+            TeeMode::MockNative,
+            TeeMode::GramineDirect,
+            TeeMode::SgxNoAttest,
+            TeeMode::Real,
+        ] {
+            env.tee_mode = tee;
+            let specs = required_artifacts(&env, &feature, &feature.scenarios[0])
+                .expect("ordinary scenario artifacts");
+            let sidecar = specs
+                .iter()
+                .find(|spec| spec.name == "outbe_radicle")
+                .expect("validators always launch a sidecar");
+            assert_eq!(
+                sidecar.path,
+                crate::internal::config::Config::resolve(&env).bin_radicle
+            );
+            assert!(sidecar.executable);
+            assert!(!specs
+                .iter()
+                .any(|spec| matches!(spec.name, "rad" | "git_remote_rad")));
+        }
+        for feature_tag in [true, false] {
+            feature.tags.clear();
+            feature.scenarios[0].tags.clear();
+            if feature_tag {
+                feature.tags.push("radicle".to_owned());
+            } else {
+                feature.scenarios[0].tags.push("radicle".to_owned());
+            }
+            let specs = required_artifacts(&env, &feature, &feature.scenarios[0])
+                .expect("repository scenario artifacts");
+            for name in ["outbe_radicle", "rad", "git_remote_rad"] {
+                assert_eq!(specs.iter().filter(|spec| spec.name == name).count(), 1);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untagged_scenario_rejects_missing_or_changed_sidecar_before_execution() {
+        use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+        for mutation in ["member", "file", "bytes", "permissions", "symlink", "path"] {
+            let (directory, mut env, feature, mut manifest) = manifest_fixture();
+            let sidecar = crate::internal::config::Config::resolve(&env).bin_radicle;
+            match mutation {
+                "member" => {
+                    manifest.artifacts.remove("outbe_radicle");
+                }
+                "file" => fs::remove_file(&sidecar).expect("remove fixture sidecar"),
+                "bytes" => fs::write(&sidecar, b"stale sidecar").expect("replace sidecar bytes"),
+                "permissions" => fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o644))
+                    .expect("remove execute permission"),
+                "symlink" => {
+                    let target = directory.path().join("sidecar-target");
+                    fs::rename(&sidecar, &target).expect("move fixture sidecar");
+                    symlink(&target, &sidecar).expect("replace fixture with symlink");
+                }
+                "path" => {
+                    let other = directory.path().join("other-sidecar");
+                    fs::copy(&sidecar, &other).expect("copy identical bytes to another path");
+                    manifest.artifacts.insert(
+                        "outbe_radicle".to_owned(),
+                        identify(&other, true).expect("identify alternative sidecar"),
+                    );
+                }
+                _ => unreachable!(),
+            }
+            let manifest_path = directory.path().join("artifacts.json");
+            publish_manifest(&manifest_path, &manifest).expect("publish fixture manifest");
+            env.artifact_manifest = Some(manifest_path);
+            let error = ArtifactLedger::new(&env)
+                .preflight_scenario(&env, &feature, &feature.scenarios[0])
+                .expect_err("untagged scenario must reject invalid sidecar before execution");
+            assert!(
+                error.to_string().contains("outbe_radicle"),
+                "{mutation}: {error:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untagged_sidecar_is_rechecked_before_final_evidence() {
+        let (directory, mut env, feature, manifest) = manifest_fixture();
+        let manifest_path = directory.path().join("artifacts.json");
+        publish_manifest(&manifest_path, &manifest).expect("publish fixture manifest");
+        env.artifact_manifest = Some(manifest_path);
+        let sidecar = crate::internal::config::Config::resolve(&env).bin_radicle;
+        let mut ledger = ArtifactLedger::new(&env);
+        ledger
+            .preflight_scenario(&env, &feature, &feature.scenarios[0])
+            .expect("exact untagged scenario accepted without repository tools");
+        let snapshot = ledger.snapshot(&env).expect("unchanged final evidence");
+        assert_eq!(
+            snapshot["members"]["outbe_radicle"],
+            serde_json::to_value(identify(&sidecar, true).expect("exact sidecar identity"))
+                .expect("serialize identity")
+        );
+        fs::write(&sidecar, b"changed after preflight").expect("tamper sidecar after preflight");
+        let error = ledger
+            .snapshot(&env)
+            .expect_err("finalization must reject changed sidecar");
+        assert!(error
+            .to_string()
+            .contains("outbe_radicle changed during the run"));
+    }
+
+    #[test]
     fn source_fingerprint_detects_tracked_and_untracked_changes() {
         let directory = tempfile::tempdir().expect("temporary git repository");
         let repo = directory.path();
@@ -695,13 +846,26 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let directory = tempfile::tempdir().expect("temporary artifact set");
+        let repo = directory.path().join("repo");
+        fs::create_dir_all(repo.join("target/release")).expect("fixture release directory");
+        git(&repo, &["init"]);
+        git(&repo, &["config", "user.email", "e2e@example.invalid"]);
+        git(&repo, &["config", "user.name", "E2E Test"]);
+        for (name, bytes) in [
+            ("Cargo.lock", "lock"),
+            ("rust-toolchain.toml", "toolchain"),
+            (".gitignore", "/target/\n"),
+        ] {
+            fs::write(repo.join(name), bytes).expect("write fixture source");
+        }
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "fixture"]);
+        let sidecar = repo.join("target/release/outbe-radicle");
+        fs::write(&sidecar, b"sidecar").expect("write fixture sidecar");
+        fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o755))
+            .expect("make sidecar executable");
         let mut env = Environment {
-            repo: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(|path| path.parent())
-                .expect("e2e-harness belongs to the workspace")
-                .canonicalize()
-                .expect("canonical workspace"),
+            repo,
             ..Environment::default()
         };
         for (path, file_name, bytes) in [

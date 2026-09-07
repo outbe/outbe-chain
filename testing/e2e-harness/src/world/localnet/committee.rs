@@ -29,12 +29,6 @@ fn restore_validator_argv(
     recovery_original.unwrap_or(rebuilt)
 }
 
-pub(super) fn validator_protocol_environment(opts: &StartOpts) -> Vec<(&'static str, String)> {
-    opts.voting_window
-        .map(|window| vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string())])
-        .unwrap_or_default()
-}
-
 fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
     std::iter::once(format!("-{signal}"))
         .chain(std::iter::once("--".to_owned()))
@@ -107,7 +101,9 @@ fn verify_pre_dkg_public_identity(
             );
             Ok(())
         }
-        _ => bail!("fresh founder preparation requires authenticated keyless PublicKeys"),
+        _ => {
+            bail!("fresh founder preparation requires authenticated keyless PublicKeys");
+        }
     }
 }
 
@@ -315,10 +311,15 @@ impl Localnet {
         // Stop only this owned node. A process-name backstop can kill a node
         // from another concurrently running scenario using the same slot.
         child.interrupt();
-        ensure!(child.exit_status()?.is_some(), "validator-{i} did not stop");
+        let status = child
+            .exit_status()?
+            .ok_or_else(|| eyre::eyre!("validator-{i} did not stop"))?;
+        ensure!(
+            status.success(),
+            "validator-{i} failed during planned restart: {status}"
+        );
         self.validators.remove(&i);
-        let opts = self.start_opts.clone();
-        self.spawn_validator_with_argv(i, &opts, argv)?;
+        self.spawn_validator_with_argv(i, argv)?;
         sleep(Duration::from_secs(2));
         let child = self
             .validators
@@ -335,8 +336,29 @@ impl Localnet {
     /// preserving validator datadirs and sealed enclave state. This models an
     /// operator-level localnet stop/start rather than a single node restart.
     pub fn restart_committee_and_enclaves(&mut self) -> Result<()> {
+        self.restart_committee_and_enclaves_observed(|_| Ok(()))
+    }
+
+    /// Arm restart observations after owned launchers exit and cleanup runs,
+    /// before any replacement can append to the same logs.
+    pub(crate) fn restart_committee_and_enclaves_observed(
+        &mut self,
+        before_launch: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        for validator in self.validators.values_mut() {
+            let status = validator.stop_and_reap()?;
+            ensure!(
+                status.success(),
+                "validator PID {} failed during committee restart: {status}",
+                validator.pid()
+            );
+        }
+        for enclave in self.enclaves.values_mut() {
+            enclave.stop_and_reap()?;
+        }
         self.validators.clear();
         self.enclaves.clear();
+        before_launch(self)?;
         let opts = self.start_opts.clone();
         self.start(&opts)
     }
@@ -434,6 +456,30 @@ impl Localnet {
         Ok(())
     }
 
+    /// Fault the exact observed node and reap both owned children before arming
+    /// replacement observations. Never use a process-name fallback for this fault.
+    pub(crate) fn restart_validator_and_enclave_owned_observed(
+        &mut self,
+        index: usize,
+        expected_node_pid: u32,
+        expected_enclave_pid: u32,
+        before_launch: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        ensure!(
+            self.live_validator_and_enclave_pids(index)?
+                == (expected_node_pid, expected_enclave_pid),
+            "validator-{index} restart target incarnation changed"
+        );
+        self.kill_validator_owned(index, expected_node_pid)?;
+        self.enclaves
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned enclave"))?
+            .stop_and_reap()?;
+        self.enclaves.remove(&index);
+        before_launch(self)?;
+        self.restart()
+    }
+
     /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
     /// state; the node keeps running. Its enclave session must reconnect (with
     /// identity re-validation) on the next request - a node restart is not
@@ -502,6 +548,25 @@ impl Localnet {
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
+    }
+
+    /// Fault only the previously observed owned validator, leaving its enclave up.
+    pub(crate) fn kill_validator_owned(
+        &mut self,
+        index: usize,
+        expected_pid: u32,
+    ) -> Result<std::process::ExitStatus> {
+        let child = self
+            .validators
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned fault target"))?;
+        ensure!(
+            child.pid() == expected_pid,
+            "validator-{index} fault target incarnation changed"
+        );
+        let status = child.fault_and_reap()?;
+        self.validators.remove(&index);
+        Ok(status)
     }
 
     /// Rebuild one validator's derived CE database from its preserved canonical
@@ -600,21 +665,13 @@ impl Localnet {
         // snapshot verbatim instead of reconstructing a merely equivalent
         // command from mutable harness inputs.
         a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
-        self.spawn_validator_with_argv(i, opts, a)
+        self.spawn_validator_with_argv(i, a)
     }
 
-    fn spawn_validator_with_argv(
-        &mut self,
-        i: usize,
-        opts: &StartOpts,
-        argv: Vec<String>,
-    ) -> Result<()> {
+    fn spawn_validator_with_argv(&mut self, i: usize, argv: Vec<String>) -> Result<()> {
         let vd = self.cfg.validator_dir(i);
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        for (name, value) in validator_protocol_environment(opts) {
-            cmd.env(name, value);
-        }
         cmd.args(&argv);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), i, &vd, cmd)?;
@@ -1091,6 +1148,107 @@ mod owned_committee_tests {
         assert!(error.to_string().contains("validator-0 exited"));
     }
 
+    fn owned_restart_fixture() -> (tempfile::TempDir, Localnet, (u32, u32)) {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            validators: 1,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut localnet = Localnet::new(Config::resolve(&env));
+        let mut node = Command::new("sleep");
+        node.arg("60");
+        let node = ChildGuard::spawn("owned-restart-node", node).unwrap();
+        let mut enclave = Command::new("sleep");
+        enclave.arg("60");
+        let enclave = crate::internal::proc::EnclaveGuard::from_test_child(
+            ChildGuard::spawn("owned-restart-enclave", enclave).unwrap(),
+        );
+        let pids = (node.pid(), enclave.pid());
+        localnet.validators.insert(0, node);
+        localnet.enclaves.insert(0, enclave);
+        (directory, localnet, pids)
+    }
+
+    #[test]
+    fn owned_restart_rejects_either_changed_identity_without_stopping_children() {
+        for change_node in [true, false] {
+            let (_directory, mut localnet, pids) = owned_restart_fixture();
+            let expected = if change_node {
+                (0, pids.1)
+            } else {
+                (pids.0, 0)
+            };
+            let mut observed = false;
+            let result = localnet.restart_validator_and_enclave_owned_observed(
+                0,
+                expected.0,
+                expected.1,
+                |_| {
+                    observed = true;
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert!(!observed);
+            assert_eq!(localnet.live_validator_and_enclave_pids(0).unwrap(), pids);
+        }
+    }
+
+    #[test]
+    fn owned_restart_arms_observation_after_reaping_and_preserves_other_children() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        let mut survivor = Command::new("sleep");
+        survivor.arg("60");
+        let survivor = ChildGuard::spawn("owned-restart-survivor", survivor).unwrap();
+        let survivor_pid = survivor.pid();
+        localnet.validators.insert(1, survivor);
+        let mut observed = false;
+        let result =
+            localnet.restart_validator_and_enclave_owned_observed(0, pids.0, pids.1, |net| {
+                assert!(!net.validators.contains_key(&0));
+                assert!(!net.enclaves.contains_key(&0));
+                assert_eq!(net.validator_pid(1)?, survivor_pid);
+                observed = true;
+                Err(eyre::eyre!("injected observation failure"))
+            });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("injected observation failure"));
+        assert!(observed);
+        assert!(localnet
+            .validators
+            .get_mut(&1)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
+        assert!(!localnet.validators.contains_key(&0));
+        assert!(!localnet.enclaves.contains_key(&0));
+    }
+
+    #[test]
+    fn owned_restart_rejects_an_already_exited_node_without_replacing_its_enclave() {
+        let (_directory, mut localnet, pids) = owned_restart_fixture();
+        localnet
+            .validators
+            .get_mut(&0)
+            .unwrap()
+            .stop_and_reap()
+            .unwrap();
+        let mut observed = false;
+        let result =
+            localnet.restart_validator_and_enclave_owned_observed(0, pids.0, pids.1, |_| {
+                observed = true;
+                Ok(())
+            });
+        assert!(result.is_err());
+        assert!(!observed);
+        assert_eq!(localnet.live_enclave_pid(0).unwrap(), pids.1);
+    }
+
     #[test]
     fn pinned_enclave_image_is_not_resolved_again_on_committee_restart() {
         let env = Environment {
@@ -1285,11 +1443,42 @@ mod tests {
 
     #[test]
     fn validator_recovery_preserves_consensus_relevant_environment() {
-        let opts = super::StartOpts::with_voting_window(41);
-        assert_eq!(
-            super::validator_protocol_environment(&opts),
-            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "41".to_owned())]
-        );
+        for window in [Some(41), None] {
+            for role in [
+                "validator",
+                "keyless-full-node",
+                "cold-follower",
+                "recovery-follower",
+            ] {
+                let mut command = std::process::Command::new("outbe-chain");
+                command
+                    .arg(role)
+                    .env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "stale")
+                    .env("RUST_MIN_STACK", "16777216");
+                let opts = super::StartOpts {
+                    voting_window: window,
+                    ..Default::default()
+                };
+                super::super::configure_node_protocol_environment(&opts, &mut command);
+                let configured = command
+                    .get_envs()
+                    .find(|(key, _)| *key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS")
+                    .expect("shared node launch must explicitly set or remove the override")
+                    .1;
+                assert_eq!(
+                    configured.map(|value| value.to_str().unwrap()),
+                    window.map(|_| "41")
+                );
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [std::ffi::OsStr::new(role)]
+                );
+                assert!(command
+                    .get_envs()
+                    .any(|(key, value)| key == "RUST_MIN_STACK"
+                        && value == Some(std::ffi::OsStr::new("16777216"))));
+            }
+        }
     }
 
     #[test]

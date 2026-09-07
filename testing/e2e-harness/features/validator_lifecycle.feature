@@ -93,11 +93,11 @@ Feature: Validator admission, membership, recovery, and removal
     And the FullNode independently materializes job A without voting
     When the synced node completes OCOMP-ready validator admission
     Then the certified boundary adds exactly one fifth OCOMP validator domain
-    And the controlled COEN USD quote is finalized through the real price feeder
+    And all five admitted validators finalize the controlled COEN USD quote through the real price feeder
     And job B opens with five members and quorum four while job A remains four of three
     When validator 2 OCOMP worker restarts and completes both pinned quorums
     Then the FullNode result for job A matches the canonical quorum result
-    And both deadlines record validator 3 missing and keep the chain live after jailing it
+    And both deadlines record validator 3 missing with one soft penalty and all five validators stay live
 
   @pfs-006-02
   Scenario: Unconfirmed joiner remains PENDING until confirm-ready

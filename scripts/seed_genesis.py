@@ -230,9 +230,12 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
 
-# IntexFactory profile selector (config slot 13). Numbers live in Rust
-# (crates/core/intexfactory/src/config.rs); genesis only picks one.
-INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
+# Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs
+# and crates/core/gem/src/config.rs); genesis only picks one. The slots are pinned
+# by a test in each crate.
+PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
+INTEX_PROFILE_SLOT = 10
+GEM_PROFILE_SLOT = 42
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
@@ -1553,19 +1556,21 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
 # --- External contracts ---
 
-def seed_intex_factory(storage: StorageBuilder, config: dict):
-    """Write the profile selector (slot 13) from `profile: "prod"|"dev"`;
-    prod is the default and seeds nothing."""
-    profile = str(config.get("profile", "prod")).lower()
-    if profile not in INTEX_PROFILE_SELECTORS:
+def seed_profile_selector(
+    storage: StorageBuilder, config: dict, section: str, slot: int
+):
+    """Write the profile selector from `profile: "auto"|"dev"|"prod"`; auto is
+    the default, seeds nothing, and lets the chain id decide."""
+    profile = str(config.get("profile", "auto")).lower()
+    if profile not in PROFILE_SELECTORS:
         raise ValueError(
-            f"intex_factory: unknown profile {profile!r}; "
-            f"expected one of {sorted(INTEX_PROFILE_SELECTORS)}"
+            f"{section}: unknown profile {profile!r}; "
+            f"expected one of {sorted(PROFILE_SELECTORS)}"
         )
-    selector = INTEX_PROFILE_SELECTORS[profile]
+    selector = PROFILE_SELECTORS[profile]
     if selector == 0:
         return
-    storage.set_slot(13, selector)
+    storage.set_slot(slot, selector)
 
 
 def seed_radicle_registry(storage: StorageBuilder, config: dict):
@@ -1970,15 +1975,20 @@ def apply_seed(
         print(f"  Oracle: {len(pairs)} pairs, "
               f"{len(oracle_storage.entries)} storage entries")
 
-    # Seed IntexFactory profile selector (prod seeds nothing).
-    if "intex_factory" in seed:
-        intex_factory_storage = StorageBuilder()
-        seed_intex_factory(intex_factory_storage, seed["intex_factory"])
-        if intex_factory_storage.entries:
-            entry = alloc.setdefault(INTEX_FACTORY_ADDRESS, {})
-            entry.setdefault("storage", {}).update(intex_factory_storage.entries)
+    # Seed the profile selectors (prod seeds nothing).
+    for section, address, slot, label in (
+        ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
+        ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
+    ):
+        if section not in seed:
+            continue
+        profile_storage = StorageBuilder()
+        seed_profile_selector(profile_storage, seed[section], section, slot)
+        if profile_storage.entries:
+            entry = alloc.setdefault(address, {})
+            entry.setdefault("storage", {}).update(profile_storage.entries)
             entry.setdefault("code", MARKER_CODE)
-            print(f"  IntexFactory: {len(intex_factory_storage.entries)} storage entries")
+            print(f"  {label}: {len(profile_storage.entries)} storage entries")
 
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:

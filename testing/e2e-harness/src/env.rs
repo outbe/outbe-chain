@@ -15,7 +15,7 @@
 //!   - `tee`              -> requires an enabled enclave mode.
 //!   - `sudo`             -> requires `sudo` (no `--no-sudo`).
 //!   - explicit TEE profile tags (`real-sgx`, `sgx-no-attest`,
-//!     `gramine-direct`) -> always skipped outside that profile, regardless of
+//!     `gramine-direct`, `mock-native`) -> always skipped outside that profile, regardless of
 //!     `--all`.
 //!   - `todo`             -> always skipped (unimplemented stub), regardless of `--all`.
 
@@ -235,25 +235,6 @@ pub struct EnvCli {
     /// `<repo>/scripts/seed-testnet-lowstake.json`.
     #[arg(long)]
     pub seed: Option<PathBuf>,
-
-    /// Backend for generated offchain-storage.toml files.
-    #[arg(long, value_enum, default_value = "rocksdb")]
-    pub projection_backend: ProjectionBackend,
-
-    /// MongoDB fixture URI, used only with --projection-backend mongodb.
-    /// `auto` starts a temporary single-node replica set.
-    #[arg(long, default_value = "auto")]
-    pub projection_mongodb_uri: String,
-}
-
-/// Backend used when generating each scenario's storage TOML.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
-pub enum ProjectionBackend {
-    #[default]
-    #[value(name = "rocksdb")]
-    RocksDb,
-    #[value(name = "mongodb")]
-    MongoDb,
 }
 
 /// The resolved environment: every knob and path the harness needs, sourced
@@ -288,8 +269,6 @@ pub struct Environment {
     pub enclave_bin: PathBuf,
     pub mock_bin: PathBuf,
     pub seed: PathBuf,
-    pub projection_mongodb_uri: String,
-    pub projection_backend: ProjectionBackend,
 }
 
 impl Environment {
@@ -352,8 +331,6 @@ impl Environment {
                 .seed
                 .clone()
                 .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
-            projection_mongodb_uri: cli.projection_mongodb_uri.clone(),
-            projection_backend: cli.projection_backend,
             repo,
         }
     }
@@ -397,8 +374,6 @@ impl Default for Environment {
             enclave_bin: None,
             mock_bin: None,
             seed: None,
-            projection_mongodb_uri: "auto".to_owned(),
-            projection_backend: ProjectionBackend::RocksDb,
         })
     }
 }
@@ -407,8 +382,8 @@ impl Default for Environment {
 /// harness must not prepend `sudo` and prompt for a password it does not need.
 ///
 /// True for Docker Desktop (macOS) and for any Linux host whose user is in the
-/// `docker` group; false for a rootful daemon, which still gets `sudo`. Mirrors
-/// `scripts/localnet-mongo.sh`. Probed once - the daemon does not change
+/// `docker` group; false for a rootful daemon, which still gets `sudo`.
+/// Probed once - the daemon does not change
 /// reachability mid-run, and every `base_cmd` would otherwise pay for it.
 fn docker_reachable_without_sudo() -> bool {
     static REACHABLE: OnceLock<bool> = OnceLock::new();
@@ -483,14 +458,6 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 /// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
 /// so the Given text stays purely descriptive - nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
-    if has_tag(feature, scenario, "mongodb") && env.projection_backend != ProjectionBackend::MongoDb
-    {
-        return Some("needs --projection-backend mongodb".to_owned());
-    }
-    if has_tag(feature, scenario, "rocksdb") && env.projection_backend != ProjectionBackend::RocksDb
-    {
-        return Some("needs --projection-backend rocksdb".to_owned());
-    }
     if let Some(n) = exact_validators(feature, scenario) {
         if env.validators != n {
             return Some(format!(
@@ -503,6 +470,12 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
         if env.validators < n {
             return Some(format!("needs >={n} validators, have {}", env.validators));
         }
+    }
+    if has_tag(feature, scenario, "mock-native") && !env.tee_mode.runs_native_host_enclave() {
+        return Some(format!(
+            "needs the native mock enclave (@mock-native), but --tee {}",
+            env.tee_mode.evidence_name()
+        ));
     }
     if has_tag(feature, scenario, "gramine-direct")
         && !env.tee_mode.satisfies_gramine_direct_requirement()
@@ -585,15 +558,13 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
         return Decision::Skip("not implemented (@todo)".to_string());
     }
     let requirement = unmet(feature, scenario, env);
-    let profile_mismatch = (has_tag(feature, scenario, "mongodb")
-        && env.projection_backend != ProjectionBackend::MongoDb)
-        || (has_tag(feature, scenario, "rocksdb")
-            && env.projection_backend != ProjectionBackend::RocksDb)
-        || (has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real))
+    let profile_mismatch = (has_tag(feature, scenario, "real-sgx")
+        && !matches!(env.tee_mode, TeeMode::Real))
         || (has_tag(feature, scenario, "sgx-no-attest")
             && !env.tee_mode.satisfies_sgx_no_attest_requirement())
         || (has_tag(feature, scenario, "gramine-direct")
-            && !env.tee_mode.satisfies_gramine_direct_requirement());
+            && !env.tee_mode.satisfies_gramine_direct_requirement())
+        || (has_tag(feature, scenario, "mock-native") && !env.tee_mode.runs_native_host_enclave());
     decide_requirement(requirement, env.all, profile_mismatch)
 }
 
@@ -625,53 +596,74 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn offchain_storage_network_scenario_is_registered_for_both_backends() {
+    fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
         let feature = Feature::parse_path(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage.feature"),
             cucumber::gherkin::GherkinEnv::default(),
         )
         .unwrap();
         let scenario = &feature.scenarios[0];
-        for backend in [ProjectionBackend::RocksDb, ProjectionBackend::MongoDb] {
-            for tee_mode in [TeeMode::GramineDirect, TeeMode::MockNative] {
-                let env = Environment {
-                    projection_backend: backend,
-                    tee_mode,
-                    validators: 4,
-                    sudo: true,
-                    ..Environment::default()
-                };
-                assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-            }
+        for tee_mode in [TeeMode::SgxNoAttest, TeeMode::Real] {
+            let env = Environment {
+                tee_mode,
+                validators: 4,
+                sudo: true,
+                ..Environment::default()
+            };
+            assert_eq!(decide(&feature, scenario, &env), Decision::Run);
         }
         assert_registered_steps(&feature, scenario);
     }
 
     #[test]
-    fn mongodb_fault_scenario_is_ineligible_in_rocksdb_lane_even_with_all() {
+    fn storage_backend_and_mongo_uri_are_not_e2e_cli_inputs() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            env: EnvCli,
+        }
+        for args in [
+            vec!["e2e", "--projection-backend", "mongodb"],
+            vec!["e2e", "--projection-mongodb-uri", "mongodb://127.0.0.1"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        assert_eq!(Cli::try_parse_from(["e2e"]).unwrap().env.validators, 4);
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn native_storage_scenario_runs_only_in_its_explicit_profile_even_with_all() {
         let feature = Feature::parse_path(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage_native.feature"),
             cucumber::gherkin::GherkinEnv::default(),
         )
         .unwrap();
-        let scenario = feature
-            .scenarios
-            .iter()
-            .find(|scenario| scenario.tags.iter().any(|tag| tag == "mongodb"))
-            .unwrap();
-        let mut env = Environment {
-            all: true,
-            tee_mode: TeeMode::SgxNoAttest,
-            validators: 4,
-            sudo: true,
-            ..Environment::default()
-        };
-        assert!(matches!(
-            decide(&feature, scenario, &env),
-            Decision::Skip(_)
-        ));
-        env.projection_backend = ProjectionBackend::MongoDb;
-        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
+        let scenario = &feature.scenarios[0];
+        for all in [false, true] {
+            for tee_mode in [
+                TeeMode::Real,
+                TeeMode::SgxNoAttest,
+                TeeMode::GramineDirect,
+                TeeMode::Mock,
+                TeeMode::MockNative,
+            ] {
+                let env = Environment {
+                    tee_mode,
+                    all,
+                    sudo: true,
+                    validators: 4,
+                    ..Environment::default()
+                };
+                assert_eq!(
+                    matches!(decide(&feature, scenario, &env), Decision::Run),
+                    tee_mode == TeeMode::MockNative
+                );
+            }
+        }
+        assert_registered_steps(&feature, scenario);
     }
 
     #[test]
@@ -762,7 +754,7 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn worker_outage_fault_is_after_public_input_and_includes_independent_recovery() {
+    fn worker_outage_precedes_independent_exports_and_includes_independent_recovery() {
         let feature = Feature::parse_path(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
             cucumber::gherkin::GherkinEnv::default(),
@@ -777,7 +769,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(scenario.steps.len(), 10);
-        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop after exact exports of the public JobIntent before voting opens");
+        assert_eq!(scenario.steps[4].value, "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent");
         assert_eq!(
             scenario.steps[9].value,
             "the independent OCOMP job completes on every validator"

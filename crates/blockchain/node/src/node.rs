@@ -4,8 +4,10 @@
 //! the executor (stateful precompiles) and consensus (increased extra_data).
 
 use crate::{
-    consensus::OutbeConsensusBuilder, engine::OutbeEngineValidatorBuilder,
+    consensus::OutbeConsensusBuilder,
+    engine::OutbeEngineValidatorBuilder,
     payload_builder::OutbePayloadBuilder,
+    shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
 use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
@@ -21,7 +23,7 @@ use reth_ethereum::node::node::EthereumEthApiBuilder;
 use reth_ethereum::node::EthereumNetworkBuilder;
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_node_builder::{
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder, PayloadBuilderBuilder},
+    components::{ComponentsBuilder, PayloadBuilderBuilder},
     node::{FullNodeTypes, NodeTypes},
     rpc::{BasicEngineValidatorBuilder, NoopEngineApiBuilder, RpcAddOns},
     BuilderContext, Node, NodeAdapter, PayloadBuilderConfig,
@@ -36,6 +38,8 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 /// (increased extra_data size for participation bitmap).
 #[derive(Clone)]
 pub struct OutbeNode {
+    /// Process-owned shutdown observation and payload-event lifetime.
+    pub shutdown: NodeShutdown,
     /// Optional bridge to pass consensus data to the block executor.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
@@ -77,6 +81,7 @@ impl OutbeNode {
         compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
+            shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: None,
             runtime_body_readers,
@@ -92,12 +97,19 @@ impl OutbeNode {
         compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
+            shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
             runtime_body_readers,
             compressed_tree_service,
             ocomp_fork_install: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_shutdown(mut self, shutdown: NodeShutdown) -> Self {
+        self.shutdown = shutdown;
+        self
     }
 
     #[must_use]
@@ -121,7 +133,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         OutbePoolBuilder,
-        BasicPayloadServiceBuilder<OutbePayloadBuilderBuilder>,
+        OutbePayloadServiceBuilder,
         EthereumNetworkBuilder,
         OutbeExecutorBuilder,
         OutbeConsensusBuilder,
@@ -165,7 +177,7 @@ where
             .node_types::<N>()
             .pool(OutbePoolBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation))
             .executor(executor)
-            .payload(BasicPayloadServiceBuilder::new(OutbePayloadBuilderBuilder))
+            .payload(OutbePayloadServiceBuilder::new(self.shutdown.clone()))
             .network(EthereumNetworkBuilder::default())
             .consensus(
                 OutbeConsensusBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation),

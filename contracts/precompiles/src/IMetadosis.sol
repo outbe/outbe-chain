@@ -97,11 +97,7 @@ interface IMetadosis {
         bytes32 activationPreconditionsHash
     );
 
-    event OffchainJobExpired(
-        bytes32 indexed intentId,
-        uint32 indexed wwd,
-        uint64 expiredAtHeight
-    );
+    event OffchainJobExpired(bytes32 indexed intentId, uint32 indexed wwd, uint64 expiredAtHeight);
 
     event OcompVoteMissed(
         address indexed validator,

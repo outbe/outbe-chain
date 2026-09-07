@@ -46,7 +46,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
     let mut factory = IntexFactoryContract::new(storage.clone());
-    let cfg = config::read(&factory)?;
+    let cfg = config::read_from(&factory, storage.chain_id()?)?;
 
     let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
     let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;

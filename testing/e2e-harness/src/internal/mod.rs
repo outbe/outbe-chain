@@ -9,6 +9,7 @@ pub(crate) mod eth;
 pub(crate) mod launch_log;
 pub(crate) mod ocomp_worker_outage;
 pub(crate) mod parse;
+pub(crate) mod pending_dkg;
 pub(crate) mod ports;
 pub(crate) mod proc;
 pub(crate) mod shell;

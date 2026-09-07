@@ -9,6 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::api;
+use crate::config::GemParams;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{GemAddParams, GemContract, GemState};
 
@@ -31,8 +32,6 @@ fn sample_params(owner: Address) -> GemAddParams {
         floor_price_minor: U256::from(540_000u64),
         call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
-        call_window: 28 * 86_400,
-        call_threshold: 21 * 86_400,
         issuance_currency: 840,
         reference_currency: 840,
         initial_state: GemState::Issued,
@@ -643,6 +642,11 @@ fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option
 }
 
 fn qualified_gem(storage: &StorageHandle) -> U256 {
+    // These cases reason in the PROD call terms; the test chain id resolves to DEV.
+    GemContract::new(storage.clone())
+        .config_profile
+        .write(crate::config::PROFILE_PROD)
+        .unwrap();
     let mut p = sample_params(ALICE);
     // Issue well before the window so no day is skipped as pre-issuance.
     p.issued_at = T_NOW - 100 * 86_400;
@@ -1031,26 +1035,90 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
 }
 
 #[test]
-fn a_wider_window_than_the_constant_widens_the_span_the_scan_collects() {
-    with_storage(|s| {
-        let gem = GemContract::new(s.clone());
+fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
         let iso = sample_params(ALICE).reference_currency;
-        assert_eq!(gem.max_call_window.read(&iso).unwrap(), 0);
+        let profile = |p: u8| {
+            GemContract::new(storage.clone())
+                .config_profile
+                .write(p)
+                .unwrap()
+        };
 
-        let mut wide = sample_params(ALICE);
-        wide.call_window = 40 * 86_400;
-        crate::api::add_gem(s, wide).unwrap();
+        profile(crate::config::PROFILE_DEV);
+        api::add_gem(storage, sample_params(ALICE)).unwrap();
         assert_eq!(
             gem.max_call_window.read(&iso).unwrap(),
-            40 * 86_400,
-            "the span follows the widest window ever issued"
+            GemParams::DEV.call_window
         );
 
-        crate::api::add_gem(s, sample_params(BOB)).unwrap();
+        profile(crate::config::PROFILE_PROD);
+        api::add_gem(storage, sample_params(BOB)).unwrap();
         assert_eq!(
             gem.max_call_window.read(&iso).unwrap(),
-            40 * 86_400,
-            "issuing on the narrow constant again does not shrink it"
+            GemParams::PROD.call_window,
+            "a wider profile widens the span"
+        );
+
+        profile(crate::config::PROFILE_DEV);
+        let mut third = sample_params(ALICE);
+        third.promis_load_minor = U256::from(2_000_000u64);
+        api::add_gem(storage, third).unwrap();
+        assert_eq!(
+            gem.max_call_window.read(&iso).unwrap(),
+            GemParams::PROD.call_window,
+            "going back to the narrow one does not shrink it"
+        );
+    });
+}
+
+#[test]
+fn config_unset_resolves_by_chain_id() {
+    with_storage(|storage| {
+        // No genesis profile selected -> resolved by network; the test chain is not mainnet.
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::DEV);
+        // An explicit selector still wins over the network default.
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
+        assert_eq!(GemParams::PROD.call_window, 28 * 24 * 3600);
+        assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
+    });
+}
+
+/// The network default: only mainnet runs the real timings.
+#[test]
+fn config_auto_profile_follows_the_network() {
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+
+    assert_eq!(GemParams::for_chain_id(MAINNET_CHAIN_ID), GemParams::PROD);
+    for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
+        assert_eq!(GemParams::for_chain_id(chain_id), GemParams::DEV);
+    }
+}
+
+#[test]
+fn config_unknown_selector_errors() {
+    with_storage(|storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(99u8)
+            .unwrap();
+        assert!(crate::config::read(storage).is_err());
+    });
+}
+
+/// Pin the selector slot index: the seeder writes a raw slot, and `gem_items`
+/// spans a 17-slot record, so the attribute order is not the slot.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    with_storage(|storage| {
+        assert_eq!(
+            GemContract::new(storage.clone()).config_profile.slot(),
+            U256::from(42)
         );
     });
 }
@@ -1097,5 +1165,25 @@ fn leaving_called_frees_the_expiry_slot() {
         gem.set_state(gem_id, GemState::Qualified).unwrap();
         assert_eq!(gem.expiry_bucket_live.read(&bucket).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);
+    });
+}
+
+#[test]
+fn config_dev_profile_terms_a_new_gem() {
+    with_storage(|storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_DEV)
+            .unwrap();
+
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+
+        // A gem snapshots its call terms at issuance, so the dev bundle has to
+        // reach the record; the prod one must not.
+        let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.call_window, GemParams::DEV.call_window);
+        assert_eq!(item.call_threshold, GemParams::DEV.call_threshold);
+        assert_eq!(item.call_notice_period, GemParams::DEV.call_notice_period);
+        assert!(item.call_window < GemParams::PROD.call_window);
     });
 }

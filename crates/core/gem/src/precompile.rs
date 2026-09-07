@@ -16,6 +16,16 @@ sol!(
     "../../../contracts/precompiles/src/IGem.sol"
 );
 
+// A gem is stamped live, so only a throwaway build can move its issuance back
+// behind the closed days a scenario seeds for the call sweep.
+#[cfg(feature = "e2e-test")]
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IGemTestArming {
+        function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
+    }
+}
+
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
@@ -23,6 +33,19 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) =
+        <IGemTestArming::backdateGemForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
+    {
+        let gem = GemContract::new(storage.clone());
+        let mut item = gem
+            .gem_items
+            .get(call.gemId)?
+            .ok_or(GemError::GemNotFound)?;
+        item.issued_at = call.issuedAt;
+        gem.gem_items.update(&item)?;
+        return Ok(Bytes::new());
+    }
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
         let gem = GemContract::new(storage.clone());
         use IGem::IGemCalls::*;
@@ -74,5 +97,8 @@ fn to_abi_data(item: &GemData) -> IGem::GemData {
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
+        callPrice: item.call_price_minor,
+        calledAt: item.called_at,
+        callNoticePeriod: item.call_notice_period,
     }
 }

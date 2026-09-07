@@ -12,8 +12,7 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
-    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -205,6 +204,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
+    let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window;
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
@@ -231,7 +231,14 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             gem.call_scan_cursor.write(&iso_code, 0)?;
             continue;
         }
-        let index = window_for(&gem, &oracle, &mut windows, iso_code, pinned_day)?;
+        let index = window_for(
+            &gem,
+            &oracle,
+            &mut windows,
+            iso_code,
+            pinned_day,
+            live_window,
+        )?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
@@ -397,6 +404,7 @@ fn window_for(
     cache: &mut Vec<(u16, VwapWindow)>,
     iso_code: u16,
     last_closed_day: u32,
+    live_window: u32,
 ) -> Result<usize> {
     if let Some(index) = cache.iter().position(|(code, _)| *code == iso_code) {
         return Ok(index);
@@ -404,8 +412,9 @@ fn window_for(
     let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     let mut window = Vec::new();
     if pair_index != 0 {
-        let widest = gem.max_call_window.read(&iso_code)?.max(CALL_WINDOW);
-        let window_days = widest / 86_400;
+        // Widest of the live profile and anything ever issued: a gem keeps the window
+        // it was issued with, so a narrowed profile must not shorten the span.
+        let window_days = gem.max_call_window.read(&iso_code)?.max(live_window) / 86_400;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

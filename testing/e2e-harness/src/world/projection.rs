@@ -1,4 +1,4 @@
-//! Backend-neutral projection fixture. Runtime processes consume only the generated TOML.
+//! RocksDB projection fixture. Runtime processes consume only the generated TOML.
 
 use std::fs;
 use std::io::Write;
@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_compressed_entities::{decode_stored_tribute_v1, WwdEntityId};
 use outbe_offchain_storage::{
-    Key, MongoStorageConfig, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend,
-    StorageConfig, StorageProvider, StorageReader, StorageReaderHandle,
+    Key, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend, StorageConfig,
+    StorageProvider, StorageReader, StorageReaderHandle,
 };
 
-use super::mongodb::MongoDb;
-use crate::env::{Environment, ProjectionBackend};
+#[cfg(test)]
+use crate::env::Environment;
 use crate::internal::config::Config;
 use crate::ocomp_evidence::sha256_hex;
 
@@ -22,7 +22,6 @@ const COLLECTIONS: [&str; 3] = ["tributes", "tributes_by_owner", "tributes_by_da
 #[derive(Debug)]
 pub struct ProjectionFixture {
     cfg: Config,
-    mongo: Option<MongoDb>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,21 +72,19 @@ fn record_sha256(namespace: &str, record: &ScanEntry) -> Result<String> {
 /// Create once, privately. A restart validates and reuses the operator's exact file.
 pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {
     let path = cfg.projection_storage_config(index);
+    reject_symlink_path(&path)?;
     if path.exists() {
-        StorageConfig::load(&path)?;
+        rocksdb_config(cfg, index)?;
         return Ok(());
     }
     fs::create_dir_all(cfg.validator_dir(index))?;
-    let backend = match cfg.projection_backend {
-        ProjectionBackend::RocksDb => StorageBackend::RocksDb(RocksDbConfig {
-            path: cfg.validator_dir(index).join("data/offchain"),
-            secondary_path: cfg.validator_dir(index).join("ocomp/rocksdb-secondary"),
-        }),
-        ProjectionBackend::MongoDb => StorageBackend::MongoDb(MongoStorageConfig {
-            uri: cfg.projection_mongodb_uri.clone(),
-            database: cfg.validator_projection_database(index),
-        }),
-    };
+    let directory = cfg.validator_dir(index).canonicalize()?;
+    reject_symlink_path(&directory.join("data/offchain"))?;
+    reject_symlink_path(&directory.join("ocomp/rocksdb-secondary"))?;
+    let backend = StorageBackend::RocksDb(RocksDbConfig {
+        path: directory.join("data/offchain"),
+        secondary_path: directory.join("ocomp/rocksdb-secondary"),
+    });
     let document = StorageConfig {
         start_block: 1,
         backend,
@@ -99,10 +96,11 @@ pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {
     match file.persist_noclobber(&path) {
         Ok(_) => {}
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            StorageConfig::load(&path)?;
+            rocksdb_config(cfg, index)?;
         }
         Err(error) => return Err(error.error.into()),
     }
+    rocksdb_config(cfg, index)?;
     Ok(())
 }
 
@@ -143,66 +141,80 @@ pub(crate) fn configure_node_command(
     Ok(())
 }
 
-fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
+/// Validate again at each consumer: a persisted Mongo config must never start a service
+/// or silently redirect a restarted node/exporter to another storage identity.
+pub(crate) fn rocksdb_config(cfg: &Config, index: usize) -> Result<StorageConfig> {
+    reject_symlink_path(&cfg.projection_storage_config(index))?;
     let config = StorageConfig::load(cfg.projection_storage_config(index))?;
+    let StorageBackend::RocksDb(ref rocks) = config.backend else {
+        bail!("E2E requires RocksDB storage for validator-{index}");
+    };
+    let expected = cfg.validator_dir(index).canonicalize()?;
+    reject_symlink_path(&rocks.path)?;
+    reject_symlink_path(&rocks.secondary_path)?;
+    if config.start_block != 1
+        || rocks.path != expected.join("data/offchain")
+        || rocks.secondary_path != expected.join("ocomp/rocksdb-secondary")
+    {
+        bail!("validator-{index}: E2E RocksDB storage identity changed");
+    }
+    Ok(config)
+}
+
+fn reject_symlink_path(path: &std::path::Path) -> Result<()> {
+    for ancestor in path.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!(
+                    "E2E storage path must not traverse symlink {}",
+                    ancestor.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
+    let config = rocksdb_config(cfg, index)?;
     Ok(StorageProvider::new(config)?
         .read_source("e2e-observer")?
         .open_session()?)
 }
 
 impl ProjectionFixture {
-    pub(crate) fn connect_or_start(cfg: &mut Config) -> Result<Self> {
-        let mongo = match cfg.projection_backend {
-            ProjectionBackend::RocksDb => None,
-            ProjectionBackend::MongoDb => Some(MongoDb::connect_or_start(cfg)?),
-        };
-        Ok(Self {
-            cfg: cfg.clone(),
-            mongo,
-        })
-    }
-
-    pub(crate) fn teardown_managed_for_run(env: &Environment) {
-        if env.projection_backend == ProjectionBackend::MongoDb {
-            MongoDb::teardown_managed_for_run(env);
-        }
-    }
-
-    pub fn pause_managed(&self) -> Result<()> {
-        self.mongo
-            .as_ref()
-            .ok_or_else(|| eyre!("MongoDB outage scenario requires --projection-backend mongodb"))?
-            .pause_managed()
-    }
-
-    pub fn resume_managed(&self) -> Result<()> {
-        self.mongo
-            .as_ref()
-            .ok_or_else(|| eyre!("MongoDB outage scenario requires --projection-backend mongodb"))?
-            .resume_managed()
+    pub(crate) fn new(cfg: &Config) -> Self {
+        Self { cfg: cfg.clone() }
     }
 
     /// The caller must stop all nodes before deliberate re-bootstrap.
     pub fn reset_projection_state(&self) -> Result<()> {
-        if let Some(mongo) = &self.mongo {
-            return mongo.reset_projection_state();
-        }
+        let mut targets = Vec::new();
         for index in 0..self.cfg.validators {
             let path = self.cfg.projection_storage_config(index);
             if !path.exists() {
                 continue;
             }
-            if let StorageBackend::RocksDb(config) = StorageConfig::load(path)?.backend {
+            if let StorageBackend::RocksDb(config) = rocksdb_config(&self.cfg, index)?.backend {
                 for path in [config.path, config.secondary_path] {
                     if path.exists() {
                         let canonical = path.canonicalize()?;
                         if !canonical.starts_with(self.cfg.dir.canonicalize()?) {
                             bail!("refusing to reset storage outside this scenario");
                         }
-                        fs::remove_dir_all(path)?;
+                        targets.push(path);
                     }
                 }
             }
+        }
+        for path in targets {
+            fs::remove_dir_all(path)?;
         }
         Ok(())
     }
@@ -359,14 +371,15 @@ fn snapshot(reader: &dyn StorageReader, tx_hash: &str) -> Result<TributeProjecti
 mod tests {
     use super::*;
     use outbe_offchain_storage::{
-        AtomicWriteBatch, AtomicWriteOperation, MemoryStorage, StorageMetadata, StorageWriter,
+        AtomicWriteBatch, AtomicWriteOperation, RocksDbStorage, StorageMetadata, StorageWriter,
         Value,
     };
     use std::collections::BTreeMap;
 
     #[test]
     fn transaction_lookup_pages_and_rejects_duplicate_matches() {
-        let storage = MemoryStorage::default();
+        let root = tempfile::tempdir().unwrap();
+        let storage = RocksDbStorage::open(root.path().join("primary")).unwrap();
         let ns = Namespace::new("tributes").unwrap();
         let mut batch = AtomicWriteBatch::new();
         for index in 0_u32..300 {
@@ -438,6 +451,116 @@ mod tests {
     }
 
     #[test]
+    fn persisted_mongo_config_is_rejected_without_overwrite_or_connection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cfg = Config::resolve(&Environment::default());
+        cfg.dir = root.path().to_path_buf();
+        ensure_node_config(&cfg, 0).unwrap();
+        let path = cfg.projection_storage_config(0);
+        let incompatible = "version = 1\nbackend = \"mongodb\"\n[mongodb]\nuri = \"mongodb://127.0.0.1:1\"\ndatabase = \"forbidden\"\n";
+        fs::write(&path, incompatible).unwrap();
+        assert!(ensure_node_config(&cfg, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("requires RocksDB"));
+        assert!(session(&cfg, 0).is_err());
+        assert!(ProjectionFixture::new(&cfg)
+            .reset_projection_state()
+            .is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), incompatible);
+    }
+
+    #[test]
+    fn persisted_storage_identity_and_start_block_cannot_change() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cfg = Config::resolve(&Environment::default());
+        cfg.dir = root.path().to_path_buf();
+        ensure_node_config(&cfg, 0).unwrap();
+        let path = cfg.projection_storage_config(0);
+        let original = StorageConfig::load(&path).unwrap();
+        for field in 0..3 {
+            let mut config = original.clone();
+            let StorageBackend::RocksDb(ref mut rocks) = config.backend else {
+                unreachable!()
+            };
+            match field {
+                0 => config.start_block = 2,
+                1 => rocks.path = cfg.validator_dir(1).join("data/offchain"),
+                _ => rocks.secondary_path = cfg.validator_dir(1).join("ocomp/rocksdb-secondary"),
+            }
+            let document = config.to_toml().unwrap();
+            fs::write(&path, &document).unwrap();
+            assert!(ensure_node_config(&cfg, 0).is_err());
+            assert!(session(&cfg, 0).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), document);
+        }
+        fs::write(&path, "not valid storage TOML").unwrap();
+        assert!(ensure_node_config(&cfg, 0).is_err());
+    }
+
+    #[test]
+    fn storage_symlink_cannot_alias_another_database() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let mut cfg = Config::resolve(&Environment::default());
+        cfg.dir = root.path().to_path_buf();
+        ensure_node_config(&cfg, 0).unwrap();
+        let data = cfg.validator_dir(0).join("data");
+        fs::create_dir_all(&data).unwrap();
+        std::os::unix::fs::symlink(external.path(), data.join("offchain")).unwrap();
+        fs::write(external.path().join("sentinel"), "preserved").unwrap();
+        assert!(ensure_node_config(&cfg, 0).is_err());
+        assert!(session(&cfg, 0).is_err());
+        assert!(ProjectionFixture::new(&cfg)
+            .reset_projection_state()
+            .is_err());
+        assert_eq!(
+            fs::read_to_string(external.path().join("sentinel")).unwrap(),
+            "preserved"
+        );
+    }
+
+    #[test]
+    fn first_launch_rejects_storage_symlink_before_publishing_config() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let mut cfg = Config::resolve(&Environment::default());
+        cfg.dir = root.path().to_path_buf();
+        let data = cfg.validator_dir(0).join("data");
+        fs::create_dir_all(&data).unwrap();
+        std::os::unix::fs::symlink(external.path(), data.join("offchain")).unwrap();
+        let sentinel = external.path().join("sentinel");
+        fs::write(&sentinel, "preserved").unwrap();
+        let mut command = std::process::Command::new("node");
+        assert!(configure_node_command(&cfg, 0, &mut command).is_err());
+        assert_eq!(command.get_args().count(), 0);
+        assert!(!cfg.projection_storage_config(0).exists());
+        assert_eq!(fs::read_to_string(sentinel).unwrap(), "preserved");
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn reset_validates_every_owned_path_before_removing_any_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cfg = Config::resolve(&Environment::default());
+        cfg.dir = root.path().to_path_buf();
+        for index in 0..2 {
+            ensure_node_config(&cfg, index).unwrap();
+            fs::create_dir_all(cfg.validator_dir(index).join("data/offchain")).unwrap();
+        }
+        let sentinel = cfg.validator_dir(0).join("data/offchain/sentinel");
+        fs::write(&sentinel, "preserved").unwrap();
+        let path = cfg.projection_storage_config(1);
+        let mut config = StorageConfig::load(&path).unwrap();
+        config.start_block = 2;
+        fs::write(path, config.to_toml().unwrap()).unwrap();
+        assert!(ProjectionFixture::new(&cfg)
+            .reset_projection_state()
+            .is_err());
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "preserved");
+    }
+
+    #[test]
     fn node_config_is_shared_with_readers_and_survives_restart() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg = Config::resolve(&Environment::default());
@@ -445,7 +568,6 @@ mod tests {
         ensure_node_config(&cfg, 4).unwrap();
         let path = cfg.projection_storage_config(4);
         let original = fs::read(&path).unwrap();
-        cfg.projection_backend = ProjectionBackend::MongoDb;
         ensure_node_config(&cfg, 4).unwrap();
         assert_eq!(fs::read(&path).unwrap(), original);
         let config = StorageConfig::load(&path).unwrap();

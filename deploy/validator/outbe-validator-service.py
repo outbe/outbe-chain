@@ -127,7 +127,7 @@ def enclave() -> NoReturn:
         "--socket",
         "127.0.0.1:17000",
         "--tee-dir",
-        str(OUTBE_ROOT / "tee"),
+        "/var/lib/outbe/tee" if runtime == "bundled-sgx" else str(OUTBE_ROOT / "tee"),
         "--chain-id",
         chain_hex,
     ]

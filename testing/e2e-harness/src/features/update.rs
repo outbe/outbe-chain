@@ -274,13 +274,12 @@ fn restart_during_voting(world: &mut World, name: String) {
         .kill_validator(index)
         .expect("kill validator");
     world.localnet.restart().expect("restart validator");
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(index), before, 60)
-            .is_some(),
-        "{name} did not recover its chain state"
-    );
+    world
+        .rpc
+        .wait_finalized_checkpoint(&validator_ports(world), before, 60)
+        .unwrap_or_else(|error| {
+            panic!("{name} did not recover its finalized chain state: {error:#}")
+        });
 }
 
 fn validator_ports(world: &World) -> Vec<u16> {
@@ -341,13 +340,12 @@ fn restart_entire_committee(world: &mut World, context: &str) {
         .localnet
         .restart_committee_and_enclaves()
         .expect(context);
-    for port in validator_ports(world) {
-        let recovered = world.rpc.wait_block(port, before, 90);
-        assert!(
-            recovered.is_some_and(|height| height >= before),
-            "RPC {port} did not recover to finalized height {before} after {context}: {recovered:?}"
-        );
-    }
+    world
+        .rpc
+        .wait_finalized_checkpoint(&validator_ports(world), before, 90)
+        .unwrap_or_else(|error| {
+            panic!("committee did not restore finalized height {before} after {context}: {error:#}")
+        });
 }
 
 #[when("the entire committee restarts after update scheduling")]
@@ -536,7 +534,7 @@ fn committee_continues_finalizing(world: &mut World) {
         let head = world
             .rpc
             .wait_block(port, finalized_before.saturating_add(2), 60)
-            .unwrap_or_else(|| panic!("RPC {port} did not advance"));
+            .unwrap_or_else(|error| panic!("RPC {port} did not advance: {error:#}"));
         assert!(
             world
                 .rpc
@@ -800,7 +798,7 @@ fn upgraded_binary_resumes_committee(world: &mut World) {
     let primary = world.validators.primary_port();
     let resumed = world.rpc.wait_block_gt(primary, activation, 120);
     assert!(
-        resumed.is_some_and(|height| height > activation),
+        resumed.as_ref().is_ok_and(|height| *height > activation),
         "replacement binary did not resume beyond activation {activation}: {resumed:?}"
     );
     for port in validator_ports(world) {

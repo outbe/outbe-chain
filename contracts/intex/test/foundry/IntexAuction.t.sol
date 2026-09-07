@@ -7,6 +7,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
+import {NotWhitelisted, Whitelist} from "@shared/Whitelist.sol";
 
 contract AuctionTest is Test {
     uint16 internal constant ISSUANCE_CCY = 840;
@@ -222,6 +223,41 @@ contract AuctionTest is Test {
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         vm.prank(iba1);
         auction.cancelCommit(worldwideDay);
+    }
+
+    function test_CommitBid_UngatedUntilWhitelistIsSet() public {
+        assertEq(auction.whitelist(), address(0));
+
+        uint32 worldwideDay = 20250117;
+        _start(worldwideDay, 10, 1);
+
+        // iba1 is on no list; commitBid must still work while the gate is unset.
+        _commit(worldwideDay, iba1, 5, 11, iba1PrivateKey);
+    }
+
+    function test_CommitBid_GatedOnceWhitelistIsSet() public {
+        address[] memory allowed = new address[](1);
+        allowed[0] = iba2;
+        Whitelist registry = new Whitelist(admin, allowed);
+
+        vm.prank(admin);
+        auction.setWhitelist(address(registry));
+
+        uint32 worldwideDay = 20250117;
+        _start(worldwideDay, 10, 1);
+
+        bytes memory signature = _createSignature(worldwideDay, iba1, 5, 11, iba1PrivateKey);
+        vm.expectRevert(abi.encodeWithSelector(NotWhitelisted.selector, iba1));
+        vm.prank(iba1);
+        auction.commitBid(worldwideDay, keccak256(signature));
+
+        _commit(worldwideDay, iba2, 5, 11, iba2PrivateKey);
+    }
+
+    function test_SetWhitelist_OnlyAdmin() public {
+        vm.expectRevert();
+        vm.prank(iba1);
+        auction.setWhitelist(address(1));
     }
 
     function test_CommitBid_RevertsZeroCommitHash() public {

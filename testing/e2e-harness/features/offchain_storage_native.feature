@@ -1,4 +1,4 @@
-@ocomp @tee @price-oracle @min-validators-4 @offchain-storage-native-e2e
+@ocomp @tee @mock-native @price-oracle @min-validators-4 @offchain-storage-native-e2e
 Feature: Off-chain storage through Lysis with the native mock enclave
   Four validators exercise the real storage and OCOMP processes. Enclave
   emulation does not cover SGX or the separately tested fifth-node onboarding.
@@ -14,6 +14,8 @@ Feature: Off-chain storage through Lysis with the native mock enclave
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute
+    # Hold workers during processing until all four current nodes have accepted
+    # their exact exports and dispatched computation, then release them together.
     When the committee logical clock reaches the fresh capacity processing time
     Then the same fresh capacity day advances through WAITING and READY
     And Metadosis creates one finalized JobIntent from that public Tribute
@@ -21,6 +23,6 @@ Feature: Off-chain storage through Lysis with the native mock enclave
     Then three matching validator domains atomically apply Lysis and create the Nod
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
-    When validator 0 SnapshotExporter restarts from a prepared-only crash state
+    When validator 0 SnapshotExporter restarts with its committed export intact
     And all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical

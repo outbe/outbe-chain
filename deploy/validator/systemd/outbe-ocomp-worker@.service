@@ -1,8 +1,7 @@
 [Unit]
-Description=Outbe validator OCOMP bundle lane %i worker
-After=outbe-validator.service
-Requires=outbe-validator.service
-PartOf=outbe-validator.target
+Description=Outbe OCOMP worker %i
+After=outbe-full-node.service outbe-validator.service
+PartOf=outbe-full-node.service outbe-validator.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -18,7 +17,7 @@ ExecStart=/opt/outbe-chain/outbe-ocomp worker \
   --chain-id ${OCOMP_CHAIN_ID} \
   --genesis-hash ${OCOMP_GENESIS_HASH} \
   --boot-nonce ${OCOMP_BOOT_NONCE} \
-  --worker-ordinal 0 \
+  --worker-ordinal %i \
   --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASHES} \
   --supervisor-address 127.0.0.1:30401
 Restart=on-failure
@@ -36,4 +35,4 @@ ProtectSystem=strict
 ReadWritePaths=/opt/outbe-chain/validator-0
 
 [Install]
-WantedBy=outbe-validator.target
+WantedBy=outbe-full-node.service outbe-validator.service

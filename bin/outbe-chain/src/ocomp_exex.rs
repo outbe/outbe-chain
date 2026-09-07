@@ -2733,7 +2733,7 @@ mod tests {
                 &root.path().join("ce"),
                 EnvironmentIdentity {
                     local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                    chain_id: 1,
+                    chain_id: outbe_primitives::chain::MAINNET_CHAIN_ID,
                     genesis_hash: parent_hash,
                     commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                     topology: CeTopologyV1.encode(),
@@ -2793,6 +2793,7 @@ mod tests {
 
             let spec = Arc::new(
                 ChainSpecBuilder::mainnet()
+                    .chain(outbe_primitives::chain::MAINNET_CHAIN_ID.into())
                     .build()
                     .map_header(OutbeHeader::new),
             );

@@ -18,6 +18,8 @@ import {TypeCasts} from "../src/libs/TypeCasts.sol";
 import {BaseTest} from "./BaseTest.sol";
 import {MockERC7786Bridge} from "./mocks/MockERC7786Bridge.sol";
 import {MockTheCompact} from "./mocks/MockTheCompact.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {NotWhitelisted, Whitelist} from "@shared/Whitelist.sol";
 
 event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
 
@@ -176,6 +178,69 @@ contract RouterE2E is BaseTest {
     }
 
     // ========== Tests ==========
+
+    function _ids(bytes32 orderId) internal pure returns (bytes32[] memory ids) {
+        ids = new bytes32[](1);
+        ids[0] = orderId;
+    }
+
+    function test_emergencyWithdraw_releasesInputToOwner() public {
+        (bytes32 orderId,) = _openOrder();
+
+        uint256 before = inputToken.balanceOf(owner);
+        originRouter.emergencyWithdraw(_ids(orderId));
+
+        assertEq(inputToken.balanceOf(owner), before + amount, "input released");
+        assertEq(originRouter.orderStatus(orderId), originRouter.REFUNDED(), "status");
+    }
+
+    function test_emergencyWithdraw_onlyOwner() public {
+        (bytes32 orderId,) = _openOrder();
+
+        vm.prank(vegeta);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, vegeta));
+        originRouter.emergencyWithdraw(_ids(orderId));
+    }
+
+    function test_emergencyWithdraw_revertsWhenAlreadyWithdrawn() public {
+        (bytes32 orderId,) = _openOrder();
+
+        originRouter.emergencyWithdraw(_ids(orderId));
+        vm.expectRevert("order not open");
+        originRouter.emergencyWithdraw(_ids(orderId));
+    }
+
+    function test_open_ungatedUntilWhitelistIsSet() public {
+        assertEq(address(originRouter.whitelist()), address(0));
+        _openOrder(); // vegeta is not on any list; open() must still work
+    }
+
+    function test_open_gatedOnceWhitelistIsSet() public {
+        address[] memory allowed = new address[](1);
+        allowed[0] = kakaroto;
+        originRouter.setWhitelist(address(new Whitelist(owner, allowed)));
+
+        OrderData memory orderData = _prepareOrderData();
+        OnchainCrossChainOrder memory order = OnchainCrossChainOrder({
+            fillDeadline: orderData.fillDeadline,
+            orderDataType: OrderEncoder.orderDataType(),
+            orderData: OrderEncoder.encode(orderData)
+        });
+
+        vm.startPrank(vegeta);
+        inputToken.approve(address(originRouter), amount);
+        vm.expectRevert(abi.encodeWithSelector(NotWhitelisted.selector, vegeta));
+        originRouter.open(order);
+        vm.stopPrank();
+
+        _openOrder(); // kakaroto is on the list
+    }
+
+    function test_setWhitelist_onlyOwner() public {
+        vm.prank(vegeta);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, vegeta));
+        originRouter.setWhitelist(address(1));
+    }
 
     function test_open_fill_settle() public {
         (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();

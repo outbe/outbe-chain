@@ -1,13 +1,14 @@
 //! Operator-owned Radicle sidecars for release LocalNet scenarios.
 
 use std::fs::{self, OpenOptions};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use eyre::{bail, eyre, Result, WrapErr};
+use eyre::{bail, ensure, eyre, Result, WrapErr};
 use outbe_radicle::endpoint::EndpointAddress;
 use outbe_radicle::integration::query_sidecar;
 use outbe_radicle::manager::{ControlSession, HeartwoodControl, NativeHeartwoodControl};
@@ -16,7 +17,7 @@ use radicle::node::policy::{Scope, SeedingPolicy};
 use radicle::storage::ReadRepository as _;
 
 use crate::internal::eth::block_on;
-use crate::internal::proc::{args, wait_tcp, ChildGuard};
+use crate::internal::proc::{args, ChildGuard};
 
 use super::Localnet;
 
@@ -25,6 +26,9 @@ const VALIDATOR_SET_MAX_VALIDATORS_SLOT: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000001";
 const PORTABLE_UNIX_SOCKET_PATH_LIMIT: usize = 104;
 const NATIVE_CONTROL_DEADLINE: Duration = Duration::from_secs(5);
+const RADICLE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const RADICLE_READY_POLL: Duration = Duration::from_millis(100);
+const RADICLE_SOURCE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(180);
 const HEARTWOOD_REVISION: &str = "b76a17801329291153585ed31db61ee3c658046e";
 
 #[derive(Clone, Debug)]
@@ -38,6 +42,113 @@ pub struct RadicleRepositoryFixtureV1 {
     pub pushed_commit: Option<String>,
 }
 
+/// Decode only the provisioned OpenSSH public file, without a CLI profile or
+/// any fallback to the private key. Metadata errors and symlinks fail closed.
+fn provisioned_radicle_node_id(home: &Path) -> Result<[u8; 32]> {
+    let public = home.join("keys/radicle.pub");
+    let metadata = fs::symlink_metadata(&public)
+        .wrap_err_with(|| format!("inspect Radicle public identity {}", public.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "Radicle public identity must be a regular non-symlink file: {}",
+        public.display()
+    );
+    radicle::crypto::ssh::Keystore::new(&home.join("keys"))
+        .public_key()
+        .wrap_err_with(|| format!("decode Radicle public identity {}", public.display()))?
+        .map(radicle::crypto::PublicKey::into_inner)
+        .ok_or_else(|| eyre!("Radicle public identity disappeared: {}", public.display()))
+}
+
+/// A TCP listener alone is not readiness. Retain ownership in the caller until
+/// native identity/config, status TCP and the final child observation succeed.
+/// Each blocking observation consumes the same deadline; no per-probe reset.
+fn wait_radicle_ready(
+    guard: &mut ChildGuard,
+    expected_node_id: [u8; 32],
+    control_socket: &Path,
+    peer: SocketAddr,
+    status: SocketAddr,
+    log: &Path,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    let pid = guard.pid();
+    let result = (|| -> Result<()> {
+        let mut last_error = "native control not yet observed".to_owned();
+        loop {
+            if let Some(exit) = guard.exit_status()? {
+                bail!("owned Radicle child exited: {exit}; last observation: {last_error}");
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "Radicle readiness deadline: {last_error}"
+            );
+            let native = block_on(query_sidecar(
+                control_socket.to_path_buf(),
+                remaining.min(NATIVE_CONTROL_DEADLINE),
+            ));
+            let ready = match native {
+                Ok(info) => {
+                    ensure!(
+                        info.node_id == expected_node_id,
+                        "native Radicle NodeId differs from the provisioned public identity"
+                    );
+                    let addresses = info
+                        .addresses
+                        .iter()
+                        .map(native_address)
+                        .collect::<Result<Vec<_>>>()?;
+                    ensure!(
+                        addresses == [peer.to_string()],
+                        "native Radicle advertised addresses differ from the requested listen endpoint"
+                    );
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        last_error =
+                            "native observation exhausted the readiness deadline".to_owned();
+                        false
+                    } else {
+                        match TcpStream::connect_timeout(&status, remaining.min(RADICLE_READY_POLL))
+                        {
+                            Ok(_) => true,
+                            Err(error) => {
+                                last_error = format!("status TCP observation failed: {error}");
+                                false
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    last_error = format!("native control observation failed: {error}");
+                    false
+                }
+            };
+            if let Some(exit) = guard.exit_status()? {
+                bail!("owned Radicle child exited during readiness: {exit}; last observation: {last_error}");
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "Radicle readiness deadline: {last_error}"
+            );
+            if ready {
+                return Ok(());
+            }
+            std::thread::sleep(
+                RADICLE_READY_POLL.min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    })();
+    result.wrap_err_with(|| {
+        let exit = guard.exit_status();
+        format!(
+            "Radicle readiness failed: pid={pid}, node_id={}, peer={peer}, status={status}, control={}, log={}, exit={exit:?}",
+            native_node_id(expected_node_id), control_socket.display(), log.display()
+        )
+    })
+}
+
 impl Localnet {
     pub(crate) fn radicle_control_socket(&self, index: usize) -> std::path::PathBuf {
         self.cfg.radicle_control_socket(index)
@@ -49,12 +160,10 @@ impl Localnet {
     }
 
     fn start_radicle_at(&mut self, index: usize, peer_port: u16) -> Result<()> {
-        if self
-            .radicle_sidecars
-            .get_mut(&index)
-            .is_some_and(|guard| !guard.exited())
-        {
-            return Ok(());
+        if let Some(guard) = self.radicle_sidecars.get_mut(&index) {
+            if guard.exit_status()?.is_none() {
+                return Ok(());
+            }
         }
         self.radicle_sidecars.remove(&index);
 
@@ -67,6 +176,7 @@ impl Localnet {
                 key.display()
             );
         }
+        let node_id = provisioned_radicle_node_id(&home)?;
         fs::create_dir_all(validator_dir.join("logs"))?;
 
         let script = self.cfg.repo.join("scripts/run-radicle.sh");
@@ -91,10 +201,11 @@ impl Localnet {
                 max_validators,
                 advertise,
             ]);
+        let log_path = validator_dir.join("radicle.log");
         let log = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(validator_dir.join("radicle.log"))?;
+            .open(&log_path)?;
         command
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
@@ -103,13 +214,15 @@ impl Localnet {
         let label = format!("radicle-{index}");
         let mut guard = ChildGuard::spawn(&label, command)
             .wrap_err_with(|| format!("start {label} through {}", script.display()))?;
-        if !wait_tcp(self.cfg.radicle_status_port(index), 100) {
-            guard.stop();
-            return Err(eyre!(
-                "validator-{index} Radicle status endpoint never came up; see {}",
-                validator_dir.join("radicle.log").display()
-            ));
-        }
+        wait_radicle_ready(
+            &mut guard,
+            node_id,
+            &control_socket,
+            ([127, 0, 0, 1], peer_port).into(),
+            ([127, 0, 0, 1], self.cfg.radicle_status_port(index)).into(),
+            &log_path,
+            RADICLE_READY_TIMEOUT,
+        )?;
         self.radicle_sidecars.insert(index, guard);
         Ok(())
     }
@@ -297,12 +410,11 @@ impl Localnet {
 
     /// Start the independent source and explicitly connect it to every validator.
     pub fn start_user_radicle(&mut self, fixture: &RadicleRepositoryFixtureV1) -> Result<()> {
-        if self
-            .user_radicle
-            .as_mut()
-            .is_some_and(|guard| !guard.exited())
-        {
-            return Ok(());
+        require_public_source_repository(fixture)?;
+        if let Some(guard) = self.user_radicle.as_mut() {
+            if guard.exit_status()?.is_none() {
+                return Ok(());
+            }
         }
         self.user_radicle = None;
         // Retain local ownership until all setup succeeds. Validators' policies
@@ -320,6 +432,7 @@ impl Localnet {
     }
 
     fn spawn_user_radicle(&self, home: &Path) -> Result<ChildGuard> {
+        let node_id = provisioned_radicle_node_id(home)?;
         let slot = self.committee_size() + 32;
         let listen = format!("127.0.0.1:{}", self.cfg.radicle_port(slot));
         let status = format!("127.0.0.1:{}", self.cfg.radicle_status_port(slot));
@@ -338,19 +451,25 @@ impl Localnet {
                 max_validators,
                 format!("127.0.0.1:{}", self.cfg.radicle_port(slot)),
             ]);
+        let log_path = self.cfg.dir.join("user-radicle.log");
         let log = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.cfg.dir.join("user-radicle.log"))?;
+            .open(&log_path)?;
         command
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
             .stdin(Stdio::null());
         let mut guard = ChildGuard::spawn("radicle-user", command)?;
-        if !wait_tcp(self.cfg.radicle_status_port(slot), 100) {
-            guard.stop();
-            bail!("independent user Radicle status endpoint never came up");
-        }
+        wait_radicle_ready(
+            &mut guard,
+            node_id,
+            &control_socket,
+            ([127, 0, 0, 1], self.cfg.radicle_port(slot)).into(),
+            ([127, 0, 0, 1], self.cfg.radicle_status_port(slot)).into(),
+            &log_path,
+            RADICLE_READY_TIMEOUT,
+        )?;
         Ok(guard)
     }
 
@@ -646,25 +765,189 @@ fn native_sessions(socket: PathBuf) -> Result<Vec<ControlSession>> {
 }
 
 fn configure_user_radicle(socket: PathBuf, repo: [u8; 20], peers: Vec<PathBuf>) -> Result<()> {
-    block_on(async move {
-        let control = NativeHeartwoodControl::new(socket, NATIVE_CONTROL_DEADLINE);
+    ensure!(!peers.is_empty(), "source setup requires validator peers");
+    let control_socket = socket.clone();
+    let expected = block_on(async move {
+        let control = NativeHeartwoodControl::new(control_socket, NATIVE_CONTROL_DEADLINE);
         control
             .seed(repo.into())
             .await
             .wrap_err("seed independent user repository through native control")?;
+        let mut expected = Vec::with_capacity(peers.len());
         for (index, socket) in peers.into_iter().enumerate() {
             let info = query_sidecar(socket, NATIVE_CONTROL_DEADLINE)
                 .await
                 .wrap_err_with(|| format!("query validator-{index} before user connection"))?;
+            ensure!(
+                !expected.contains(&info.node_id),
+                "duplicate validator identity in source discovery cohort"
+            );
             control
                 .connect(info.node_id, &info.addresses)
                 .await
                 .wrap_err_with(|| {
                     format!("connect user to validator-{index} through native control")
                 })?;
+            expected.push(info.node_id);
         }
-        Ok(())
+        Ok::<_, eyre::Report>(expected)
+    })?;
+    let rid = format!(
+        "rad:{}",
+        multibase::encode(multibase::Base::Base58Btc, repo)
+    )
+    .parse::<radicle::identity::RepoId>()
+    .wrap_err("parse source inventory RepoId")?;
+    // Native Seed changes policy, but unlike `rad seed` does not publish a
+    // locally held public repository. An unchanged inventory is idempotent,
+    // not a failure: the caller already verified the local public identity.
+    let publication = source_control_response::<InventoryPublication>(
+        &socket,
+        radicle::node::Command::AddInventory { rid },
+        Instant::now() + NATIVE_CONTROL_DEADLINE,
+    )
+    .wrap_err("publish independent source inventory")?;
+    eprintln!(
+        "[e2e] independent source inventory published rid={rid} updated={}",
+        publication.updated
+    );
+    wait_for_source_seeds(&socket, rid, &expected, RADICLE_SOURCE_DISCOVERY_TIMEOUT)
+}
+
+/// Keep the pinned native protocol, but bound the entire exchange rather than
+/// the SDK's individual reads. Cancellation drops the socket; no blocking I/O
+/// or detached task survives a timed-out control operation.
+fn source_control_response<T: serde::de::DeserializeOwned + Send + 'static>(
+    socket: &Path,
+    command: radicle::node::Command,
+    deadline: Instant,
+) -> Result<T> {
+    let socket = socket.to_path_buf();
+    block_on(async move {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        ensure!(
+            Instant::now() < deadline,
+            "source control deadline exceeded"
+        );
+        let response = tokio::time::timeout_at(deadline.into(), async {
+            let mut stream = tokio::net::UnixStream::connect(&socket)
+                .await
+                .wrap_err("connect source control socket")?;
+            let mut request = Vec::new();
+            command.to_writer(&mut request)?;
+            stream
+                .write_all(&request)
+                .await
+                .wrap_err("write source control command")?;
+            let mut response = Vec::new();
+            BufReader::new(stream)
+                .read_until(b'\n', &mut response)
+                .await
+                .wrap_err("read source control response")?;
+            ensure!(
+                response.last() == Some(&b'\n'),
+                "source control response incomplete"
+            );
+            Ok::<_, eyre::Report>(response)
+        })
+        .await
+        .wrap_err("source control deadline exceeded")??;
+        let decoded = serde_json::from_slice::<radicle::node::CommandResult<T>>(&response)
+            .wrap_err("decode native source control response")?;
+        // Tokio may poll a ready operation before an already elapsed timer.
+        // Completion (including decoding) must still meet the original deadline.
+        ensure!(
+            Instant::now() < deadline,
+            "source control deadline exceeded"
+        );
+        match decoded {
+            radicle::node::CommandResult::Okay(value) => Ok(value),
+            radicle::node::CommandResult::Error { reason } => {
+                bail!("source control: {reason}");
+            }
+        }
     })
+}
+
+// The native untagged CommandResult tries its success variant first. Reject
+// unknown fields here so an {"error": ...} cannot deserialize as updated=false.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryPublication {
+    #[serde(default)]
+    updated: bool,
+}
+
+fn require_public_source_repository(fixture: &RadicleRepositoryFixtureV1) -> Result<()> {
+    decode_repo_id(&fixture.repo_id)?;
+    let rid = fixture
+        .repo_id
+        .parse()
+        .wrap_err("parse public source RepoId")?;
+    let path = fixture
+        .home
+        .join("storage")
+        .join(fixture.repo_id.trim_start_matches("rad:"));
+    let repository = radicle::storage::git::Repository::open(&path, rid)
+        .wrap_err("open existing independent source repository")?;
+    ensure!(
+        repository.identity_doc()?.is_public(),
+        "independent source inventory must contain a public repository"
+    );
+    Ok(())
+}
+
+fn wait_for_source_seeds(
+    socket: &Path,
+    rid: radicle::identity::RepoId,
+    expected: &[[u8; 32]],
+    timeout: Duration,
+) -> Result<()> {
+    ensure!(
+        !expected.is_empty(),
+        "source discovery requires validator peers"
+    );
+    let deadline = Instant::now() + timeout;
+    let mut missing = expected
+        .iter()
+        .copied()
+        .map(native_node_id)
+        .collect::<Vec<_>>();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        ensure!(
+            !remaining.is_zero(),
+            "source repository {rid} discovery deadline; missing connected validator seeds: {missing:?}"
+        );
+        // Discovery observes routing and connected identities, not synchronization
+        // of the future update. The subsequent ordinary Git push must announce
+        // that update itself; no forced refs announcement or validator fetch.
+        let seeds = source_control_response::<radicle::node::Seeds>(
+            socket,
+            radicle::node::Command::SeedsFor {
+                rid,
+                namespaces: Default::default(),
+            },
+            deadline.min(Instant::now() + NATIVE_CONTROL_DEADLINE),
+        )
+        .wrap_err("observe source repository seeds")?;
+        ensure!(
+            Instant::now() < deadline,
+            "source discovery deadline exceeded"
+        );
+        missing = expected
+            .iter()
+            .copied()
+            .filter(|peer| !seeds.is_connected(&radicle::crypto::PublicKey::from(*peer)))
+            .map(native_node_id)
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        std::thread::sleep(
+            RADICLE_READY_POLL.min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
 }
 
 fn connected_sessions(sessions: Vec<ControlSession>) -> Result<Vec<(String, String)>> {
@@ -836,9 +1119,11 @@ mod tests {
     use super::{
         block_on, configure_user_radicle, connected_sessions, decode_repo_id,
         materialized_max_validators, native_address, native_node_id, native_sessions,
-        prepare_private_socket_parent, pushed_commit_visible, query_sidecar, repository_visible,
-        seed_scope_all, verify_user_tool_version, write_outbe_profile, RadicleRepositoryFixtureV1,
-        NATIVE_CONTROL_DEADLINE,
+        prepare_private_socket_parent, provisioned_radicle_node_id, pushed_commit_visible,
+        query_sidecar, repository_visible, require_public_source_repository, seed_scope_all,
+        source_control_response, verify_user_tool_version, wait_for_source_seeds,
+        wait_radicle_ready, write_outbe_profile, ChildGuard, InventoryPublication,
+        RadicleRepositoryFixtureV1, NATIVE_CONTROL_DEADLINE,
     };
 
     struct KillOnDrop(Child);
@@ -848,6 +1133,185 @@ mod tests {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+
+    fn readiness_child() -> ChildGuard {
+        let mut command = Command::new("sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        ChildGuard::spawn("radicle-readiness-fixture", command).unwrap()
+    }
+
+    #[test]
+    fn readiness_public_identity_needs_no_private_key_or_profile() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(provisioned_radicle_node_id(root.path()).is_err());
+        let keys = root.path().join("keys");
+        fs::create_dir(&keys).unwrap();
+        let public = keys.join("radicle.pub");
+        fs::write(&public, "malformed public fixture").unwrap();
+        assert!(provisioned_radicle_node_id(root.path()).is_err());
+        // OpenSSH encoding of public bytes [7; 32], not a generated secret.
+        fs::write(&public, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH fixture\n").unwrap();
+        assert_eq!(provisioned_radicle_node_id(root.path()).unwrap(), [7; 32]);
+        assert!(!keys.join("radicle").exists());
+        assert!(!root.path().join("config.json").exists());
+        fs::rename(&public, keys.join("public-fixture")).unwrap();
+        symlink(keys.join("public-fixture"), &public).unwrap();
+        assert!(provisioned_radicle_node_id(root.path()).is_err());
+    }
+
+    #[test]
+    fn readiness_accepts_owned_live_native_identity_without_changing_endpoints() {
+        for peer_port in [8776, 9776] {
+            let peer: std::net::SocketAddr = ([127, 0, 0, 1], peer_port).into();
+            let status = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let status_addr = status.local_addr().unwrap();
+            let (root, socket, server) = native_control_fixture(vec![
+                serde_json::json!(native_node_id([7; 32])),
+                serde_json::json!({"externalAddresses": [peer.to_string()]}),
+            ]);
+            let mut guard = readiness_child();
+            let pid = guard.pid();
+            wait_radicle_ready(
+                &mut guard,
+                [7; 32],
+                &socket,
+                peer,
+                status_addr,
+                &root.path().join("radicle.log"),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            assert_eq!(guard.pid(), pid);
+            assert!(guard.exit_status().unwrap().is_none());
+            assert_eq!(status.local_addr().unwrap(), status_addr);
+            assert_eq!(server.join().unwrap().len(), 2);
+            assert!(!root.path().join("config.json").exists());
+            assert!(!root.path().join("keys").exists());
+        }
+    }
+
+    #[test]
+    fn readiness_foreign_status_listener_cannot_replace_missing_native_control() {
+        let root = tempfile::tempdir().unwrap();
+        let status = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket = root.path().join("missing.sock");
+        let log = root.path().join("radicle.log");
+        let mut guard = readiness_child();
+        let error = wait_radicle_ready(
+            &mut guard,
+            [7; 32],
+            &socket,
+            ([127, 0, 0, 1], 8776).into(),
+            status.local_addr().unwrap(),
+            &log,
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+        let diagnostic = format!("{error:#}");
+        assert!(diagnostic.contains("native control observation failed"));
+        assert!(diagnostic.contains(&format!("pid={}", guard.pid())));
+        assert!(diagnostic.contains(&socket.display().to_string()));
+        assert!(diagnostic.contains(&log.display().to_string()));
+        assert!(guard.exit_status().unwrap().is_none());
+        assert!(std::net::TcpStream::connect(status.local_addr().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn readiness_rejects_wrong_native_identity_and_advertised_listen_endpoint() {
+        for (nid, addresses, expected_error) in [
+            (
+                native_node_id([8; 32]),
+                vec!["127.0.0.1:8776"],
+                "NodeId differs",
+            ),
+            (
+                native_node_id([7; 32]),
+                vec!["127.0.0.1:9776"],
+                "advertised addresses differ",
+            ),
+            (
+                native_node_id([7; 32]),
+                vec!["127.0.0.1:8776", "127.0.0.1:9776"],
+                "advertised addresses differ",
+            ),
+        ] {
+            let (root, socket, server) = native_control_fixture(vec![
+                serde_json::json!(nid),
+                serde_json::json!({"externalAddresses": addresses}),
+            ]);
+            let status = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut guard = readiness_child();
+            let error = wait_radicle_ready(
+                &mut guard,
+                [7; 32],
+                &socket,
+                ([127, 0, 0, 1], 8776).into(),
+                status.local_addr().unwrap(),
+                &root.path().join("radicle.log"),
+                Duration::from_secs(2),
+            )
+            .unwrap_err();
+            assert!(format!("{error:#}").contains(expected_error));
+            server.join().unwrap();
+            assert!(guard.exit_status().unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn readiness_exited_owner_fails_even_with_a_foreign_status_listener() {
+        let root = tempfile::tempdir().unwrap();
+        let status = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 7"]);
+        let mut guard = ChildGuard::spawn("exited-radicle-fixture", command).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while guard.exit_status().unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            sleep(Duration::from_millis(1));
+        }
+        let error = wait_radicle_ready(
+            &mut guard,
+            [7; 32],
+            &root.path().join("control.sock"),
+            ([127, 0, 0, 1], 8776).into(),
+            status.local_addr().unwrap(),
+            &root.path().join("radicle.log"),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        let diagnostic = format!("{error:#}");
+        assert!(diagnostic.contains("owned Radicle child exited"));
+        assert!(diagnostic.contains("exit status: 7"));
+        assert_eq!(guard.exit_status().unwrap().unwrap().code(), Some(7));
+        assert!(std::net::TcpStream::connect(status.local_addr().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn readiness_native_identity_does_not_replace_status_tcp() {
+        let (root, socket, server) = native_control_fixture(vec![
+            serde_json::json!(native_node_id([7; 32])),
+            serde_json::json!({"externalAddresses": ["127.0.0.1:8776"]}),
+        ]);
+        let mut guard = readiness_child();
+        // Port zero cannot be a listening TCP endpoint; avoid a release/rebind
+        // race in this negative fixture by not selecting an ephemeral port.
+        assert!(wait_radicle_ready(
+            &mut guard,
+            [7; 32],
+            &socket,
+            ([127, 0, 0, 1], 8776).into(),
+            ([127, 0, 0, 1], 0).into(),
+            &root.path().join("radicle.log"),
+            Duration::from_millis(100),
+        )
+        .is_err());
+        server.join().unwrap();
+        assert!(guard.exit_status().unwrap().is_none());
     }
 
     #[test]
@@ -907,7 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn native_user_setup_seeds_only_the_user_and_connects_to_live_validator_identity() {
+    fn native_user_setup_publishes_inventory_and_discovers_live_validator_seeds() {
         let nid = native_node_id([7; 32]);
         let repo = [5; 20];
         for result in [
@@ -915,8 +1379,17 @@ mod tests {
             serde_json::json!({"status": "disconnected", "reason": "rejected"}),
         ] {
             let success = result["status"] == "connected";
-            let (_user_root, user, user_server) =
-                native_control_fixture(vec![serde_json::json!({"updated": true}), result]);
+            let mut responses = vec![serde_json::json!({"updated": true}), result];
+            if success {
+                responses.extend([
+                    serde_json::json!({"updated": true}),
+                    serde_json::json!([{
+                        "nid": nid, "addrs": [],
+                        "state": {"connected": {"since": 0}}
+                    }]),
+                ]);
+            }
+            let (_user_root, user, user_server) = native_control_fixture(responses);
             let (_validator_root, validator, validator_server) = native_control_fixture(vec![
                 serde_json::json!(nid),
                 serde_json::json!({"externalAddresses": ["127.0.0.1:9776"]}),
@@ -936,6 +1409,12 @@ mod tests {
             assert_eq!(commands[1]["command"], "connect");
             assert_eq!(commands[1]["addr"], format!("{nid}@127.0.0.1:9776"));
             assert_eq!(commands[1]["opts"]["persistent"], false);
+            if success {
+                assert_eq!(commands[2]["command"], "addInventory");
+                assert_eq!(commands[2]["rid"], commands[0]["rid"]);
+                assert_eq!(commands[3]["command"], "seedsFor");
+                assert_eq!(commands[3]["rid"], commands[0]["rid"]);
+            }
             assert_eq!(
                 validator_server.join().unwrap(),
                 vec![
@@ -944,6 +1423,263 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[test]
+    fn native_user_publication_is_idempotent_but_errors_are_not_acknowledgements() {
+        let nid = native_node_id([7; 32]);
+        for publication in [
+            serde_json::json!({}),
+            serde_json::json!({"updated": false}),
+            serde_json::json!({"error": "inventory rejected"}),
+        ] {
+            let rejected = publication.get("error").is_some();
+            let mut responses = vec![
+                serde_json::json!({"updated": false}),
+                serde_json::json!({"status": "connected"}),
+                publication,
+            ];
+            if !rejected {
+                responses.push(serde_json::json!([{
+                    "nid": nid, "addrs": [], "state": {"connected": {"since": 0}}
+                }]));
+            }
+            let (_user_root, user, user_server) = native_control_fixture(responses);
+            let (_validator_root, validator, validator_server) = native_control_fixture(vec![
+                serde_json::json!(nid),
+                serde_json::json!({"externalAddresses": ["127.0.0.1:9776"]}),
+            ]);
+            let result = configure_user_radicle(user, [5; 20], vec![validator]);
+            if rejected {
+                let error = format!("{:#}", result.unwrap_err());
+                assert!(error.contains("inventory rejected"), "{error}");
+                assert!(
+                    error.contains("publish independent source inventory"),
+                    "{error}"
+                );
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(
+                user_server.join().unwrap().len(),
+                if rejected { 3 } else { 4 }
+            );
+            assert_eq!(validator_server.join().unwrap().len(), 2);
+        }
+    }
+
+    #[test]
+    fn native_source_discovery_requires_every_expected_connected_seed() {
+        let rid = format!(
+            "rad:{}",
+            multibase::encode(multibase::Base::Base58Btc, [5; 20])
+        );
+        let first = native_node_id([7; 32]);
+        let second = native_node_id([8; 32]);
+        let foreign = native_node_id([9; 32]);
+        let (_root, socket, server) = native_control_fixture(vec![
+            serde_json::json!([
+                {"nid": first, "addrs": [], "state": {"connected": {"since": 0}}},
+                {"nid": second, "addrs": []},
+                {"nid": foreign, "addrs": [], "state": {"connected": {"since": 0}}}
+            ]),
+            serde_json::json!([
+                {"nid": first, "addrs": [], "state": {"connected": {"since": 0}}},
+                {"nid": second, "addrs": [], "state": {"connected": {"since": 0}}}
+            ]),
+        ]);
+        wait_for_source_seeds(
+            &socket,
+            rid.parse().unwrap(),
+            &[[7; 32], [8; 32]],
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .all(|request| request["command"] == "seedsFor" && request["rid"] == rid));
+    }
+
+    #[test]
+    fn native_source_discovery_rejects_errors_empty_cohorts_and_elapsed_deadlines() {
+        let rid = format!(
+            "rad:{}",
+            multibase::encode(multibase::Base::Base58Btc, [5; 20])
+        );
+        let (_root, socket, server) =
+            native_control_fixture(vec![serde_json::json!({"error": "routing unavailable"})]);
+        let error = wait_for_source_seeds(
+            &socket,
+            rid.parse().unwrap(),
+            &[[7; 32]],
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("routing unavailable"));
+        assert_eq!(server.join().unwrap().len(), 1);
+        assert!(
+            wait_for_source_seeds(&socket, rid.parse().unwrap(), &[], Duration::from_secs(5))
+                .is_err()
+        );
+        let error =
+            wait_for_source_seeds(&socket, rid.parse().unwrap(), &[[7; 32]], Duration::ZERO)
+                .unwrap_err();
+        assert!(error.to_string().contains("discovery deadline"));
+        assert!(error.to_string().contains(&native_node_id([7; 32])));
+    }
+
+    #[test]
+    fn source_control_decoded_success_after_deadline_is_rejected() {
+        static DECODED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        struct SlowReply;
+        impl<'de> serde::Deserialize<'de> for SlowReply {
+            fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+                let _ = <bool as serde::Deserialize>::deserialize(decoder)?;
+                DECODED.store(true, std::sync::atomic::Ordering::SeqCst);
+                sleep(Duration::from_millis(150));
+                Ok(Self)
+            }
+        }
+        let (_root, socket, server) = native_control_fixture(vec![serde_json::json!(true)]);
+        let result = source_control_response::<SlowReply>(
+            &socket,
+            radicle::node::Command::NodeId,
+            std::time::Instant::now() + Duration::from_millis(100),
+        );
+        server.join().unwrap();
+        assert!(DECODED.load(std::sync::atomic::Ordering::SeqCst));
+        let error = result.err().expect("expired decoded success must fail");
+        assert!(format!("{error:#}").contains("deadline exceeded"));
+    }
+
+    #[test]
+    fn source_control_stall_and_truncated_reply_fail_and_close_the_socket() {
+        use std::io::{BufRead as _, Write as _};
+        for truncated in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let socket = root.path().join("control.sock");
+            let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "missing request");
+                            sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("accept source request: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = String::new();
+                std::io::BufReader::new(&stream)
+                    .read_line(&mut request)
+                    .unwrap();
+                if truncated {
+                    stream.write_all(b"{}").unwrap();
+                    stream.shutdown(std::net::Shutdown::Write).unwrap();
+                }
+                // The client must drop the timed-out/incomplete exchange, not
+                // leave a detached blocking operation waiting for this server.
+                assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+            });
+            let rid = format!(
+                "rad:{}",
+                multibase::encode(multibase::Base::Base58Btc, [5; 20])
+            );
+            let result = source_control_response::<InventoryPublication>(
+                &socket,
+                radicle::node::Command::AddInventory {
+                    rid: rid.parse().unwrap(),
+                },
+                std::time::Instant::now() + Duration::from_millis(100),
+            );
+            server.join().unwrap();
+            let error = format!("{:#}", result.err().expect("response must fail"));
+            assert!(
+                error.contains(if truncated {
+                    "response incomplete"
+                } else {
+                    "deadline exceeded"
+                }),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_source_discovery_partial_response_cannot_extend_deadline() {
+        use std::io::{BufRead as _, Write as _};
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("control.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(std::time::Instant::now() < deadline, "missing request");
+                        sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept source request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = String::new();
+            std::io::BufReader::new(&stream)
+                .read_line(&mut request)
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&request).unwrap()["command"],
+                "seedsFor"
+            );
+            // Each byte arrives within the old per-read timeout, but the complete
+            // valid response arrives after the discovery's absolute deadline.
+            for _ in 0..20 {
+                if stream.write_all(b" ").is_err() {
+                    return;
+                }
+                sleep(Duration::from_millis(20));
+            }
+            let response = serde_json::json!([{
+                "nid": native_node_id([7; 32]), "addrs": [],
+                "state": {"connected": {"since": 0}}
+            }]);
+            if serde_json::to_writer(&mut stream, &response).is_ok() {
+                let _ = stream.write_all(b"\n");
+            }
+        });
+        let rid = format!(
+            "rad:{}",
+            multibase::encode(multibase::Base::Base58Btc, [5; 20])
+        );
+        let result = wait_for_source_seeds(
+            &socket,
+            rid.parse().unwrap(),
+            &[[7; 32]],
+            Duration::from_millis(100),
+        );
+        server.join().unwrap();
+        assert!(
+            result.is_err(),
+            "late partial response must not satisfy discovery"
+        );
     }
 
     #[test]
@@ -1031,6 +1767,8 @@ mod tests {
             pushed_commit: Some("33".repeat(20)),
         };
         assert!(!repository_visible(root.path(), &fixture).unwrap());
+        assert!(require_public_source_repository(&fixture).is_err());
+        assert!(!fixture.home.exists());
         assert!(!root.path().join("storage").exists());
         fs::create_dir_all(root.path().join("storage").join(canonical)).unwrap();
         assert!(repository_visible(root.path(), &fixture).is_err());

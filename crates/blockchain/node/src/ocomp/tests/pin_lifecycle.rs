@@ -2360,11 +2360,19 @@ impl FailNthDurability {
         if self.point != point {
             return false;
         }
-        self.remaining_calls
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                remaining.checked_sub(1)
-            })
-            == Ok(1)
+        let mut remaining = self.remaining_calls.load(Ordering::SeqCst);
+        while let Some(next) = remaining.checked_sub(1) {
+            match self.remaining_calls.compare_exchange_weak(
+                remaining,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return remaining == 1,
+                Err(observed) => remaining = observed,
+            }
+        }
+        false
     }
 }
 

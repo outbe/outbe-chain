@@ -127,7 +127,7 @@ fn call_currency(
     budget: &mut ScanBudget,
 ) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-    let params = crate::config::read(&factory)?;
+    let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
     // Widest terms ever issued here, not the live profile: a series keeps the terms
     // it was issued with, and a narrowed profile must not hide it from the search.
     let (window_days, threshold_days) =

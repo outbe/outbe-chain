@@ -20,8 +20,6 @@ pub struct GemAddParams {
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
     pub call_rate: u16,
-    pub call_window: u32,
-    pub call_threshold: u32,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -195,19 +193,22 @@ pub struct GemContract {
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// Widest window ever issued in a currency; it only grows, so the span the scan
-    /// collects always covers a gem whose record outruns the current constant.
+    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 26)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
+
+    /// Widest window ever issued in a currency; it only grows, so the span the scan
+    /// collects always covers a gem whose record outruns the live profile.
+    #[attribute(order = 27)]
     pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
-    #[attribute(order = 27)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// Bucket -> gems still waiting in it. The day leaves the tree when this hits 0.
     #[attribute(order = 28)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 29)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id.
-    #[attribute(order = 29)]
+    #[attribute(order = 30)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 31)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,

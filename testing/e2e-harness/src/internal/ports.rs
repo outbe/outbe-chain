@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use eyre::{bail, Result};
+use eyre::{bail, Result, WrapErr};
 
 /// First port the allocator considers.
 pub(crate) const NODE_BASE: u16 = 18545;
@@ -200,9 +200,11 @@ struct Resolver {
     /// Node index -> first port of its separate Radicle block.
     radicle_blocks: HashMap<usize, u16>,
     /// Lowest port not yet handed out. Only ever moves forward.
-    cursor: u16,
+    cursor: u64,
     /// Lowest Radicle port not yet handed out.
-    radicle_cursor: u16,
+    radicle_cursor: u64,
+    /// All issued spans, including earlier scenarios whose sockets may linger.
+    issued: Vec<(u16, u16)>,
     /// Probe the OS for a free window, rather than taking the cursor verbatim.
     scan: bool,
 }
@@ -217,8 +219,9 @@ impl Ports {
             inner: Arc::new(Mutex::new(Resolver {
                 blocks: HashMap::new(),
                 radicle_blocks: HashMap::new(),
-                cursor: NODE_BASE,
-                radicle_cursor: RADICLE_BASE,
+                cursor: u64::from(NODE_BASE),
+                radicle_cursor: u64::from(RADICLE_BASE),
+                issued: Vec::new(),
                 scan,
             })),
         }
@@ -231,9 +234,9 @@ impl Ports {
     pub(crate) fn from_block_starts(starts: &[u16]) -> Result<Self> {
         for (index, &start) in starts.iter().enumerate() {
             fits(u64::from(start))?;
-            let end = start + BLOCK - 1;
+            let end = start + (BLOCK - 1);
             for (previous_index, &previous) in starts[..index].iter().enumerate() {
-                let previous_end = previous + BLOCK - 1;
+                let previous_end = previous + (BLOCK - 1);
                 if start <= previous_end && previous <= end {
                     bail!(
                         "persisted validator-{index} port block {start}..={end} overlaps validator-{previous_index} block {previous}..={previous_end}"
@@ -245,14 +248,22 @@ impl Ports {
             .iter()
             .copied()
             .max()
-            .map_or(NODE_BASE, |start| start.saturating_add(BLOCK));
+            .map_or(u64::from(NODE_BASE), |start| {
+                u64::from(start) + u64::from(BLOCK)
+            });
         Ok(Self {
             inner: Arc::new(Mutex::new(Resolver {
                 blocks: starts.iter().copied().enumerate().collect(),
                 radicle_blocks: HashMap::new(),
                 cursor,
-                radicle_cursor: RADICLE_BASE,
-                scan: false,
+                radicle_cursor: u64::from(RADICLE_BASE),
+                issued: starts
+                    .iter()
+                    .map(|&start| (start, start + (BLOCK - 1)))
+                    .collect(),
+                // Only CORE spans were persisted. Fresh sidecar/joiner ports
+                // still need the normal OS collision and ephemeral checks.
+                scan: true,
             })),
         })
     }
@@ -356,13 +367,12 @@ impl Resolver {
 
     /// Take the next block at or above the cursor, and advance the cursor past it.
     fn alloc(&mut self) -> Result<u16> {
-        let mut candidate = u64::from(self.cursor);
+        let mut candidate = self.cursor;
         loop {
             let start = fits(candidate)?;
-            if !self.scan || window_free(start) {
-                // Saturating: a block ending exactly at `u16::MAX` leaves no room
-                // for another, and the next `fits` will say so.
-                self.cursor = start.saturating_add(BLOCK);
+            if !self.overlaps_issued(start, BLOCK) && (!self.scan || window_free(start)) {
+                self.cursor = u64::from(start) + u64::from(BLOCK);
+                self.issued.push((start, start + (BLOCK - 1)));
                 return Ok(start);
             }
             candidate = u64::from(start) + 1;
@@ -370,16 +380,65 @@ impl Resolver {
     }
 
     fn alloc_radicle(&mut self) -> Result<u16> {
-        let mut candidate = u64::from(self.radicle_cursor);
+        let ephemeral = if self.scan {
+            Some(ephemeral_port_range()?)
+        } else {
+            None
+        };
+        self.alloc_radicle_avoiding(ephemeral)
+    }
+
+    fn alloc_radicle_avoiding(&mut self, ephemeral: Option<(u16, u16)>) -> Result<u16> {
+        let mut candidate = self.radicle_cursor;
         loop {
             let start = fits_width(candidate, RADICLE_BLOCK)?;
-            if !self.scan || radicle_window_free(start) {
-                self.radicle_cursor = start.saturating_add(RADICLE_BLOCK);
+            if let Some((low, high)) = ephemeral {
+                if ranges_overlap((start, start + (RADICLE_BLOCK - 1)), (low, high)) {
+                    candidate = u64::from(high) + 1;
+                    continue;
+                }
+            }
+            if !self.overlaps_issued(start, RADICLE_BLOCK)
+                && (!self.scan || radicle_window_free(start))
+            {
+                self.radicle_cursor = u64::from(start) + u64::from(RADICLE_BLOCK);
+                self.issued.push((start, start + (RADICLE_BLOCK - 1)));
                 return Ok(start);
             }
             candidate = u64::from(start) + 1;
         }
     }
+
+    fn overlaps_issued(&self, start: u16, width: u16) -> bool {
+        self.issued
+            .iter()
+            .any(|&span| ranges_overlap((start, start + (width - 1)), span))
+    }
+}
+
+fn ranges_overlap(left: (u16, u16), right: (u16, u16)) -> bool {
+    left.0 <= right.1 && right.0 <= left.1
+}
+
+fn ephemeral_port_range() -> Result<(u16, u16)> {
+    let path = "/proc/sys/net/ipv4/ip_local_port_range";
+    let value = std::fs::read_to_string(path)
+        .wrap_err_with(|| format!("read {path} for Radicle port allocation"))?;
+    parse_ephemeral_port_range(&value).wrap_err_with(|| format!("parse {path}"))
+}
+
+fn parse_ephemeral_port_range(value: &str) -> Result<(u16, u16)> {
+    let ports = value
+        .split_whitespace()
+        .map(str::parse::<u16>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let [low, high] = ports.as_slice() else {
+        bail!("ephemeral port range must contain exactly two ports");
+    };
+    if *low == 0 || low > high {
+        bail!("invalid ephemeral port range {low}..={high}");
+    }
+    Ok((*low, *high))
 }
 
 /// `start` as a `u16`, once we know a whole block fits at or above it.
@@ -615,13 +674,13 @@ mod tests {
     }
 
     #[test]
-    fn persisted_block_layout_round_trips_every_service_port() {
+    fn persisted_block_layout_round_trips_every_core_service_port() {
         let original = static_ports(3);
         let starts = original.block_starts(3).unwrap();
         let restored = Ports::from_block_starts(&starts).unwrap();
 
         for index in 0..3 {
-            for service in Service::ALL {
+            for service in Service::CORE {
                 assert_eq!(
                     restored.port(service, index),
                     original.port(service, index),
@@ -636,6 +695,23 @@ mod tests {
         let error = Ports::from_block_starts(&[NODE_BASE, NODE_BASE + BLOCK - 1])
             .expect_err("overlapping blocks must be rejected");
         assert!(error.to_string().contains("overlap"));
+    }
+
+    #[test]
+    fn restored_layout_protects_fresh_radicle_ports_without_renumbering_core() {
+        let restored = Ports::from_block_starts(&[NODE_BASE, NODE_BASE + BLOCK]).unwrap();
+        let ephemeral = ephemeral_port_range().unwrap();
+        let mut seen = HashSet::new();
+        for index in 0..2 {
+            assert_eq!(restored.port(Http, index), NODE_BASE + index as u16 * BLOCK);
+            for service in Service::ALL {
+                let port = restored.port(service, index);
+                assert!(seen.insert(port), "reconstructed services overlap");
+                if service.is_radicle() {
+                    assert!(!ranges_overlap((port, port), ephemeral));
+                }
+            }
+        }
     }
 
     /// A busy port shifts only the block that hits it; later blocks follow the
@@ -665,5 +741,121 @@ mod tests {
                 "the separate Radicle block stays contiguous"
             );
         }
+    }
+
+    #[test]
+    fn radicle_skips_the_entire_kernel_ephemeral_interval() {
+        for cursor in [49_999, 50_000, 60_999] {
+            let ports = Ports::new(false);
+            let mut resolver = lock(&ports.inner);
+            resolver.radicle_cursor = cursor;
+            assert_eq!(
+                resolver
+                    .alloc_radicle_avoiding(Some((50_000, 60_999)))
+                    .unwrap(),
+                61_000
+            );
+        }
+        let ports = Ports::new(false);
+        let mut resolver = lock(&ports.inner);
+        resolver.radicle_cursor = 49_998;
+        assert_eq!(
+            resolver
+                .alloc_radicle_avoiding(Some((50_000, 60_999)))
+                .unwrap(),
+            49_998
+        );
+        assert_eq!(
+            resolver
+                .alloc_radicle_avoiding(Some((50_000, 60_999)))
+                .unwrap(),
+            61_000
+        );
+    }
+
+    #[test]
+    fn malformed_kernel_range_is_not_silently_ignored() {
+        assert_eq!(
+            parse_ephemeral_port_range("32768\t60999\n").unwrap(),
+            (32768, 60999)
+        );
+        for value in [
+            "",
+            "32768",
+            "1 2 3",
+            "0 123",
+            "60000 50000",
+            "1 65536",
+            "no ports",
+        ] {
+            assert!(parse_ephemeral_port_range(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn core_and_radicle_never_reissue_each_others_spans() {
+        let ports = Ports::new(false);
+        let mut resolver = lock(&ports.inner);
+        resolver.cursor = 50_000;
+        assert_eq!(resolver.block_start(0).unwrap(), 50_000);
+        assert_eq!(resolver.radicle_block_start(0).unwrap(), 50_021);
+        assert_eq!(resolver.block_start(1).unwrap(), 50_023);
+        drop(resolver);
+        ports.start_scenario(0).unwrap();
+        let mut resolver = lock(&ports.inner);
+        assert_eq!(resolver.radicle_block_start(0).unwrap(), 50_044);
+    }
+
+    #[test]
+    fn final_port_block_is_not_reissued_after_exhaustion() {
+        let ports = Ports::new(false);
+        let mut resolver = lock(&ports.inner);
+        resolver.radicle_cursor = 65_534;
+        assert_eq!(resolver.alloc_radicle_avoiding(None).unwrap(), 65_534);
+        assert!(resolver.alloc_radicle_avoiding(None).is_err());
+        resolver.cursor = 65_515;
+        assert!(
+            resolver.alloc().is_err(),
+            "last core span overlaps issued Radicle ports"
+        );
+    }
+
+    #[test]
+    fn last_core_window_ends_at_maximum_port_and_is_not_reissued() {
+        let ports = Ports::new(false);
+        let mut resolver = lock(&ports.inner);
+        let start = u16::MAX - (BLOCK - 1);
+        resolver.cursor = u64::from(start);
+        assert_eq!(resolver.alloc().unwrap(), start);
+        assert_eq!(resolver.issued, vec![(start, u16::MAX)]);
+        assert_eq!(resolver.cursor, u64::from(u16::MAX) + 1);
+        assert!(resolver.alloc().is_err());
+    }
+
+    #[test]
+    fn persisted_final_core_window_round_trips_in_either_order() {
+        let last = u16::MAX - (BLOCK - 1);
+        for starts in [[NODE_BASE, last], [last, NODE_BASE]] {
+            let ports = Ports::from_block_starts(&starts).unwrap();
+            assert_eq!(ports.block_starts(2).unwrap(), starts);
+            let mut resolver = lock(&ports.inner);
+            assert_eq!(resolver.cursor, u64::from(u16::MAX) + 1);
+            assert!(resolver.alloc().is_err());
+        }
+        assert!(Ports::from_block_starts(&[last, last]).is_err());
+    }
+
+    #[test]
+    fn scanned_radicle_pair_skips_an_occupied_status_port() {
+        let held = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied status fixture");
+        let occupied = held.local_addr().unwrap().port();
+        let ports = Ports::new(true);
+        let mut resolver = lock(&ports.inner);
+        resolver.radicle_cursor = u64::from(occupied - 1);
+        let start = resolver.alloc_radicle_avoiding(None).unwrap();
+        assert!(
+            start > occupied,
+            "neither peer nor status may use the held port"
+        );
     }
 }

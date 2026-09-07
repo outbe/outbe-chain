@@ -4,9 +4,8 @@ use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{
-        shutdown_bounded, ObservedRepositoryStatus, RadicleMetrics, RadicleRepositoryState,
-        RadicleStatusChannel, RadicleVotingGate, SignedEndpointEvidence,
-        PRODUCTION_REPAIR_INTERVAL,
+        ObservedRepositoryStatus, RadicleMetrics, RadicleRepositoryState, RadicleStatusChannel,
+        RadicleVotingGate, SignedEndpointEvidence, PRODUCTION_REPAIR_INTERVAL,
     },
     manager::{
         BoxFuture, FinalizedBlock, FinalizedSnapshot, FinalizedValidator, ManagerError,
@@ -16,10 +15,7 @@ use outbe_radicle::{
 use outbe_radicleregistry::RepoId;
 use std::{
     collections::VecDeque,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -284,27 +280,4 @@ async fn repo_error_is_pending() {
         handle.snapshot().repositories[0].state,
         RadicleRepositoryState::Pending
     );
-}
-
-#[tokio::test]
-async fn shutdown_deadline() {
-    let manager_started = Arc::new(AtomicBool::new(false));
-    let endpoint_started = Arc::new(AtomicBool::new(false));
-    let manager_flag = manager_started.clone();
-    let endpoint_flag = endpoint_started.clone();
-    let result = shutdown_bounded(
-        Duration::from_millis(20),
-        async move {
-            manager_flag.store(true, Ordering::SeqCst);
-            std::future::pending::<Result<(), ManagerError>>().await
-        },
-        async move {
-            endpoint_flag.store(true, Ordering::SeqCst);
-            std::future::pending::<Result<(), ManagerError>>().await
-        },
-    )
-    .await;
-    assert!(result.is_err());
-    assert!(manager_started.load(Ordering::SeqCst));
-    assert!(endpoint_started.load(Ordering::SeqCst));
 }

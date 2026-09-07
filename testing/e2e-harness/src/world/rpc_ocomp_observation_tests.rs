@@ -94,6 +94,7 @@ fn pending_record() -> OcompJobRecordV1 {
 
 #[derive(Clone)]
 struct Replies {
+    block_number: Value,
     head: Value,
     logs: Value,
     block: Value,
@@ -101,6 +102,9 @@ struct Replies {
     pool: Value,
     balance: Value,
     nonce: Value,
+    code: Value,
+    account_block: Value,
+    call_block: Value,
     error_method: Option<&'static str>,
     transient_finalized_errors: usize,
 }
@@ -123,6 +127,7 @@ impl Replies {
         block["hash"] = json!(B256::repeat_byte(70));
         block["stateRoot"] = json!(B256::repeat_byte(71));
         Self {
+            block_number: json!("0x68"),
             head: json!({"number": "0x68"}),
             logs: json!([{
                 "address": addresses::WWD_ADDR,
@@ -144,6 +149,9 @@ impl Replies {
             pool: json!({"pending": {}, "queued": {}}),
             balance: json!("0x100"),
             nonce: json!("0x3"),
+            code: json!("0x"),
+            account_block: json!({"blockHash": B256::repeat_byte(70), "requireCanonical": true}),
+            call_block: json!("0x68"),
         }
     }
 }
@@ -199,27 +207,27 @@ impl RpcServer {
                 let request: Value = serde_json::from_slice(&body).unwrap();
                 let method = request["method"].as_str().unwrap();
                 let result = match method {
+                    "eth_blockNumber" => &replies.block_number,
                     "eth_getBlockByNumber" if request["params"][0] == "finalized" => &replies.head,
                     "eth_getBlockByNumber" => &replies.block,
                     "eth_getLogs" => &replies.logs,
                     "txpool_content" => &replies.pool,
-                    "eth_getBalance" | "eth_getTransactionCount" => {
+                    "eth_getBalance" | "eth_getTransactionCount" | "eth_getCode" => {
                         assert_eq!(
-                            request["params"][1],
-                            json!({
-                                "blockHash": replies.block["hash"], "requireCanonical": true
-                            }),
+                            request["params"][1], replies.account_block,
                             "account context must be pinned to the sampled canonical hash"
                         );
                         if method == "eth_getBalance" {
                             &replies.balance
-                        } else {
+                        } else if method == "eth_getTransactionCount" {
                             &replies.nonce
+                        } else {
+                            &replies.code
                         }
                     }
                     "eth_call" => {
                         assert_eq!(
-                            request["params"][1], "0x68",
+                            request["params"][1], replies.call_block,
                             "record must be read at sampled finalized height"
                         );
                         &replies.call
@@ -265,6 +273,222 @@ impl Drop for RpcServer {
             result.expect("RPC server did not panic");
         }
     }
+}
+
+#[test]
+fn block_wait_rejects_a_readable_head_below_its_target() {
+    let server = RpcServer::start(Replies::new(&pending_record()));
+    // Zero retries still performs the final observation. It must enforce the
+    // same predicate as observations made before the polling budget expires.
+    for retries in [0, 1] {
+        let error = server
+            .rpc()
+            .wait_block(server.port, 105, retries)
+            .expect_err("a responsive node at 104 has not reached 105");
+        let message = format!("{error:#}");
+        assert!(message.contains("HEAD 105"), "{message}");
+        assert!(message.contains("last height 104"), "{message}");
+    }
+}
+
+#[test]
+fn strict_block_wait_rejects_equality_at_its_final_observation() {
+    let server = RpcServer::start(Replies::new(&pending_record()));
+    let error = server
+        .rpc()
+        .wait_block_gt(server.port, 104, 0)
+        .expect_err("the strict wait must observe a block after 104");
+    assert!(format!("{error:#}").contains("last height 104"));
+}
+
+#[test]
+fn block_wait_accepts_only_the_requested_inclusive_or_strict_boundary() {
+    let server = RpcServer::start(Replies::new(&pending_record()));
+    assert_eq!(
+        server
+            .rpc()
+            .wait_block(server.port, 104, 0)
+            .expect("inclusive boundary"),
+        104
+    );
+    assert_eq!(
+        server
+            .rpc()
+            .wait_block_gt(server.port, 103, 0)
+            .expect("strict boundary"),
+        104
+    );
+}
+
+#[test]
+fn block_wait_does_not_turn_rpc_failure_or_invalid_quantity_into_progress() {
+    let mut unavailable = Replies::new(&pending_record());
+    unavailable.error_method = Some("eth_blockNumber");
+    let mut malformed = Replies::new(&pending_record());
+    malformed.block_number = json!("not-a-block-number");
+    for replies in [unavailable, malformed] {
+        let server = RpcServer::start(replies);
+        let error = server
+            .rpc()
+            .wait_block(server.port, 1, 0)
+            .expect_err("failed observation must not prove progress");
+        assert!(format!("{error:#}").contains("could not observe HEAD 1"));
+        let error = server
+            .rpc()
+            .wait_block_gt(server.port, 0, 0)
+            .expect_err("failed observation must not prove strict progress");
+        assert!(format!("{error:#}").contains("could not observe HEAD 1"));
+    }
+}
+
+#[test]
+fn strict_block_wait_cannot_wrap_the_maximum_height() {
+    let server = RpcServer::start(Replies::new(&pending_record()));
+    let error = server
+        .rpc()
+        .wait_block_gt(server.port, u64::MAX, 0)
+        .expect_err("no representable height can exceed u64::MAX");
+    assert!(format!("{error:#}").contains("beyond u64::MAX"));
+}
+
+#[test]
+fn balance_observation_preserves_rpc_and_decode_errors() {
+    for (value, error_method) in [
+        (json!("0x100"), Some("eth_getBalance")),
+        (json!("not-a-quantity"), None),
+        (Value::Null, None),
+    ] {
+        let mut replies = Replies::new(&pending_record());
+        replies.account_block = json!("latest");
+        replies.balance = value;
+        replies.error_method = error_method;
+        let server = RpcServer::start(replies);
+        let error = eth::balance_result(&server.rpc().cfg.rpc0, Address::ZERO)
+            .expect_err("unavailable or malformed balance must not become a number");
+        if error_method.is_some() {
+            assert!(format!("{error:#}").contains("injected RPC failure"));
+        }
+    }
+    let mut replies = Replies::new(&pending_record());
+    replies.account_block = json!("latest");
+    let server = RpcServer::start(replies);
+    assert_eq!(
+        eth::balance_result(&server.rpc().cfg.rpc0, Address::ZERO).unwrap(),
+        U256::from(256)
+    );
+}
+
+#[test]
+fn zerofee_assertions_require_both_observed_balances() {
+    let mut replies = Replies::new(&pending_record());
+    replies.call_block = json!("latest");
+    replies.call = json!(format!("0x{}", hex::encode((1_u32, 8_u32).abi_encode())));
+    let server = RpcServer::start(replies);
+    let rpc = server.rpc();
+    let sponsored = json!({"status": "0x1", "logs": [{
+        "address": addresses::ZEROFEE_ADDR, "topics": [SPONSORSHIP_TOPIC]
+    }]});
+    let ninth = json!({"status": "0x0", "logs": [{
+        "address": addresses::ZEROFEE_LOG_ADDR,
+        "topics": [B256::ZERO, format!("0x{:064x}", 110)]
+    }]});
+    for (before, after, missing) in [
+        (None, None, "after"),
+        (Some(U256::from(10)), None, "after"),
+        (None, Some(U256::from(9)), "before"),
+    ] {
+        let state = FixtureState {
+            zerofee_address: Some(format!("{:#x}", Address::ZERO)),
+            zerofee_balance_before: before,
+            zerofee_balance_after_quota: after,
+            zerofee_sponsored_receipts: vec![sponsored.clone(); 8],
+            ..FixtureState::default()
+        };
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rpc.assert_zerofee_quota(&state)
+        }))
+        .expect_err("missing quota balance must fail the assertion");
+        assert_balance_panic(panic, &format!("balance {missing} sponsored quota"));
+
+        let state = FixtureState {
+            zerofee_address: Some(format!("{:#x}", Address::ZERO)),
+            zerofee_balance_after_quota: before,
+            zerofee_balance_after_ninth: after,
+            zerofee_ninth_receipt: Some(ninth.clone()),
+            ..FixtureState::default()
+        };
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rpc.assert_zerofee_ninth(&state)
+        }))
+        .expect_err("missing ninth-call balance must fail the assertion");
+        assert_balance_panic(panic, &format!("balance {missing} ninth call"));
+
+        let state = FixtureState {
+            zerofee_address: Some(format!("{:#x}", Address::ZERO)),
+            zerofee_balance_after_ninth: before,
+            zerofee_balance_after_paid: after,
+            zerofee_paid_receipt: Some(
+                json!({"status": "0x1", "logs": [], "gasUsed": "0x1", "effectiveGasPrice": "0x1"}),
+            ),
+            ..FixtureState::default()
+        };
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rpc.assert_zerofee_paid(&state)
+        }))
+        .expect_err("missing paid-call balance must not prove a fee was charged");
+        assert_balance_panic(panic, &format!("balance {missing} paid fallback"));
+    }
+
+    let state = FixtureState {
+        zerofee_address: Some(format!("{:#x}", Address::ZERO)),
+        zerofee_balance_before: Some(U256::from(10)),
+        zerofee_balance_after_quota: Some(U256::from(10)),
+        zerofee_balance_after_ninth: Some(U256::from(10)),
+        zerofee_balance_after_paid: Some(U256::from(9)),
+        zerofee_sponsored_receipts: vec![sponsored; 8],
+        zerofee_ninth_receipt: Some(ninth),
+        zerofee_paid_receipt: Some(
+            json!({"status": "0x1", "logs": [], "gasUsed": "0x1", "effectiveGasPrice": "0x1"}),
+        ),
+        ..FixtureState::default()
+    };
+    rpc.assert_zerofee_quota(&state);
+    rpc.assert_zerofee_ninth(&state);
+    rpc.assert_zerofee_paid(&state);
+    let mut wrong_fee = state;
+    wrong_fee.zerofee_paid_receipt.as_mut().unwrap()["effectiveGasPrice"] = json!("0x2");
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rpc.assert_zerofee_paid(&wrong_fee)
+    }))
+    .expect_err("a balance decrease alone does not prove exact fee accounting");
+    assert_balance_panic(panic, "balance delta differs from its exact receipt fee");
+}
+
+#[test]
+fn receipt_fee_rejects_missing_malformed_or_overflowing_values() {
+    for receipt in [
+        json!({"gasUsed": "0x1"}),
+        json!({"gasUsed": "bad", "effectiveGasPrice": "invalid"}),
+        json!({"gasUsed": format!("{:#x}", U256::MAX), "effectiveGasPrice": "0x2"}),
+    ] {
+        assert_eq!(Rpc::receipt_gas_cost(&receipt), None);
+    }
+    assert_eq!(
+        Rpc::receipt_gas_cost(&json!({"gasUsed": "0x2", "effectiveGasPrice": "0x3"})),
+        Some(U256::from(6))
+    );
+}
+
+fn assert_balance_panic(panic: Box<dyn std::any::Any + Send>, expected: &str) {
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .expect("assertion panic must contain text");
+    assert!(
+        message.contains(expected),
+        "wrong failure: {message}; expected {expected}"
+    );
 }
 
 #[test]
@@ -808,4 +1032,82 @@ fn pr4_recovery_waits_for_rpc_readiness_before_sampling_fresh_finality() {
     let checkpoint = rpc.wait_finalized_checkpoint(&ports, 1, 2).unwrap();
     assert_eq!(checkpoint.height, 100);
     assert_eq!(rpc.fresh_finality_target(&ports).unwrap(), 102);
+}
+
+#[test]
+fn fresh_finality_cannot_be_proved_by_head_progress_alone() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    replies.block_number = json!("0x1000");
+    let server = RpcServer::start(replies);
+    let rpc = server.rpc();
+    let target = rpc.fresh_finality_target(&[server.port]).unwrap();
+    assert_eq!(target, 102);
+    assert_eq!(rpc.wait_block(server.port, target, 0).unwrap(), 4096);
+    let error = rpc
+        .wait_finalized_checkpoint(&[server.port], target, 1)
+        .expect_err("HEAD progress is not finalized progress");
+    assert!(format!("{error:#}").contains("h100"));
+}
+
+#[test]
+fn finalized_cohort_cannot_drop_a_divergent_observer() {
+    let mut replies = Replies::new(&pending_record());
+    replies.head = replies.block.clone();
+    let first = RpcServer::start(replies.clone());
+    replies.block["stateRoot"] = json!(B256::repeat_byte(99));
+    let divergent = RpcServer::start(replies);
+    let error = first
+        .rpc()
+        .wait_finalized_checkpoint(&[first.port, divergent.port], 100, 1)
+        .expect_err("all declared observers must agree on the exact checkpoint");
+    assert!(format!("{error:#}").contains("disagrees on finalized checkpoint"));
+}
+
+#[test]
+fn zerofee_coupled_state_reads_are_pinned_and_require_every_rpc_result() {
+    let mut replies = Replies::new(&pending_record());
+    replies.call_block = json!("0x64");
+    replies.call = json!(format!("0x{}", hex::encode((7_u32, 8_u32).abi_encode())));
+    replies.code = json!("0xef01001234");
+    let checkpoint = FinalizedCheckpoint {
+        height: 100,
+        block_hash: B256::repeat_byte(70),
+        state_root: B256::repeat_byte(71),
+    };
+    let server = RpcServer::start(replies.clone());
+    let observed = server
+        .rpc()
+        .zerofee_state_at(server.port, Address::ZERO, checkpoint)
+        .unwrap();
+    assert_eq!(
+        observed,
+        (
+            Bytes::from(hex::decode("ef01001234").unwrap()),
+            (7, 8),
+            U256::from(256)
+        )
+    );
+    for method in ["eth_getCode", "eth_getBalance", "eth_call"] {
+        let mut unavailable = replies.clone();
+        unavailable.error_method = Some(method);
+        let server = RpcServer::start(unavailable);
+        let error = server
+            .rpc()
+            .zerofee_state_at(server.port, Address::ZERO, checkpoint)
+            .expect_err("one failed state observation must invalidate the complete proof");
+        assert!(format!("{error:#}").contains("injected RPC failure"));
+    }
+    let error = server
+        .rpc()
+        .zerofee_state_at(
+            server.port,
+            Address::ZERO,
+            FinalizedCheckpoint {
+                block_hash: B256::repeat_byte(90),
+                ..checkpoint
+            },
+        )
+        .expect_err("a different hash must not be accepted because state root matches");
+    assert!(format!("{error:#}").contains("checkpoint changed before"));
 }

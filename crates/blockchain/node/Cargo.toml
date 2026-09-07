@@ -36,12 +36,14 @@ reth-evm.workspace = true
 reth-provider.workspace = true
 reth-engine-primitives.workspace = true
 reth-payload-builder.workspace = true
+reth-payload-builder-primitives.workspace = true
 reth-payload-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-revm.workspace = true
 reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-trie.workspace = true
+reth-tasks.workspace = true
 revm.workspace = true
 
 # Utilities
@@ -65,6 +67,9 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 outbe-chain-constants.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
@@ -79,7 +84,6 @@ reth-node-api.workspace = true
 reth-node-core.workspace = true
 reth-rpc-server-types.workspace = true
 reth-tracing.workspace = true
-reth-tasks.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 tempfile.workspace = true

@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-use crate::constants::{MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS};
+use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
 use crate::runtime::emit_event;
 use crate::schema::{GemFactoryContract, GemPosition};
 
@@ -40,7 +40,7 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
         };
         // `>=`, copied from the guard in `issue_merchant_gem`: the merchant can no
         // longer issue from the position at exactly this instant.
-        if now < record.parked_at + POSITION_VALIDITY_SECONDS {
+        if now < record.expires_at {
             break;
         }
         budget -= 1;
