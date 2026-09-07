@@ -20,13 +20,19 @@ use outbe_primitives::{
 
 use crate::{
     api,
-    constants::{CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT},
+    constants::{
+        CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD,
+        CALL_WINDOW, SECS_PER_DAY,
+    },
     NodContract, NodItemState, NodRepositoryReader,
 };
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
 const DAY: u64 = 86_400;
+/// The notice period a bucket seals at qualification, in the width these tests
+/// do timestamp arithmetic in.
+const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
 const ISO: u16 = 840;
 const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
@@ -205,6 +211,184 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>, &ExecutionScope, &NodRepository
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
         body(&storage, &scope, &parent);
+    });
+}
+
+// --- Sealed call terms -----------------------------------------------------
+
+/// Rewrites the terms a qualified bucket sealed, the way a retuned constant
+/// would have if the scan still read the constants. Widens the currency's
+/// high-water mark alongside, exactly as `insert_callable_bucket` does.
+fn reterm(
+    storage: &StorageHandle<'_>,
+    bucket_key: B256,
+    iso: u16,
+    window_days: u32,
+    threshold_days: u32,
+    notice_days: u32,
+) {
+    let nod = NodContract::new(storage.clone());
+    let window = window_days * SECS_PER_DAY;
+    nod.callable_bucket_call_window
+        .write(&bucket_key, window)
+        .unwrap();
+    nod.callable_bucket_call_threshold
+        .write(&bucket_key, threshold_days * SECS_PER_DAY)
+        .unwrap();
+    nod.callable_bucket_call_notice_period
+        .write(&bucket_key, notice_days * SECS_PER_DAY)
+        .unwrap();
+    if window > nod.max_call_window.read(&iso).unwrap() {
+        nod.max_call_window.write(&iso, window).unwrap();
+    }
+}
+
+/// Qualification seals the terms; the constants are read exactly once, there.
+#[test]
+fn qualification_seals_the_call_terms_on_the_bucket() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(
+            nod.callable_bucket_call_rate
+                .read(&item.bucket_key)
+                .unwrap(),
+            CALL_RATE_PCT
+        );
+        assert_eq!(
+            nod.callable_bucket_call_window
+                .read(&item.bucket_key)
+                .unwrap(),
+            CALL_WINDOW
+        );
+        assert_eq!(
+            nod.callable_bucket_call_threshold
+                .read(&item.bucket_key)
+                .unwrap(),
+            CALL_THRESHOLD
+        );
+        assert_eq!(
+            nod.callable_bucket_call_notice_period
+                .read(&item.bucket_key)
+                .unwrap(),
+            CALL_NOTICE_PERIOD
+        );
+        assert_eq!(nod.max_call_window.read(&ISO).unwrap(), CALL_WINDOW);
+    });
+}
+
+/// The terms a bucket is called and forfeited under are the ones sealed at
+/// qualification, not the live constants. A `const` cannot be retuned at
+/// runtime, so this proves it from the other side: rewrite what the bucket
+/// holds and watch the scan follow the bucket rather than the constant.
+#[test]
+fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let at = START + 30 * DAY;
+        let latest = last_closed_day(at);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
+        // Three breach days at the head - far short of the 21 the constant
+        // demands, and exactly the threshold the bucket will carry.
+        fill_days(storage, latest, 3, above_call());
+
+        assert_eq!(
+            scan(storage, scope, parent, at),
+            0,
+            "the constant's 21-of-28 threshold is unmet"
+        );
+
+        reterm(storage, item.bucket_key, ISO, 3, 3, 1);
+        assert_eq!(scan(storage, scope, parent, at), 1);
+        assert_eq!(called_at(storage, item.bucket_key), at);
+
+        // And the sealed notice governs the forfeit: one day, not seven.
+        assert_eq!(
+            api::settlement_deadline(storage, item.bucket_key).unwrap(),
+            at + DAY,
+            "the deadline follows the sealed notice period"
+        );
+        finalize_through(storage, at + DAY + 1);
+        assert_eq!(scan(storage, scope, parent, at + DAY), 0, "not past it yet");
+        assert_eq!(scan(storage, scope, parent, at + DAY + 1), 1);
+        assert!(api::get_item(storage, scope, parent, item.nod_id)
+            .unwrap()
+            .is_none());
+    });
+}
+
+/// A bucket carrying zero terms is uncallable, not callable on every day. Zero
+/// is what a bucket armed before the terms existed reads back, and
+/// `breaches >= 0` would otherwise call the whole index on the next scan.
+#[test]
+fn a_bucket_with_zero_call_terms_is_never_called() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+
+        reterm(storage, item.bucket_key, ISO, 0, 0, 0);
+        assert_eq!(
+            scan(storage, scope, parent, at),
+            0,
+            "a full breach window still does not call"
+        );
+        assert_eq!(called_at(storage, item.bucket_key), 0);
+    });
+}
+
+/// A zero notice on an already-called bucket means "no deadline", not "lapsed
+/// at the moment of the call" - otherwise the next run would forfeit it.
+#[test]
+fn a_called_bucket_with_a_zero_notice_period_is_never_forfeited() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 1);
+
+        reterm(
+            storage,
+            item.bucket_key,
+            ISO,
+            CALL_LOOKBACK_DAYS,
+            CALL_BREACH_DAYS,
+            0,
+        );
+        let long_after = at + 365 * DAY;
+        finalize_through(storage, long_after);
+        assert_eq!(scan(storage, scope, parent, long_after), 0);
+        assert!(api::get_item(storage, scope, parent, item.nod_id)
+            .unwrap()
+            .is_some());
+    });
+}
+
+/// A bucket whose sealed window outruns the current constant still gets its
+/// whole span collected: the scan sizes the shared per-currency window off the
+/// `max_call_window` high-water mark, not off the constant.
+#[test]
+fn a_window_wider_than_the_constant_is_collected_in_full() {
+    harness(|storage, scope, parent| {
+        const WIDE_DAYS: u32 = 40;
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
+        let at = START + 60 * DAY;
+        fill_days(storage, last_closed_day(at), WIDE_DAYS, above_call());
+
+        // 35 of the 40 days must breach, which no 28-day window can supply.
+        reterm(storage, item.bucket_key, ISO, WIDE_DAYS, 35, 7);
+        assert_eq!(scan(storage, scope, parent, at), 1);
+        assert_eq!(called_at(storage, item.bucket_key), at);
     });
 }
 
@@ -406,7 +590,7 @@ fn the_notice_period_expires_strictly_after_the_deadline() {
     harness(|storage, scope, parent| {
         let at = START + 30 * DAY;
         let item = call_bucket(storage, scope, parent, Address::repeat_byte(0x11), at);
-        let deadline = at + CALL_NOTICE_PERIOD;
+        let deadline = at + NOTICE;
 
         // Exactly at the deadline the Nod survives.
         finalize_through(storage, deadline);
@@ -437,7 +621,7 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_callable_index() {
             1
         );
 
-        let past = at + CALL_NOTICE_PERIOD + 1;
+        let past = at + NOTICE + 1;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 1);
 
@@ -556,7 +740,7 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
         );
         assert_eq!(scan(storage, scope, parent, at), 1);
 
-        let past = at + CALL_NOTICE_PERIOD + 1;
+        let past = at + NOTICE + 1;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3, "all three burn");
 
@@ -602,7 +786,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
         // The call alone forfeits nothing, so nothing is returned yet.
         assert_eq!(reserve(storage), U256::ZERO);
 
-        let past = at + CALL_NOTICE_PERIOD + 1;
+        let past = at + NOTICE + 1;
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3);
 
@@ -649,7 +833,7 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
         nod.bucket_called_at.write(&items[0].bucket_key, 0).unwrap();
         nod.bucket_called_at.write(&items[2].bucket_key, 0).unwrap();
 
-        let past = at + CALL_NOTICE_PERIOD + 1;
+        let past = at + NOTICE + 1;
         fill_days(
             storage,
             last_closed_day(past),

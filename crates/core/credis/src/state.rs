@@ -34,6 +34,22 @@ impl CredisContract<'_> {
         self.positions.update(position)
     }
 
+    /// Raises the currency's widest-window high-water mark to `call_window` if
+    /// the new position outruns it. Monotonic, so the daily scan can size one
+    /// shared VWAP window per currency and still cover every position
+    /// denominated in it. Mirrors `outbe_gem`'s `max_call_window`.
+    pub(crate) fn widen_max_call_window(
+        &mut self,
+        reference_currency: u16,
+        call_window: u32,
+    ) -> Result<()> {
+        if call_window > self.max_call_window.read(&reference_currency)? {
+            self.max_call_window
+                .write(&reference_currency, call_window)?;
+        }
+        Ok(())
+    }
+
     // ---------------------------------------------------------------------
     // Per-address dense index (mirrors outbe-nod owner_nod_* shape)
     // ---------------------------------------------------------------------

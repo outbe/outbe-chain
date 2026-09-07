@@ -11,7 +11,9 @@ use outbe_primitives::error::Result;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, PRICE_RATE_DEN};
+use crate::constants::{
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, DAYS_PER_YEAR, PRICE_RATE_DEN,
+};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
@@ -88,8 +90,13 @@ pub fn calc_call_price(price: U256) -> Result<U256> {
 }
 
 /// Timestamp after which a called position's remainder may be voided.
+///
+/// Reads the notice period sealed onto the position at opening, so retuning the
+/// constant cannot move the deadline of a position that is already live.
 pub fn settlement_deadline(position: &Position) -> u64 {
-    position.called_at.saturating_add(CALL_WINDOW_SECS)
+    position
+        .called_at
+        .saturating_add(u64::from(position.call_notice_period))
 }
 
 impl CredisContract<'_> {
@@ -125,8 +132,10 @@ impl CredisContract<'_> {
     /// `position_id = keccak256(handle_id || smart_account)`.
     ///
     /// Everything the position will ever need is sealed here: the call price
-    /// derives from `entry_price`, and `policy_rate` is pinned. Collateral
-    /// starts fully locked and the interest anchor starts at origination.
+    /// derives from `entry_price`, `policy_rate` is pinned, and the four call
+    /// terms are snapshotted so a later retune of the constants cannot re-term a
+    /// live position. Collateral starts fully locked and the interest anchor
+    /// starts at origination.
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         if params.principal.is_zero() || params.collateral.is_zero() {
             return Err(CredisError::InvalidAmount.into());
@@ -156,8 +165,13 @@ impl CredisContract<'_> {
             last_settled_at: params.originated_at,
             called_at: 0,
             state: CredisState::Open as u8,
+            call_notice_period: CALL_NOTICE_PERIOD,
+            call_rate: CALL_RATE_PCT,
+            call_window: CALL_WINDOW,
+            call_threshold: CALL_THRESHOLD,
         };
         self.create_position_record(&position)?;
+        self.widen_max_call_window(position.reference_currency, position.call_window)?;
         self.append_to_address_index(params.smart_account, position_id)?;
         self.append_to_global_index(position_id)?;
         self.insert_active(position_id)?;

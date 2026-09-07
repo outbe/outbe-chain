@@ -15,10 +15,19 @@ pub const BIN_STEP_BP: u16 = 25;
 /// and is resumed deterministically in the next block.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
+/// The four call terms below are snapshotted onto a bucket when it qualifies,
+/// and every later check reads the bucket's copy. Retuning one of them re-terms
+/// buckets that qualify afterwards, and leaves every already-armed bucket on
+/// the terms it was armed with - the same guarantee gem and intex give.
+///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
 /// gem/intex's 128, one rung up the same ladder.
-pub const CALL_RATE_PCT: u64 = 256;
+pub const CALL_RATE_PCT: u16 = 256;
+
+/// Seconds in a day. The call terms a bucket seals are second-encoded, the way
+/// gem's record stores them; the daily scan divides them back into day counts.
+pub const SECS_PER_DAY: u32 = 24 * 3600;
 
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
@@ -28,14 +37,23 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either.
 pub const CALL_BREACH_DAYS: u32 = 21;
 
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window`
+/// seals at qualification, matching `GemData::call_window`.
+pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
+
+/// [`CALL_BREACH_DAYS`] in seconds - the encoding
+/// `callable_bucket_call_threshold` seals at qualification, matching
+/// `GemData::call_threshold`.
+pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
+
 /// Seconds after `called_at` within which the owner must settle and mine. Once
 /// elapsed the bucket's remaining Nods are forfeit-burned.
-pub const CALL_NOTICE_PERIOD: u64 = 7 * 24 * 3600;
+pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
 /// Callable buckets visited per daily run; the cursor resumes the rest. A bucket
 /// displaced past the cursor is picked up a day later, which cannot change an
-/// outcome: the call needs a multi-week breach count and the forfeit follows a
-/// seven-day window.
+/// outcome: the call needs a multi-week breach count and the forfeit follows the
+/// bucket's sealed notice period.
 pub const MAX_NOD_CALL_VISITS: u32 = 4096;
 
 /// Nod bodies forfeit-burned per daily run, far below the visit budget because a

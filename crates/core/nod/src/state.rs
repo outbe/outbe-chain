@@ -14,7 +14,7 @@ use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
     constants::BIN_STEP_BP,
     errors::NodError,
-    schema::{NodBucketState, NodContract, NodItemState},
+    schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
 impl NodContract<'_> {
@@ -417,21 +417,59 @@ impl NodContract<'_> {
 
     // --- Callable-bucket index ----------------------------------------------
 
-    /// Arms a freshly qualified bucket for the daily call scan, snapshotting the
-    /// terms the scan needs so it never has to load a bucket body to decide.
+    /// Arms a freshly qualified bucket for the daily call scan, sealing the terms
+    /// it will be called and forfeited under so the scan never has to load a
+    /// bucket body - or read a constant - to decide.
+    ///
+    /// Qualification is the arm point rather than issuance because the bucket
+    /// body is a compressed entity: the call clock cannot start before this
+    /// call, so terms fixed here cover the whole callable life of the bucket.
+    /// This is where the call price has always been snapshotted; the rest of the
+    /// terms now travel with it.
     pub(crate) fn insert_callable_bucket(
         &mut self,
         bucket_key: B256,
-        call_price: U256,
-        reference_currency: u16,
+        terms: CallTerms,
     ) -> Result<()> {
         let index = self.callable_buckets.len()?;
         self.callable_buckets.push(bucket_key)?;
         self.callable_bucket_index.write(&bucket_key, index)?;
         self.callable_bucket_call_price
-            .write(&bucket_key, call_price)?;
+            .write(&bucket_key, terms.call_price)?;
         self.callable_bucket_currency
-            .write(&bucket_key, reference_currency)?;
+            .write(&bucket_key, terms.reference_currency)?;
+        self.callable_bucket_call_rate
+            .write(&bucket_key, terms.call_rate)?;
+        self.callable_bucket_call_window
+            .write(&bucket_key, terms.call_window)?;
+        self.callable_bucket_call_threshold
+            .write(&bucket_key, terms.call_threshold)?;
+        self.callable_bucket_call_notice_period
+            .write(&bucket_key, terms.call_notice_period)?;
+        self.widen_max_call_window(terms.reference_currency, terms.call_window)
+    }
+
+    /// Reads back the terms [`Self::insert_callable_bucket`] sealed.
+    pub(crate) fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
+        Ok(CallTerms {
+            call_price: self.callable_bucket_call_price.read(&bucket_key)?,
+            reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
+            call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
+            call_window: self.callable_bucket_call_window.read(&bucket_key)?,
+            call_threshold: self.callable_bucket_call_threshold.read(&bucket_key)?,
+            call_notice_period: self.callable_bucket_call_notice_period.read(&bucket_key)?,
+        })
+    }
+
+    /// Raises the currency's widest-window high-water mark if this bucket
+    /// outruns it. Monotonic, so the daily scan can size one shared VWAP window
+    /// per currency and still cover every bucket denominated in it. Mirrors
+    /// `outbe_gem`'s `max_call_window`.
+    fn widen_max_call_window(&mut self, reference_currency: u16, call_window: u32) -> Result<()> {
+        if call_window > self.max_call_window.read(&reference_currency)? {
+            self.max_call_window
+                .write(&reference_currency, call_window)?;
+        }
         Ok(())
     }
 
@@ -466,6 +504,10 @@ impl NodContract<'_> {
         self.callable_bucket_index.clear(&bucket_key)?;
         self.callable_bucket_call_price.clear(&bucket_key)?;
         self.callable_bucket_currency.get(&bucket_key).delete()?;
+        self.callable_bucket_call_rate.get(&bucket_key).delete()?;
+        self.callable_bucket_call_window.clear(&bucket_key)?;
+        self.callable_bucket_call_threshold.clear(&bucket_key)?;
+        self.callable_bucket_call_notice_period.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }

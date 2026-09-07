@@ -133,6 +133,28 @@ pub struct Position {
     /// denominate the position and carries no FX exposure.
     #[attribute(order = 16)]
     pub reference_currency: u16,
+
+    /// Call Notice Period in seconds: a called position whose remainder is
+    /// still outstanding at `called_at + call_notice_period` is voided.
+    /// Snapshot of the protocol constant at opening.
+    #[attribute(order = 17, default = 0)]
+    pub call_notice_period: u32,
+
+    /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at opening);
+    /// `call_price = entry_price * (100 + call_rate) / 100` (64 => 1.64x).
+    #[attribute(order = 18, default = 0)]
+    pub call_rate: u16,
+
+    /// Call-trigger evaluation window in seconds (snapshot of the protocol
+    /// constant at opening); the trailing span the daily scan reads for Call
+    /// Price breaches. Divided by 86400 to get the day count.
+    #[attribute(order = 19, default = 0)]
+    pub call_window: u32,
+
+    /// Breach threshold in seconds (snapshot of the protocol constant at
+    /// opening); divided by 86400 to get the required breach-day count.
+    #[attribute(order = 20, default = 0)]
+    pub call_threshold: u32,
 }
 
 impl Position {
@@ -186,6 +208,12 @@ pub struct CredisContract {
     /// `hasCalledPosition` view.
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+
+    /// Widest `call_window` ever opened in a reference currency, in seconds. It
+    /// only grows, so the trailing span the daily scan collects always covers a
+    /// position whose sealed window outruns the current constant.
+    #[attribute(order = 8)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl CredisContract<'_> {

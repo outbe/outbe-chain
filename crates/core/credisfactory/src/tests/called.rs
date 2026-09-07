@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_credis::constants::{CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS};
+use outbe_credis::constants::{CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, SECS_PER_DAY};
 use outbe_credis::{CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
@@ -47,6 +47,119 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     position_id
 }
 
+/// Rewrites the call terms sealed on a position, the way a retuned constant
+/// would have if the terms were still read live. Widens the currency's
+/// high-water mark alongside, exactly as `open_position` does.
+fn reterm(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    window_days: u32,
+    threshold_days: u32,
+    notice_days: u32,
+) {
+    let credis = CredisContract::new(storage.clone());
+    let mut position = credis.get_position(position_id).unwrap();
+    position.call_window = window_days * SECS_PER_DAY;
+    position.call_threshold = threshold_days * SECS_PER_DAY;
+    position.call_notice_period = notice_days * SECS_PER_DAY;
+    credis.positions.update(&position).unwrap();
+    if position.call_window > credis.max_call_window.read(&REFERENCE_ISO).unwrap() {
+        credis
+            .max_call_window
+            .write(&REFERENCE_ISO, position.call_window)
+            .unwrap();
+    }
+}
+
+/// The terms a position is called and voided under are the ones sealed at
+/// opening, not the live constants. A `const` cannot be retuned at runtime, so
+/// this proves it from the other side: rewrite what the record holds and watch
+/// the scan follow the record rather than the constant.
+#[test]
+fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, below_call());
+        // Three breach days at the head of the window - far short of the 21 the
+        // constant demands, and exactly the threshold the record will carry.
+        for i in 0..3 {
+            set_vwap(&storage, day_back(at, i), above_call());
+        }
+
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "the constant's 21-of-28 threshold is unmet"
+        );
+
+        reterm(&storage, position_id, 3, 3, 1);
+        assert_eq!(scan(&storage, at), 1, "3 of 3 meets the sealed threshold");
+        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+
+        // And the sealed notice period governs the void: one day, not seven.
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(
+            outbe_credis::settlement_deadline(&position),
+            at + DAY,
+            "the deadline follows the sealed notice period"
+        );
+        let lapsed = at + DAY;
+        advance_to(&storage, lapsed);
+        finalize_through(&storage, lapsed);
+        assert_eq!(scan(&storage, lapsed), 1);
+        assert_eq!(state_of(&storage, position_id), CredisState::Void);
+    });
+    teardown();
+}
+
+/// A position carrying zero terms is uncallable, not callable on every day.
+/// Zero is what a record sealed before the terms existed reads back, and
+/// `breaches >= 0` would otherwise call the whole book on the next scan.
+#[test]
+fn a_position_with_zero_call_terms_is_never_called() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+
+        reterm(&storage, position_id, 0, 0, 0);
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "a full breach window still does not call"
+        );
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+    });
+    teardown();
+}
+
+/// A position whose sealed window outruns the current constant still gets its
+/// whole span collected: the scan sizes the shared per-currency window off the
+/// `max_call_window` high-water mark, not off the constant.
+#[test]
+fn a_window_wider_than_the_constant_is_collected_in_full() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        const WIDE_DAYS: u32 = 40;
+        let at = CREATED_AT + (WIDE_DAYS as u64 + 5) * DAY;
+        let position_id = open(&storage, 1);
+        advance_to(&storage, at);
+        fill_days(&storage, last_closed_day(at), WIDE_DAYS, above_call());
+
+        // 35 of the 40 days must breach, which no 28-day window can supply.
+        reterm(&storage, position_id, WIDE_DAYS, 35, 7);
+        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+    });
+    teardown();
+}
+
 #[test]
 fn a_full_window_above_the_call_price_calls_the_position() {
     let mut storage = env();
@@ -64,8 +177,8 @@ fn a_full_window_above_the_call_price_calls_the_position() {
         assert_eq!(position.called_at, at, "stamped with the run's timestamp");
         assert_eq!(
             outbe_credis::settlement_deadline(&position),
-            at + 14 * DAY,
-            "the 14-day settlement window opens at the call"
+            at + NOTICE,
+            "the settlement window opens at the call"
         );
 
         // The owner's called-position counter tracks the unresolved call.
@@ -273,7 +386,7 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, at), 0);
 
         // Inside the window, nothing happens.
-        let inside = at + 13 * DAY;
+        let inside = at + NOTICE - DAY;
         advance_to(&storage, inside);
         finalize_through(&storage, inside);
         assert_eq!(scan(&storage, inside), 0);
@@ -281,7 +394,7 @@ fn the_call_and_the_void_compose_across_runs() {
 
         // The window lapses with the whole principal outstanding: the entire
         // collateral is burned and credited to the Promis Reserve.
-        let lapsed = at + 14 * DAY;
+        let lapsed = at + NOTICE;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 1);
@@ -503,7 +616,7 @@ fn voiding_several_positions_in_one_pass_skips_none() {
             }
         }
 
-        let lapsed = called_at + 14 * DAY;
+        let lapsed = called_at + NOTICE;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
         assert_eq!(scan(&storage, lapsed), 3, "all three voided in one pass");

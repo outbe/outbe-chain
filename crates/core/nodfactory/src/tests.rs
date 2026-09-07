@@ -878,7 +878,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
 
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
-    world.set_timestamp(called_at + CALL_NOTICE_PERIOD);
+    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
 
     let proof = world.covering_proof(&input);
     let nonce = find_valid_nonce(nod_id);
@@ -912,7 +912,7 @@ fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
 
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
-    world.set_timestamp(called_at + CALL_NOTICE_PERIOD + 1);
+    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 1);
 
     let nonce = find_valid_nonce(nod_id);
     let error = world

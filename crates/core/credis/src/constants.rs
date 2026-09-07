@@ -4,15 +4,25 @@
 //! carry a placeholder here plus a `ponytail:` note naming what has to be
 //! decided before launch.
 
+/// The four call terms below are snapshotted onto a position when it opens, and
+/// every later check reads the position's copy. Retuning one of them re-terms
+/// positions opened afterwards, and leaves every already-open position on the
+/// terms it was opened with - the same guarantee gem and intex give.
+///
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 
 /// Call price: `entry + 64%`. A sustained breach of it arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
 
+/// Seconds in a day, for the second-encoded call terms below. A position seals
+/// its window and threshold the way gem's record does, in seconds, and the
+/// daily scan divides them back into day counts.
+pub const SECS_PER_DAY: u32 = 24 * 60 * 60;
+
 /// Evaluation window for the call, in closed UTC days: the daily scan looks
 /// back this far over the official daily reference series. Distinct from
-/// [`CALL_WINDOW_SECS`], which is the settlement window the call itself opens.
+/// [`CALL_NOTICE_PERIOD`], which is the settlement window the call itself opens.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 
 /// Breach threshold: a position is called once the official daily reference
@@ -23,8 +33,18 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_WINDOW` / `CALL_THRESHOLD` pair.
 pub const CALL_BREACH_DAYS: u32 = 21;
 
-/// Settlement window opened by the call.
-pub const CALL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `Position::call_window`
+/// seals at opening, matching `GemData::call_window`.
+pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
+
+/// [`CALL_BREACH_DAYS`] in seconds - the encoding `Position::call_threshold`
+/// seals at opening, matching `GemData::call_threshold`.
+pub const CALL_THRESHOLD: u32 = CALL_BREACH_DAYS * SECS_PER_DAY;
+
+/// Settlement window opened by the call, in seconds. Named for what it is, and
+/// for the `Position::call_notice_period` it seals, rather than for the window
+/// it is not.
+pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
 /// Day count convention for interest accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;

@@ -45,6 +45,11 @@ pub const REFERENCE_ISO: u16 = 978;
 
 pub const DAY: u64 = 86_400;
 
+/// The settlement window a position seals at opening. Derived from the constant
+/// rather than written out as a literal: a hard-coded `14 * DAY` is what these
+/// tests used to carry, and it went stale the day the window was retuned.
+pub const NOTICE: u64 = outbe_credis::constants::CALL_NOTICE_PERIOD as u64;
+
 pub fn alice() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }

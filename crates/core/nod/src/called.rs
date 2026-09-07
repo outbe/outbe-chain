@@ -6,11 +6,15 @@
 //! per bucket, in lifecycle order:
 //!
 //! - *not called* -> *called* when the reference price exceeded the bucket's
-//!   call price on at least [`CALL_BREACH_DAYS`] of the trailing
-//!   [`CALL_LOOKBACK_DAYS`] days.
-//! - *called* -> *forfeited* when [`CALL_NOTICE_PERIOD`] has lapsed with Nods
-//!   still unmined. The two can never fire in one pass, since a bucket called
-//!   now cannot also be seven days past its call.
+//!   call price on at least its `call_threshold` of the trailing
+//!   `call_window`.
+//! - *called* -> *forfeited* when the bucket's `call_notice_period` has lapsed
+//!   with Nods still unmined. The two can never fire in one pass, since a
+//!   bucket called now cannot also be a notice period past its call.
+//!
+//! All four terms are sealed onto the bucket when it qualifies and read back
+//! from it here, so retuning a constant leaves every armed bucket on the terms
+//! it was armed with. Gem and intex give the same guarantee.
 //!
 //! The breach rule needs no per-bucket streak state: the daily series is global
 //! per currency, so one trailing window per currency decides every bucket
@@ -33,12 +37,9 @@ use outbe_primitives::{
 
 use crate::{
     api,
-    constants::{
-        CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, MAX_NOD_CALL_VISITS,
-        MAX_NOD_FORFEITS_PER_RUN,
-    },
+    constants::{CALL_WINDOW, MAX_NOD_CALL_VISITS, MAX_NOD_FORFEITS_PER_RUN, SECS_PER_DAY},
     precompile::INod,
-    schema::NodContract,
+    schema::{CallTerms, NodContract},
 };
 
 /// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
@@ -121,28 +122,29 @@ pub fn scan_and_call(
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
             if called_at == 0 {
                 // Structural reads stay on `?` so infra errors still propagate.
-                let iso_code = nod.callable_bucket_currency.read(&bucket_key)?;
-                let call_price = nod.callable_bucket_call_price.read(&bucket_key)?;
+                let terms = nod.read_call_terms(bucket_key)?;
                 let start_day = nod.bucket_worldwide_day.read(&bucket_key)?.value();
                 let index = window_for(
+                    &nod,
                     &ctx.storage,
                     &oracle,
                     &mut windows,
-                    iso_code,
+                    terms.reference_currency,
                     last_closed_day,
                 )?;
-                if breached_enough(&windows[index].1, call_price, start_day) {
+                if breached_enough(&windows[index].1, &terms, start_day) {
                     // Isolate per-bucket: a deterministic Err rolls back this
                     // bucket's checkpoint and is skipped, so one bad bucket never
                     // halts the daily scan.
-                    let res = ctx
-                        .storage
-                        .with_checkpoint(|| mark_called(&mut nod, bucket_key, now));
+                    let res = ctx.storage.with_checkpoint(|| {
+                        mark_called(&mut nod, bucket_key, now, terms.call_notice_period)
+                    });
                     if res.is_ok() {
                         mutated = mutated.saturating_add(1);
                     }
                 }
-            } else if now > called_at.saturating_add(CALL_NOTICE_PERIOD) {
+            } else if now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
+            {
                 let budget = MAX_NOD_FORFEITS_PER_RUN.saturating_sub(forfeited);
                 if budget > 0 {
                     let res = ctx.storage.with_checkpoint(|| {
@@ -169,35 +171,57 @@ pub fn scan_and_call(
     Ok(mutated)
 }
 
-/// True when the trailing window carries at least [`CALL_BREACH_DAYS`] days
-/// strictly above `call_price`.
+/// True when the bucket's trailing `call_window` carries at least its
+/// `call_threshold` of days strictly above its `call_price`.
+///
+/// Every term comes off the bucket, not from the constants, so a retune cannot
+/// re-term a bucket that is already armed. `window` is sized for the widest
+/// window in the currency, so this takes only its own prefix.
 ///
 /// Days at or below the call price, and days with no published price, both
-/// simply fail to count, so the window absorbs up to
-/// `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either. The walk stops at the
-/// first day preceding the bucket's worldwide day so a bucket can never inherit
-/// a breach run that predates it - the window is newest-first, so everything
-/// beyond that point is older still.
-fn breached_enough(window: &[(u32, Option<U256>)], call_price: U256, start_day: u32) -> bool {
+/// simply fail to count, so the window absorbs up to `window - threshold` of
+/// either. The walk stops at the first day preceding the bucket's worldwide day
+/// so a bucket can never inherit a breach run that predates it - the window is
+/// newest-first, so everything beyond that point is older still.
+fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day: u32) -> bool {
+    let window_days = terms.call_window / SECS_PER_DAY;
+    let threshold_days = terms.call_threshold / SECS_PER_DAY;
+    // A bucket armed before the terms existed carries zeroes. Zero days is "no
+    // terms", not "every day breaches"; leave it uncallable. Same guard as
+    // `outbe_gem::runtime::trigger_call`.
+    if window_days == 0 || threshold_days == 0 {
+        return false;
+    }
     let mut breaches: u32 = 0;
-    for (day, vwap) in window.iter().take(CALL_LOOKBACK_DAYS as usize) {
+    for (day, vwap) in window.iter().take(window_days as usize) {
         if *day < start_day {
             break;
         }
-        if vwap.is_some_and(|value| value > call_price) {
+        if vwap.is_some_and(|value| value > terms.call_price) {
             breaches = breaches.saturating_add(1);
         }
     }
-    breaches >= CALL_BREACH_DAYS
+    breaches >= threshold_days
 }
 
-/// Stamps the call and opens the settlement window.
-fn mark_called(nod: &mut NodContract<'_>, bucket_key: B256, now: u64) -> Result<()> {
+/// The bucket's sealed notice period. Read on its own in the forfeit arm, which
+/// needs no other term.
+fn notice_period(nod: &NodContract<'_>, bucket_key: B256) -> Result<u32> {
+    nod.callable_bucket_call_notice_period.read(&bucket_key)
+}
+
+/// Stamps the call and opens the settlement window the bucket sealed.
+fn mark_called(
+    nod: &mut NodContract<'_>,
+    bucket_key: B256,
+    now: u64,
+    notice_period: u32,
+) -> Result<()> {
     nod.bucket_called_at.write(&bucket_key, now)?;
     nod.emit(INod::NodBucketCalled {
         bucketKey: bucket_key,
         calledAt: now,
-        settlementDeadline: now.saturating_add(CALL_NOTICE_PERIOD),
+        settlementDeadline: api::settlement_deadline_of(now, notice_period),
     })
 }
 
@@ -280,6 +304,7 @@ fn forfeit_members(
 /// never register a breach, but it must still reach the forfeit arm, so this is
 /// a skip of the call check rather than a skip of the bucket.
 fn window_for(
+    nod: &NodContract<'_>,
     storage: &StorageHandle<'_>,
     oracle: &OracleContract<'_>,
     cache: &mut Vec<(u16, VwapWindow)>,
@@ -291,9 +316,13 @@ fn window_for(
     }
     let mut window = Vec::new();
     if let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)? {
-        window.reserve(CALL_LOOKBACK_DAYS as usize);
+        // Widest of the current constant and anything ever armed: a bucket keeps
+        // the window it was armed with, so a narrowed constant must not shorten
+        // the span the scan collects for it.
+        let window_days = nod.max_call_window.read(&iso_code)?.max(CALL_WINDOW) / SECS_PER_DAY;
+        window.reserve(window_days as usize);
         let mut day = last_closed_day;
-        for _ in 0..CALL_LOOKBACK_DAYS {
+        for _ in 0..window_days {
             window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
             day = previous_date_key(day);
         }

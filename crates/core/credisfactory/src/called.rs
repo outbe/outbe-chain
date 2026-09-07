@@ -5,9 +5,9 @@
 //! per position, in lifecycle order:
 //!
 //! - `Open -> Called` when the COEN price in the position's REFERENCE currency sat
-//!   at or above the call price on [`CALL_BREACH_DAYS`] of the trailing
-//!   [`CALL_LOOKBACK_DAYS`] days. The issuance currency the position is denominated
-//!   in never enters the threshold.
+//!   strictly above the call price on `call_threshold` of the trailing
+//!   `call_window`, both sealed onto the position at opening. The issuance
+//!   currency the position is denominated in never enters the threshold.
 //! - `Called -> Void` when the settlement window has lapsed with principal still
 //!   outstanding.
 //!
@@ -19,7 +19,7 @@
 
 use alloy_primitives::U256;
 
-use outbe_credis::constants::{CALL_BREACH_DAYS, CALL_LOOKBACK_DAYS};
+use outbe_credis::constants::{CALL_WINDOW, SECS_PER_DAY};
 use outbe_credis::{CredisContract, CredisState, Position};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
@@ -35,7 +35,8 @@ use crate::schema::CredisFactoryContract;
 /// Max positions visited per daily run; the cursor resumes the rest on the next
 /// run so one scan can never outgrow a block. An entry displaced past the cursor
 /// is picked up a day later, which cannot change an outcome: the call needs a
-/// multi-week breach count and the void follows a 14-day window.
+/// multi-week breach count and the void follows the position's sealed notice
+/// period.
 pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 
 /// Max positions voided per daily run, far below [`MAX_CREDIS_DAILY_VISITS`]
@@ -124,6 +125,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             // Structural reads stay on `?` so infra errors still propagate.
             let position = credis.get_position(position_id)?;
             let index = window_for(
+                &credis,
                 &ctx.storage,
                 &oracle,
                 &mut windows,
@@ -229,7 +231,7 @@ fn visit_price_path(
         // Gated on the state at entry, not the running one: a call stamped in
         // this same visit sets `called_at = now`, so its window cannot have
         // lapsed, and reading the deadline off the record loaded before that
-        // would compare `now` against `0 + CALL_WINDOW_SECS`.
+        // would compare `now` against `0 + call_notice_period`.
         void_due: entry_state == CredisState::Called
             && !position.outstanding.is_zero()
             && now >= outbe_credis::settlement_deadline(position),
@@ -237,11 +239,16 @@ fn visit_price_path(
 }
 
 /// True when the daily COEN price in the position's reference currency sat
-/// strictly above its call price on at least [`CALL_BREACH_DAYS`] of the window.
+/// strictly above its call price on at least `call_threshold` days of its
+/// trailing `call_window`.
+///
+/// Both terms are read off the position, not from the constants, so retuning
+/// them cannot re-term a position that is already live. `window` is sized for
+/// the widest window in the currency, so this takes only its own prefix.
 ///
 /// Days at or below the call price and days with no published price both simply
-/// fail to count, so the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS`
-/// of either. section 11.3 leaves missing-data days undecided; treating them as
+/// fail to count, so the window absorbs up to `window - threshold` of either.
+/// section 11.3 leaves missing-data days undecided; treating them as
 /// non-breaches is conservative - it can only delay a call, never trigger one.
 ///
 /// A day that predates the position ends the count: the window is newest-first,
@@ -249,9 +256,17 @@ fn visit_price_path(
 /// breach run from before it existed. Mirrors the issuance guard in
 /// `outbe_gem::runtime::trigger_call`.
 fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool {
+    let window_days = position.call_window / SECS_PER_DAY;
+    let threshold_days = position.call_threshold / SECS_PER_DAY;
+    // A position sealed before the terms existed carries zeroes. Zero days is
+    // "no terms", not "every day breaches"; leave it uncallable. Same guard as
+    // `outbe_gem::runtime::trigger_call`.
+    if window_days == 0 || threshold_days == 0 {
+        return false;
+    }
     let originated_day = timestamp_to_date_key(position.originated_at);
     let mut breaches: u32 = 0;
-    for (day, vwap) in window {
+    for (day, vwap) in window.iter().take(window_days as usize) {
         if *day < originated_day {
             break;
         }
@@ -259,7 +274,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
             breaches = breaches.saturating_add(1);
         }
     }
-    breaches >= CALL_BREACH_DAYS
+    breaches >= threshold_days
 }
 
 /// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
@@ -270,6 +285,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
 /// register a breach, but it must still reach the void arm, so this skips the
 /// price checks rather than the position.
 fn window_for(
+    credis: &CredisContract<'_>,
     storage: &StorageHandle<'_>,
     oracle: &OracleContract<'_>,
     cache: &mut Vec<(u16, VwapWindow)>,
@@ -281,9 +297,13 @@ fn window_for(
     }
     let mut window = Vec::new();
     if let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)? {
-        window.reserve(CALL_LOOKBACK_DAYS as usize);
+        // Widest of the current constant and anything ever opened: a position
+        // keeps the window it was opened with, so a narrowed constant must not
+        // shorten the span the scan collects for it.
+        let window_days = credis.max_call_window.read(&iso_code)?.max(CALL_WINDOW) / SECS_PER_DAY;
+        window.reserve(window_days as usize);
         let mut day = last_closed_day;
-        for _ in 0..CALL_LOOKBACK_DAYS {
+        for _ in 0..window_days {
             window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
             day = previous_date_key(day);
         }
