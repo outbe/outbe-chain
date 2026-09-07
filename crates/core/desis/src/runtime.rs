@@ -94,11 +94,6 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// The digits the ladder ran on before the anchor was stored: the retired $100
-/// strike's own, plus the six each of the load and the rate. A chain that already
-/// stepped under that rule keeps its grid.
-const PROMIS_LOAD_LEGACY_ANCHOR_DIGITS: u32 = 15;
-
 /// Decades of decline the ladder covers before the load pins and the band starts
 /// riding the price down.
 const PROMIS_LOAD_DECADES_OF_HEADROOM: u32 = 6;
@@ -204,14 +199,7 @@ fn step_promis_load(
     };
     let anchor_digits = match contract.promis_load_anchor_digits.read()? {
         0 => {
-            // A chain already stepping the ladder keeps the grid the retired strike
-            // put it on; a fresh one takes the launch pair, which puts this first
-            // Intex on the launch rung whatever the rate is.
-            let digits = if current.is_some() {
-                PROMIS_LOAD_LEGACY_ANCHOR_DIGITS
-            } else {
-                launch_anchor_digits(rate)
-            };
+            let digits = launch_anchor_digits(rate);
             contract.promis_load_anchor_digits.write(digits)?;
             digits
         }

@@ -75,35 +75,6 @@ fn the_first_priced_brief_captures_the_launch_anchor() {
 }
 
 #[test]
-#[cfg(not(feature = "e2e-test"))]
-fn a_chain_already_on_the_ladder_keeps_its_grid() {
-    with_storage(|s| {
-        // A rung reached under the retired strike, with the anchor cell still unset.
-        s.contract::<DesisContract>()
-            .promis_load_exponent
-            .write(8)
-            .unwrap();
-
-        brief(&s, true);
-
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.promis_load_anchor_digits.read().unwrap(),
-            15,
-            "the anchor backfills to the digits that rung was derived from"
-        );
-        assert_eq!(
-            contract
-                .config_promis_load_minor
-                .read(&WORLDWIDE_DAY)
-                .unwrap(),
-            U256::from(100_000_000u128),
-            "and the day holds the rung it arrived on"
-        );
-    });
-}
-
-#[test]
 fn a_launch_anchor_below_the_stored_exponent_cannot_underflow_the_decade() {
     // Independent cells: a corrupt pair must resolve to a rung, not index past the table.
     runtime::promis_load_exponent(LAUNCH_EXPONENT, Some(14), U256::from(5u8));
