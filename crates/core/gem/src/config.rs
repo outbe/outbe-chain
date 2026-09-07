@@ -1,37 +1,37 @@
-//! Genesis-selectable parameter profile for IntexFactory: `PROD` (real timings)
-//! and `DEV` (short timings) are fixed here. A chain picks one via the
+//! Genesis-selectable parameter profile for the Gem protocol: `PROD` (real
+//! timings) and `DEV` (short timings) are fixed here. A chain picks one via the
 //! `config_profile` selector byte seeded from genesis; an unset byte resolves by
 //! network, so only mainnet runs PROD.
 
 use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR, FLOOR_RATE,
+    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
+    POSITION_VALIDITY_SECONDS,
 };
-use crate::schema::IntexFactoryContract;
+use crate::schema::GemContract;
 
 /// Resolve by network: PROD on mainnet, DEV everywhere else.
 pub const PROFILE_AUTO: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
 pub const PROFILE_PROD: u8 = 2;
 
-/// Resolved IntexFactory protocol parameters. Periods are seconds; rates are
-/// percentage points over [`crate::constants::PRICE_RATE_DEN`].
+/// Resolved Gem protocol parameters; all periods are seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IntexParams {
+pub struct GemParams {
     pub call_window: u32,
     pub call_threshold: u32,
     pub call_notice_period: u32,
+    /// Percentage points over the entry price; see `crate::constants`.
     pub call_rate: u16,
     pub floor_rate: u16,
-    /// Commit-entry bond on the target-chain auction in 18-decimal WCOEN units.
-    pub commit_bond_minor: u128,
+    /// How long a parked-Intex position may still issue gems.
+    pub position_validity: u64,
 }
 
-impl IntexParams {
+impl GemParams {
     /// Real protocol timings; the default on mainnet.
     pub const PROD: Self = Self {
         call_window: CALL_WINDOW,
@@ -39,12 +39,11 @@ impl IntexParams {
         call_notice_period: CALL_NOTICE_PERIOD,
         call_rate: CALL_RATE,
         floor_rate: FLOOR_RATE,
-        commit_bond_minor: COMMIT_BOND_MINOR,
+        position_validity: POSITION_VALIDITY_SECONDS,
     };
 
-    /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
-    /// so window/threshold stay whole multiples of a day. The bond drops to
-    /// 100 wCOEN so test bidders are not forced to mint 100M per commit.
+    /// Short timings for dev/test. `called` is day-granular, so window and
+    /// threshold stay whole days; the notice and validity are real waits.
     pub const DEV: Self = Self {
         call_window: 3 * 24 * 3600,
         call_threshold: 2 * 24 * 3600,
@@ -54,7 +53,10 @@ impl IntexParams {
         call_notice_period: 600,
         call_rate: 10,
         floor_rate: 5,
-        commit_bond_minor: 100 * SCALE_1E18_U128,
+        #[cfg(not(feature = "e2e-test"))]
+        position_validity: 7 * 24 * 3600,
+        #[cfg(feature = "e2e-test")]
+        position_validity: 900,
     };
 
     /// The profile a chain runs when genesis left the selector unset.
@@ -72,19 +74,18 @@ impl IntexParams {
             PROFILE_DEV => Ok(Self::DEV),
             PROFILE_PROD => Ok(Self::PROD),
             other => Err(PrecompileError::Revert(format!(
-                "unknown intex profile selector: {other}"
+                "unknown gem profile selector: {other}"
             ))),
         }
     }
 }
 
-pub fn read(storage: &StorageHandle<'_>) -> Result<IntexParams> {
-    read_from(
-        &IntexFactoryContract::new(storage.clone()),
-        storage.chain_id()?,
-    )
+/// Resolve the profile a chain was seeded with. Callers outside the gem crate
+/// read the terms through here rather than from the constants.
+pub fn read(storage: &StorageHandle<'_>) -> Result<GemParams> {
+    read_from(&GemContract::new(storage.clone()), storage.chain_id()?)
 }
 
-pub(crate) fn read_from(factory: &IntexFactoryContract<'_>, chain_id: u64) -> Result<IntexParams> {
-    IntexParams::from_selector(factory.config_profile.read()?, chain_id)
+pub(crate) fn read_from(gem: &GemContract<'_>, chain_id: u64) -> Result<GemParams> {
+    GemParams::from_selector(gem.config_profile.read()?, chain_id)
 }

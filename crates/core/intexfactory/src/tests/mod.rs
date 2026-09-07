@@ -57,7 +57,19 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    StorageHandle::enter(&mut storage, f)
+    StorageHandle::enter(&mut storage, |handle| {
+        select_prod_profile(&handle);
+        f(handle)
+    })
+}
+
+/// These cases assert the PROD terms; an unset profile resolves by chain id, and
+/// the test chain is not mainnet.
+fn select_prod_profile(storage: &StorageHandle<'_>) {
+    crate::schema::IntexFactoryContract::new(storage.clone())
+        .config_profile
+        .write(crate::config::PROFILE_PROD)
+        .unwrap();
 }
 
 /// Test ids carry a fixed USD/U pair; only the day varies.

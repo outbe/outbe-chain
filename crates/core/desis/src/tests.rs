@@ -168,7 +168,15 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
     );
-    StorageHandle::enter(&mut storage, f)
+    StorageHandle::enter(&mut storage, |handle| {
+        // These cases assert the PROD intex terms; an unset profile resolves by
+        // chain id, and the test chain is not mainnet.
+        outbe_intexfactory::schema::IntexFactoryContract::new(handle.clone())
+            .config_profile
+            .write(outbe_intexfactory::config::PROFILE_PROD)
+            .unwrap();
+        f(handle)
+    })
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {

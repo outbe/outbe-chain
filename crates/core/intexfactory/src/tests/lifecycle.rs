@@ -372,7 +372,10 @@ mod call_sweep {
             crate::constants::ORIGIN_ROUTER_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        StorageHandle::enter(&mut storage, f)
+        StorageHandle::enter(&mut storage, |handle| {
+            crate::tests::select_prod_profile(&handle);
+            f(handle)
+        })
     }
 
     fn setup_pair(oracle: &OracleContract) -> AddressPair {
@@ -1195,7 +1198,10 @@ mod called_pstar {
             crate::constants::ORIGIN_ROUTER_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        StorageHandle::enter(&mut storage, f)
+        StorageHandle::enter(&mut storage, |handle| {
+            crate::tests::select_prod_profile(&handle);
+            f(handle)
+        })
     }
 
     fn setup_pair(oracle: &OracleContract) -> AddressPair {
