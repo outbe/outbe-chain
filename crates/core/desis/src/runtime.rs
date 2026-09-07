@@ -103,10 +103,13 @@ const _: () = assert!(
 const PROMIS_LOAD_STRIKE_DIGITS: u32 =
     PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_STRIKE_DIGITS - 1;
+/// The widest rung, and the ceiling the ladder saturates at.
+const PROMIS_LOAD_MAX_EXPONENT: u32 = 14;
 
-const POW10: [u128; PROMIS_LOAD_STRIKE_DIGITS as usize + 1] = {
-    let mut table = [1u128; PROMIS_LOAD_STRIKE_DIGITS as usize + 1];
+/// One entry past the widest rung: the deadband brackets a rung against the top of
+/// the decade above the one it holds.
+const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
+    let mut table = [1u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2];
     let mut i = 1;
     while i < table.len() {
         table[i] = table[i - 1] * 10;
