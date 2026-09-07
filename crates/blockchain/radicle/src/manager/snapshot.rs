@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn exact_snapshot() {
-        let chain_id = 54_322_345;
+        let chain_id = 70_860_602;
         let genesis_hash = B256::repeat_byte(0x44);
         let validator = Address::repeat_byte(0x11);
         let signer = bls12381::PrivateKey::from_seed(7);

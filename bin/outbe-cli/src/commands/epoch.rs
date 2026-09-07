@@ -104,7 +104,7 @@ async fn info(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("Epoch Start Time:   {}", ei.epoch_start_timestamp);
     println!("Active Validators:  {}", ei.active_count);
     println!(
-        "Total Staked:       {} COEN",
+        "Total Staked:       {} rudis",
         super::format_coen_amount(ei.total_staked)
     );
     Ok(())

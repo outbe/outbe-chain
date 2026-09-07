@@ -10,9 +10,9 @@ pub const GRATIS_FACTORY_ADDRESS: Address = address!("0x000000000000000000000000
 pub const PROMIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001337");
 
 /// Promis factory precompile address (orchestrator: mint/burn orchestration via
-/// cross-module API, `mineCoen` on the ABI). Wraps the Promis token at
+/// cross-module API, `mineRudis` on the ABI). Wraps the Promis token at
 /// [`PROMIS_ADDRESS`], records Fidelity cohorts, and mints native COEN on
-/// `mineCoen`. Carries no persistent storage of its own.
+/// `mineRudis`. Carries no persistent storage of its own.
 pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
 
 /// Tribute NFT precompile address.

@@ -720,7 +720,13 @@ fn test_token_uri_returns_metadata_json() {
 
         let token_uri = tc.token_uri(tribute.tribute_id).unwrap();
         assert!(token_uri.starts_with("data:application/json;utf8,"));
-        assert!(token_uri.contains("Outbe Tribute"));
+        let json: serde_json::Value = serde_json::from_str(
+            token_uri
+                .strip_prefix("data:application/json;utf8,")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["description"], "Rudis Tribute");
         assert!(token_uri.contains("worldwide_day"));
         assert!(token_uri.contains("issuance_amount_minor"));
         assert!(token_uri.contains("\"trait_type\":\"reference_currency\""));

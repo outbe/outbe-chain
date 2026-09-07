@@ -7,7 +7,7 @@ Feature: Validator lifecycle state remains internally consistent
 
   @risk-d-01a
   Scenario: A registration proof cannot be replayed on another valid chain
-    Given a funded validator registration fixture on a valid localnet with chain id 54322345
+    Given a funded validator registration fixture on a valid localnet with chain id 70860602
     And the fixture is accepted without changing its identity material
     When the localnet is re-bootstrapped with valid chain id 424242
     And the same validator address, BLS public key, and proof are submitted

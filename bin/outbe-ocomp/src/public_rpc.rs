@@ -85,13 +85,13 @@ impl PublicOcompRpcClientV1 {
         canonical_request: &[u8],
     ) -> Result<Vec<u8>, PublicRpcError> {
         let value = self.call(
-            "outbe_getOcompLysisOpeningsV1",
+            "rudis_getOcompLysisOpeningsV1",
             json!([
                 format!("{intent_id:#x}"),
                 format!("0x{}", hex::encode(canonical_request))
             ]),
         )?;
-        parse_hex_bytes(&value, "outbe_getOcompLysisOpeningsV1")
+        parse_hex_bytes(&value, "rudis_getOcompLysisOpeningsV1")
     }
 
     fn job_record_at_tag(

@@ -91,7 +91,7 @@ interface IOriginRouter {
     event NativeSwept(address indexed to, uint256 amount);
 
     /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
-    event ProceedsRouteSet(address tokenBridge, address wcoen);
+    event ProceedsRouteSet(address tokenBridge, address wrudis);
     /// @notice Emitted when inbound auction proceeds are handed to the factory for creator payout.
     event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when distribution failed and the proceeds were parked for retry.
@@ -345,11 +345,11 @@ interface IOriginRouter {
 
     // --- Proceeds ---
     /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
-    function setProceedsRoute(address _tokenBridge, address _wcoen) external;
+    function setProceedsRoute(address _tokenBridge, address _wrudis) external;
     /// @notice WCOEN token bridge authorized to invoke the proceeds hook.
     function tokenBridge() external view returns (address);
     /// @notice WCOEN token unwrapped to native before distribution.
-    function wcoen() external view returns (address);
+    function wrudis() external view returns (address);
     /// @notice Parked proceeds awaiting retry, by enqueue index.
     function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
     /// @notice Permissionless retry of a parked distribution.

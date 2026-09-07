@@ -41,7 +41,7 @@ pub fn dispatch(
                 let (rate, block, ts) = oracle.get_exchange_rate_data(c.base, c.quote)?;
                 Ok((rate, block, ts).into())
             }),
-            getCoenExchangeRateFor(c) => view(c, |c| {
+            getRudisExchangeRateFor(c) => view(c, |c| {
                 let quote = crate::api::currency_address(c.isoCode);
                 oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)
             }),

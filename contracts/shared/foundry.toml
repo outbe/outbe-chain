@@ -24,7 +24,7 @@ remappings_generate = false
 [rpc_endpoints]
 outbe-dev="https://eth.d.outbe.net"
 bsc-testnet="https://bsc-testnet-rpc.publicnode.com"
-outbe-testnet="https://rpc.testnet.outbe.net"
+outbe-testnet="${OUTBE_RPC_URL}"
 
 
 [dependencies]

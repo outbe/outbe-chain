@@ -50,7 +50,7 @@ impl Committee {
 
     fn binding(&self) -> DcapSeededChainSpecBindingV1 {
         DcapSeededChainSpecBindingV1 {
-            chain_id: 54322345,
+            chain_id: 70860602,
             genesis_hash: B256::ZERO,
             genesis_consensus_keys: self
                 .players

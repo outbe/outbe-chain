@@ -99,7 +99,7 @@ jobs:
             --output "${TESTNET_SEEDED_GENESIS}" "${OUTBE_GENESIS_URL}"
           printf '%s  %s\n' "${OUTBE_GENESIS_SHA256}" "${TESTNET_SEEDED_GENESIS}" \
             | sha256sum --check
-          test "$(jq -er '.config.chainId' "${TESTNET_SEEDED_GENESIS}")" = '54322345'
+          test "$(jq -er '.config.chainId' "${TESTNET_SEEDED_GENESIS}")" = '70860602'
           test "$(jq -r '.config | has("teeAttestationV1")' \
             "${TESTNET_SEEDED_GENESIS}")" = 'false'
 

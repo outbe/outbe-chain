@@ -9,9 +9,9 @@
   "capacity_evidence_sha256": "0x1bbe70942341ba3d2d9809c37e2ded19e93173d25e3e006d7e5166f39e400238",
   "generated_limits_manifest_sha256": "0x5714005fb64ea5714229b552c28445cd7f5e7673af998b0ca172d7ba341a7002",
   "generator_source_sha256": "0xec24e2348986622a7273f240020e210195e3703d14537bae0ff2a974bd51689b",
-  "base_genesis_sha256": "0x7b5ed0f4830359fef8ed785f8d964907a9930cc2d91057a06328f3c66b1a4c17",
+  "base_genesis_sha256": "0x38c21603dc6511cfdb760d854bb1358c318b18a2f9660cbdcc0304e044e2899b",
   "validators_manifest_sha256": "0xc96a44b8151e5c53823ffa8f4a06e44fa7cd68521c04783a9f36b167f9fb76de",
-  "chain_id": 54322345,
+  "chain_id": 70860602,
   "genesis_hash": "0x88cf63d3a70910c1fa3ac5e5c86bc56e1fdc7eda8531257f93ef1298d5f4895f",
   "fork_id": "0x1d1378c5bf42070e0326f13d3094f4b7ed3ef42c63edb3179745045f65027eb2",
   "correctness_profile_id": "0x0469002bbc5065d8e9d200daede2a65ec479cad78210d7dadabdd5320d241c8d",
@@ -21,8 +21,8 @@
   "protocol_bundle_hash": "0x22f538ebdbdb10a50d78fb615fb9bc689d0cdbea67bad911fa79bf0a9b7de970",
   "protocol_bundle_ocb1_sha256": "0xa30cd34abaea678f229262c66aa913f53790d1015e507effeb62e8a443fb8183",
   "founder_registration_count": 4,
-  "fork_install_hash": "0x9043da41f854e7ff763490b44543983b7e8d5926e0443518fa680eb058fb3f1b",
-  "fork_install_ocb1_sha256": "0x7d2370d4ef6e81227823dbbb201dbd9e63882bafc245e75ccad0b64be025355b",
-  "chain_manifest_sha256": "0xdd822d966875318ae772f68c6ee8257bce61545a3d4195737f6e45ffe8a96ebf",
+  "fork_install_hash": "0x9118fe9ffe767e024e1e9ffe9c3c4711a70bb8adc2557730e444f15f1d0ae12f",
+  "fork_install_ocb1_sha256": "0x3fc1539de3d2886c3867975af194528d2e74652d1c40ea3d01d23c2a7f41c85e",
+  "chain_manifest_sha256": "0x289a1f18ba9424f0771b2f565e410373308ef13ed44f86295b9444c62fa1595b",
   "semantic_artifacts_sha256": "0xa421b649b6f8f3e31a1e53e51c3a746b37970690cfd130efb5da7f8fe33da2f3"
 }

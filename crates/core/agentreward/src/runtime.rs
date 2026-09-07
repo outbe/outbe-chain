@@ -128,7 +128,7 @@ impl AgentRewardContract<'_> {
         let burned = checked_protocol_to_native(gem_load)
             .ok_or_else(|| PrecompileError::Revert("native AgentReward claim overflow".into()))?;
         let entry_price = resolve_gem_entry_price(&self.storage)?.ok_or_else(|| {
-            PrecompileError::Revert("agentreward has no usable COEN price yet".into())
+            PrecompileError::Revert("agentreward has no usable rudis price yet".into())
         })?;
         let gem_type = match pool {
             RewardPool::Waa => GemTypes::Wallet,

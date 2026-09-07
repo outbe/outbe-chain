@@ -828,16 +828,20 @@ struct OutbeRpcModuleValidator;
 
 impl RpcModuleValidator for OutbeRpcModuleValidator {
     fn parse_selection(s: &str) -> Result<RpcModuleSelection, String> {
-        let selection = s
+        let mut selection = s
             .parse::<RpcModuleSelection>()
             .map_err(|error| format!("Failed to parse RPC modules: {error}"))?;
 
-        if let RpcModuleSelection::Selection(modules) = &selection {
-            for module in modules {
+        if let RpcModuleSelection::Selection(modules) = &mut selection {
+            // Preserve the operator selector; expose only rudis_* on the wire.
+            if modules.remove(&RethRpcModule::Other("outbe".to_owned())) {
+                modules.insert(RethRpcModule::Other("rudis".to_owned()));
+            }
+            for module in modules.iter() {
                 let RethRpcModule::Other(name) = module else {
                     continue;
                 };
-                if name != "outbe" {
+                if name != "rudis" {
                     return Err(format!("Unknown RPC module: '{name}'"));
                 }
             }
@@ -2098,7 +2102,7 @@ fn run_node() -> eyre::Result<()> {
         let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health: published by the tee-canary worker (spawned
-        // after node launch), read by `outbe_consensusStatus.enclave`.
+        // after node launch), read by `rudis_consensusStatus.enclave`.
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
@@ -2156,7 +2160,7 @@ fn run_node() -> eyre::Result<()> {
                     let provider = Arc::new(ctx.provider().clone());
                     // Validators get the full bridge-backed handler.
                     // `--upstream` followers also run a marshal and CAN serve
-                    // `outbe_getFinalization` (chaining followers), but must NOT
+                    // `rudis_getFinalization` (chaining followers), but must NOT
                     // report validator status; they get a follower-scoped handler
                     // that exposes only the finalization-serving capability.
                     let outbe_api = (if is_validator {
@@ -2251,10 +2255,10 @@ fn run_node() -> eyre::Result<()> {
                     .with_radicle_status(radicle_status.clone())
                     .with_tee_enclave_health(tee_enclave_health.clone());
                     ctx.modules.merge_if_module_configured(
-                        RethRpcModule::Other("outbe".to_owned()),
+                        RethRpcModule::Other("rudis".to_owned()),
                         outbe_api.into_rpc(),
                     )?;
-                    info!("outbe_* RPC namespace registered where configured");
+                    info!("rudis_* RPC namespace registered where configured");
                     Ok(())
                 }
             })
@@ -3579,15 +3583,26 @@ mod tests {
     }
 
     #[test]
-    fn outbe_rpc_module_validator_accepts_outbe_namespace() {
+    fn outbe_rpc_module_validator_accepts_rudis_namespace() {
         use reth_rpc_server_types::{RpcModuleSelection, RpcModuleValidator as _};
 
-        let selection = super::OutbeRpcModuleValidator::parse_selection("eth,net,web3,outbe")
-            .expect("outbe namespace should be accepted");
+        let selection = super::OutbeRpcModuleValidator::parse_selection("eth,net,web3,rudis")
+            .expect("rudis namespace should be accepted");
         let RpcModuleSelection::Selection(modules) = selection else {
             panic!("explicit module list should parse as selection");
         };
-        assert!(modules.iter().any(|module| module.as_str() == "outbe"));
+        assert!(modules.iter().any(|module| module.as_str() == "rudis"));
+    }
+
+    #[test]
+    fn outbe_rpc_module_validator_normalizes_legacy_operator_selector() {
+        use reth_rpc_server_types::{RpcModuleSelection, RpcModuleValidator as _};
+        let selection = super::OutbeRpcModuleValidator::parse_selection("eth,outbe").unwrap();
+        let RpcModuleSelection::Selection(modules) = selection else {
+            panic!("expected explicit module selection");
+        };
+        assert!(modules.iter().any(|module| module.as_str() == "rudis"));
+        assert!(!modules.iter().any(|module| module.as_str() == "outbe"));
     }
 
     #[test]

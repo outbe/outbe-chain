@@ -8733,6 +8733,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8974,6 +8975,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9742,6 +9744,7 @@ dependencies = [
  "outbe-primitives",
  "revm",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]

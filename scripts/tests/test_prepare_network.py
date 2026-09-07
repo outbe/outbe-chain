@@ -65,7 +65,7 @@ class PrepareNetworkTests(unittest.TestCase):
     def test_network_profiles_expose_the_canonical_attestation_matrix(self) -> None:
         for network, chain_id in (
             ("devnet", 424242),
-            ("testnet", 54322345),
+            ("testnet", 70860602),
         ):
             for tee_mode in ("dcap-required", "gramine-direct-dev"):
                 self.assertEqual(
@@ -377,7 +377,7 @@ class PrepareNetworkTests(unittest.TestCase):
                     "--tee-mode",
                     "dcap-required",
                     "--chain-id",
-                    "54322345",
+                    "70860602",
                     "--mrenclave",
                     "0x" + "11" * 32,
                     "--mrsigner",
@@ -428,7 +428,7 @@ class PrepareNetworkTests(unittest.TestCase):
                     "--tee-mode",
                     "dcap-required",
                     "--chain-id",
-                    "54322345",
+                    "70860602",
                     "--mrenclave",
                     "0x" + "11" * 32,
                     "--mrsigner",
@@ -447,7 +447,7 @@ class PrepareNetworkTests(unittest.TestCase):
             )
 
             genesis = json.loads((output / "genesis.json").read_text())
-            self.assertEqual(genesis["config"]["chainId"], 54322345)
+            self.assertEqual(genesis["config"]["chainId"], 70860602)
             self.assertEqual(genesis["config"]["epochLengthBlocks"], 300)
             tee_manifest = json.dumps(genesis["config"]["teeAttestationV1"])
             self.assertIn("11" * 32, tee_manifest)

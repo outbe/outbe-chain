@@ -7,17 +7,21 @@ export interface ChainConfig {
   name: string;
   rpc: string;
   chainId: number;
-  /** Decimals of the chain's native token; COEN and standard EVM natives are 18.
+  /** Decimals of the chain's native token; rudis and standard EVM natives are 18.
    *  Not discoverable over RPC, so it has to be configured per chain. */
   nativeDecimals: number;
 }
 
-// Router address (same on all chains)
-export const ROUTER = process.env.ROUTER || '0x1619D255A9febB3C66b54Ff17Eb165efbCcda5b3';
+function requiredAddress(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} must name a confirmed deployment for the selected networks`);
+  return ethers.getAddress(value);
+}
 
-// Token addresses
-export const INPUT_TOKEN = process.env.INPUT_TOKEN || '0x5cDF01b5Cb3C82a71f423dB6a91c721f138EbEce';
-export const OUTPUT_TOKEN = process.env.OUTPUT_TOKEN || '0xe6E008521e1DB2a638863eac4682c2561874F37b';
+// Deployment addresses are explicitly configured for each example run.
+export const ROUTER = requiredAddress('ROUTER');
+export const INPUT_TOKEN = requiredAddress('INPUT_TOKEN');
+export const OUTPUT_TOKEN = requiredAddress('OUTPUT_TOKEN');
 
 // Fill deadline (seconds after order creation)
 export const FILL_DEADLINE_SECONDS = parseInt(process.env.FILL_DEADLINE_SECONDS || '86400'); // Default: 24 hours
@@ -61,9 +65,12 @@ export const chains: Record<string, ChainConfig> = {
   },
 
   outbe_testnet: {
-    name: 'Outbe Testnet',
-    rpc: process.env.OUTBE_TESTNET_RPC || 'https://rpc.testnet.outbe.net',
-    chainId: parseInt(process.env.OUTBE_TESTNET_CHAIN_ID || '54322345'),
+    name: 'Rehearsal Network',
+    get rpc() {
+      if (!process.env.OUTBE_TESTNET_RPC) throw new Error('OUTBE_TESTNET_RPC is required for Rehearsal Network');
+      return process.env.OUTBE_TESTNET_RPC;
+    },
+    chainId: parseInt(process.env.OUTBE_TESTNET_CHAIN_ID || '70860602'),
     nativeDecimals: 18,
   },
 };

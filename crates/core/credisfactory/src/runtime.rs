@@ -99,7 +99,7 @@ pub fn request_credis(
     // pledge quote. Exact equality, not a floor: matching one for one is the rule, and a
     // floor would let the amount handed to the borrower drift off the collateral.
     let required_stake = checked_protocol_to_native(terms.gratis_amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN stake overflow".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("native rudis stake overflow".into()))?;
     if stake != required_stake {
         return Err(CredisFactoryError::CcaStakeMismatch.into());
     }

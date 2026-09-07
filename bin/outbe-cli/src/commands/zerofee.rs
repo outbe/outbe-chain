@@ -93,7 +93,7 @@ async fn submit_bootstrap(client: &(impl Rpc + Sync), signer: &TxSigner) -> Resu
     let balance = client.eth_get_balance(signer.address()).await?;
     eyre::ensure!(
         !balance.is_zero(),
-        "ZeroFee bootstrap requires a positive balance (at least 0.000001 COEN)"
+        "ZeroFee bootstrap requires a positive balance (at least 0.000001 rudis)"
     );
     let chain_id = client.eth_chain_id().await?;
     let nonce = client.eth_get_transaction_count(signer.address()).await?;
@@ -238,7 +238,7 @@ mod tests {
         )]);
 
         let error = submit_bootstrap(&rpc, &signer).await.unwrap_err();
-        assert!(error.to_string().contains("at least 0.000001 COEN"));
+        assert!(error.to_string().contains("at least 0.000001 rudis"));
         rpc.assert_done();
     }
 

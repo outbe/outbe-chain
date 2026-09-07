@@ -1,4 +1,4 @@
-import type { Abi } from "viem";
+import { type Abi, type Address, getAddress } from "viem";
 import RouterJson from "../../../contracts/intent/abi-export/Router.json";
 import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 
@@ -10,7 +10,12 @@ import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
  *  - contracts/tokens/src/interfaces/IERC20.sol
  */
 
-export const DEFAULT_ROUTER = "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492";
+/** Same-address router deployment on both chains, explicitly supplied by the operator. */
+export function intentRouter(): Address {
+  const value = process.env.OUTBE_INTENT_ROUTER;
+  if (!value) throw new Error("Set OUTBE_INTENT_ROUTER to the deployed Rudis intent router");
+  return getAddress(value);
+}
 export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
 
 /**
@@ -21,12 +26,12 @@ export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
 export interface NetworkDef {
   name: string;
   chainId: number;
-  rpc: string;
+  rpc?: string;
 }
 
 export const NETWORKS: NetworkDef[] = [
   { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
+  { name: "rehearsal-network-1", chainId: 70860602, rpc: process.env.OUTBE_RPC },
 ];
 
 export const ROUTER_ABI: Abi = RouterJson as Abi;

@@ -60,7 +60,7 @@ pub enum PublicFinalizedBlockDecodeError {
 }
 
 /// Canonically decode the two byte strings exposed by
-/// `outbe_getFinalization(height)`.
+/// `rudis_getFinalization(height)`.
 ///
 /// Decoding establishes structure only. Callers must still authenticate the
 /// certificate against the historical committee before treating it as
@@ -130,7 +130,7 @@ pub trait LocalBlockSource: Clone + Send + Sync + 'static {
 
 /// Discovers how far the upstream has finalized, so the follower knows which
 /// heights to pull. Backed by the upstream's
-/// `outbe_consensusStatus().last_finalized_block`.
+/// `rudis_consensusStatus().last_finalized_block`.
 pub trait TipSource: Clone + Send + Sync + 'static {
     /// The upstream's latest finalized block height, or `None` if unreachable.
     fn finalized_tip(&self) -> impl Future<Output = Option<Height>> + Send;

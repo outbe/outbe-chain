@@ -314,7 +314,7 @@ impl CurrencyPairConfig {
 
 fn parse_oracle_asset(symbol: &str) -> Result<Address> {
     let text = symbol.trim();
-    if text.eq_ignore_ascii_case("COEN") {
+    if text.eq_ignore_ascii_case("rudis") || text.eq_ignore_ascii_case("COEN") {
         return Ok(Address::ZERO);
     }
     if let Ok(code) = text.parse::<u16>() {
@@ -567,13 +567,13 @@ mod tests {
         );
         let cfg = FeederConfig::load(&path).unwrap();
         // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
-        assert_eq!(cfg.chain.chain_id, 54322345);
+        assert_eq!(cfg.chain.chain_id, 70860602);
         assert_eq!(cfg.oracle.vote_period, 8);
         // COEN/840 is the only pair the chain registers; the decorative
         // XAU/BTC/ETH/stablecoin entries were dropped because no code read them
         // and they name assets with no on-chain address.
         assert_eq!(cfg.currency_pairs.len(), 1);
-        assert_eq!(cfg.currency_pairs[0].base, "COEN");
+        assert_eq!(cfg.currency_pairs[0].base, "rudis");
         assert_eq!(cfg.currency_pairs[0].quote, "840");
         assert!(cfg
             .currency_pairs

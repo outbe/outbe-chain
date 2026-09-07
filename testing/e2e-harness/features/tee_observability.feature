@@ -5,7 +5,7 @@ Feature: TEE enclave observability and session identity
   # owns the OBSERVABILITY and SESSION-IDENTITY contract around that channel
   # (2026-08-22 testnet incident follow-up):
   #   - every enclave answers the node's canary decrypt and reports health
-  #     through `outbe_consensusStatus.enclave`;
+  #     through `rudis_consensusStatus.enclave`;
   #   - every served request leaves a telemetry line in the enclave log;
   #   - an enclave-sidecar restart that preserves the sealed identity is
   #     survivable WITHOUT restarting the validator (session reconnect with

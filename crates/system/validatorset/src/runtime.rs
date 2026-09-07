@@ -1405,7 +1405,7 @@ impl ValidatorSet<'_> {
 
     /// Stale-join guard: a PENDING joiner confirms, on-chain, that its node has
     /// caught up to head and is ready to be frozen into the next DKG reshare
-    /// target. The operator sends this only after `outbe_syncStatus` shows the
+    /// target. The operator sends this only after `rudis_syncStatus` shows the
     /// node at the finalized tip; until then the joiner stays PENDING and is
     /// excluded from [`Self::get_reshare_target_set`]. Caller must be the
     /// validator itself and currently PENDING.

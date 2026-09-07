@@ -16,7 +16,10 @@ use outbe_primitives::asset_type::AssetType;
 /// say `oracle rate COEN 840` working now that the ABI takes addresses.
 fn parse_asset(spec: &str) -> Result<Address> {
     let text = spec.trim();
-    if text.eq_ignore_ascii_case("COEN") || text.eq_ignore_ascii_case("native") {
+    if text.eq_ignore_ascii_case("rudis")
+        || text.eq_ignore_ascii_case("COEN")
+        || text.eq_ignore_ascii_case("native")
+    {
         return Ok(Address::ZERO);
     }
     if let Ok(code) = text.parse::<u16>() {
@@ -25,13 +28,13 @@ fn parse_asset(spec: &str) -> Result<Address> {
         }
     }
     text.parse::<Address>()
-        .map_err(|e| eyre::eyre!("{spec:?} is not COEN, an ISO 4217 code or a 0x address: {e}"))
+        .map_err(|e| eyre::eyre!("{spec:?} is not rudis, an ISO 4217 code or a 0x address: {e}"))
 }
 
 /// Renders an asset address back into the shorthand `parse_asset` accepts.
 fn show_asset(address: Address) -> String {
     match AssetType::from(address) {
-        AssetType::Native => "COEN".to_string(),
+        AssetType::Native => outbe_primitives::units::NATIVE_TOKEN_SYMBOL.to_string(),
         AssetType::IsoCurrency(code) => code.to_string(),
         AssetType::ERC20(token) => token.to_string(),
     }
@@ -53,7 +56,7 @@ fn format_oracle_market_quantity(
 pub enum OracleCmd {
     /// Show exchange rate for a pair
     Rate {
-        /// Base currency (e.g., COEN)
+        /// Base currency (e.g., rudis)
         #[arg(value_parser = parse_asset)]
         base: Address,
         /// Quote as an ISO 4217 numeric code (e.g., 840 for USD)
@@ -976,6 +979,15 @@ fn format_percent(numerator: u64, denominator: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_aliases_render_as_rudis() {
+        for alias in ["rudis", "RUDIS", "COEN", "native"] {
+            let asset = parse_asset(alias).unwrap();
+            assert_eq!(asset, Address::ZERO);
+            assert_eq!(show_asset(asset), "rudis");
+        }
+    }
 
     #[test]
     fn test_oracle_cmd_parse() {

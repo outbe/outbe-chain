@@ -115,7 +115,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
 
     println!("=== Outbe Network Monitor ===");
     println!(
-        "Block: {block}  |  Epoch: {epoch}  |  Active: {count}  |  Staked: {} COEN",
+        "Block: {block}  |  Epoch: {epoch}  |  Active: {count}  |  Staked: {} rudis",
         super::format_coen_amount(total)
     );
     println!();
@@ -518,7 +518,7 @@ mod tests {
         run_readiness(&mock, None).await.unwrap();
     }
 
-    /// An `enclave` object absent from `outbe_consensusStatus` (older node) is
+    /// An `enclave` object absent from `rudis_consensusStatus` (older node) is
     /// a warning, never a readiness failure - the happy test above covers it.
     /// A ready canary keeps READY; degraded/unavailable flips to NOT READY.
     #[tokio::test]

@@ -6,7 +6,9 @@
 # key shows its default value; uncomment to change it. Section defaults come
 # from scripts/seed-testnet.json, the single baseline profile.
 
-chain_id: 424242
+network: testnet
+chain_id: 70860602
+enclave_sgx: true
 
 # One host or IP per founding validator, in order. OCOMP V1 fixes the
 # founding committee at four members. Append `:port` to give one validator a
@@ -154,11 +156,11 @@ tee:
 #     slash_fraction: "0"
 #     lookback_duration: 86400
 #   pairs:
-#     - base: COEN
+#     - base: rudis
 #       quote: "840"
 #       initial_rate: "1000000"
 #   scurve_seeds:
-#     - pair_base: COEN
+#     - pair_base: rudis
 #       pair_quote: "840"
 #       peak_day: 20241220
 #       peak_price: "1000000"

@@ -1621,7 +1621,7 @@ mod tests {
             &path,
             &FeederConfigInput {
                 rpc_url: "http://127.0.0.1:18545",
-                chain_id: 54_322_345,
+                chain_id: 70_860_602,
                 private_key: "0xsecret",
                 validator_address: "0x0000000000000000000000000000000000000001",
                 mock_url: "http://127.0.0.1:31415",

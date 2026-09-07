@@ -84,7 +84,7 @@ function oraclePresentationScale(
 ): DecimalScale | undefined {
   if (!context) return undefined;
 
-  if (fn.name === "getCoenExchangeRateFor" || fn.name === "getPolicyRate") {
+  if (fn.name === "getRudisExchangeRateFor" || fn.name === "getPolicyRate") {
     return 6;
   }
 

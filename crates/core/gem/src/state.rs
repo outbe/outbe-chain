@@ -8,7 +8,7 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     schema::{GemContract, GemData, GemState},
 };
@@ -60,14 +60,11 @@ impl GemContract<'_> {
 
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        let gem_id_str = gem_id.to_string();
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"promis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
+            "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"promis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
             gem_id,
             TOKEN_DESCRIPTION,
-            TOKEN_IMAGE_BASE,
-            gem_id_str,
             gem_id,
             item.gem_type,
             item.state,

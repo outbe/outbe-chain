@@ -4,7 +4,7 @@
 //! (`outbe_promis::api`). Writes are authorized by the caller's Promis modify key
 //! (`mac` + `opNonce`). `mint` wraps `outbe_promis::api::mint`; `mine_coen` is the
 //! symmetric sale path: it wraps `outbe_promis::api::burn`, mints native COEN 1:1,
-//! and emits `CoenMined`. `mine_gratis` is the conversion path: it burns promis and
+//! and emits `RudisMined`. `mine_gratis` is the conversion path: it burns promis and
 //! mints the matching Gratis through `outbe_gratisfactory::api::mint`.
 
 use alloy_primitives::{Address, U256};
@@ -32,7 +32,7 @@ pub fn mint(
 }
 
 /// Burn `amount` promis from `account`, mint the matching native COEN to `account`
-/// 1:1, and emit `CoenMined`. Returns the minted native amount. The confidential
+/// 1:1, and emit `RudisMined`. Returns the minted native amount. The confidential
 /// burn runs inside the enclave and is authorized by the caller's Promis modify
 /// key (`auth`).
 pub fn mine_coen(
@@ -42,7 +42,7 @@ pub fn mine_coen(
     auth: ModifyAuth,
 ) -> Result<U256> {
     let native_amount = checked_protocol_to_native(amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("native rudis amount overflow".into()))?;
 
     promis::burn(storage.clone(), account, amount, auth)?;
 
@@ -51,7 +51,7 @@ pub fn mine_coen(
 
     storage.emit_event(
         PROMIS_FACTORY_ADDRESS,
-        alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::CoenMined {
+        alloy_sol_types::SolEvent::encode_log_data(&IPromisFactory::RudisMined {
             sender: account,
             amount: native_amount,
         }),

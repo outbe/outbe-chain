@@ -1,6 +1,6 @@
 [chain]
 rpc_endpoint = "http://127.0.0.1:8545"
-chain_id = 54322345
+chain_id = 70860602
 gasless_oracle_votes = true
 
 [account]
@@ -23,7 +23,7 @@ name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
 
 [[currency_pairs]]
-base = "COEN"
+base = "rudis"
 quote = "840"
 
 [[currency_pairs.sources]]
@@ -32,5 +32,5 @@ base = "COEN"
 quote = "840"
 
 [[deviation_thresholds]]
-base = "COEN"
+base = "rudis"
 threshold = "2.0"

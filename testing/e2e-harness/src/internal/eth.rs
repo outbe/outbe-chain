@@ -486,7 +486,7 @@ pub(crate) fn block_hash(url: &str, height: u64) -> Option<String> {
 }
 
 /// A custom JSON-RPC method returning an arbitrary JSON value (e.g.
-/// `outbe_consensusStatus`).
+/// `rudis_consensusStatus`).
 pub(crate) fn raw_json(url: &str, method: &'static str) -> Option<serde_json::Value> {
     raw_json_with_params(url, method, serde_json::json!([]))
 }
@@ -566,7 +566,7 @@ pub(crate) fn derive_account_keys(
     };
     let response = raw_json_result(
         url,
-        "outbe_deriveKeys",
+        "rudis_deriveKeys",
         serde_json::json!([
             ledger_name,
             format!("{account:#x}"),
@@ -579,9 +579,9 @@ pub(crate) fn derive_account_keys(
         let value = response
             .get(field)
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre!("outbe_deriveKeys omitted {field}"))?;
+            .ok_or_else(|| eyre!("rudis_deriveKeys omitted {field}"))?;
         hex::decode(value.trim_start_matches("0x"))
-            .map_err(|error| eyre!("decode outbe_deriveKeys {field}: {error}"))
+            .map_err(|error| eyre!("decode rudis_deriveKeys {field}: {error}"))
     };
     let ephemeral_pubkey: [u8; 32] = decode("enclaveEphemeralPubkey")?
         .try_into()
@@ -600,7 +600,7 @@ pub(crate) fn derive_account_keys(
     .map_err(|error| eyre!("open sealed {ledger_name} keys: {error}"))?;
     if plaintext.len() != 64 {
         return Err(eyre!(
-            "outbe_deriveKeys plaintext is {} bytes instead of 64",
+            "rudis_deriveKeys plaintext is {} bytes instead of 64",
             plaintext.len()
         ));
     }

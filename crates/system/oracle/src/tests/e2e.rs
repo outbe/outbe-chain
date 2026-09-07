@@ -335,12 +335,12 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
 
         // COEN sorts first, so the ISO-code shorthand is always the canonical
         // direction and agrees with the explicit two-address form.
-        let calldata = IOracle::getCoenExchangeRateForCall { isoCode: 840 }.abi_encode();
+        let calldata = IOracle::getRudisExchangeRateForCall { isoCode: 840 }.abi_encode();
         let result =
             crate::precompile::dispatch(storage.clone(), &calldata, Address::ZERO, U256::ZERO)
                 .unwrap();
         assert_eq!(
-            IOracle::getCoenExchangeRateForCall::abi_decode_returns(&result).unwrap(),
+            IOracle::getRudisExchangeRateForCall::abi_decode_returns(&result).unwrap(),
             expected_rate
         );
     });

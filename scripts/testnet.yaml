@@ -154,11 +154,11 @@ oracle:
     slash_fraction: "0"
     lookback_duration: 86400
   pairs:
-    - base: COEN
+    - base: rudis
       quote: "840"
       initial_rate: "1000000"
   scurve_seeds:
-    - pair_base: COEN
+    - pair_base: rudis
       pair_quote: "840"
       peak_day: 20241220
       peak_price: "1000000"

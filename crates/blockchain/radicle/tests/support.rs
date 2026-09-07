@@ -7,7 +7,7 @@ use outbe_radicle::endpoint::{
     EndpointResponseBody, PeerId, SignedEndpointResponse,
 };
 
-pub const CHAIN_ID: u64 = 54_322_345;
+pub const CHAIN_ID: u64 = 70_860_602;
 pub const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
 pub const ANCHOR_HASH: B256 = B256::repeat_byte(0x22);
 

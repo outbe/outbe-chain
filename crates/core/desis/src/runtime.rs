@@ -192,7 +192,7 @@ fn step_promis_load(
                 worldwideDay: worldwide_day.into(),
                 previousLoadMinor: promis_load_minor(previous),
                 newLoadMinor: load,
-                coenUsdRateMinor: rate,
+                rudisUsdRateMinor: rate,
             })?;
             contract.promis_load_exponent.write(exponent)?;
         }

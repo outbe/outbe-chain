@@ -60,6 +60,8 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
+        _assertContains(json, "Rehearsal Network");
+        assertFalse(json.contains("Outbe"));
         _assertContains(json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), "\","));
         _assertContains(json, string.concat("\"description\":\"", IntexMetadata.DESCRIPTION, "\""));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");

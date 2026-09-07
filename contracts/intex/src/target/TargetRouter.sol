@@ -39,7 +39,7 @@ contract TargetRouter is
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
     /// @notice Destination chainId of Outbe - the sole peer for every outbound send and the only accepted source.
-    uint32 public immutable OUTBE_CHAIN_ID;
+    uint32 public immutable RUDIS_CHAIN_ID;
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
@@ -52,8 +52,8 @@ contract TargetRouter is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address bridge_, uint32 outbeChainId_) ERC7786MessengerBase(bridge_) {
-        OUTBE_CHAIN_ID = outbeChainId_;
+    constructor(address bridge_, uint32 rudisChainId_) ERC7786MessengerBase(bridge_) {
+        RUDIS_CHAIN_ID = rudisChainId_;
         _disableInitializers();
     }
 
@@ -230,7 +230,7 @@ contract TargetRouter is
     ///         exposing it externally would let anyone trigger relayed bids without going through
     ///         the auction-stage handler.
     /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
-    function relayBidsToOutbe(uint32 worldwideDay) external {
+    function relayBidsToRudis(uint32 worldwideDay) external {
         if (msg.sender != address(this)) revert NotSelf();
         _doSendBidsToOutbe(worldwideDay);
     }
@@ -309,7 +309,7 @@ contract TargetRouter is
         bytes memory message = BridgeMsgCodec.encodeBidsDone(
             worldwideDay, uint32(block.chainid), relayGeneration, totalBatches, totalBids
         );
-        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_DONE);
+        bytes32 sendId = _send(RUDIS_CHAIN_ID, message, IntexGas.BIDS_DONE);
         emit BidsDoneSent(sendId, worldwideDay, totalBatches, totalBids);
     }
 
@@ -326,7 +326,7 @@ contract TargetRouter is
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
             worldwideDay, uint32(block.chainid), relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
         );
-        sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
+        sendId = _send(RUDIS_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
     }
 
@@ -403,9 +403,9 @@ contract TargetRouter is
         IERC20 token = $.escrowAdapter.paymentToken();
 
         token.forceApprove(address($.tokenBridge), amount);
-        uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        uint256 fee = $.tokenBridge.quoteSend(RUDIS_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line unused-return,arbitrary-send-eth
-        $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        $.tokenBridge.sendAndCall{value: fee}(RUDIS_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         emit ProceedsRouted(worldwideDay, amount);
     }
 

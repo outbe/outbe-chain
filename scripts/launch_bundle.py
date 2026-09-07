@@ -247,35 +247,35 @@ exec {quote(enclave_runner)} \\
   --tee-dir {quote(validator_dir + "/tee")} \\
   --chain-id {chain_id_hex}
 """
-    # The dev lane still runs the real enclave: on a host with SGX it goes
-    # through gramine-sgx with remote attestation switched off, which is the
-    # `GramineDirectDev` profile - real hardware, no Intel collateral. The
-    # container image is the fallback for a host without SGX.
-    manifest = f"{enclave_dir}/outbe-tee-enclave.manifest.sgx"
-    return f"""
-# TEE enclave, unattested development profile. The node refuses to start
-# until this answers on {endpoint}.
-mkdir -p {quote(validator_dir + "/tee")}
-
-if [ -e /dev/sgx_enclave ] && [ -f {quote(manifest)} ]; then
-  # Real SGX hardware with a signed manifest: run it natively.
-  #
-  # The sealing directory is the one baked into the signed manifest, not a
-  # per-validator path: Gramine only lets the enclave touch files the manifest
-  # declares, so passing anything else fails with a bare "Permission denied".
-  # One signed manifest per host therefore means one sealing directory per
-  # host, which is what a real deployment has anyway.
-  cd {quote(enclave_dir)}
-  # `sudo` only when not already root: under systemd the unit runs as root and
-  # sudo may not even be present in the service environment.
-  exec ${{SUDO:-$([ "$(id -u)" = 0 ] || echo sudo)}} gramine-sgx outbe-tee-enclave \\
-    --socket {quote(endpoint)} \\
-    --tee-dir {quote(enclave_dir + "/tee")} \\
-    --chain-id {chain_id_hex}
+    # The genesis policy permits unattested execution; the launch profile decides
+    # whether hardware isolation is mandatory. Keep it aligned with node_script.
+    if config.get("enclave_sgx", True):
+        manifest = f"{enclave_dir}/outbe-tee-enclave.manifest.sgx"
+        return f"""
+# Unattested SGX: hardware isolation and sealing, no DCAP/PCCS dependency.
+# An explicitly selected hardware profile never falls back to gramine-direct.
+if [ ! -e /dev/sgx_enclave ] && [ ! -e /dev/sgx/enclave ]; then
+  echo "SGX hardware required by enclave_sgx; no enclave device found" >&2
+  exit 1
 fi
+[ -f {quote(manifest)} ] || {{ echo "signed SGX manifest missing" >&2; exit 1; }}
+python3 - {quote(manifest)} <<'PY_MANIFEST'
+import sys, tomllib
+with open(sys.argv[1], "rb") as source:
+    manifest = tomllib.load(source)
+if manifest.get("sgx", {{}}).get("remote_attestation", "none") != "none":
+    sys.exit("gramine-direct-dev requires SGX remote attestation none")
+PY_MANIFEST
+cd {quote(enclave_dir)}
+exec ${{SUDO:-$([ "$(id -u)" = 0 ] || echo sudo)}} gramine-sgx outbe-tee-enclave \\
+  --socket {quote(endpoint)} \\
+  --tee-dir {quote(enclave_dir + "/tee")} \\
+  --chain-id {chain_id_hex}
+"""
 
-# No SGX on this host: fall back to the container, which runs the enclave
-# under gramine-direct (LibOS only, no hardware isolation).
+    return f"""
+# Unattested development profile without SGX, selected by enclave_sgx: false.
+mkdir -p {quote(validator_dir + "/tee")}
 docker rm -f {quote(name)} >/dev/null 2>&1 || true
 exec docker run --rm --name {quote(name)} \\
   --network host \\
@@ -414,7 +414,7 @@ exec {quote(binary)} node \\
   --tee-enclave-socket 127.0.0.1:{port_of(config, "tee_enclave_port")} \\
   --projection.storage-config {quote(base_dir + f"/validator-{index}/offchain-storage.toml")} \\
   --http --http.addr 127.0.0.1 --http.port {port_of(config, "rpc_port")} \\
-  --http.api eth,net,web3,outbe \\
+  --http.api eth,net,web3,rudis \\
   --authrpc.port {port_of(config, "authrpc_port")} \\
   --port {port_of(config, "reth_p2p_port")} \\
   --discovery.port {port_of(config, "reth_p2p_port")} \\
@@ -476,7 +476,7 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 {provider_endpoint}
 
 [[currency_pairs]]
-base = "COEN"
+base = "rudis"
 quote = "840"
 
 [[currency_pairs.sources]]
@@ -485,7 +485,7 @@ base = "COEN"
 quote = "{source_quote}"
 
 [[deviation_thresholds]]
-base = "COEN"
+base = "rudis"
 threshold = "2.0"
 """
 

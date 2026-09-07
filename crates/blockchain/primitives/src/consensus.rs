@@ -365,13 +365,13 @@ struct BridgeState {
     /// across rejected or abandoned proposal candidates; the block-number guard
     /// in the payload builder makes it unreachable after block 1.
     pending_tee_bootstrap: Option<crate::tee_bootstrap_v2::TeeBootstrapV2>,
-    /// Channel to the consensus-side drainer that answers `outbe_getFinalization`
+    /// Channel to the consensus-side drainer that answers `rudis_getFinalization`
     /// RPC requests from the marshal. Set once at marshal-start; `None` on a
     /// node that does not serve finalizations (e.g. before consensus is up).
     finalization_fetcher: Option<FinalizationFetcherTx>,
 }
 
-/// The marshal-backed answer to an `outbe_getFinalization` request: the
+/// The marshal-backed answer to an `rudis_getFinalization` request: the
 /// commonware-codec-encoded finalization certificate and the encoded
 /// `ConsensusBlock`, ready to hex and ship. A follower's resolver reconstructs
 /// `finalization.encode() || block.encode()` from exactly these two fields.
@@ -603,7 +603,7 @@ impl ConsensusExecutionBridge {
     }
 
     /// Requests the finalized certificate + block bytes for `height` from the
-    /// consensus thread (used by the `outbe_getFinalization` RPC handler).
+    /// consensus thread (used by the `rudis_getFinalization` RPC handler).
     ///
     /// Returns `None` if no fetcher is installed (consensus not serving), the
     /// drainer dropped the reply (height not available), or the channel is

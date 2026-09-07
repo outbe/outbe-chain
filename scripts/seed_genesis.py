@@ -708,7 +708,7 @@ def asset_address(spec: str) -> bytes:
     `AssetType` in crates/blockchain/primitives/src/asset_type.rs.
     """
     text = str(spec).strip()
-    if text.upper() in ("COEN", "NATIVE"):
+    if text.upper() in ("RUDIS", "COEN", "NATIVE"):
         return bytes(20)
     if text.lower().startswith("0x"):
         return address_bytes(text)
@@ -1404,7 +1404,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 60: retired policy-rate mapping
       slots 74-75: policy_rate_currencies / policy_rate
     """
-    pair_keys: dict[tuple[str, str], bytes] = {}
+    pair_keys: dict[tuple[bytes, bytes], bytes] = {}
     pairs = config.get("pairs", [])
     validated_pairs = []
 
@@ -1418,7 +1418,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 f"oracle pair must contain two different assets: same asset {base}/{quote}"
             )
         h = address_pair(base, quote)
-        key = (base, quote)
+        key = (asset_address(base), asset_address(quote))
         if key in pair_keys:
             raise ValueError(f"duplicate oracle pair: {base}/{quote}")
         # The key is order-independent, so the inverse is the same pair.
@@ -1454,9 +1454,9 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
     storage.set_slot(8, len(pairs))
 
-    pair_ids: dict[tuple[str, str], int] = {}
+    pair_ids: dict[tuple[bytes, bytes], int] = {}
     for idx, pair, base, quote, h in validated_pairs:
-        key = (base, quote)
+        key = (asset_address(base), asset_address(quote))
         pair_ids[key] = idx
 
         storage.set_mapping(10, h, idx)
@@ -1474,7 +1474,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 
     for rate_entry in config.get("initial_rates", []):
         key = (rate_entry["base"], rate_entry["quote"])
-        idx = pair_ids.get(key)
+        idx = pair_ids.get((asset_address(key[0]), asset_address(key[1])))
         if idx is None:
             raise ValueError(f"initial rate pair is not registered: {key[0]}/{key[1]}")
         storage.set_mapping(12, u32_bytes(idx), parse_int(rate_entry["rate"]))
@@ -1510,7 +1510,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         storage.set_slot(38, 0)  # scurve_oldest_idx
         for idx, sc in enumerate(scurve_seeds):
             pair = (sc["pair_base"], sc["pair_quote"])
-            if pair_ids.get(pair) is None:
+            if pair_ids.get((asset_address(pair[0]), asset_address(pair[1]))) is None:
                 raise ValueError(
                     f"scurve seed pair is not registered: {pair[0]}/{pair[1]}"
                 )

@@ -38,7 +38,7 @@ fn fresh_full_node_domain_creates_its_node_local_storage_parent() {
         bundles: vec![EmbeddedOcompBundleConfigV1 {
             worker_address,
             identity: EndpointIdentity {
-                chain_id: 54_322_345,
+                chain_id: 70_860_602,
                 genesis_hash: B256::repeat_byte(0x21),
                 boot_nonce: B256::repeat_byte(0x22),
                 protocol_bundle_hash: bundle_hash,
@@ -76,7 +76,7 @@ fn one_embedded_domain_opens_distinct_worker_lanes_for_two_bundles() {
     let first_address = "127.0.0.1:0".parse().unwrap();
     let second_address = "127.0.0.1:0".parse().unwrap();
     let identity = |protocol_bundle_hash| EndpointIdentity {
-        chain_id: 54_322_345,
+        chain_id: 70_860_602,
         genesis_hash: B256::repeat_byte(0x51),
         boot_nonce: B256::repeat_byte(0x52),
         protocol_bundle_hash,
@@ -119,7 +119,7 @@ fn node_owned_worker_server_outlives_embedded_runner() {
     let canonical_bundle = bundle.encode_canonical(&limits).unwrap();
     let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
     let identity = EndpointIdentity {
-        chain_id: 54_322_345,
+        chain_id: 70_860_602,
         genesis_hash: B256::repeat_byte(0x31),
         boot_nonce: B256::repeat_byte(0x32),
         protocol_bundle_hash: bundle_hash,

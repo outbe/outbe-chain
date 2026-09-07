@@ -100,7 +100,7 @@
       "if": {
         "properties": {
           "network": {
-            "properties": { "chain_id": { "const": 54322345 } },
+            "properties": { "chain_id": { "const": 70860602 } },
             "required": ["chain_id"]
           }
         },
@@ -206,8 +206,8 @@
         },
         {
           "properties": {
-            "chain_id": { "const": 54322345 },
-            "chain_name": { "const": "outbe-testnet-1" },
+            "chain_id": { "const": 70860602 },
+            "chain_name": { "const": "rehearsal-network-1" },
             "genesis_file": {
               "properties": {
                 "path": { "const": "testnet-genesis.json" }
@@ -220,10 +220,10 @@
       ],
       "properties": {
         "chain_id": {
-          "enum": [676, 54322345]
+          "enum": [676, 70860602]
         },
         "chain_name": {
-          "enum": ["outbe-mainnet-1", "outbe-testnet-1"]
+          "enum": ["outbe-mainnet-1", "rehearsal-network-1"]
         },
         "genesis_hash": {
           "pattern": "^0x[0-9a-f]{64}$",

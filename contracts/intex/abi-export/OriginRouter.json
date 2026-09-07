@@ -1238,7 +1238,7 @@
           "internalType": "address"
         },
         {
-          "name": "_wcoen",
+          "name": "_wrudis",
           "type": "address",
           "internalType": "address"
         }
@@ -1366,19 +1366,6 @@
     },
     {
       "type": "function",
-      "name": "wcoen",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "wire",
       "inputs": [
         {
@@ -1394,6 +1381,19 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "wrudis",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "event",
@@ -1769,7 +1769,7 @@
           "internalType": "address"
         },
         {
-          "name": "wcoen",
+          "name": "wrudis",
           "type": "address",
           "indexed": false,
           "internalType": "address"

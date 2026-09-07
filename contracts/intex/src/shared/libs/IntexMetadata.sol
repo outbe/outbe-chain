@@ -13,7 +13,7 @@ import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 ///      display; expiry is not an on-chain state).
 library IntexMetadata {
     string internal constant DESCRIPTION =
-        "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
+        "Intex is the core cross-chain asset of Rehearsal Network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
     /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
     uint8 private constant PRICE_DECIMALS = 6;

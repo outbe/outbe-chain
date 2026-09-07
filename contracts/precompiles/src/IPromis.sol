@@ -13,7 +13,7 @@ interface IPromis {
     // 56 bytes = version(8, big-endian) || ChaCha20Poly1305 ct (32-byte U256
     // amount + 16-byte tag). The length is constant regardless of the balance,
     // so it never leaks magnitude; a never-written account returns empty bytes.
-    // Decrypt off-chain with the account's Promis view key (outbe_deriveKeys).
+    // Decrypt off-chain with the account's Promis view key (rudis_deriveKeys).
     function balanceOf(address account) external view returns (bytes memory);
 
     // Current modify-auth replay counter for `account` - the value a write's

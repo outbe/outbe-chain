@@ -254,10 +254,10 @@ mod tests {
         install_consensus_domain(&cell, 676).unwrap();
 
         assert_eq!(
-            install_consensus_domain(&cell, 54_322_345),
+            install_consensus_domain(&cell, 70_860_602),
             Err(ConsensusChainIdError::AlreadyBound {
                 installed: 676,
-                requested: 54_322_345,
+                requested: 70_860_602,
             })
         );
         assert_eq!(consensus_domain(&cell).chain_id, 676);

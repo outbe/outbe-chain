@@ -1470,7 +1470,7 @@ mod tests {
         );
         vec![
             (
-                PathBuf::from("scenario-1/validator-1/logs/54322345/reth.log"),
+                PathBuf::from("scenario-1/validator-1/logs/70860602/reth.log"),
                 reth,
             ),
             (PathBuf::from("scenario-1/validator-1/node.log"), node),
@@ -1505,7 +1505,7 @@ mod tests {
     fn legacy_new_payload_adapter_accepts_rotated_reth_log() {
         let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
         let mut logs = legacy_deadline_bundle(hash, hash);
-        logs[0].0 = PathBuf::from("scenario-1/validator-1/logs/54322345/reth.log.1");
+        logs[0].0 = PathBuf::from("scenario-1/validator-1/logs/70860602/reth.log.1");
 
         let accepted = audit_loaded_logs_with_expectations(&logs, 4, None, None, None);
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
@@ -1581,7 +1581,7 @@ mod tests {
                 format!("{anchor}\nERROR engine::tree: Fatal error\n{cli}"),
             ),
             (
-                PathBuf::from("scenario-1/validator-4/logs/54322345/reth.log"),
+                PathBuf::from("scenario-1/validator-4/logs/70860602/reth.log"),
                 format!("{anchor}\n{engine}\n{cli}"),
             ),
         ];
@@ -1667,7 +1667,7 @@ mod tests {
             ),
             (
                 PathBuf::from(format!(
-                    "scenario-1/validator-{validator}/logs/54322345/reth.log"
+                    "scenario-1/validator-{validator}/logs/70860602/reth.log"
                 )),
                 format!("{guard}\n{shutdown}"),
             ),
@@ -1684,7 +1684,7 @@ mod tests {
             ),
             (
                 PathBuf::from(format!(
-                    "scenario-1/validator-{full_node}/logs/54322345/reth.log"
+                    "scenario-1/validator-{full_node}/logs/70860602/reth.log"
                 )),
                 format!(
                     "{guard}\n{shutdown}\nDEBUG reth::cli: shutting down gracefully\nDEBUG reth::cli: shutdown signal received, terminating engine\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\n"
@@ -1969,7 +1969,7 @@ mod tests {
         assert!(!check(&too_far));
         assert!(!check(&baseline[..1]));
         let mut mismatched = baseline.clone();
-        mismatched[1].0 = PathBuf::from("scenario-1/validator-5/logs/54322345/reth.log");
+        mismatched[1].0 = PathBuf::from("scenario-1/validator-5/logs/70860602/reth.log");
         assert!(!check(&mismatched));
     }
 
@@ -2033,8 +2033,8 @@ mod tests {
             "validator-0/radicle.log",
             "validator-0/ocomp/domain-v1/snapshot-exporter.log",
             "validator-0/ocomp/domain-v1/worker-0.log",
-            "validator-0/logs/54322345/reth.log",
-            "validator-0/logs/54322345/reth.log.1",
+            "validator-0/logs/70860602/reth.log",
+            "validator-0/logs/70860602/reth.log.1",
         ] {
             assert!(super::is_runtime_log(Path::new(path)), "missed {path}");
         }

@@ -1,7 +1,6 @@
 pub const TOKEN_NAME: &str = "Gem";
 pub const TOKEN_SYMBOL: &str = "GEM";
-pub const TOKEN_DESCRIPTION: &str = "Outbe Gem";
-pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/gem/image/";
+pub const TOKEN_DESCRIPTION: &str = "Rudis Gem";
 
 pub const BIN_STEP_BP: u16 = 25;
 

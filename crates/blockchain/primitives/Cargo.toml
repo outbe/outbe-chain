@@ -38,7 +38,7 @@ thiserror.workspace = true
 # `WorldwideDay::is_valid` calendar checks.
 time.workspace = true
 # Async request/response channel for the bridge's finalization fetcher (the
-# follower-upstream `outbe_getFinalization` serving path crosses the
+# follower-upstream `rudis_getFinalization` serving path crosses the
 # outbe-rpc -> consensus crate boundary through the bridge). `sync` only.
 tokio = { workspace = true, features = ["sync"] }
 # Validator EVM signer (system-tx signing key). Lives here so consensus does

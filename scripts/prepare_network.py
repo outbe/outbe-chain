@@ -56,11 +56,11 @@ SECP256K1_G = (
 
 DEFAULT_PREFUND_COEN_UNITS = 10_000 * 10**18
 DEVNET_CHAIN_ID = 424242
-TESTNET_CHAIN_ID = 54322345
+TESTNET_CHAIN_ID = 70860602
 MAINNET_CHAIN_ID = 676
 NETWORK_IDENTITIES = {
     "devnet": (DEVNET_CHAIN_ID, "outbe-devnet-1"),
-    "testnet": (TESTNET_CHAIN_ID, "outbe-testnet-1"),
+    "testnet": (TESTNET_CHAIN_ID, "rehearsal-network-1"),
     "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
 }
 # OCOMP jobs can live for 1,868 blocks. The canonical localnet and retained
@@ -821,7 +821,7 @@ def command_lines(
         "  --engine.persistence-threshold 0 \\",
         "  --engine.memory-block-buffer-target 0 \\",
         f"  --http --http.addr {rpc_host} --http.port {rpc_port} \\",
-        "  --http.api eth,net,web3,outbe \\",
+        "  --http.api eth,net,web3,rudis \\",
         f"  --port {reth_p2p_port} \\",
         f"  --discovery.port {reth_p2p_port} \\",
         f"  --discovery.v5.addr {discv5_host} \\",

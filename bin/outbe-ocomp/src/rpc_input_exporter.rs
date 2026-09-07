@@ -351,7 +351,7 @@ impl RpcInputExporterV1 {
                         .and_then(|encoded| {
                             LysisOpeningsProofV1::decode_body(&encoded, &self.config.limits)
                                 .map_err(|error| crate::public_rpc::PublicRpcError::Malformed {
-                                    method: "outbe_getOcompLysisOpeningsV1",
+                                    method: "rudis_getOcompLysisOpeningsV1",
                                     detail: error.to_string(),
                                 })
                         }) {

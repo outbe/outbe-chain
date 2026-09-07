@@ -71,6 +71,23 @@ fn add_gem_inserts_and_bumps_counters() {
 }
 
 #[test]
+fn token_uri_exposes_rudis_metadata_without_an_external_image_host() {
+    use base64::Engine as _;
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let uri = GemContract::new(storage.clone()).token_uri(gem_id).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["name"], format!("Gem #{gem_id}"));
+        assert_eq!(json["description"], "Rudis Gem");
+        assert!(json.get("image").is_none());
+        assert!(!String::from_utf8(bytes).unwrap().contains("Outbe"));
+    });
+}
+
+#[test]
 fn add_gem_rejects_zero_owner() {
     with_storage(|storage| {
         let mut p = sample_params(ALICE);

@@ -174,7 +174,7 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
 async fn balance(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     let bal = client.eth_get_balance(address).await?;
     println!(
-        "Balance of {:?}: {} COEN",
+        "Balance of {:?}: {} rudis",
         address,
         super::format_coen_amount(bal)
     );

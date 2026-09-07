@@ -16,7 +16,7 @@ pub enum CredisFactoryError {
     CcaNotActive,
     #[error("smart account is not deployed")]
     SmartAccountNotDeployed,
-    #[error("attached COEN must equal the pledged collateral exactly")]
+    #[error("attached rudis must equal the pledged collateral exactly")]
     CcaStakeMismatch,
 }
 

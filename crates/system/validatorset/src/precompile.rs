@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn registration_v2_and_radicle_getters_round_trip_through_public_abi() {
-        let chain_id = 54322345;
+        let chain_id = 70860602;
         let validator = Address::repeat_byte(0x61);
         let node_id = B256::repeat_byte(0x71);
         let secret = blst::min_pk::SecretKey::key_gen(&[0x41; 32], &[]).unwrap();

@@ -2128,7 +2128,7 @@ async fn load_finalized_admission_anchor_v1(
             outbe_consensus::follow::decode_public_finalized_block(&finalization, &block, 256)
                 .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
         if certified.block.number() != height {
-            eyre::bail!("outbe_getFinalization returned height mismatch at {height}");
+            eyre::bail!("rudis_getFinalization returned height mismatch at {height}");
         }
         let artifacts =
             decode_outbe_block_artifacts(certified.block.header().extra_data().as_ref())
@@ -2181,7 +2181,7 @@ async fn stream_finalized_admission_attempt_v1(
                 .map_err(|error| eyre::eyre!("decode finalization at height {height}: {error}"))?;
         if certified.block.number() != height {
             return Err(
-                eyre::eyre!("outbe_getFinalization returned height mismatch at {height}").into(),
+                eyre::eyre!("rudis_getFinalization returned height mismatch at {height}").into(),
             );
         }
         let artifacts =

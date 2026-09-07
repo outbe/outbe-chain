@@ -49,7 +49,7 @@ pub enum ValidatorCmd {
     Deactivate,
     /// Confirm your PENDING validator has caught up to head and is ready to be
     /// included in the next DKG reshare target (stale-join guard). Send only
-    /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
+    /// after `outbe-cli monitor` / `rudis_syncStatus` shows the node at tip.
     ConfirmReady {
         /// Canonical binary OcompKeyRegistrationV1 produced for this validator.
         #[arg(long, value_name = "PATH")]
@@ -284,7 +284,7 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
         status_label(v.status)
     );
     println!(
-        "Stake:                {} COEN",
+        "Stake:                {} rudis",
         super::format_coen_amount(v.stake)
     );
     println!("Slash Count:          {}", v.slashCount);

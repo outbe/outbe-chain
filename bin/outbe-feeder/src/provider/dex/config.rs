@@ -257,8 +257,12 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
                 continue;
             }
             ensure!(
-                pair.base == "COEN" && pair.quote == "840",
-                "DEX v1 sources must feed COEN/840 (USD parity assumption)"
+                pair.oracle_pair()?
+                    == (
+                        Address::ZERO,
+                        outbe_primitives::asset_type::AssetType::IsoCurrency(840).into()
+                    ),
+                "DEX v1 sources must feed rudis/840 (USD parity assumption)"
             );
             let dex = config
                 .dex_providers

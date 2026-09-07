@@ -15,7 +15,7 @@ const TO: Address = Address::new([0x22; 20]);
 const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
 
 fn block_context() -> BlockContext {
-    BlockContext::new(7, 1_700_000_000, 54_322_345, FROM, vec![FROM])
+    BlockContext::new(7, 1_700_000_000, 70_860_602, FROM, vec![FROM])
 }
 
 fn account(balance: U256, nonce: u64, code: Bytecode) -> AccountInfo {

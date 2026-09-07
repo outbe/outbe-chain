@@ -7,7 +7,7 @@ import { CONTRACTS, resolveContract } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const addr = z.string().describe("0x-prefixed address");
-const coen = z.string().describe("amount in whole COEN, e.g. \"100\" or \"1.5\"");
+const coen = z.string().describe("amount in whole rudis, e.g. \"100\" or \"1.5\"");
 const tributeBase = z
   .string()
   .refine((value) => {
@@ -18,7 +18,7 @@ const tributeBase = z
       return false;
     }
   }, "amount must be a canonical unsigned u64")
-  .describe("whole unsigned COEN amount, canonical u64 string");
+  .describe("whole unsigned rudis amount, canonical u64 string");
 
 const GAS_OFFER = 8_000_000n;
 const GAS_DEFAULT = 3_000_000n;
@@ -150,7 +150,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   // --- staking ---------------------------------------------------------------
   server.tool(
     "staking_stake",
-    "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
+    "Stake rudis to a validator. Requires OUTBE_PRIVATE_KEY.",
     { validator: addr, amount: coen, wait: z.boolean().optional() },
     handler(({ validator, amount, wait }) => {
       const stake = parseNativeAmount(ctx.chain, amount);
@@ -168,7 +168,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "staking_unstake",
-    "Unstake COEN (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
+    "Unstake rudis (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
       submit(
@@ -227,7 +227,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "oracle_vote_submit",
     "Submit oracle exchange-rate votes. `tuples`: [{base, quote, exchangeRate, volume}] with rate/volume as " +
-      "integer minor strings (COEN/ISO rates use scale 1e6; generic pairs keep their existing scale). " +
+      "integer minor strings (rudis/ISO rates use scale 1e6; generic pairs keep their existing scale). " +
       "Requires OUTBE_PRIVATE_KEY (validator).",
     {
       tuples: z

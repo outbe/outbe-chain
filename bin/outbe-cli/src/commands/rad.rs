@@ -536,7 +536,7 @@ mod tests {
     use clap::Parser;
     use std::net::{IpAddr, Ipv4Addr};
 
-    /// The NodeId of testnet validator-0, as reported by `outbe_radicleStatus`
+    /// The NodeId of testnet validator-0, as reported by `rudis_radicleStatus`
     /// and rendered by `rad node status`.
     #[test]
     fn encodes_a_node_id_the_way_heartwood_does() {

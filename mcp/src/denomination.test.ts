@@ -55,10 +55,12 @@ async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promi
   }
 }
 
-test("Outbe chain metadata declares eighteen native decimals", async () => {
-  await withChainIdRpc(54_322_345, async (rpcUrl) => {
+test("Rudis chain metadata declares its public identity and eighteen native decimals", async () => {
+  await withChainIdRpc(70_860_602, async (rpcUrl) => {
     const ctx = await createCtx(rpcUrl);
-    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 18 });
+    assert.equal(ctx.chain.id, 70_860_602);
+    assert.equal(ctx.chain.name, "Rehearsal Network");
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "rudis", symbol: "rudis", decimals: 18 });
   });
 });
 
@@ -161,7 +163,7 @@ test("MCP Oracle views apply six decimals from the real call context", async () 
   const read = async (method: string, args: unknown[], result: unknown) => {
     const ctx = {
       rpcUrl: "http://unused.invalid",
-      chain: { id: 54_322_345 } as Chain,
+      chain: { id: 70_860_602 } as Chain,
       publicClient: {
         readContract: async () => result,
       } as unknown as PublicClient,
@@ -178,7 +180,7 @@ test("MCP Oracle views apply six decimals from the real call context", async () 
   assert.deepEqual(await read("getVwap", [coen, iso840, 3_600], 1_111_111n), {
     vwap: { raw: "1111111", value: "1.111111" },
   });
-  assert.deepEqual(await read("getCoenExchangeRateFor", [840], 1_234_567n), {
+  assert.deepEqual(await read("getRudisExchangeRateFor", [840], 1_234_567n), {
     rate: { raw: "1234567", value: "1.234567" },
   });
   assert.deepEqual(await read("getPolicyRate", [840], 43_000n), {
@@ -209,7 +211,7 @@ test("MCP Oracle aggregate views format each market row independently", async ()
   const read = async (method: string, args: unknown[], result: unknown) => {
     const ctx = {
       rpcUrl: "http://unused.invalid",
-      chain: { id: 54_322_345 } as Chain,
+      chain: { id: 70_860_602 } as Chain,
       publicClient: {
         readContract: async () => result,
       } as unknown as PublicClient,

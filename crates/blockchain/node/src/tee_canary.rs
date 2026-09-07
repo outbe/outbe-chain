@@ -3,7 +3,7 @@
 //! probe, published to [`TeeEnclaveHealthChannel`] and Prometheus.
 //!
 //! Signal only - a failing canary never gates consensus participation; it
-//! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
+//! surfaces through `rudis_consensusStatus.enclave`, `outbe-cli monitor
 //! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
 //!
 //! The probe uses a separate connection to the same pinned enclave identity;

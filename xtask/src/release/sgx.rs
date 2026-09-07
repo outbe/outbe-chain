@@ -14,7 +14,7 @@ use clap::ValueEnum;
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
 use outbe_evm::tee_attestation_activation::{DcapChainSpecBindingV1, DcapSeededChainSpecBindingV1};
-use outbe_primitives::chain::{OutbeNetwork, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+use outbe_primitives::chain::{OutbeNetwork, MAINNET_CHAIN_ID, MAINNET_CHAIN_NAME, TESTNET_CHAIN_ID, TESTNET_CHAIN_NAME};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
 };
@@ -67,8 +67,8 @@ impl SgxReleaseNetwork {
     #[must_use]
     pub const fn chain_name(self) -> &'static str {
         match self {
-            Self::Testnet => "outbe-testnet-1",
-            Self::Mainnet => "outbe-mainnet-1",
+            Self::Testnet => TESTNET_CHAIN_NAME,
+            Self::Mainnet => MAINNET_CHAIN_NAME,
         }
     }
 

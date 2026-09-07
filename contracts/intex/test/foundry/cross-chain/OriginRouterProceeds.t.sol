@@ -105,6 +105,12 @@ contract OriginRouterProceedsTest is CrossChainTest {
         assertEq(address(origin).balance, 0);
     }
 
+    function test_PublicWrappedTokenGetterUsesRudis() public view {
+        assertEq(origin.wrudis(), address(wcoen));
+        (bool ok,) = address(origin).staticcall(abi.encodeWithSignature("wcoen()"));
+        assertFalse(ok, "old getter must not remain in the public ABI");
+    }
+
     function test_OnReceive_ParksOnDistributeFailure() public {
         factory.setShouldRevert(true);
 

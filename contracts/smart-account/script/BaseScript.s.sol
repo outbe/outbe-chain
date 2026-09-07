@@ -47,7 +47,7 @@ contract BaseScript is Script {
         if (chainId == 8453) return "base";
         if (chainId == 512512) return "outbe-privnet";
         if (chainId == 512215) return "local-reth";
-        if (chainId == 54322345) return "outbe-peira";
+        if (chainId == 70860602) return "outbe-peira";
 
         return string.concat("chain-", vm.toString(chainId));
     }

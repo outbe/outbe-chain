@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::world::World;
 
-/// The parsed `outbe_consensusStatus.enclave` object of validator `index`.
+/// The parsed `rudis_consensusStatus.enclave` object of validator `index`.
 fn enclave_status(world: &World, index: usize) -> Option<Value> {
     let port = world.validators.http_port(index);
     let raw = world.rpc.consensus_status_field(port, "enclave")?;

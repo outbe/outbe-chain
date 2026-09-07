@@ -158,7 +158,7 @@ contract PatternADeferTest is CrossChainTest {
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbRouter.relayBidsToOutbe(SERIES_ID_DAY);
+        bnbRouter.relayBidsToRudis(SERIES_ID_DAY);
     }
 
     // a zero-bid auction still emits one empty final batch (the no-bid completion signal),

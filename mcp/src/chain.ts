@@ -26,8 +26,8 @@ export interface Ctx {
 }
 
 export function nativeCurrencyForChainId(id: number): Chain["nativeCurrency"] {
-  if (id === 424_242 || id === 54_322_345) {
-    return { name: "COEN", symbol: "COEN", decimals: 18 };
+  if (id === 424_242 || id === 70_860_602 || id === 676) {
+    return { name: "rudis", symbol: "rudis", decimals: 18 };
   }
   if (id === 56 || id === 97) {
     return { name: "BNB", symbol: "BNB", decimals: 18 };
@@ -61,7 +61,7 @@ export async function createCtx(rpcUrl: string, privateKey?: string): Promise<Ct
 
   const chain = defineChain({
     id,
-    name: `outbe-${id}`,
+    name: id === 70_860_602 ? "Rehearsal Network" : `outbe-${id}`,
     nativeCurrency: nativeCurrencyForChainId(id),
     rpcUrls: { default: { http: [rpcUrl] } },
   });

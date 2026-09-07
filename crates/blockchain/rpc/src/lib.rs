@@ -1,4 +1,4 @@
-//! Outbe custom RPC namespace (`outbe_*`).
+//! Outbe custom RPC namespace (`rudis_*`).
 //!
 //! Provides JSON-RPC methods for querying validator infrastructure state:
 //! validators, epoch info, staking, rewards, and slashing data.

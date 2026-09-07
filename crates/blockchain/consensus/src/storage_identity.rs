@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn mainnet_rejects_wrong_or_malformed_storage_identity() {
         for marker in [
-            r#"{"version":1,"chainId":54322345,"genesisHash":"0x1111111111111111111111111111111111111111111111111111111111111111"}"#,
+            r#"{"version":1,"chainId":70860602,"genesisHash":"0x1111111111111111111111111111111111111111111111111111111111111111"}"#,
             r#"{"version":1,"chainId":676,"genesisHash":"0x2222222222222222222222222222222222222222222222222222222222222222"}"#,
             "not-json",
         ] {

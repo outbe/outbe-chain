@@ -89,9 +89,9 @@ const config: HardhatUserConfig = {
     },
     outbeTestnetNew: {
       type: "http",
-      url: "https://rpc.testnet.outbe.net",
+      url: configVariable("OUTBE_RPC_URL"),
       accounts: [configVariable("OUTBE_PRIVATE_KEY")],
-      chainId: 54322345,
+      chainId: 70860602,
     },
   },
 };

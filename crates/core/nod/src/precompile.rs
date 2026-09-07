@@ -105,11 +105,9 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     let cost_amount_minor =
         api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?;
     let json = format!(
-        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
+        "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
         nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
-        crate::constants::TOKEN_IMAGE_BASE,
-        nod_id_str,
         nod_id_str,
         item.worldwide_day,
         item.league_id,
@@ -124,6 +122,48 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     );
     let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
     Ok(format!("data:application/json;base64,{encoded}"))
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn token_uri_exposes_rudis_without_an_external_image_host() {
+        let owner = Address::repeat_byte(0x11);
+        let worldwide_day = WorldwideDay::new(20_260_907);
+        let floor = U256::from(1_000_000);
+        let bucket_key = NodContract::bucket_key(worldwide_day, floor, 840);
+        let item = NodItemState {
+            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(1_000_000),
+            worldwide_day,
+            league_id: 4,
+            floor_price_minor: floor,
+            bucket_key,
+            issuance_currency: 840,
+            reference_currency: 840,
+            issued_at: 1_788_739_200,
+        };
+        let bucket = NodBucketState {
+            bucket_key,
+            worldwide_day,
+            floor_price_minor: floor,
+            is_qualified: false,
+            total_nods: 1,
+            entry_price_minor: U256::from(1_000_000),
+            reference_currency: 840,
+        };
+        let uri = token_uri(&item, &bucket).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["description"], "Rudis Nod");
+        assert!(json.get("image").is_none());
+        assert!(!String::from_utf8(bytes).unwrap().contains("Outbe"));
+    }
 }
 
 fn to_abi_data(

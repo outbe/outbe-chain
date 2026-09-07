@@ -232,7 +232,7 @@ mod tests {
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
     };
 
-    const LOCALNET_CHAIN_ID: u64 = 54_322_345;
+    const LOCALNET_CHAIN_ID: u64 = 70_860_602;
     const OTHER_CHAIN_ID: u64 = 1;
 
     fn payload(activation_height: u64) -> ScheduleUpdatePayload {

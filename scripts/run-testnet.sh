@@ -422,7 +422,7 @@ do_start() {
             --engine.persistence-threshold 0
             --engine.memory-block-buffer-target 0
             --http --http.addr 0.0.0.0 --http.port $((base_rpc + i))
-            --http.api eth,net,web3,outbe
+            --http.api eth,net,web3,rudis
             --port $((base_p2p + i))
             --discovery.port $((base_p2p + i))
             --discovery.v5.addr 127.0.0.1

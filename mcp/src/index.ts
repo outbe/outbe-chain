@@ -7,12 +7,11 @@ import { registerRpcTools } from "./tools/rpc.js";
 import { registerSignTools } from "./tools/sign.js";
 import { registerViewTools } from "./tools/view.js";
 
-const DEFAULT_RPC = "https://rpc.testnet.outbe.net";
-
 function parseRpc(argv: string[]): string {
   const i = argv.indexOf("--rpc");
   if (i >= 0 && argv[i + 1]) return argv[i + 1];
-  return process.env.OUTBE_RPC ?? DEFAULT_RPC;
+  if (process.env.OUTBE_RPC) return process.env.OUTBE_RPC;
+  throw new Error("Set --rpc or OUTBE_RPC to the Rehearsal Network RPC endpoint");
 }
 
 async function main(): Promise<void> {

@@ -32,7 +32,7 @@ pub fn dispatch(
         |call| {
             use IPromisFactory::IPromisFactoryCalls::*;
             match call {
-                mineCoen(c) => mutate(c, caller, |sender, c| {
+                mineRudis(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,

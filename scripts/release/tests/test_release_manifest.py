@@ -113,8 +113,8 @@ class ReleaseManifestTests(unittest.TestCase):
             chain_name = "outbe-mainnet-1"
             genesis_path = "mainnet-genesis.json"
         elif network == "testnet":
-            chain_id = 54_322_345
-            chain_name = "outbe-testnet-1"
+            chain_id = 70_860_602
+            chain_name = "rehearsal-network-1"
             genesis_path = "testnet-genesis.json"
         else:
             raise AssertionError(f"unsupported fixture network: {network}")

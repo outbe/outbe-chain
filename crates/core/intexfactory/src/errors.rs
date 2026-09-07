@@ -33,9 +33,9 @@ pub enum IntexFactoryError {
     PaymentTokenNotRegistered(alloy_primitives::Address),
     #[error("payment token currency {0} does not match the series")]
     SettlementCurrencyMismatch(u16),
-    #[error("no COEN rate published for currency {0}")]
+    #[error("no rudis rate published for currency {0}")]
     FxRateUnavailable(u16),
-    #[error("COEN rate for currency {0} is too old to convert with")]
+    #[error("rudis rate for currency {0} is too old to convert with")]
     FxRateStale(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,

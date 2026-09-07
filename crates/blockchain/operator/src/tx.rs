@@ -247,7 +247,7 @@ mod tests {
         let signer = RelaySignerV1::new(&format!("{:064x}", 1)).unwrap();
         let first = signer
             .sign_renewal(
-                54_322_345,
+                70_860_602,
                 7,
                 U256::from(1_000_000_000_u64),
                 1_000_000,
@@ -257,7 +257,7 @@ mod tests {
             .unwrap();
         let second = signer
             .sign_renewal(
-                54_322_345,
+                70_860_602,
                 7,
                 U256::from(1_000_000_000_u64),
                 1_000_000,

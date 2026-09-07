@@ -479,9 +479,9 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         let league_before = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
         assert_eq!(league_before, MAX_LEAGUE);
 
-        // mineCoen burns gratis (op = Burn) at op-nonce 1.
+        // mineRudis burns gratis (op = Burn) at op-nonce 1.
         let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+            IGratisFactory::IGratisFactoryCalls::mineRudis(IGratisFactory::mineRudisCall {
                 amount,
                 mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
                 opNonce: 1,
@@ -489,7 +489,7 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
             .abi_encode(),
         );
         let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        let minted = IGratisFactory::mineCoenCall::abi_decode_returns(&out).unwrap();
+        let minted = IGratisFactory::mineRudisCall::abi_decode_returns(&out).unwrap();
         let native_amount = checked_protocol_to_native(amount).unwrap();
         assert_eq!(minted, native_amount);
 
@@ -519,7 +519,7 @@ fn mine_coen_rejects_insufficient_balance() {
 
         let amount = U256::from(200u64);
         let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+            IGratisFactory::IGratisFactoryCalls::mineRudis(IGratisFactory::mineRudisCall {
                 amount,
                 mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
                 opNonce: 1,

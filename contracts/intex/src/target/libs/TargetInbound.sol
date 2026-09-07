@@ -14,7 +14,7 @@ import {TargetRouterStorage, PendingBidsRelay, PendingIssuance, PendingProceedsR
 /// @dev Self-call shims the router exposes for per-item isolation; called on `address(this)` from the
 ///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
 interface ITargetRouterShims {
-    function relayBidsToOutbe(uint32 worldwideDay) external;
+    function relayBidsToRudis(uint32 worldwideDay) external;
     function issueOne(bytes14 seriesId, address to, uint256 quantity) external;
     function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
@@ -94,7 +94,7 @@ library TargetInbound {
         if (!$.clearingRelayed[worldwideDay]) {
             $.clearingRelayed[worldwideDay] = true;
             // solhint-disable-next-line no-empty-blocks
-            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: IntexGas.RELAY_BIDS_CAP}(worldwideDay) {}
+            try ITargetRouterShims(address(this)).relayBidsToRudis{gas: IntexGas.RELAY_BIDS_CAP}(worldwideDay) {}
             catch (bytes memory reason) {
                 uint256 idx = $.nextPendingBidsRelayIdx++;
                 $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});

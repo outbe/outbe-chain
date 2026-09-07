@@ -64,7 +64,7 @@ pub fn dispatch(
                     )?;
                     emit_unpledged(&storage, sender, gratis_amount)
                 }),
-                mineCoen(c) => mutate(c, caller, |sender, c| {
+                mineRudis(c) => mutate(c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,

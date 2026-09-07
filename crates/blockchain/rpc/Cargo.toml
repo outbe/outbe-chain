@@ -39,6 +39,7 @@ eyre.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-update.workspace = true

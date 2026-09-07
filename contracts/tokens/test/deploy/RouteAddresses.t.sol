@@ -43,7 +43,7 @@ contract RouteAddressesTest is Test {
 
     function setUp() public {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
-        vm.setEnv("OUTBE_CHAIN_ID", "54322345");
+        vm.setEnv("OUTBE_CHAIN_ID", "70860602");
         vm.setEnv("DEPLOYER_PK", "0xA11CE");
 
         deploy = new AddressHarness();

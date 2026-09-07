@@ -16,7 +16,7 @@ export const DEFAULT_CREDIS_ADDRESS = "0x000000000000000000000000000000000000100
 export const DEFAULT_FIDELITY_ADDRESS = "0x000000000000000000000000000000000000100C";
 
 // Native COEN uses the standard 18-decimal EVM boundary. Protocol-side Gratis
-// accounting remains six-decimal; mineCoen performs that conversion on-chain.
+// accounting remains six-decimal; mineRudis performs that conversion on-chain.
 export const COEN_DECIMALS = 18;
 export const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
 

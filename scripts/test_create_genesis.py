@@ -8,6 +8,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess
 import tempfile
 import time
 import unittest
@@ -173,7 +174,7 @@ class ConfigValidationTests(unittest.TestCase):
     def test_networks_expose_the_canonical_attestation_matrix(self):
         for network, chain_id in (
             ("devnet", 424242),
-            ("testnet", 54322345),
+            ("testnet", 70860602),
         ):
             for tee_mode in ("dcap-required", "gramine-direct-dev"):
                 config = minimal_config("./keys") | {
@@ -201,7 +202,7 @@ class ConfigValidationTests(unittest.TestCase):
             CG.validate_config(mainnet)
 
     def test_testnet_direct_dev_needs_no_secondary_opt_in(self):
-        config = minimal_config("./keys") | {"chain_id": 54322345}
+        config = minimal_config("./keys") | {"chain_id": 70860602}
         CG.validate_config(config)
 
     def test_mainnet_rejects_direct_dev(self):
@@ -241,7 +242,7 @@ class ConfigValidationTests(unittest.TestCase):
     def test_mainnet_profile_rejects_identity_and_test_shortcut_drift(self):
         config = minimal_config("./keys") | {
             "network": "mainnet",
-            "chain_id": 54322345,
+            "chain_id": 70860602,
             "tee": {"mode": "dcap-required"},
             "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
             "price_feed_rest": "https://prc.testnet.outbe.net",
@@ -1143,7 +1144,7 @@ class LaunchBundleTests(unittest.TestCase):
         AESM socket and the sealed state are all host-side."""
         with tempfile.TemporaryDirectory() as tmp:
             config = {
-                "chain_id": 54322345,
+                "chain_id": 70860602,
                 "tee": {
                     "mode": "dcap-required",
                     "mrenclave": "ab" * 32,
@@ -1184,12 +1185,26 @@ class LaunchBundleTests(unittest.TestCase):
 
     def test_dev_enclave_script_is_marked_unattested(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
+            _, _, output_dir = self.render(tmp, {"enclave_sgx": False})
             script = (output_dir / "validator-0" / "run-enclave.sh").read_text()
             self.assertIn("--dkg-seed", script)
-            self.assertIn("unattested", script)
+            self.assertIn("unattested", script.lower())
             deploy = (output_dir / "DEPLOY.md").read_text()
             self.assertIn("unattested", deploy)
+
+    @unittest.skipIf(
+        pathlib.Path("/dev/sgx_enclave").exists() or pathlib.Path("/dev/sgx/enclave").exists(),
+        "this negative launch test needs a host without SGX",
+    )
+    def test_explicit_sgx_launch_fails_without_hardware_before_any_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp, {"enclave_sgx": True})
+            result = subprocess.run(
+                ["bash", str(output_dir / "validator-0" / "run-enclave.sh")],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("SGX hardware required", result.stderr)
 
 
 if __name__ == "__main__":

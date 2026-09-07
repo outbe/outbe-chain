@@ -36,7 +36,7 @@ fn evidence(
     let response = sign_response(
         EndpointResponseBody {
             request_id: [9_u8; 32],
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
             validator,
             node_id,

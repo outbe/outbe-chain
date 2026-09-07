@@ -1,7 +1,7 @@
 //! Shared status cell for the node's periodic enclave canary probe.
 //!
 //! The canary worker (in `outbe-node`) publishes snapshots; the RPC layer reads
-//! them into `outbe_consensusStatus.enclave` and `outbe-cli monitor readiness`
+//! them into `rudis_consensusStatus.enclave` and `outbe-cli monitor readiness`
 //! consumes that. Signal only - nothing here gates consensus participation.
 
 use std::sync::{Arc, RwLock};

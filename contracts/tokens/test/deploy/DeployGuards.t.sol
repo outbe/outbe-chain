@@ -53,7 +53,7 @@ contract DeployHarness is DeployAll {
 ///      Sepolia is the declared external chain on purpose: it proves a new network needs env only, no code change.
 contract DeployGuardsTest is Test {
     uint256 internal constant EXTERNAL_CHAIN = 11_155_111; // Sepolia
-    uint256 internal constant OUTBE_CHAIN = 54_322_345;
+    uint256 internal constant OUTBE_CHAIN = 70_860_602;
     uint256 internal constant UNDECLARED_CHAIN = 97; // BSC testnet - no longer privileged by a hardcoded chain id
     uint256 internal constant LOCAL_CHAIN = 31_337;
 
@@ -67,7 +67,7 @@ contract DeployGuardsTest is Test {
 
     function setUp() public {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
-        vm.setEnv("OUTBE_CHAIN_ID", "54322345");
+        vm.setEnv("OUTBE_CHAIN_ID", "70860602");
         vm.setEnv("DEPLOYER_PK", "0xA11CE");
         vm.setEnv("ALLOW_EOA_OWNER", "true");
         vm.setEnv("BRIDGE_ADDRESS", "0x0000000000000000000000000000000000B41D6E");
@@ -189,6 +189,8 @@ contract DeployGuardsTest is Test {
             deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("WCOEN"));
         bytes memory extUsdtCode = extUsdt.code;
         uint8 extWcoenDecimals = BridgeableERC20(extWcoen).decimals();
+        assertEq(BridgeableERC20(extWcoen).name(), "Wrapped Rudis");
+        assertEq(BridgeableERC20(extWcoen).symbol(), "wrudis");
         assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
 
         vm.revertToState(snapshot);
@@ -206,6 +208,8 @@ contract DeployGuardsTest is Test {
         assertEq(extWcoenBridge, outWcoenBridge, "WCOEN bridge address differs between chains");
         assertEq(extWcoenDecimals, 18, "external WCOEN decimals differ");
         assertEq(BridgeableERC20(outWcoen).decimals(), 18, "Outbe WCOEN decimals differ");
+        assertEq(BridgeableERC20(outWcoen).name(), "Wrapped Rudis");
+        assertEq(BridgeableERC20(outWcoen).symbol(), "wrudis");
 
         assertTrue(keccak256(extUsdtCode) != keccak256(outUsdt.code), "same bytecode: the test proves nothing");
     }

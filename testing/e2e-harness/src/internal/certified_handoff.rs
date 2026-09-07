@@ -34,7 +34,7 @@ pub(crate) fn read_certified(
 ) -> Result<CertifiedFinalizedBlock> {
     let wire: FinalizationWire = serde_json::from_value(eth::raw_json_result(
         &rpc.url(port),
-        "outbe_getFinalization",
+        "rudis_getFinalization",
         serde_json::json!([height]),
     )?)?;
     decode_public_finalized_block(&wire.finalization_hex, &wire.block_hex, committee_members)

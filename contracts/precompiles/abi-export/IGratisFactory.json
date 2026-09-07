@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "mineCoen",
+    "name": "mineRudis",
     "inputs": [
       {
         "name": "amount",
@@ -116,25 +116,6 @@
   },
   {
     "type": "event",
-    "name": "CoenMined",
-    "inputs": [
-      {
-        "name": "sender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "GratisPledged",
     "inputs": [
       {
@@ -182,6 +163,25 @@
       },
       {
         "name": "gratisAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RudisMined",
+    "inputs": [
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -35,7 +35,7 @@ interface IIntexFactory {
     ///         off-chain proof of work. Caller is the holder. Authorized by the
     ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
     ///         where `opNonce` MUST equal the holder's current on-chain promis
-    ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
+    ///         op-nonce (fetch via `rudis_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
     function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)

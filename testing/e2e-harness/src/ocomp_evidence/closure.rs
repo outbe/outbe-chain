@@ -651,7 +651,7 @@ mod tests {
                 json!({
                     "scenario_launch_identities": {
                         scenario: {
-                            "chain_id": if classification == "final" { 54322345 } else { 424242 },
+                            "chain_id": if classification == "final" { 70860602 } else { 424242 },
                             "genesis_hash": genesis,
                             "protocol_bundle_hash": format!("0xbundle-{classification}"),
                             "fork_install_hash": format!("0xfork-{genesis}"),

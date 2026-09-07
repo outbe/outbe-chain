@@ -215,10 +215,10 @@ impl RenewalRpc for HttpRenewalRpc {
 
     async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
-            self.call("outbe_teeRenewalScheduleV1", serde_json::json!([]))
+            self.call("rudis_teeRenewalScheduleV1", serde_json::json!([]))
                 .await?,
         )
-        .wrap_err("decode outbe_teeRenewalScheduleV1 result")
+        .wrap_err("decode rudis_teeRenewalScheduleV1 result")
         .and_then(|schedule: TeeRenewalScheduleV1| schedule.validate().map_err(eyre::Report::msg))
     }
 }

@@ -1051,7 +1051,7 @@ mod tests {
         let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
             .unwrap();
-        let chain_id = 54322345;
+        let chain_id = 70860602;
 
         // Sign the same way cmd_sign_registration does
         let sk_bytes = key.encode();

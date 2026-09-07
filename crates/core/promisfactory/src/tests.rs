@@ -58,7 +58,7 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 
 fn mine_coen_call(amount: U256, a: &ModifyAuth) -> Bytes {
     Bytes::from(
-        IPromisFactory::IPromisFactoryCalls::mineCoen(IPromisFactory::mineCoenCall {
+        IPromisFactory::IPromisFactoryCalls::mineRudis(IPromisFactory::mineRudisCall {
             amount,
             mac: alloy_primitives::FixedBytes(a.mac),
             opNonce: a.op_nonce,
@@ -95,7 +95,7 @@ fn mine_coen_success_burns_and_mints_native() {
 
         let call = mine_coen_call(one_promis, &auth(PromisOp::Burn, alice(), one_promis, 1));
         let output = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        let minted = IPromisFactory::mineCoenCall::abi_decode_returns(&output).unwrap();
+        let minted = IPromisFactory::mineRudisCall::abi_decode_returns(&output).unwrap();
 
         // One six-decimal PROMIS becomes one 18-decimal native COEN.
         assert_eq!(minted, ONE_COEN);

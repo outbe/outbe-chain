@@ -309,8 +309,8 @@ pub struct RadicleRepositoryInfo {
 /// Outbe custom RPC namespace.
 ///
 /// Provides read-only access to validator infrastructure state.
-/// Enable with `--http.api outbe`.
-/// Sealed Gratis view + modify keys returned by `outbe_deriveGratisKeys`.
+/// Enable with `--http.api rudis`.
+/// Sealed Gratis view + modify keys returned by `rudis_deriveGratisKeys`.
 ///
 /// The enclave derives the account's keys and seals them to the requester's
 /// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
@@ -324,7 +324,7 @@ pub struct GratisKeysSealed {
     pub enclave_ephemeral_pubkey: B256,
 }
 
-#[rpc(server, namespace = "outbe")]
+#[rpc(server, namespace = "rudis")]
 pub trait OutbeApi {
     /// Returns one independently verifiable latest-finalized compressed-entity
     /// point package. V1 deliberately has no caller-selected block.

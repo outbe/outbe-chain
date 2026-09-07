@@ -28,7 +28,7 @@ const TIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Re-query the upstream tip only every Nth wakeup. Hints re-issue every wakeup
 /// (the marshal needs steady re-hinting as its floor advances), but the upstream
-/// `outbe_consensusStatus` tip query is throttled to avoid HTTP 429 rate-limits
+/// `rudis_consensusStatus` tip query is throttled to avoid HTTP 429 rate-limits
 /// on a busy upstream. Between tip queries the driver drives toward the last
 /// known tip.
 const TIP_REFRESH_EVERY: u32 = 4;

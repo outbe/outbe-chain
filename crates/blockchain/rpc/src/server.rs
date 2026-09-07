@@ -70,13 +70,13 @@ impl StorageReader for RethStateReader<'_> {
     }
 }
 
-/// RPC handler for the `outbe_*` namespace.
+/// RPC handler for the `rudis_*` namespace.
 #[derive(Clone)]
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     bridge: Option<ConsensusExecutionBridge>,
     /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
-    /// also holds a bridge (to serve `outbe_getFinalization` to downstream
+    /// also holds a bridge (to serve `rudis_getFinalization` to downstream
     /// followers) but must report itself as a non-validator / TrustedFinality
     /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
     is_validator: bool,
@@ -176,7 +176,7 @@ impl<P> OutbeApiHandler<P> {
     }
 
     /// Create a `--upstream` follower handler: it holds the bridge so it can
-    /// serve `outbe_getFinalization` (chaining followers), but reports itself as
+    /// serve `rudis_getFinalization` (chaining followers), but reports itself as
     /// a non-validator (TrustedFinality) node, not a validator.
     pub fn with_follower_bridge(
         provider: Arc<P>,
@@ -1010,6 +1010,51 @@ mod tests {
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
+    #[tokio::test]
+    async fn rudis_namespace_dispatches_and_rejects_old_wire_names() {
+        use crate::api::OutbeApiServer;
+        use outbe_primitives::projection::{
+            projection_readiness, ProjectionCheckpoint, ProjectionStatus,
+        };
+        use reth_provider::test_utils::MockEthProvider;
+
+        let baseline = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: B256::ZERO,
+        };
+        let (_publisher, readiness) = projection_readiness(
+            baseline,
+            ProjectionStatus::Ready {
+                checkpoint: baseline,
+            },
+        );
+        let handler = super::OutbeApiHandler::new(
+            std::sync::Arc::new(MockEthProvider::<outbe_primitives::OutbePrimitives>::new()),
+            readiness,
+        );
+        let module = handler.into_rpc();
+        assert!(module.method_names().all(|name| name.starts_with("rudis_")));
+        let (response, _) = module
+            .raw_json_request(
+                r#"{"jsonrpc":"2.0","id":1,"method":"rudis_radicleStatus","params":[]}"#,
+                1,
+            )
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(response.get()).unwrap();
+        assert_eq!(response["result"]["phase"], "disabled");
+        assert!(response.get("error").is_none());
+        let (response, _) = module
+            .raw_json_request(
+                r#"{"jsonrpc":"2.0","id":2,"method":"outbe_radicleStatus","params":[]}"#,
+                1,
+            )
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(response.get()).unwrap();
+        assert_eq!(response["error"]["code"], -32601);
+    }
+
     #[test]
     fn slash_config_rpc_reports_runtime_defaults_for_zero_storage() {
         let mut provider = HashMapStorageProvider::new(1);
@@ -1094,7 +1139,7 @@ mod tests {
         let signer = bls12381::PrivateKey::from_seed(7);
         let body = EndpointResponseBody {
             request_id: [8_u8; 32],
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
             validator: alloy_primitives::Address::repeat_byte(0x11),
             node_id: [9_u8; 32],

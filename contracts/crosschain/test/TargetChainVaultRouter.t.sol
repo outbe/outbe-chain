@@ -13,7 +13,7 @@ import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "src/inter
 import {IERC7786TokenReceiver} from "src/interfaces/IERC7786TokenReceiver.sol";
 
 contract MockWCOEN is ERC20 {
-    constructor() ERC20("Wrapped COEN", "WCOEN") {}
+    constructor() ERC20("Wrapped Rudis", "wrudis") {}
 
     function mint(address account, uint256 amount) external {
         _mint(account, amount);
@@ -149,7 +149,7 @@ contract MockTokenBridge {
 }
 
 contract TargetChainVaultRouterTest is Test {
-    uint32 internal constant OUTBE_DOMAIN = 54_322_345;
+    uint32 internal constant OUTBE_DOMAIN = 70_860_602;
     address internal constant OUTBE_ROUTER = 0x0000000000000000000000000000000000001017;
     uint256 internal constant ACK_GAS_LIMIT = 300_000;
     uint256 internal constant RETURN_GAS_LIMIT = 400_000;

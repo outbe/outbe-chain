@@ -13,7 +13,7 @@ use crate::aggregator::AggregatedPrice;
 /// Render an already validated Oracle asset for log lines.
 fn show_asset(address: Address) -> String {
     match AssetType::from(address) {
-        AssetType::Native => "COEN".to_string(),
+        AssetType::Native => outbe_primitives::units::NATIVE_TOKEN_SYMBOL.to_string(),
         AssetType::IsoCurrency(code) => code.to_string(),
         AssetType::ERC20(token) => token.to_string(),
     }

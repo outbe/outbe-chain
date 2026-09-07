@@ -132,7 +132,7 @@ fn network_binding_is_canonical_and_every_field_changes_its_hash() {
 fn trusted_network_descriptor_is_canonical_and_dcap_only() {
     let descriptor = TrustedNetworkDescriptorV1 {
         network_binding: NetworkBindingV1 {
-            chain_id: alloy_primitives::U256::from(54322345_u64).to_be_bytes(),
+            chain_id: alloy_primitives::U256::from(70860602_u64).to_be_bytes(),
             genesis_hash: B256::repeat_byte(0x31),
             attestation_mode: AttestationMode::DcapRequired,
         },

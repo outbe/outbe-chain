@@ -33,7 +33,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
   server.tool(
     "contract_call",
-    `Call any view/pure method on an outbe precompile and get decoded, human-readable output. ` +
+    `Call any view/pure method on a Rudis precompile and get decoded, human-readable output. ` +
       `\`contract\` is a registry name (${Object.keys(CONTRACTS).join(", ")}) or a 0x address. ` +
       `\`method\` is the function name; \`args\` are its arguments in order (numbers/strings).`,
     {
@@ -164,7 +164,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Gratis balance + pledged amount for an account (in COEN).",
+    "Gratis balance + pledged amount for an account (in rudis).",
     { account: addr },
     handler(async ({ account }) => {
       const [balance, pledged] = await Promise.all([
@@ -177,7 +177,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "promis_balance",
-    "Promis balance for an account (in COEN).",
+    "Promis balance for an account (in rudis).",
     { account: addr },
     handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
   );
@@ -197,7 +197,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_claimable",
-    "Claimable AgentReward balance for an account (in COEN), both pools summed.",
+    "Claimable AgentReward balance for an account (in rudis), both pools summed.",
     { account: addr },
     handler(async ({ account }) =>
       ok(await view(ctx, "agentreward", "getClaimableBalance", [account])),
@@ -206,7 +206,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "agentreward_pool_claimable",
-    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA), in COEN.",
+    "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA), in rudis.",
     { account: addr, pool: z.number().int().min(0).max(1).describe("0 = WAA, 1 = SRA") },
     handler(async ({ account, pool }) =>
       ok(await view(ctx, "agentreward", "getPoolClaimableBalance", [account, pool])),

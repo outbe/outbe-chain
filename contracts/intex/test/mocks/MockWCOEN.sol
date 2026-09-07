@@ -8,5 +8,5 @@ import {MockERC20} from "./MockERC20.sol";
  * @notice The auction's payment token: WCOEN, 18 decimals.
  */
 contract MockWCOEN is MockERC20 {
-    constructor() MockERC20("Wrapped COEN", "WCOEN", 18) {}
+    constructor() MockERC20("Wrapped Rudis", "wrudis", 18) {}
 }

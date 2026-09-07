@@ -20,9 +20,9 @@ const abiOf = (json: unknown): Abi =>
  *
  * Intex is cross-chain: the auction + escrow + NFT run on target chains (BSC
  * today, more later); the series ledger (Intex), settlement
- * (IntexFactory) and Promis live on outbe as runtime precompiles. Addresses are
- * embedded constants, keyed by network so a new target chain is an added branch,
- * not a rewrite. The ABI JSON is inlined at build time, never read at runtime.
+ * (IntexFactory) and Promis live on Rehearsal Network as runtime precompiles.
+ * Precompile addresses are fixed; application addresses are supplied by the
+ * operator. The ABI JSON is inlined at build time, never read at runtime.
  *
  * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
  * hand-written - matching the convention in src/registry.ts. Where a method is
@@ -33,13 +33,13 @@ const abiOf = (json: unknown): Abi =>
 export interface NetworkDef {
   name: string;
   chainId: number;
-  rpc: string;
+  rpc?: string;
 }
 
-/** Supported networks. `outbe-testnet` reuses the connected ctx when ids match. */
+/** Supported networks. `rehearsal-network-1` reuses the connected ctx when ids match. */
 export const NETWORKS: NetworkDef[] = [
   { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
+  { name: "rehearsal-network-1", chainId: 70860602, rpc: process.env.OUTBE_RPC },
 ];
 
 /** Per-network Intex contract addresses. Empty until deployed on that network. */
@@ -59,66 +59,36 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
-const OUTBE = "outbe-testnet";
+const OUTBE = "rehearsal-network-1";
 
-// The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v4.0.0"), so
-// each one shares a single address on every chain; only the wCOEN payment token
-// is a per-chain deployment. Networks gate availability, addresses do not.
-const APP = {
-  auction: a("0xC23D78a2a4A93799D1c020f640B9a4DAE80Bdff2"),
-  escrow: a("0x4b28c9C5391ffA0C7cF9Fd730BfbfF08cA65c680"),
-  nft: a("0x956d5Dc2D4FFD706ea9f2d1da350EEC73557ff8a"),
-  nftBridge: a("0xa29ACC8Cdf56481D1C2911D4499641129274d953"),
-};
-
-/** outbe runtime precompiles (addresses.rs) + the fan-out router. */
-const OUTBE_ONLY = {
+/** Fixed runtime precompiles. Deployed application contracts are operator configuration. */
+const OUTBE_ONLY: IntexAddresses = {
   intex: a("0x0000000000000000000000000000000000001014"),
   factory: a("0x0000000000000000000000000000000000001015"),
   promis: a("0x0000000000000000000000000000000000001337"),
   desis: a("0x0000000000000000000000000000000000001016"),
   vaultRouter: a("0x0000000000000000000000000000000000001017"),
-  // CREATE3 proxy, salt "outbe-intex:OriginRouter:v4.0.0".
-  originRouter: a("0xc863eA177036b01a73B56B16a7F51c2529382547"),
 };
 
-/** Networks where the auction/escrow pair is live. The NFT pair runs on the origin
- *  and every target; enabling a new target = adding it here + its wCOEN below. */
-const AUCTION_LIVE = new Set(["bsc-testnet"]);
-
-/** WCOEN - the auction's 18-decimal wrapped native payment token, per chain. */
-const PAYMENT_TOKEN: Record<string, Address> = {
-  "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
-};
-
-/** Resolve a contract address for a network, or throw a clear error. */
+/**
+ * OUTBE_INTEX_ADDRESSES is JSON keyed by network then contract key.
+ * Existing deployments are never assumed to be configured for a new chain ID.
+ */
 export function intexAddress(network: string, key: keyof IntexAddresses): Address {
-  let addr: Address | undefined;
-  switch (key) {
-    case "auction":
-    case "escrow":
-      addr = AUCTION_LIVE.has(network) ? APP[key] : undefined;
-      break;
-    case "nft":
-    case "nftBridge":
-      addr = network === OUTBE || AUCTION_LIVE.has(network) ? APP[key] : undefined;
-      break;
-    case "paymentToken":
-      addr = PAYMENT_TOKEN[network];
-      break;
-    default:
-      addr = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+  const fixed = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+  if (fixed) return fixed;
+  const deployments = JSON.parse(process.env.OUTBE_INTEX_ADDRESSES ?? "{}");
+  const value = deployments[network]?.[key];
+  if (typeof value !== "string") {
+    throw new Error(`Intex "${key}" is not configured on "${network}"; set OUTBE_INTEX_ADDRESSES`);
   }
-  if (!addr) {
-    throw new Error(`Intex "${key}" is not configured on "${network}"`);
-  }
-  return addr;
+  return getAddress(value);
 }
 
 /** Destination EVM chain id of each network's bridge counterpart (NFT destination). */
 export const BRIDGE_DST_CHAIN_ID: Record<string, number> = {
-  "bsc-testnet": 54322345, // -> outbe-testnet
-  "outbe-testnet": 97, // -> bsc-testnet
+  "bsc-testnet": 70860602, // -> rehearsal-network-1
+  "rehearsal-network-1": 97, // -> bsc-testnet
 };
 
 /** Destination chain id for bridging an NFT out of a network, or throw. */

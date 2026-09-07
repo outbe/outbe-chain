@@ -146,7 +146,7 @@ fn response(
     sign_response(
         EndpointResponseBody {
             request_id,
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
             validator: address,
             node_id,
@@ -189,7 +189,7 @@ async fn request_response_and_signed_evidence() {
     gate.mark_startup_ready();
     let (service, resolver, evidence) = EndpointNetwork::build(
         ChainIdentity {
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
         },
         status,
@@ -251,7 +251,7 @@ async fn request_response_and_signed_evidence() {
         &anchor(&current),
         VerificationContext {
             chain: ChainIdentity {
-                chain_id: 54_322_345,
+                chain_id: 70_860_602,
                 genesis_hash: B256::repeat_byte(0xaa),
             },
             current_height: current.block.number,
@@ -273,7 +273,7 @@ async fn response_gate() {
     let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
     let (service, resolver, _evidence) = EndpointNetwork::build(
         ChainIdentity {
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
         },
         status,
@@ -398,7 +398,7 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
     gate.mark_startup_ready();
     let (service, resolver, _evidence) = EndpointNetwork::build(
         ChainIdentity {
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
         },
         status,
@@ -511,7 +511,7 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
     gate.mark_startup_ready();
     let (service, resolver, evidence) = EndpointNetwork::build(
         ChainIdentity {
-            chain_id: 54_322_345,
+            chain_id: 70_860_602,
             genesis_hash: B256::repeat_byte(0xaa),
         },
         status,

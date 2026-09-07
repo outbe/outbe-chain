@@ -17,6 +17,7 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 mongodb.workspace = true
 revm.workspace = true

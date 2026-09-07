@@ -114,7 +114,7 @@ abstract contract Routes is BaseRoute {
         return canonical
             ? type(WCOEN).creationCode
             : abi.encodePacked(
-                type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(18), _owner())
+                type(BridgeableERC20).creationCode, abi.encode("Wrapped Rudis", "wrudis", uint8(18), _owner())
             );
     }
 }

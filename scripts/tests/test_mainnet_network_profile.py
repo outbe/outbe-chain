@@ -24,7 +24,7 @@ class MainnetNetworkProfileTests(unittest.TestCase):
 
     def test_mainnet_profile_rejects_mismatch_and_unknown_ids(self) -> None:
         with self.assertRaisesRegex(ValueError, "mainnet.*676"):
-            PN.resolve_network_profile("mainnet", 54322345, "dcap-required")
+            PN.resolve_network_profile("mainnet", 70860602, "dcap-required")
         with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
             PN.resolve_network_profile(None, 999999, "dcap-required")
 

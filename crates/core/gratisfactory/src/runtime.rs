@@ -149,7 +149,7 @@ pub fn mine_coen(
     auth: ModifyAuth,
 ) -> Result<U256> {
     let native_amount = checked_protocol_to_native(amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("native rudis amount overflow".into()))?;
 
     // Fold the sale cohort into the gratis burn round-trip; persist the returned
     // fidelity blob.
@@ -164,7 +164,7 @@ pub fn mine_coen(
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::CoenMined {
+        SolEvent::encode_log_data(&IGratisFactory::RudisMined {
             sender: account,
             amount: native_amount,
         }),

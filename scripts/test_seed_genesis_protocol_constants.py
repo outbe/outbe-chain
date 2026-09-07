@@ -27,6 +27,19 @@ SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
+    def test_native_aliases_produce_identical_oracle_state(self):
+        states = []
+        for alias in ("rudis", "RUDIS", "COEN", "native"):
+            storage = seed_genesis.StorageBuilder()
+            seed_genesis.seed_oracle(storage, {
+                "pairs": [{"base": alias, "quote": "840"}],
+                "initial_rates": [{"base": "rudis", "quote": "840", "rate": "1000000"}],
+                "scurve_seeds": [{"pair_base": "rudis", "pair_quote": "840", "peak_day": 20260907, "peak_price": "1000000"}],
+            })
+            states.append(storage.entries)
+        for state in states[1:]:
+            self.assertEqual(state, states[0])
+
     def test_oracle_seed_preserves_configured_generic_pair_orientation(self):
         storage = seed_genesis.StorageBuilder()
         token = "0x1111111111111111111111111111111111111111"

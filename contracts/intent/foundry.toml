@@ -46,7 +46,7 @@
 [rpc_endpoints]
   outbe-dev="https://eth.d.outbe.net"
   bsc-testnet="https://cosmopolitan-solemn-emerald.bsc-testnet.quiknode.pro/10f3eba8ae928e9655a53773651d528c78a45b4c/"
-  outbe-testnet="https://rpc.testnet.outbe.net"
+  outbe-testnet="${OUTBE_RPC_URL}"
 
 [lint]
 exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode", "unsafe-typecast"]

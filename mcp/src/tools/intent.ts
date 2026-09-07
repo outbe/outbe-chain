@@ -20,7 +20,7 @@ import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
-  DEFAULT_ROUTER,
+  intentRouter,
   ERC20_ABI,
   NETWORKS,
   ROUTER_ABI,
@@ -59,7 +59,6 @@ interface Network {
 }
 
 export function registerIntentTools(server: McpServer, ctx: Ctx): void {
-  const router = getAddress(process.env.OUTBE_INTENT_ROUTER ?? DEFAULT_ROUTER);
   const pk = process.env.OUTBE_PRIVATE_KEY;
 
   // --- network resolution (reuses root createCtx; cached per network) --------
@@ -84,7 +83,14 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
     }
     const cached = netCache.get(def.name);
     if (cached) return cached;
-    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(def.rpc, pk);
+    const rpc = def.rpc ?? process.env.OUTBE_RPC;
+    if (def.chainId !== ctx.chain.id && !rpc) {
+      throw new Error(`Set OUTBE_RPC to connect to ${def.name}`);
+    }
+    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(rpc!, pk);
+    if (c.chain.id !== def.chainId) {
+      throw new Error(`RPC for ${def.name} returned chain ID ${c.chain.id}; expected ${def.chainId}`);
+    }
     const n = toNet(def.name, c);
     netCache.set(def.name, n);
     return n;
@@ -149,7 +155,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       if (seen.has(n.chainId)) continue;
       seen.add(n.chainId);
       const raw = (await n.client.readContract({
-        address: router,
+        address: intentRouter(),
         abi: ROUTER_ABI,
         functionName: "openOrders",
         args: [orderId],
@@ -163,7 +169,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   }
 
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
-  const tokenArg = z.string().describe("token: symbol (USD, COEN, ...) or a 0x address");
+  const tokenArg = z.string().describe("token: symbol (USD, rudis, ...) or a 0x address");
 
   // --- create order ----------------------------------------------------------
   server.tool(
@@ -209,10 +215,10 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
           address: input.address,
           abi: ERC20_ABI,
           functionName: "allowance",
-          args: [user, router],
+          args: [user, intentRouter()],
         })) as bigint;
         if (allowance < amountIn) {
-          const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [router, amountIn] });
+          const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [intentRouter(), amountIn] });
           const gas = await estimateGas(originNet, input.address, data, 0n);
           approveTx = await send(originNet, input.address, data, 0n, gas);
           await originNet.client.waitForTransactionReceipt({ hash: approveTx, timeout: 180_000 });
@@ -229,7 +235,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         senderNonce: BigInt(Date.now()),
         originDomain: originNet.chainId,
         destinationDomain: destNet.chainId,
-        destinationSettler: pad(router, { size: 32 }),
+        destinationSettler: pad(intentRouter(), { size: 32 }),
         fillDeadline,
         data: "0x",
       };
@@ -241,14 +247,14 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         args: [{ fillDeadline, orderDataType: ORDER_DATA_TYPE_HASH, orderData: encodeOrderData(orderData) }],
       });
       const value = native ? amountIn : 0n;
-      const gas = await estimateGas(originNet, router, data, value);
-      const hash = await send(originNet, router, data, value, gas);
+      const gas = await estimateGas(originNet, intentRouter(), data, value);
+      const hash = await send(originNet, intentRouter(), data, value, gas);
 
       const meta = {
         orderId,
         txHash: hash,
         approveTx: approveTx ?? null,
-        router,
+        router: intentRouter(),
         origin: { network: originNet.name, chainId: originNet.chainId },
         destination: { network: destNet.name, chainId: destNet.chainId },
         sender: user,
@@ -290,8 +296,8 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       const destNet = destResolved ?? origin;
 
       const [originRaw, destRaw] = await Promise.all([
-        origin.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "orderStatus", args: [orderId] }) as Promise<Hex>,
-        destNet.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "destinationOrderStatus", args: [orderId] }) as Promise<Hex>,
+        origin.client.readContract({ address: intentRouter(), abi: ROUTER_ABI, functionName: "orderStatus", args: [orderId] }) as Promise<Hex>,
+        destNet.client.readContract({ address: intentRouter(), abi: ROUTER_ABI, functionName: "destinationOrderStatus", args: [orderId] }) as Promise<Hex>,
       ]);
       const originStatus = statusLabel(originRaw) || "UNKNOWN";
       const destinationStatus = statusLabel(destRaw) || "UNKNOWN";
@@ -367,7 +373,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       const { origin, order, originData } = await loadOrder(orderId, hint);
 
       const originStatusRaw = (await origin.client.readContract({
-        address: router,
+        address: intentRouter(),
         abi: ROUTER_ABI,
         functionName: "orderStatus",
         args: [orderId],
@@ -384,7 +390,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       try {
         destNet = await resolveNetwork(String(order.destinationDomain));
       } catch {
-        throw new Error(`destination chainId ${order.destinationDomain} is not reachable (outbe/bsc only)`);
+        throw new Error(`destination chainId ${order.destinationDomain} is not reachable (Rudis/BSC only)`);
       }
 
       const sameChain = order.originDomain === order.destinationDomain;
@@ -393,7 +399,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         // payload mirrors RouterMessage refund encoding: (bool false, bytes32[] ids, bytes[] [])
         const payload = encodeAbiParameters(parseAbiParameters("bool, bytes32[], bytes[]"), [false, [orderId], []]);
         const fee = (await destNet.client.readContract({
-          address: router,
+          address: intentRouter(),
           abi: ROUTER_ABI,
           functionName: "quote",
           args: [order.originDomain, payload, false],
@@ -406,8 +412,8 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         functionName: "refund",
         args: [[{ fillDeadline: order.fillDeadline, orderDataType: ORDER_DATA_TYPE_HASH, orderData: originData }]],
       });
-      const gas = await estimateGas(destNet, router, data, value);
-      const hash = await send(destNet, router, data, value, gas);
+      const gas = await estimateGas(destNet, intentRouter(), data, value);
+      const hash = await send(destNet, intentRouter(), data, value, gas);
 
       const meta = {
         orderId,

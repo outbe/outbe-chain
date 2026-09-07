@@ -42,7 +42,7 @@ export type Ledger = "Gratis" | "Promis";
 // preimage tag (".../modify/v1"); only the latter appears here (the enclave applies
 // the former server-side when deriving the modify key).
 interface LedgerLabels {
-  deriveKeysTag: Uint8Array; // personal_sign domain for outbe_deriveKeys
+  deriveKeysTag: Uint8Array; // personal_sign domain for rudis_deriveKeys
   nonceInfo: Uint8Array; // per-slot AEAD nonce HKDF info
   modifyTag: Uint8Array; // modify-MAC preimage tag
 }
@@ -134,7 +134,7 @@ function chachaDecrypt(key: Uint8Array, nonce: Uint8Array, ctWithTag: Uint8Array
 }
 
 // ---------------------------------------------------------------------------
-// Key delivery - outbe_deriveGratisKeys RPC
+// Key delivery - rudis_deriveGratisKeys RPC
 // ---------------------------------------------------------------------------
 
 export interface GratisKeys {
@@ -144,7 +144,7 @@ export interface GratisKeys {
 
 /**
  * Fetch the signer's own enclave-derived view + modify keys for `ledger` via the
- * unified `outbe_deriveKeys(ledger, ...)` RPC. The enclave seals them to a fresh
+ * unified `rudis_deriveKeys(ledger, ...)` RPC. The enclave seals them to a fresh
  * client ephemeral X25519 key (the `decrypt_share` scheme in `crypto.rs`).
  *
  * The RPC authenticates control of the account: we prove it with an EIP-191
@@ -168,7 +168,7 @@ export async function deriveKeys(signer: ethers.Wallet, ledger: Ledger): Promise
   const signature = await signer.signMessage(message);
 
   const resp: { sealed: string; nonce: string; enclaveEphemeralPubkey: string } =
-    await provider.send("outbe_deriveKeys", [
+    await provider.send("rudis_deriveKeys", [
       ledger,
       account,
       ethers.hexlify(ephPublic),

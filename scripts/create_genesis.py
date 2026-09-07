@@ -65,11 +65,11 @@ DEFAULT_CHAIN_ID = 424242
 # Mainnet requires `dcap-required`. The selected mode is bound into the genesis policy
 # and cannot change through successor-policy activation.
 DEVNET_CHAIN_ID = 424242
-TESTNET_CHAIN_ID = 54322345
+TESTNET_CHAIN_ID = 70860602
 MAINNET_CHAIN_ID = 676
 NETWORK_IDENTITIES = {
     "devnet": (DEVNET_CHAIN_ID, "outbe-devnet-1"),
-    "testnet": (TESTNET_CHAIN_ID, "outbe-testnet-1"),
+    "testnet": (TESTNET_CHAIN_ID, "rehearsal-network-1"),
     "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
 }
 DEFAULT_GAS_LIMIT = "0x1c9c380"
@@ -383,6 +383,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if unknown_tee:
         raise ValueError(f"unknown tee key(s): {', '.join(unknown_tee)}")
     network, chain_id, _ = network_identity(config)
+    if "enclave_sgx" in config and not isinstance(config["enclave_sgx"], bool):
+        raise ValueError("enclave_sgx must be a boolean")
     mode = tee.get("mode")
     if mode not in ("gramine-direct-dev", "dcap-required"):
         raise ValueError("tee.mode must be gramine-direct-dev or dcap-required")

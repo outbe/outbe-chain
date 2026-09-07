@@ -132,11 +132,11 @@ contract StablecoinInterfacesTest {
                     domainTypehash,
                     keccak256("Example Dollar"),
                     versionHash,
-                    uint256(54322345),
-                    address(0x53C0f7F0acaf4C6a42867EDc0CFeDD65eE90C97f)
+                    uint256(70860602),
+                    address(0x53c06885866f40057219Ad4fEdF304838f00D626)
                 )
             ),
-            0x24aae2a2078bc2de3469da62ff425b346368ad5de045f3e522e81d0ccac6a425
+            0x6fd6dcb46e2f123e50eb7a225f84bca93ab0f49c8e40ec586cee374ec34cf167
         );
     }
 

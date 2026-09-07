@@ -40,7 +40,7 @@ import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
 
 /**
  * Intex participant tools: auction commit/reveal, escrow funding, NFT holdings,
- * the series ledger, the BSC->outbe bridge, and settlement/Promis on outbe.
+ * the series ledger, the BSC->outbe bridge, and settlement/Promis on Rehearsal Network.
  *
  * Domain (addresses, ABIs, decoders) lives in src/intex/. Networks come from the
  * NETWORKS table; a resolved network reuses the connected `ctx` when chain ids
@@ -60,7 +60,7 @@ interface Network {
 const SCALE_1E6 = 1_000_000n;
 const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
 
-/** Convert the protocol-6 auction basis and rate into the native-18 WCOEN lock. */
+/** Convert the protocol-6 auction basis and rate into the native-18 wrudis lock. */
 export function wcoenLockAmount(quantity: bigint, promisLoadProtocol: bigint, bidRate: bigint): bigint {
   return ((quantity * promisLoadProtocol * bidRate) / SCALE_1E6) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
 }
@@ -109,7 +109,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     }
     const cached = netCache.get(def.name);
     if (cached) return cached;
-    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(def.rpc, pk);
+    const rpc = def.rpc ?? process.env.OUTBE_RPC;
+    if (def.chainId !== ctx.chain.id && !rpc) {
+      throw new Error(`Set OUTBE_RPC to connect to ${def.name}`);
+    }
+    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(rpc!, pk);
+    if (c.chain.id !== def.chainId) {
+      throw new Error(`RPC for ${def.name} returned chain ID ${c.chain.id}; expected ${def.chainId}`);
+    }
     const n: Network = {
       name: def.name,
       chainId: c.chain.id,
@@ -161,7 +168,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   // A bid is a RATE: the fraction of the protocol-6 per-Intex PROMIS load that
   // the bidder will pay, as 1e6 fixed-point. The result crosses into native-18
-  // WCOEN only at the escrow boundary. Payment-token meta is cached per network.
+  // wrudis only at the escrow boundary. Payment-token meta is cached per network.
   const metaCache = new Map<string, { decimals: number; symbol: string }>();
   async function paymentMeta(n: Network): Promise<{ decimals: number; symbol: string }> {
     const cached = metaCache.get(n.name);
@@ -200,7 +207,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
   /**
    * Payment tokens a series accepts: the vault router's assets for either of its
-   * currencies. An issuance-currency token only settles while both COEN rates are
+   * currencies. An issuance-currency token only settles while both rudis rates are
    * published and fresh, which `quoteSettlement` is the one to answer.
    */
   async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
@@ -274,19 +281,19 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     .int()
     .describe("reference currency the bid prices in, ISO 4217 numeric; must be one the day prices (auction_info)");
   const amountArg = z.string().describe("amount as the raw on-chain integer");
-  const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
+  const recipientArg = z.string().optional().describe("recipient on Rehearsal Network (default: the signer)");
   const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
 
   // --- Series ledger (outbe Intex) -----------------------------------
   server.tool(
     "intex_series_info",
-    "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
+    "Canonical series record from the Rudis Intex: promis load, entry/floor/call prices, currencies, " +
       "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
       "callDeadline/expired pair - check `expired` before attempting settle (past-deadline settles revert) - " +
       "and how the issued units split into settled, parked and still-outstanding.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const d = (await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
@@ -327,10 +334,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_series_list",
-    "Enumerate series ids that exist in the outbe Intex (dense enumeration).",
+    "Enumerate series ids that exist in the Rudis Intex (dense enumeration).",
     { network: networkArg.optional() },
     handler(async ({ network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const total = Number(
         (await n.client.readContract({
           address: addr(n, "intex"),
@@ -357,7 +364,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
       "for Issued ones the series lifecycle with its callDeadline. Defaults to bsc-testnet (where won NFTs " +
-      "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits - bridge " +
+      "land); pass network to read Rehearsal Network. A holding away from Rehearsal Network cannot be settled where it sits - bridge " +
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
@@ -411,7 +418,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_balance",
     "An address's Intex NFT balance for one series, split into issued and settled token ids. Reads the " +
-      "chain you ask for; settlement only happens on outbe, so an issued balance found elsewhere has to be " +
+      "chain you ask for; settlement only happens on Rehearsal Network, so an issued balance found elsewhere has to be " +
       "bridged over before the series callDeadline (intex_series_info shows it).",
     { series: seriesArg, account: accountArg, network: networkArg.optional() },
     handler(async ({ series, account, network }) => {
@@ -528,7 +535,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         },
         paymentToken: { symbol: meta.symbol, decimals: dec },
         params: {
-          // Protocol-6 per-Intex PROMIS load. Escrow converts the calculated lock to WCOEN-18.
+          // Protocol-6 per-Intex PROMIS load. Escrow converts the calculated lock to wrudis-18.
           promisLoadMinor: {
             raw: d.params.promisLoadMinor.toString(),
             value: formatUnits(d.params.promisLoadMinor, 6),
@@ -565,13 +572,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_chains",
-    "Per-chain bid fan-in for one auction day, read from outbe: the day's target-chain snapshot and, for " +
+    "Per-chain bid fan-in for one auction day, read from Rehearsal Network: the day's target-chain snapshot and, for " +
       "each chain, whether its bids arrived in full (BIDS_DONE) and how many. Clearing runs once every " +
       "chain reports or the fan-in deadline passes; a chain still done=false after clearing was skipped " +
       "and its bidders reclaim locally (see auction_bids_by_owner on that chain).",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
     handler(async ({ worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const desis = addr(n, "desis");
       const chains = (await n.client.readContract({
         address: addr(n, "originRouter"),
@@ -796,7 +803,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "auction_bid_reveal",
     "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
     "and submits revealBid; the escrow calculates quantity * protocol-6 PROMIS load * rate / 1e6, then converts " +
-      "that result by 1e12 into native-18 WCOEN for the lock. The reference currency must be one the day prices, the issuance currency any " +
+      "that result by 1e12 into native-18 wrudis for the lock. The reference currency must be one the day prices, the issuance currency any " +
       "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
     {
       worldwideDay: worldwideDayArg,
@@ -814,7 +821,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const bidRate = toBidRate(rate);
 
       // Calculate in protocol-6 from the per-Intex PROMIS load and 1e6 rate,
-      // then convert exactly once to native-18 WCOEN for the escrow boundary.
+      // then convert exactly once to native-18 wrudis for the escrow boundary.
       const info = (await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
@@ -989,7 +996,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_quote",
-    "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is holder-initiated at every stage: " +
+    "Bridge native fee to move an Intex NFT from BSC to Rehearsal Network. Bridging is holder-initiated at every stage: " +
       "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
       "its callDeadline (read it with intex_series_info).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
@@ -1016,7 +1023,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_send",
-    "Bridge an Intex NFT from BSC to outbe, where settlement happens - nothing moves it for you, so a " +
+    "Bridge an Intex NFT from BSC to Rehearsal Network, where settlement happens - nothing moves it for you, so a " +
       "position left on BSC past the series callDeadline can no longer be settled at all. Works at every " +
       "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
@@ -1060,7 +1067,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "Allowed when the series is Qualified (voluntary) or Called (forced, within the call period). The " +
       "Settled token (soulbound) and the later Promis go to the SIGNING wallet, not to holder; since the MCP " +
       "signs with one key, to land them on a different wallet that wallet must settle/mine itself. " +
-      "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
+      "Settlement only ever happens on Rehearsal Network: a position sitting on BSC has to be brought over with " +
       "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
     {
@@ -1072,7 +1079,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ series, amount, holder, pay_note_proof, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
       if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
@@ -1103,7 +1110,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "PayNote you deposit before calling auction_bid_settle.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const tokens = await settlementTokens(n, series);
       const priced = await Promise.all(
         tokens.map(async (token) => {
@@ -1135,7 +1142,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "that wallet can settle on your behalf. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, settler: z.string().describe("0x address to authorize"), network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, settler, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       requireAccount();
       const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "setAuthorizedSettler", args: [series, getAddress(settler)] });
       const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
@@ -1149,7 +1156,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "first). The proof-of-work nonce is computed locally; you give only series and amount. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const account = requireAccount();
       const holder = account.address;
       const amt = BigInt(amount);
@@ -1172,7 +1179,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const pow = grindNonce(holder, promisAmount, series, seq);
       throw new Error(
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
-          "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
+          "the modify key is sealed to an ephemeral X25519 key by rudis_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
           `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
@@ -1184,10 +1191,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_promis_balance",
-    "Promis balance for an address on outbe.",
+    "Promis balance for an address on Rehearsal Network.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? "rehearsal-network-1");
       const who = whoever(account);
       const bal = (await n.client.readContract({
         address: addr(n, "promis"),

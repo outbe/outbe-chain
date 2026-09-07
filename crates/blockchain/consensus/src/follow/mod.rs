@@ -2073,7 +2073,7 @@ mod tests {
         );
     }
 
-    /// Full `outbe_getFinalization` server->client interop. The SERVER side
+    /// Full `rudis_getFinalization` server->client interop. The SERVER side
     /// (drainer) encodes the certificate and block separately and hexes them
     /// (`FinalizedBlockBytes` -> `FinalizationProof`); the CLIENT side hex-decodes
     /// and decodes the certificate with the UNBOUNDED committee config (the

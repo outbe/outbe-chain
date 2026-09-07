@@ -456,7 +456,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::PROMIS_FACTORY_ADDR,
-        &eth::IPromisFactory::mineCoenCall {
+        &eth::IPromisFactory::mineRudisCall {
             amount: gem.promisLoad,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
@@ -483,7 +483,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
     .expect("ZeroFee counter after Gem redemption");
     assert_eq!(
         counter_after.count, 3,
-        "settleGem, minePromis, and mineCoen must consume three of eight sponsored slots"
+        "settleGem, minePromis, and mineRudis must consume three of eight sponsored slots"
     );
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
@@ -715,7 +715,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &url,
             addresses::PROMIS_FACTORY_ADDR,
             &key,
-            &eth::IPromisFactory::mineCoenCall {
+            &eth::IPromisFactory::mineRudisCall {
                 amount: gem.promisLoad,
                 mac: B256::from(mac),
                 opNonce: nonce,
@@ -729,7 +729,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
     assert_receipt_event(
         &burn.receipt,
         addresses::PROMIS_FACTORY_ADDR,
-        &eth::IPromisFactory::CoenMined {
+        &eth::IPromisFactory::RudisMined {
             sender: owner,
             amount: native_mint,
         },
@@ -926,7 +926,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         &url,
         addresses::GRATIS_FACTORY_ADDR,
         &key,
-        &eth::IGratisFactory::mineCoenCall {
+        &eth::IGratisFactory::mineRudisCall {
             amount: body.gratisLoadMinor,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
@@ -1467,7 +1467,7 @@ mod tests {
     #[test]
     fn redemption_event_requires_exact_emitter_amount_and_one_occurrence() {
         let emitter = addresses::PROMIS_FACTORY_ADDR;
-        let event = eth::IPromisFactory::CoenMined {
+        let event = eth::IPromisFactory::RudisMined {
             sender: Address::repeat_byte(1),
             amount: U256::from(123),
         };

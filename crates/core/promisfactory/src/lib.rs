@@ -3,7 +3,7 @@
 //!
 //! Owns the promis mint/burn orchestration. `mine` wraps `Promis::mine`.
 //! `mine_coen` is the symmetric sale path: it wraps `Promis::burn`, mints native
-//! COEN 1:1, and emits `CoenMined`.
+//! COEN 1:1, and emits `RudisMined`.
 
 pub mod api;
 pub mod precompile;

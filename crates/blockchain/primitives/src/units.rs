@@ -5,7 +5,7 @@
 use alloy_primitives::U256;
 
 /// Native token symbol.
-pub const NATIVE_TOKEN_SYMBOL: &str = "COEN";
+pub const NATIVE_TOKEN_SYMBOL: &str = "rudis";
 
 /// Base denomination.
 pub const BASE_DENOM: &str = "unit";
@@ -77,6 +77,8 @@ mod tests {
         assert_eq!(SCALE_1E6_U128, 1_000_000);
         assert_eq!(SCALE_1E6_U256, U256::from(1_000_000u64));
         assert_eq!(NATIVE_TOKEN_DECIMALS, 18);
+        assert_eq!(NATIVE_TOKEN_SYMBOL, "rudis");
+        assert_eq!(BASE_DENOM, "unit");
     }
 
     #[test]

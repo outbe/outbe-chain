@@ -232,10 +232,10 @@ impl RpcClient {
         U256::from_str_radix(hex_str, 16).map_err(|e| eyre::eyre!("failed to parse U256: {e}"))
     }
 
-    /// Call `outbe_getVrfSeed` with a specific block number.
+    /// Call `rudis_getVrfSeed` with a specific block number.
     #[allow(dead_code)]
     pub async fn outbe_get_vrf_seed_at(&self, block_number: u64) -> Result<Value> {
-        self.call_rpc("outbe_getVrfSeed", serde_json::json!([block_number]))
+        self.call_rpc("rudis_getVrfSeed", serde_json::json!([block_number]))
             .await
     }
 }
@@ -364,21 +364,21 @@ impl Rpc for RpcClient {
     }
 
     async fn outbe_consensus_status(&self) -> Result<Value> {
-        self.call_rpc("outbe_consensusStatus", serde_json::json!([]))
+        self.call_rpc("rudis_consensusStatus", serde_json::json!([]))
             .await
     }
 
     async fn outbe_get_epoch_info(&self) -> Result<Value> {
-        self.call_rpc("outbe_getEpochInfo", serde_json::json!([]))
+        self.call_rpc("rudis_getEpochInfo", serde_json::json!([]))
             .await
     }
 
     async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
-            self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
+            self.call_rpc("rudis_teeRenewalScheduleV1", serde_json::json!([]))
                 .await?,
         )
-        .wrap_err("decode outbe_teeRenewalScheduleV1")
+        .wrap_err("decode rudis_teeRenewalScheduleV1")
     }
 
     async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
@@ -404,7 +404,7 @@ impl Rpc for RpcClient {
     }
 
     async fn outbe_get_finalization(&self, height: u64) -> Result<Value> {
-        self.call_rpc("outbe_getFinalization", serde_json::json!([height]))
+        self.call_rpc("rudis_getFinalization", serde_json::json!([height]))
             .await
     }
 
@@ -426,17 +426,17 @@ impl Rpc for RpcClient {
     }
 
     async fn outbe_get_vrf_seed(&self) -> Result<Value> {
-        self.call_rpc("outbe_getVrfSeed", serde_json::json!([null]))
+        self.call_rpc("rudis_getVrfSeed", serde_json::json!([null]))
             .await
     }
 
     async fn outbe_get_emission_info(&self) -> Result<Value> {
-        self.call_rpc("outbe_getEmissionInfo", serde_json::json!([]))
+        self.call_rpc("rudis_getEmissionInfo", serde_json::json!([]))
             .await
     }
 
     async fn outbe_get_slash_config(&self) -> Result<Value> {
-        self.call_rpc("outbe_getSlashConfig", serde_json::json!([]))
+        self.call_rpc("rudis_getSlashConfig", serde_json::json!([]))
             .await
     }
 
@@ -740,12 +740,12 @@ pub mod mock {
 
         async fn outbe_consensus_status(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeConsensusStatus)?
-                .into_value("outbe_consensusStatus")
+                .into_value("rudis_consensusStatus")
         }
 
         async fn outbe_get_epoch_info(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeGetEpochInfo)?
-                .into_value("outbe_getEpochInfo")
+                .into_value("rudis_getEpochInfo")
         }
 
         async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
@@ -760,17 +760,17 @@ pub mod mock {
 
         async fn outbe_get_vrf_seed(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeGetVrfSeed)?
-                .into_value("outbe_getVrfSeed")
+                .into_value("rudis_getVrfSeed")
         }
 
         async fn outbe_get_emission_info(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeGetEmissionInfo)?
-                .into_value("outbe_getEmissionInfo")
+                .into_value("rudis_getEmissionInfo")
         }
 
         async fn outbe_get_slash_config(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeGetSlashConfig)?
-                .into_value("outbe_getSlashConfig")
+                .into_value("rudis_getSlashConfig")
         }
 
         async fn eth_get_logs(
@@ -1103,7 +1103,7 @@ mod tests {
             body,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_getVrfSeed",
+                "method": "rudis_getVrfSeed",
                 "params": [null],
                 "id": 1,
             })
@@ -1125,7 +1125,7 @@ mod tests {
             body,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_getVrfSeed",
+                "method": "rudis_getVrfSeed",
                 "params": [99],
                 "id": 1,
             })
@@ -1322,7 +1322,7 @@ mod tests {
             first,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_consensusStatus",
+                "method": "rudis_consensusStatus",
                 "params": [],
                 "id": 1,
             })
@@ -1331,7 +1331,7 @@ mod tests {
             second,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_getEpochInfo",
+                "method": "rudis_getEpochInfo",
                 "params": [],
                 "id": 2,
             })
@@ -1340,7 +1340,7 @@ mod tests {
             third,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_getEmissionInfo",
+                "method": "rudis_getEmissionInfo",
                 "params": [],
                 "id": 3,
             })
@@ -1349,7 +1349,7 @@ mod tests {
             fourth,
             json!({
                 "jsonrpc": "2.0",
-                "method": "outbe_getSlashConfig",
+                "method": "rudis_getSlashConfig",
                 "params": [],
                 "id": 4,
             })

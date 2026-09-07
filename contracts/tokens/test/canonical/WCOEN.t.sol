@@ -23,6 +23,12 @@ contract WCOENTest is Test {
 
     WCOEN internal token;
 
+    function test_PublicMetadataUsesRudis() public view {
+        assertEq(token.name(), "Wrapped Rudis");
+        assertEq(token.symbol(), "wrudis");
+        assertEq(token.decimals(), 18);
+    }
+
     function setUp() public {
         token = new WCOEN();
     }

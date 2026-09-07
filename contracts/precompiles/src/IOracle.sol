@@ -49,7 +49,7 @@ interface IOracle {
     /// @notice `getExchangeRate` for `COEN/<isoCode>`. COEN is the zero address
     ///         and so always sorts first: this is never the inverted direction.
     ///         Every ISO reference currency uses the six-decimal COEN/ISO contract.
-    function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
+    function getRudisExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
 
     /// @notice `amount`, denominated in `fromIso`, re-expressed in `toIso` via
     ///         both COEN legs: `amount * rate(COEN/toIso) / rate(COEN/fromIso)`,

@@ -651,7 +651,7 @@ fn coherent_material(
     let read = |port| -> Result<_> {
         local_material(eth::raw_json_result(
             &world.rpc.url(port),
-            "outbe_consensusStatus",
+            "rudis_consensusStatus",
             json!([]),
         )?)
     };

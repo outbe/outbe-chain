@@ -405,7 +405,7 @@
         "internalType": "uint128"
       },
       {
-        "name": "coenUsdRateMinor",
+        "name": "rudisUsdRateMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

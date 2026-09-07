@@ -1997,7 +1997,7 @@ fn genesis_consensus_block(node: &OutbeFullNode) -> Result<outbe_consensus::bloc
     ))
 }
 
-/// Spawn the drainer that answers `outbe_getFinalization` RPC requests from the
+/// Spawn the drainer that answers `rudis_getFinalization` RPC requests from the
 /// marshal. The `outbe-rpc` handler cannot see the marshal or `ConsensusBlock`,
 /// so it requests bytes through [`ConsensusExecutionBridge::request_finalization`];
 /// this task is the consensus-side responder. Wired on BOTH the validator path
@@ -3169,7 +3169,7 @@ where
     let observer_ingress = executor_reporter.clone();
     let executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
 
-    // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
+    // -- 4b. Serve `rudis_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
     // retention both succeed. --------------------------------------
     spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
@@ -4531,7 +4531,7 @@ where
     let mut marshal_handle =
         marshal_actor.start(marshal_reporter, broadcast_mailbox.clone(), resolver);
 
-    // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
+    // Serve `rudis_getFinalization` from the marshal so `--upstream` followers
     // can backfill + verify finalized blocks from this validator.
     spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 

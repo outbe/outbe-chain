@@ -195,7 +195,7 @@ pub struct ConsensusArgs {
     #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
     pub tee_canary_interval_secs: u64,
 
-    /// Consecutive canary failures before `outbe_consensusStatus.enclave`
+    /// Consecutive canary failures before `rudis_consensusStatus.enclave`
     /// reports `degraded` (transport-unreachable reports `unavailable`
     /// immediately).
     #[arg(long = "tee-canary.failure-threshold", default_value_t = 3)]

@@ -20,7 +20,7 @@ interface IGemFactory {
     ///         gated by off-chain proof of work. Authorized by the caller's Promis
     ///         modify key: `mac = HMAC(modifyKey, op-preimage)` where `opNonce`
     ///         MUST equal the caller's current on-chain promis op-nonce (fetch via
-    ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
+    ///         `rudis_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function minePromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
     /// @notice Cumulative totals since genesis. `totalIntexParked` counts every

@@ -1151,10 +1151,10 @@ impl Rpc {
     ) -> Result<CompressedEntityAtHeader> {
         let result = eth::raw_json_with_params(
             &self.url(port),
-            "outbe_getCompressedEntity",
+            "rudis_getCompressedEntity",
             serde_json::json!([request]),
         )
-        .ok_or_else(|| eyre!("outbe_getCompressedEntity returned no result on port {port}"))?;
+        .ok_or_else(|| eyre!("rudis_getCompressedEntity returned no result on port {port}"))?;
         let result: PointReadResultV1 =
             serde_json::from_value(result).wrap_err("decode compressed-entity package")?;
         let common = match &result {
@@ -2427,9 +2427,9 @@ impl Rpc {
             .collect()
     }
 
-    /// A JSON field from `outbe_consensusStatus` on the node at `port`.
+    /// A JSON field from `rudis_consensusStatus` on the node at `port`.
     pub fn consensus_status_field(&self, port: u16, field: &str) -> Option<String> {
-        let v = eth::raw_json(&self.url(port), "outbe_consensusStatus")?;
+        let v = eth::raw_json(&self.url(port), "rudis_consensusStatus")?;
         match v.get(field)? {
             serde_json::Value::String(s) => Some(s.clone()),
             other => Some(other.to_string()),
@@ -2439,24 +2439,24 @@ impl Rpc {
     /// Whether the local consensus runtime has a private threshold share for
     /// the currently active DKG material.
     pub fn has_threshold_shares(&self, port: u16) -> Option<bool> {
-        eth::raw_json(&self.url(port), "outbe_consensusStatus")?
+        eth::raw_json(&self.url(port), "rudis_consensusStatus")?
             .get("hasThresholdShares")?
             .as_bool()
     }
 
     /// Immutable Radicle integration status as published by validator `port`.
     pub fn radicle_status(&self, port: u16) -> Option<serde_json::Value> {
-        eth::raw_json(&self.url(port), "outbe_radicleStatus")
+        eth::raw_json(&self.url(port), "rudis_radicleStatus")
     }
 
     /// Canonical signed endpoint evidence known by validator `port`.
     pub fn radicle_peers(&self, port: u16) -> Option<serde_json::Value> {
-        eth::raw_json(&self.url(port), "outbe_radiclePeers")
+        eth::raw_json(&self.url(port), "rudis_radiclePeers")
     }
 
     /// Finalized desired repositories and their local availability state.
     pub fn radicle_repositories(&self, port: u16) -> Option<serde_json::Value> {
-        eth::raw_json(&self.url(port), "outbe_radicleRepositories")
+        eth::raw_json(&self.url(port), "rudis_radicleRepositories")
     }
 
     /// Permissionlessly register one public Heartwood repository.
@@ -2503,7 +2503,7 @@ impl Rpc {
     pub fn voter_miss_count(&self, port: u16, validator: &str) -> Option<u64> {
         let value = eth::raw_json_with_params(
             &self.url(port),
-            "outbe_getSlashInfo",
+            "rudis_getSlashInfo",
             serde_json::json!([validator]),
         )?;
         let misses = value.get("voterMissCount")?;
@@ -4006,7 +4006,7 @@ impl Rpc {
     pub fn slash_percent(&self) -> Option<u64> {
         eth::raw_json_with_params(
             &self.cfg.rpc0,
-            "outbe_getSlashConfig",
+            "rudis_getSlashConfig",
             serde_json::json!([]),
         )?
         .get("slashAmountPercent")?

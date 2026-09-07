@@ -85,7 +85,7 @@ fn prepare_downtime(world: &mut World, name: &str) -> Result<()> {
     // The typed response supplies production defaults when a config slot is unset.
     // Retain and compare the pinned raw slots throughout, so a changing config
     // cannot silently change the accounting oracle.
-    let config = eth::raw_json_result(&world.rpc.url(ports[0]), "outbe_getSlashConfig", json!([]))?;
+    let config = eth::raw_json_result(&world.rpc.url(ports[0]), "rudis_getSlashConfig", json!([]))?;
     let percent = config["slashAmountPercent"]
         .as_u64()
         .ok_or_else(|| eyre!("slash config omitted percent"))?;

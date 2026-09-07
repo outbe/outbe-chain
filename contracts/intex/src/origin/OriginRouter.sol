@@ -651,13 +651,13 @@ contract OriginRouter is
 
     // --- Proceeds route ---
     /// @inheritdoc IOriginRouter
-    function setProceedsRoute(address _tokenBridge, address _wcoen) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setProceedsRoute(address _tokenBridge, address _wrudis) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_tokenBridge == address(0)) revert ZeroAddress("tokenBridge");
-        if (_wcoen == address(0)) revert ZeroAddress("wcoen");
+        if (_wrudis == address(0)) revert ZeroAddress("wrudis");
         OriginRouterStorage storage $ = _os();
         $.tokenBridge = _tokenBridge;
-        $.wcoen = _wcoen;
-        emit ProceedsRouteSet(_tokenBridge, _wcoen);
+        $.wcoen = _wrudis;
+        emit ProceedsRouteSet(_tokenBridge, _wrudis);
     }
 
     /// @inheritdoc IOriginRouter
@@ -666,7 +666,7 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function wcoen() external view returns (address) {
+    function wrudis() external view returns (address) {
         return _os().wcoen;
     }
 

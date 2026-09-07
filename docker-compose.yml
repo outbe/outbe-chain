@@ -59,7 +59,7 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545
-      - --http.api=eth,net,web3,outbe
+      - --http.api=eth,net,web3,rudis
       - --port=30303
       - --metrics=0.0.0.0:9001
       - --validator
@@ -91,7 +91,7 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545
-      - --http.api=eth,net,web3,outbe
+      - --http.api=eth,net,web3,rudis
       - --port=30303
       - --metrics=0.0.0.0:9001
       - --validator
@@ -123,7 +123,7 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545
-      - --http.api=eth,net,web3,outbe
+      - --http.api=eth,net,web3,rudis
       - --port=30303
       - --metrics=0.0.0.0:9001
       - --validator
@@ -155,7 +155,7 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545
-      - --http.api=eth,net,web3,outbe
+      - --http.api=eth,net,web3,rudis
       - --port=30303
       - --metrics=0.0.0.0:9001
       - --validator

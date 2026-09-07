@@ -310,7 +310,7 @@ async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
                 U256::ZERO
             };
             println!(
-                "{:<14} {:<12} {:<44} slashed={} COEN, by={}",
+                "{:<14} {:<12} {:<44} slashed={} rudis, by={}",
                 block,
                 "EVIDENCE",
                 format_topic_addr(validator),

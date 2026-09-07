@@ -21,6 +21,7 @@ tracing.workspace = true
 base64 = "0.22"
 
 [dev-dependencies]
+serde_json.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 mongodb.workspace = true
 

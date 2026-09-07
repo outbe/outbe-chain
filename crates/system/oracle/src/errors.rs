@@ -64,7 +64,7 @@ pub enum OracleError {
     CrossRateOverflow,
     #[error("tally arithmetic overflow: {0}")]
     TallyArithmeticOverflow(&'static str),
-    #[error("COEN rate for currency {iso_code} is stale")]
+    #[error("rudis rate for currency {iso_code} is stale")]
     StaleCoenRate { iso_code: u16 },
     #[error("lookback_seconds must be > 0 and <= lookback_duration")]
     InvalidLookbackSeconds,
