@@ -544,19 +544,21 @@ mod tests {
                     .unwrap()
                     .unwrap();
             assert_eq!(formation.base_limit, daily_base);
-            assert_eq!(formation.carry_over_taken, expected_residue);
+            // Formation forms the day against its own emission and leaves the accumulator alone.
+            assert_eq!(formation.carry_over_taken, U256::ZERO);
             assert_eq!(
                 outbe_metadosis::api::worldwide_day(ctx.storage.clone(), wwd)
                     .unwrap()
                     .unwrap()
                     .metadosis_limit_amount,
-                daily_base + expected_residue
+                daily_base
             );
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
                     .get_total_unallocated()
                     .unwrap(),
-                U256::ZERO
+                expected_residue,
+                "the residue stays in the accumulator for whichever day draws on it"
             );
         });
     }

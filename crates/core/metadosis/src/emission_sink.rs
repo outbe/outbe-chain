@@ -79,19 +79,18 @@ fn apply_ocomp_day_limit(
             return Ok(DayLimitFormationReceipt::Formed(formed));
         }
 
-        let carry_over = PromisLimitContract::new(ctx.storage.clone()).checked_take_carry_over()?;
-        let day_limit = base_limit.checked_add(carry_over.taken).ok_or_else(|| {
-            crate::errors::caller_rejection("OCOMP day limit carry-over overflow")
-        })?;
+        // A day is formed against its own emission. The accumulator is drawn from at the request,
+        // where the day's demand is known, so forming one day never strands it for the next.
+        let carry_over = PromisLimitContract::new(ctx.storage.clone()).get_total_unallocated()?;
         crate::commit::commit_day_limit_formation(
             &mut metadosis,
             OcompDayLimitFormation {
                 worldwide_day: wwd,
                 base_limit,
-                carry_over_before: carry_over.before,
-                carry_over_taken: carry_over.taken,
-                carry_over_after: carry_over.after,
-                day_limit,
+                carry_over_before: carry_over,
+                carry_over_taken: U256::ZERO,
+                carry_over_after: carry_over,
+                day_limit: base_limit,
                 block_number: ctx.block.block_number,
             },
         )

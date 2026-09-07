@@ -31,13 +31,19 @@ impl PromisLimitContract<'_> {
         })
     }
 
-    pub fn checked_take_carry_over(&mut self) -> Result<CarryOverTake> {
+    /// Take at most `amount`, returning what was actually taken. The accumulator serves what it
+    /// holds, so a request above the balance is a partial take rather than an error.
+    pub fn checked_take_carry_over_up_to(&mut self, amount: U256) -> Result<CarryOverTake> {
         let before = self.get_total_unallocated()?;
-        self.set_total_unallocated(U256::ZERO)?;
+        let taken = amount.min(before);
+        let after = before.checked_sub(taken).ok_or_else(|| {
+            PrecompileError::Revert("promislimit total_unallocated underflow".into())
+        })?;
+        self.set_total_unallocated(after)?;
         Ok(CarryOverTake {
             before,
-            taken: before,
-            after: U256::ZERO,
+            taken,
+            after,
         })
     }
 }

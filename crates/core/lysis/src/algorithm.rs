@@ -323,7 +323,11 @@ fn i256_to_u256_clamped(value: I256) -> U256 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
+
+    /// The symbolic share as a day-average fraction, and the per-league ceiling twice that.
+    /// Production derives both from the day; these only feed the tests below.
+    const F_FP_DEFAULT: U256 = u256_from_u128(SCALE_U128 * 32 / 100);
+    const F_MAX_FP: U256 = u256_from_u128(SCALE_U128 * 64 / 100);
 
     /// Compute floor(base^exp) for u128, saturating on overflow.
     fn pow_u128(base: u128, exp: u32) -> Option<u128> {

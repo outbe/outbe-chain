@@ -703,8 +703,8 @@ fn dispatcher_fires_auction_advance_at_its_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&auction_advance_id).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY / 2,
-            "fires the first 12h slot strictly after the anchor"
+            GENESIS_TS + SECONDS_PER_DAY,
+            "coalesces the backlog to the latest slot at or before the block"
         );
         assert_eq!(
             cycle

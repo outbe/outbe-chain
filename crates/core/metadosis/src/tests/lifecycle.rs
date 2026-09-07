@@ -1119,7 +1119,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
 }
 
 #[test]
-fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
+fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
     fn apply_limit(
         provider: &mut HashMapStorageProvider,
         block_number: u64,
@@ -1163,9 +1163,9 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
         assert_eq!(first_formation.worldwide_day, first);
         assert_eq!(first_formation.base_limit, U256::from(100));
         assert_eq!(first_formation.carry_over_before, U256::from(30));
-        assert_eq!(first_formation.carry_over_taken, U256::from(30));
-        assert_eq!(first_formation.carry_over_after, U256::ZERO);
-        assert_eq!(first_formation.day_limit, U256::from(130));
+        assert_eq!(first_formation.carry_over_taken, U256::ZERO);
+        assert_eq!(first_formation.carry_over_after, U256::from(30));
+        assert_eq!(first_formation.day_limit, U256::from(100));
         assert_eq!(first_formation.block_number, 10);
         assert_eq!(
             crate::api::day_limit_formation_receipt(storage.clone(), first).unwrap(),
@@ -1173,9 +1173,9 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
         );
         assert_eq!(
             first_day.metadosis_limit_amount().read().unwrap(),
-            U256::from(130)
+            U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(30));
 
         PromisLimitContract::new(storage)
             .checked_add_carry_over(U256::from(7))
@@ -1190,17 +1190,17 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
             .entry(first);
         assert_eq!(
             first_day.metadosis_limit_amount().read().unwrap(),
-            U256::from(130)
+            U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(7));
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
         assert!(MetadosisContract::new(storage.clone())
             .set_metadosis_limit(first, U256::from(999))
             .is_err());
         assert_eq!(
             first_day.metadosis_limit_amount().read().unwrap(),
-            U256::from(130)
+            U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(7));
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
     });
     assert!(apply_limit(&mut provider, 10, first, U256::from(101)).is_err());
 
@@ -1213,15 +1213,15 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
             .ocomp_day_limit_formation(second)
             .unwrap()
             .unwrap();
-        assert_eq!(second_formation.carry_over_taken, U256::from(7));
-        assert_eq!(second_formation.carry_over_before, U256::from(7));
-        assert_eq!(second_formation.carry_over_after, U256::ZERO);
+        assert_eq!(second_formation.carry_over_taken, U256::ZERO);
+        assert_eq!(second_formation.carry_over_before, U256::from(37));
+        assert_eq!(second_formation.carry_over_after, U256::from(37));
         assert_eq!(second_formation.block_number, 20);
         assert_eq!(
             second_day.metadosis_limit_amount().read().unwrap(),
-            U256::from(207)
+            U256::from(200)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
     });
 
     apply_limit(&mut provider, 30, third, U256::from(50)).unwrap();
@@ -1243,7 +1243,7 @@ fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
 }
 
 #[test]
-fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
+fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
     fn seed(provider: &mut HashMapStorageProvider, carry_over: U256) {
         StorageHandle::enter(provider, |storage| {
             arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -1274,27 +1274,31 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
         })
     }
 
-    let mut overflow = HashMapStorageProvider::new(CHAIN_ID);
+    // A formed day limit cannot be replaced, and the refusal leaves no trace.
+    let mut rejected = HashMapStorageProvider::new(CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    seed(&mut overflow, U256::from(1));
-    let before_storage = overflow.storage.clone();
-    let before_events = overflow.events.clone();
-    let before_ordered = overflow.get_ordered_events().to_vec();
-    assert!(apply_limit(&mut overflow, U256::MAX).is_err());
-    assert_eq!(overflow.storage, before_storage);
-    assert_eq!(overflow.events, before_events);
-    assert_eq!(overflow.get_ordered_events(), before_ordered.as_slice());
-    StorageHandle::enter(&mut overflow, |storage| {
+    seed(&mut rejected, U256::from(1));
+    apply_limit(&mut rejected, U256::from(100)).unwrap();
+    let before_storage = rejected.storage.clone();
+    let before_events = rejected.events.clone();
+    let before_ordered = rejected.get_ordered_events().to_vec();
+    assert!(apply_limit(&mut rejected, U256::from(101)).is_err());
+    assert_eq!(rejected.storage, before_storage);
+    assert_eq!(rejected.events, before_events);
+    assert_eq!(rejected.get_ordered_events(), before_ordered.as_slice());
+    StorageHandle::enter(&mut rejected, |storage| {
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
             U256::from(1)
         );
-        assert!(MetadosisContract::new(storage)
+        let formation = MetadosisContract::new(storage)
             .ocomp_day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
             .unwrap()
-            .is_none());
+            .unwrap();
+        assert_eq!(formation.base_limit, U256::from(100));
+        assert_eq!(formation.day_limit, U256::from(100));
     });
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
@@ -1304,8 +1308,8 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
     apply_limit(&mut probe, U256::from(100)).unwrap();
     let mutation_count = probe.clear_mutation_failure();
     assert!(
-        mutation_count >= 3,
-        "formation must mutate Promis, Metadosis and events"
+        mutation_count >= 2,
+        "formation must mutate Metadosis and events"
     );
     let event = IMetadosis::OcompDayLimitFormed::decode_log(
         probe.get_ordered_events().last().expect("formation event"),
@@ -1314,9 +1318,9 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
     assert_eq!(event.data.worldwideDay, 20260727);
     assert_eq!(event.data.baseLimit, U256::from(100));
     assert_eq!(event.data.carryOverBefore, U256::from(9));
-    assert_eq!(event.data.carryOverTaken, U256::from(9));
-    assert_eq!(event.data.carryOverAfter, U256::ZERO);
-    assert_eq!(event.data.formedDayLimit, U256::from(109));
+    assert_eq!(event.data.carryOverTaken, U256::ZERO);
+    assert_eq!(event.data.carryOverAfter, U256::from(9));
+    assert_eq!(event.data.formedDayLimit, U256::from(100));
     let replay_event_count = probe.get_ordered_events().len();
     apply_limit(&mut probe, U256::from(100)).unwrap();
     assert_eq!(probe.get_ordered_events().len(), replay_event_count);
@@ -1356,13 +1360,13 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
                 .unwrap()
                 .unwrap();
             assert_eq!(formed.base_limit, U256::from(100));
-            assert_eq!(formed.carry_over_taken, U256::from(9));
-            assert_eq!(formed.day_limit, U256::from(109));
+            assert_eq!(formed.carry_over_taken, U256::ZERO);
+            assert_eq!(formed.day_limit, U256::from(100));
             assert_eq!(
                 PromisLimitContract::new(storage)
                     .get_total_unallocated()
                     .unwrap(),
-                U256::ZERO
+                U256::from(9)
             );
         });
     }
@@ -1374,7 +1378,9 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     let base_limit = U256::from(100);
     let formation_carry = U256::from(9);
     let later_carry = U256::from(7);
-    let formed_limit = base_limit + formation_carry;
+    // Formation no longer folds the accumulator in, so the day is formed against its own base.
+    let formed_limit = base_limit;
+    let carried = formation_carry + later_carry;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, base_limit, formation_carry, later_carry);
@@ -1396,8 +1402,8 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
             .unwrap()
             .is_none());
         assert_eq!(receipt.value_routed, formed_limit);
-        assert_eq!(receipt.carry_over_before, later_carry);
-        assert_eq!(receipt.carry_over_after, later_carry + formed_limit);
+        assert_eq!(receipt.carry_over_before, carried);
+        assert_eq!(receipt.carry_over_after, carried + formed_limit);
         assert_eq!(receipt.block_number, 2);
         assert_eq!(
             receipt.retirement,
@@ -1407,7 +1413,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            later_carry + formed_limit
+            carried + formed_limit
         );
         assert_no_ocomp_job(&storage, wwd);
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
@@ -1431,8 +1437,8 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
             IMetadosis::getWorldwideDayTerminalReceiptCall::abi_decode_returns(&output).unwrap();
         assert_eq!(decoded.outcome, 1);
         assert_eq!(decoded.valueRouted, formed_limit);
-        assert_eq!(decoded.carryOverBefore, later_carry);
-        assert_eq!(decoded.carryOverAfter, later_carry + formed_limit);
+        assert_eq!(decoded.carryOverBefore, carried);
+        assert_eq!(decoded.carryOverAfter, carried + formed_limit);
         assert_eq!(
             decoded.retirementOutcome,
             crate::schema::terminal_retirement::NOT_PRESENT

@@ -1,6 +1,11 @@
 use crate::algorithm::*;
-use crate::constants::{F_FP_DEFAULT, F_MAX_FP};
 use alloy_primitives::{Address, LogData, B256, U256};
+
+/// A day whose Gratis allocation is the symbolic share of its nominal: the average fraction is
+/// 0.32 and the per-league ceiling is twice that. Production derives both from the day itself
+/// (`program_v1::execute`), so these are test inputs, not policy.
+const F_FP_DEFAULT: U256 = u256_from_u128(SCALE_U128 * 32 / 100);
+const F_MAX_FP: U256 = u256_from_u128(SCALE_U128 * 64 / 100);
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
     begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityRef,
@@ -498,32 +503,9 @@ fn test_many_fi_groups() {
 
 /// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
 #[test]
-fn test_deficit_derivation_scarce_and_abundant() {
-    // Scarce: deficit below the 8% floor -> f = deficit (adapts down).
-    let scarce = F_FP_DEFAULT / U256::from(2u64); // 4%
-    let f_fp = scarce.min(F_FP_DEFAULT);
-    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
-    assert_eq!(f_fp, scarce, "scarce gratis must lower the floor below 8%");
-    assert_eq!(
-        fmax_fp,
-        scarce * U256::from(2u64),
-        "fmax tracks 2*f when below the cap"
-    );
-
-    // Abundant: deficit at/above 8% -> f capped at 8%, fmax at 16%.
-    let abundant = F_MAX_FP; // 16% deficit
-    let f_fp = abundant.min(F_FP_DEFAULT);
-    let fmax_fp = F_MAX_FP.min(f_fp * U256::from(2u64));
-    assert_eq!(f_fp, F_FP_DEFAULT, "abundant gratis caps the floor at 8%");
-    assert_eq!(fmax_fp, F_MAX_FP, "fmax caps at 16%");
-}
-
-#[test]
 fn test_default_constants() {
     // Verify constants match expected values within integer precision
     assert_eq!(SCALE, SIX_DECIMAL_SCALE);
-    assert_eq!(F_FP_DEFAULT, U256::from(320_000u64)); // 0.32 * 10^6
-    assert_eq!(F_MAX_FP, U256::from(640_000u64)); // 0.64 * 10^6
 }
 
 #[test]

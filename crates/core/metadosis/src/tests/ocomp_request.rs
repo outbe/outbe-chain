@@ -252,12 +252,13 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .unwrap(),
             record
         );
+        // The brief waits for the Lysis deadline, so the request leaves Desis untouched.
         assert_eq!(
             DesisContract::new(storage.clone())
                 .auction_stage
                 .read(&wwd)
                 .unwrap(),
-            AuctionStage::Briefed as u8
+            AuctionStage::None as u8
         );
 
         let receipt_before = metadosis
@@ -1506,25 +1507,25 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .request_budget_receipt(wwd, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        assert_eq!(receipt.day_limit, day_limit);
+        assert_eq!(receipt.day_limit, day_limit + U256::from(68));
         assert_eq!(receipt.lysis_budget, U256::from(32));
         assert_eq!(receipt.auction_base, U256::from(68));
-        assert_eq!(receipt.carry_over_credit, U256::from(900));
+        assert_eq!(receipt.carry_over_credit, U256::from(968));
 
         assert_eq!(
             DesisContract::new(storage.clone())
                 .pending_supply_promis
                 .read(&wwd)
                 .unwrap(),
-            U256::from(68),
-            "the auction is briefed with the day's own nominal beyond the symbolic share"
+            U256::ZERO,
+            "the auction is not briefed until the Lysis deadline"
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            U256::from(900),
-            "the limit headroom the day never earned stays on the warehouse"
+            U256::from(968),
+            "the request credits what Lysis left of the day's own emission"
         );
     });
 }
