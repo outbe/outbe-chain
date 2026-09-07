@@ -9765,7 +9765,6 @@ dependencies = [
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tribute",
  "outbe-zk-backend",
