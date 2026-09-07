@@ -578,8 +578,8 @@ fn a_paynote_over_the_cost_leaves_the_nod_and_the_note_intact() {
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::PayNoteCostMismatch {
-                covered: cost + 1,
-                required: cost,
+                covered: U256::from(cost + 1),
+                required: U256::from(cost),
             }
             .to_string()),
         "unexpected error: {error:?}"
