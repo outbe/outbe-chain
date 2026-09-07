@@ -55,6 +55,11 @@ contract Router is BaseRouter, IERC7786Recipient {
 
     // ============ Configuration ============
 
+    /// @notice Points the order-opening gate at a Whitelist registry; zero address opens it.
+    function setWhitelist(address registry) external onlyOwner {
+        _setWhitelist(registry);
+    }
+
     /// @notice Registers the matching Router on `domain`. Pass empty bytes to remove it.
     /// @param interop ERC-7930 interoperable address of the remote Router (encodes chainId + address).
     function setRemoteRouter(uint32 domain, bytes calldata interop) external onlyOwner {
