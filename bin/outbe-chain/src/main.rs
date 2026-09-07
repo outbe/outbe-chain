@@ -58,6 +58,7 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::info;
 
+mod execution_runtime;
 mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
@@ -1603,7 +1604,23 @@ fn run_node() -> eyre::Result<()> {
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
     let process_shutdown = outbe_node::shutdown::NodeShutdown::default();
     let launcher_shutdown = process_shutdown.clone();
-    let command_result = cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
+    // Preserve the pool overrides normally applied by Reth's default CLI runner.
+    let runtime_config = match &cli.command {
+        reth_ethereum::cli::interface::Commands::Node(command) => {
+            reth_ethereum::tasks::RuntimeConfig::default().with_rayon(
+                reth_ethereum::tasks::RayonConfig {
+                    reserved_cpu_cores: command.engine.reserved_cpu_cores,
+                    proof_storage_worker_threads: command.engine.storage_worker_count,
+                    proof_account_worker_threads: command.engine.account_worker_count,
+                    prewarming_threads: command.engine.prewarming_threads,
+                    ..Default::default()
+                },
+            )
+        }
+        _ => reth_ethereum::tasks::RuntimeConfig::default(),
+    };
+    let command_result = execution_runtime::run_with_execution_runtime(runtime_config, |runner| {
+    cli.with_runner_and_components::<OutbeNode>(runner, components, async move |builder, args| {
         let shutdown = launcher_shutdown.clone();
         let result: eyre::Result<()> = async move {
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
@@ -2620,6 +2637,7 @@ fn run_node() -> eyre::Result<()> {
             tracing::debug!(?exit_cause, "draining application before global execution shutdown");
 
             let consensus_joined = consensus_lifecycle.join();
+            tracing::debug!("consensus thread join completed");
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 handle_consensus_thread_join(consensus_joined)
             })) {
@@ -2686,9 +2704,11 @@ fn run_node() -> eyre::Result<()> {
             }
         }
         if let Some(handle) = tee_canary_handle {
+            tracing::debug!("waiting for TEE canary worker shutdown");
             if let Err(error) = handle.await {
                 shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE canary worker panicked"));
             }
+            tracing::debug!("TEE canary worker shutdown completed");
         }
         // The maintenance loop ends with its canonical-state stream; abort it
         // explicitly so shutdown never waits on a live provider subscription.
@@ -2719,6 +2739,7 @@ fn run_node() -> eyre::Result<()> {
             launcher_shutdown.record_failure(error);
         }
         Ok(())
+    })
     })
     .wrap_err("execution node failed");
 

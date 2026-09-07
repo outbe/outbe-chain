@@ -8174,6 +8174,7 @@ dependencies = [
  "reqwest 0.12.28",
  "reth-chainspec",
  "reth-cli",
+ "reth-cli-runner",
  "reth-ethereum",
  "reth-node-builder",
  "reth-node-core",

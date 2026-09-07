@@ -90,6 +90,18 @@ fn recovery_follower_has_post_start_progress(baseline: u64, current: Option<u64>
     current.is_some_and(|height| height > baseline)
 }
 
+fn validate_interrupted_recovery_log(log: &str) -> Result<()> {
+    ensure!(
+        log.contains(FOLLOWER_ENGINE_STARTED_MARKER),
+        "interrupted recovery follower never started"
+    );
+    ensure!(
+        !log.contains("local TEE lease guard armed at authenticated catch-up anchor"),
+        "recovery completed admission before interruption; interrupted catch-up was not exercised"
+    );
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RecoveryFollowerStartupProbeV1 {
     Ready,
@@ -1212,17 +1224,38 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
         120,
         "first certified recovery follower post-start finalized progress",
     );
+    let interrupted_height = world
+        .rpc
+        .finalized_result(recovery_port)
+        .expect("read finalized progress before interrupting recovery");
+    assert!(interrupted_height > first_run_baseline);
+    let interrupted_checkpoint = world
+        .rpc
+        .checkpoint_at(recovery_port, interrupted_height)
+        .expect("read exact checkpoint before interrupting recovery");
+    assert!(
+        world
+            .rpc
+            .finalized_result(primary)
+            .expect("primary finality")
+            >= interrupted_height
+    );
+    assert_eq!(
+        interrupted_checkpoint,
+        world
+            .rpc
+            .checkpoint_at(primary, interrupted_height)
+            .expect("canonical interrupted checkpoint"),
+        "first recovery follower made noncanonical progress"
+    );
     world
         .localnet
         .stop_follower(&follower_name)
         .expect("interrupt validator recovery follower");
     let first_recovery_evidence = first_recovery_log.read();
-    assert!(
-        first_recovery_evidence
-            .contains("local TEE lease guard armed at authenticated catch-up anchor"),
-        "first recovery incarnation omitted authenticated admission anchor"
-    );
     retain_log(world, "first_recovery_follower", first_recovery_log);
+    validate_interrupted_recovery_log(&first_recovery_evidence)
+        .expect("first recovery incarnation must be interrupted before admission");
 
     let mut recovery_log_capture = LeaseLogCapture::node(world, MISSED_VALIDATOR);
     let restarted_name = world
@@ -1237,6 +1270,29 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
         120,
         "restarted certified recovery follower engine startup",
     );
+    assert!(
+        world
+            .rpc
+            .finalized_result(recovery_port)
+            .expect("restarted follower finalized height")
+            >= interrupted_height,
+        "restarted follower lost finalized progress from its first incarnation"
+    );
+    assert_eq!(
+        world
+            .rpc
+            .checkpoint_at(recovery_port, interrupted_height)
+            .expect("restarted follower checkpoint"),
+        interrupted_checkpoint,
+        "restarted follower changed its previously finalized height/hash/root"
+    );
+    world.state.tee_lease.observations.push(json!({
+        "phase": "interrupted_recovery_checkpoint_preserved",
+        "baseline_height": first_run_baseline,
+        "height": interrupted_checkpoint.height,
+        "block_hash": interrupted_checkpoint.block_hash,
+        "state_root": interrupted_checkpoint.state_root,
+    }));
     let recovery_checkpoint = world
         .rpc
         .finalized(primary)
@@ -1638,6 +1694,20 @@ mod tests {
         assert!(!super::requires_certified_follower_recovery(
             "validator recovery requires certified follower catch-up; omit --validator"
         ));
+    }
+
+    #[test]
+    fn interrupted_recovery_requires_started_but_not_yet_admitted_follower() {
+        let partial = format!(
+            "INFO {marker}\nINFO finalized block processed",
+            marker = super::FOLLOWER_ENGINE_STARTED_MARKER
+        );
+        assert!(super::validate_interrupted_recovery_log(&partial).is_ok());
+        assert!(super::validate_interrupted_recovery_log("").is_err());
+        assert!(super::validate_interrupted_recovery_log(&format!(
+            "{partial}\nINFO local TEE lease guard armed at authenticated catch-up anchor"
+        ))
+        .is_err());
     }
 
     #[test]
