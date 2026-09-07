@@ -20,8 +20,8 @@ use crate::constants::{
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
     MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
     ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT,
-    PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO,
-    REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
+    SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -99,8 +99,11 @@ pub(crate) fn record_preflighted_brief(
 /// stepped under that rule keeps its grid.
 const PROMIS_LOAD_LEGACY_ANCHOR_DIGITS: u32 = 15;
 
-/// The widest rung, and the ceiling the ladder saturates at.
-const PROMIS_LOAD_MAX_EXPONENT: u32 = 14;
+/// Decades of decline the ladder covers before the load pins and the band starts
+/// riding the price down.
+const PROMIS_LOAD_DECADES_OF_HEADROOM: u32 = 6;
+
+const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_LAUNCH_EXPONENT + PROMIS_LOAD_DECADES_OF_HEADROOM;
 
 /// One entry past the widest rung: the deadband brackets a rung against the top of
 /// the decade above the one it holds.
