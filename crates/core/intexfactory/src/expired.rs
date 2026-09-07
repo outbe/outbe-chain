@@ -2,7 +2,7 @@
 //! the Promis load of everything left unrealized to the unallocated limit.
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},

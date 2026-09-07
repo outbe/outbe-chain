@@ -69,13 +69,19 @@ fn address(key: &str) -> Address {
 }
 
 fn wait_for_proposal_votes(world: &World, proposal_id: u64, yes: u64) -> u64 {
-    let mut observed = world.rpc.vote_status(proposal_id);
+    let mut observed = world
+        .rpc
+        .vote_status(proposal_id)
+        .expect("observe stablecoin proposal votes");
     for _ in 0..12 {
         if observed.yes >= yes || observed.status != "pending" {
             break;
         }
         sleep(Duration::from_secs(2));
-        observed = world.rpc.vote_status(proposal_id);
+        observed = world
+            .rpc
+            .vote_status(proposal_id)
+            .expect("observe stablecoin proposal votes");
     }
     assert_eq!(observed.status, "pending", "proposal left pending early");
     assert_eq!(observed.yes, yes, "proposal yes tally");
@@ -244,17 +250,17 @@ fn create_and_approve_stablecoin(world: &mut World) {
         );
     }
     let deadline = wait_for_proposal_votes(world, STABLECOIN_PROPOSAL_ID, 3);
+    world
+        .rpc
+        .wait_block_gt(world.validators.primary_port(), deadline, 80)
+        .unwrap_or_else(|error| {
+            panic!("did not pass stablecoin proposal deadline {deadline}: {error:#}")
+        });
     assert!(
         world
             .rpc
-            .wait_block_gt(world.validators.primary_port(), deadline, 80)
-            .is_some(),
-        "did not pass stablecoin proposal deadline {deadline}"
-    );
-    assert!(
-        world
-            .rpc
-            .wait_vote_status(STABLECOIN_PROPOSAL_ID, "approved", 60),
+            .wait_vote_status(STABLECOIN_PROPOSAL_ID, "approved", 60)
+            .expect("observe stablecoin proposal approval"),
         "stablecoin proposal was not approved"
     );
     finalize_observation(world);
@@ -687,7 +693,11 @@ fn duplicate_ticker_preserves_state(world: &mut World) {
     finalize_observation(world);
     let fixture = world.state.stablecoin.as_ref().expect("stablecoin fixture");
     assert!(
-        !world.rpc.vote_status(fixture.proposal_id + 1).visible,
+        !world
+            .rpc
+            .vote_status(fixture.proposal_id + 1)
+            .expect("observe duplicate stablecoin proposal absence")
+            .visible,
         "duplicate ticker allocated a Vote proposal"
     );
     for port in ports(world) {
@@ -768,12 +778,19 @@ fn restart_committee(world: &mut World) {
         .localnet
         .restart_committee_and_enclaves()
         .expect("restart stablecoin committee");
-    for port in ports(world) {
-        assert!(
-            world.rpc.wait_block(port, height, 90).is_some(),
-            "RPC {port} did not recover stablecoin height {height}"
-        );
-    }
+    let cohort = ports(world);
+    world
+        .rpc
+        .wait_finalized_checkpoint(&cohort, height, 90)
+        .expect("all stablecoin validators restore the finalized snapshot");
+    let target = world
+        .rpc
+        .fresh_finality_target(&cohort)
+        .expect("sample the complete restarted stablecoin committee");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&cohort, target, 90)
+        .expect("stablecoin committee finalizes two fresh blocks after restart");
 }
 
 #[then("stablecoin historical and current reads remain identical on every validator")]

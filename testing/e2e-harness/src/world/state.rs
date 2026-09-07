@@ -6,6 +6,141 @@
 
 use serde::Serialize;
 
+/// Original owned committee incarnations; contains no signing material.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeNode {
+    pub index: usize,
+    pub port: u16,
+    pub node_pid: u32,
+    pub enclave_pid: u32,
+}
+
+/// Punitive accounting surfaces read at one exact finalized block.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeAccounting {
+    pub stake: alloy_primitives::U256,
+    pub mirrored_stake: alloy_primitives::U256,
+    pub total_staked: alloy_primitives::U256,
+    pub staking_balance: alloy_primitives::U256,
+    pub status: u8,
+    pub slash_count: u64,
+    pub felony_count: u64,
+    pub unbonding_head: alloy_primitives::U256,
+    pub slash_config: [alloy_primitives::U256; 2],
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct DowntimeObservation {
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub state_root: alloy_primitives::B256,
+    pub accounts: Vec<(u16, DowntimeAccounting)>,
+}
+
+/// Decoded canonical public event identity, retained across the no-repeat wait.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DowntimeFelonyEvent {
+    pub validator: alloy_primitives::Address,
+    pub miss_count: u64,
+    pub felony_count: u64,
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub transaction_hash: alloy_primitives::B256,
+    pub log_index: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DowntimeState {
+    pub victim: alloy_primitives::Address,
+    pub victim_index: usize,
+    pub nodes: Vec<DowntimeNode>,
+    pub percent: u64,
+    pub threshold: u64,
+    pub before: DowntimeObservation,
+    pub fault_target: Option<u64>,
+    pub penalty: Option<DowntimeObservation>,
+    pub event: Option<DowntimeFelonyEvent>,
+}
+
+/// Observations armed before restarting the held validator worker.
+#[cfg(feature = "ocomp-integration")]
+#[derive(Debug)]
+pub(crate) struct LateValidatorResultObservation {
+    pub node_pid: u32,
+    pub worker_pid: u32,
+    pub node_log: crate::internal::launch_log::LaunchLog,
+    pub canonical_result: Vec<u8>,
+}
+
+/// Owned replacement processes and their launch-scoped observations.
+#[derive(Debug)]
+pub(crate) struct RestartIncarnation {
+    pub node_pid: u32,
+    pub enclave_pid: u32,
+    pub node_log: crate::internal::launch_log::LaunchLog,
+    pub enclave_log: crate::internal::launch_log::LaunchLog,
+}
+
+/// Cleanup evidence retained only after the complete DKG expiry assertion has
+/// revalidated the sealed halt witness and its original owned processes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DkgExpiryExpectedExit {
+    pub slot: usize,
+    pub node_pid: u32,
+}
+
+/// Public DKG identity retained across the completed-but-pending crash point.
+#[derive(Debug)]
+pub(crate) struct PendingDkgRestartState {
+    pub checkpoint: crate::internal::pending_dkg::PendingDkgCheckpoint,
+    pub keys_dir: std::path::PathBuf,
+    pub consensus_public_key: Vec<u8>,
+    pub before: crate::world::rpc::FinalizedCheckpoint,
+    pub original_pids: (u32, u32),
+    pub replacement: Option<RestartIncarnation>,
+}
+
+/// Immutable public observations captured by steps, before after-hook teardown.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TeeLeaseEvidenceV1 {
+    pub observations: Vec<serde_json::Value>,
+    pub full_node_shutdown: Option<TeeLeaseShutdownV1>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TeeLeaseLogIntervalV1 {
+    pub path: std::path::PathBuf,
+    pub device: u64,
+    pub inode: u64,
+    pub start: u64,
+    pub end: u64,
+    pub content: String,
+}
+
+/// Constructed only after observing the original owned child exit, before replacement.
+#[derive(Clone, Debug, Serialize)]
+pub struct TeeLeaseShutdownV1 {
+    pub slot: usize,
+    pub pid: u32,
+    pub deadline: u64,
+    pub exit_code: Option<i32>,
+    pub exit_signal: Option<i32>,
+    pub sinks: Vec<TeeLeaseLogIntervalV1>,
+}
+
+/// Pending-pool fixture identity; secret bytes stay in a private scenario file.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingValidatorPoolFixture {
+    pub key_file: std::path::PathBuf,
+    pub sender: alloy_primitives::Address,
+    pub hash: String,
+    pub nonce: u64,
+    pub gas_limit: u64,
+    pub max_fee: u128,
+    pub admitted_tip_timestamp: u64,
+    pub owner_pid: u32,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RadicleScenarioEvidenceV1 {
     pub genesis_hash: Option<String>,
@@ -81,9 +216,6 @@ pub struct OcompPublicCapacityObservationV1 {
     pub block_bytes: u64,
     pub gas: u64,
     pub internal_work: u64,
-    pub block_processing_micros_by_validator: Vec<u64>,
-    pub block_processing_micros: u64,
-    pub finality_latency_micros: u64,
 }
 
 /// Public outcome recovered after one validator discards only its derived CE
@@ -179,8 +311,8 @@ pub struct OcompAgentRewardObservationV1 {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct OcompPublicScenarioEvidenceV1 {
     pub job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub retry_completed_finality: Option<u64>,
+    pub followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    pub followup_completed_finality: Option<u64>,
     pub activation: Option<crate::world::rpc::OcompPublicActivationV1>,
     pub certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
@@ -195,9 +327,8 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub non_quorum_changed_binding_reverted: Option<bool>,
     pub non_quorum_state_unchanged: Option<bool>,
     pub expired_without_nod: Option<bool>,
-    pub failed_terminal_receipt: Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
-    pub failed_promis_limit: Option<alloy_primitives::U256>,
-    pub failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
+    pub expired_release_had_export: Option<bool>,
+    pub worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
     pub held_late_vote_hash: Option<alloy_primitives::B256>,
     pub late_vote_reverted: Option<bool>,
     pub late_vote_inclusion_height: Option<u64>,
@@ -207,6 +338,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub restart_replay_verified: Option<bool>,
+    pub replay_receipts: Vec<serde_json::Value>,
     pub full_node_deadline_barrier_height: Option<u64>,
     pub full_node_resumed_finalized_height: Option<u64>,
     pub full_node_local_first_digest: Option<alloy_primitives::B256>,
@@ -217,6 +349,16 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    pub tee_lease: TeeLeaseEvidenceV1,
+    /// Public restart measurements saved before process teardown.
+    pub restart_observations: Vec<serde_json::Value>,
+    /// Common finalized state captured before the current lifecycle transition.
+    pub(crate) lifecycle_before: Option<crate::world::rpc::FinalizedCheckpoint>,
+    /// Explicitly expected owned nodes and their current observation intervals.
+    pub(crate) lifecycle_incarnations: std::collections::BTreeMap<usize, RestartIncarnation>,
+    pub(crate) pending_dkg_restart: Option<PendingDkgRestartState>,
+    pub(crate) committee_restart: Vec<RestartIncarnation>,
+    pub(crate) downtime: Option<DowntimeState>,
     /// Public-only Radicle operations and replication evidence.
     pub radicle: RadicleScenarioEvidenceV1,
     /// Proposal id under test (always 1 in the update flow).
@@ -236,14 +378,14 @@ pub struct FixtureState {
     /// offline long enough for the protocol's documented share-reveal path.
     /// Every other reveal/fatal/alarm remains forbidden by the log audit.
     pub expected_dkg_reveal: Option<String>,
+    pub(crate) expected_dkg_expiry_exits: Vec<DkgExpiryExpectedExit>,
     /// One manual-lease scenario deliberately fail-stops this validator after
     /// its finalized lease expires. Only the exact two-sink Reth shutdown
     /// trailers causally bound to that guard are accepted by the log audit.
     pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
     /// The same manual-lease scenario deliberately fail-stops this role-neutral
-    /// FullNode. Its execution-engine path emits one exact guarded fatal trailer
-    /// bundle, distinct from the validator's graceful shutdown profile.
-    pub expected_tee_lease_guard_shutdown_full_node: Option<usize>,
+    /// FullNode. Acceptance requires the owned exit and exact bounded sink records.
+    pub expected_tee_lease_guard_shutdown_full_node: Option<TeeLeaseShutdownV1>,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -255,6 +397,7 @@ pub struct FixtureState {
     pub wwd: Option<String>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
     pub marker_height: Option<u64>,
+    pub(crate) chained_handoff: Option<crate::internal::certified_handoff::PinnedHandoff>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
     /// Hash of a transaction that cannot be mined, submitted to observe pool
@@ -265,6 +408,7 @@ pub struct FixtureState {
     /// satisfy the observability contract.
     pub stuck_tx_sender: Option<String>,
     pub stuck_tx_nonce: Option<u64>,
+    pub(crate) pending_validator_pool: Option<PendingValidatorPoolFixture>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -295,17 +439,17 @@ pub struct FixtureState {
     pub ocomp_nod_materialization: Option<crate::world::rpc::NodMaterializationObservationV1>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
-    /// Exact primary/owner/day Mongo documents before a duplicate offer.
+    /// Exact primary/owner/day logical records before a duplicate offer.
     pub tribute_projection_before_duplicate:
-        Option<crate::world::mongodb::TributeProjectionSnapshot>,
+        Option<crate::world::projection::TributeProjectionSnapshot>,
     /// Finalized height immediately before one typed OCOMP process fault.
     pub ocomp_finality_before_fault: Option<u64>,
-    /// Finalized height immediately before the managed projection database is
-    /// paused in the dirty-operations acceptance lane.
-    pub projection_outage_finalized_before: Option<u64>,
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) ocomp_late_validator_result: Option<LateValidatorResultObservation>,
     /// Immutable activation height loaded from the scenario's prepared genesis
     /// install. Fresh Measurement activates at block 1.
     pub ocomp_activation_height: Option<u64>,
+    pub ocomp_pending_v1_workers_held: bool,
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
@@ -318,10 +462,14 @@ pub struct FixtureState {
     pub ocomp_successor_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Deterministic predecessor retention deadline observed after V1 release.
     pub ocomp_predecessor_retention_until: Option<u64>,
-    /// Finalized automatic successor to an expired public OCOMP request.
-    pub ocomp_retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Finalized height observed after the retry completed and finality advanced.
-    pub ocomp_retry_completed_finality: Option<u64>,
+    /// Finalized request for a later, independent WorldwideDay after a fault recovers.
+    pub ocomp_followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Finalized height observed after that independent job completes.
+    pub ocomp_followup_completed_finality: Option<u64>,
+    /// Whether the released terminal journal record retained an authenticated
+    /// export authority. `false` is the canonical no-ACK exporter-outage path.
+    pub ocomp_expired_release_had_export: Option<bool>,
+    pub ocomp_worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
     /// The two independently scheduled WWDs and processing timestamps used by
     /// the dynamic-membership overlap scenario.
     pub ocomp_dynamic_worldwide_days: Vec<u32>,
@@ -355,12 +503,6 @@ pub struct FixtureState {
     pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
     pub ocomp_non_quorum_state_unchanged: Option<bool>,
     pub ocomp_expired_without_nod: Option<bool>,
-    /// Canonical FAILED outcome captured after the bounded OCOMP attempt budget
-    /// is exhausted. These values are replay assertions, never control input.
-    pub ocomp_failed_terminal_receipt:
-        Option<crate::world::rpc::MetadosisWorldwideDayTerminalReceiptV1>,
-    pub ocomp_failed_promis_limit: Option<alloy_primitives::U256>,
-    pub ocomp_failed_terminal_commitment: Option<crate::world::rpc::BlockCommitmentV1>,
     /// A locally signed OCOMP transaction held by the deadline scenario until the
     /// exclusive boundary. Raw bytes are never published as scenario evidence.
     pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
@@ -374,6 +516,7 @@ pub struct FixtureState {
     pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
     pub ocomp_restart_replay_verified: Option<bool>,
+    pub ocomp_replay_receipts: Vec<serde_json::Value>,
     /// FullNode-only lifecycle evidence captured by the Citadel closure lane.
     pub ocomp_full_node_deadline_barrier_height: Option<u64>,
     pub ocomp_full_node_resumed_finalized_height: Option<u64>,
@@ -481,6 +624,13 @@ impl Default for FixtureState {
     fn default() -> Self {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
+            tee_lease: TeeLeaseEvidenceV1::default(),
+            restart_observations: Vec::new(),
+            lifecycle_before: None,
+            lifecycle_incarnations: std::collections::BTreeMap::new(),
+            pending_dkg_restart: None,
+            committee_restart: Vec::new(),
+            downtime: None,
             #[cfg(feature = "ocomp-integration")]
             settlement_currency: None,
             lifecycle_series: Vec::new(),
@@ -494,16 +644,19 @@ impl Default for FixtureState {
             voting_window: 6,
             allow_unsupported_update_fatal: false,
             expected_dkg_reveal: None,
+            expected_dkg_expiry_exits: Vec::new(),
             expected_tee_lease_guard_shutdown_validator: None,
             expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,
             promoted_validator_pid: None,
             wwd: None,
             marker_height: None,
+            chained_handoff: None,
             marker_count: None,
             stuck_tx_hash: None,
             stuck_tx_sender: None,
             stuck_tx_nonce: None,
+            pending_validator_pool: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,
@@ -522,8 +675,10 @@ impl Default for FixtureState {
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,
-            projection_outage_finalized_before: None,
+            #[cfg(feature = "ocomp-integration")]
+            ocomp_late_validator_result: None,
             ocomp_activation_height: None,
+            ocomp_pending_v1_workers_held: false,
             ocomp_job_request: None,
             ocomp_successor_bundle_hash: None,
             ocomp_successor_activation_height: None,
@@ -531,8 +686,10 @@ impl Default for FixtureState {
             ocomp_successor_node_pids_after_activation: Vec::new(),
             ocomp_successor_job_request: None,
             ocomp_predecessor_retention_until: None,
-            ocomp_retry_job_request: None,
-            ocomp_retry_completed_finality: None,
+            ocomp_followup_job_request: None,
+            ocomp_followup_completed_finality: None,
+            ocomp_expired_release_had_export: None,
+            ocomp_worker_outage: None,
             ocomp_dynamic_worldwide_days: Vec::new(),
             ocomp_dynamic_processing_times: Vec::new(),
             ocomp_dynamic_tribute_tx_hashes: Vec::new(),
@@ -551,9 +708,6 @@ impl Default for FixtureState {
             ocomp_non_quorum_changed_binding_reverted: None,
             ocomp_non_quorum_state_unchanged: None,
             ocomp_expired_without_nod: None,
-            ocomp_failed_terminal_receipt: None,
-            ocomp_failed_promis_limit: None,
-            ocomp_failed_terminal_commitment: None,
             ocomp_held_late_vote_raw: None,
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
@@ -568,6 +722,7 @@ impl Default for FixtureState {
             metadosis_fresh_initial_unix_time_offset_secs: None,
             ocomp_execution_trace_observation: None,
             ocomp_restart_replay_verified: None,
+            ocomp_replay_receipts: Vec::new(),
             ocomp_full_node_deadline_barrier_height: None,
             ocomp_full_node_resumed_finalized_height: None,
             ocomp_full_node_local_result_before_restart: None,
@@ -619,8 +774,8 @@ impl FixtureState {
     pub fn ocomp_public_scenario_evidence(&self) -> OcompPublicScenarioEvidenceV1 {
         OcompPublicScenarioEvidenceV1 {
             job_request: self.ocomp_job_request.clone(),
-            retry_job_request: self.ocomp_retry_job_request.clone(),
-            retry_completed_finality: self.ocomp_retry_completed_finality,
+            followup_job_request: self.ocomp_followup_job_request.clone(),
+            followup_completed_finality: self.ocomp_followup_completed_finality,
             activation: self.ocomp_activation.clone(),
             certified_generation: self.ocomp_certified_generation.clone(),
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
@@ -635,9 +790,8 @@ impl FixtureState {
             non_quorum_changed_binding_reverted: self.ocomp_non_quorum_changed_binding_reverted,
             non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
             expired_without_nod: self.ocomp_expired_without_nod,
-            failed_terminal_receipt: self.ocomp_failed_terminal_receipt.clone(),
-            failed_promis_limit: self.ocomp_failed_promis_limit,
-            failed_terminal_commitment: self.ocomp_failed_terminal_commitment.clone(),
+            expired_release_had_export: self.ocomp_expired_release_had_export,
+            worker_outage: self.ocomp_worker_outage.clone(),
             held_late_vote_hash: self.ocomp_held_late_vote_hash,
             late_vote_reverted: self.ocomp_late_vote_reverted,
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,
@@ -647,6 +801,7 @@ impl FixtureState {
             metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             restart_replay_verified: self.ocomp_restart_replay_verified,
+            replay_receipts: self.ocomp_replay_receipts.clone(),
             full_node_deadline_barrier_height: self.ocomp_full_node_deadline_barrier_height,
             full_node_resumed_finalized_height: self.ocomp_full_node_resumed_finalized_height,
             full_node_local_first_digest: self.ocomp_full_node_local_first_digest,

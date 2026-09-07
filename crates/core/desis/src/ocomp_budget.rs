@@ -6,11 +6,11 @@
 //! receipt.
 
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::intent::ReferenceEntryPriceV1;
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::schema::ReferenceCurrencyPrice;
 

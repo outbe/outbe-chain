@@ -565,9 +565,9 @@ impl EvmFactory for OutbeEvmFactory {
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
-    use outbe_common::WorldwideDay;
     use outbe_offchain_data::RuntimeBodyReaders;
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+    use outbe_primitives::time::WorldwideDay;
     use outbe_tribute::{TributeData, TributeRepositoryWriter};
     use revm::database_interface::EmptyDB;
     use std::sync::Arc;

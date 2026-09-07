@@ -325,13 +325,26 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("quote settling the reward Gem")
     .payableUnits;
-    fund_and_approve(
+    // The vault is credited here, not at settle time. Before the drain: this is an
+    // ordinary transaction and pays its own gas.
+    let paynote_proof = paynote::deposit_and_prove(
         world,
-        fixture.asset,
+        world.validators.primary_port(),
         &key,
         owner,
-        addresses::GEM_FACTORY_ADDR,
-        payable,
+        fixture.asset,
+        u128::try_from(payable).expect("Gem cost fits a PayNote spend amount"),
+    );
+    assert_eq!(
+        eth::read_call(
+            &url,
+            fixture.asset,
+            &ISettlementAsset::balanceOfCall {
+                account: fixture.vault,
+            },
+        ),
+        Some(payable),
+        "reserve vault did not receive exact Gem cost at deposit time"
     );
     let keys =
         eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
@@ -381,23 +394,12 @@ fn validator_redeems_reward_gem(world: &mut World) {
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
-            asset: fixture.asset,
+            payNoteProof: paynote_proof.into(),
         },
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
-    assert_eq!(
-        eth::read_call(
-            &url,
-            fixture.asset,
-            &ISettlementAsset::balanceOfCall {
-                account: fixture.vault,
-            },
-        ),
-        Some(payable),
-        "reserve vault did not receive exact Gem cost"
-    );
 
     let promis_before = promis_balance(&url, owner, &keys.view);
     let promis_nonce = eth::read_call(
@@ -486,6 +488,330 @@ fn validator_redeems_reward_gem(world: &mut World) {
     eprintln!(
         "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
         fixture.asset, fixture.vault, gem.promisLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
+    );
+}
+
+#[then("validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN")]
+fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
+    let port = world.validators.primary_port();
+    let ports = world.validators.committee_ports();
+    let url = world.rpc.url(port);
+    let key = world.validators.get(0).evm_key().expect("validator 0 key");
+    let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
+    assert_eq!(gem.owner, owner);
+    assert!(
+        matches!(gem.gemType, 0 | 1),
+        "expected a protocol reward Gem"
+    );
+    assert!(!gem.promisLoad.is_zero(), "reward Gem must carry Promis");
+    let delivery = find_canonical_reward_gem_delivery_block_number(world, gem_id)
+        .expect("reward Gem must originate from canonical RewardsGemDelivery");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, delivery, 120)
+        .expect("all validators finalize the reward Gem delivery");
+    if gem.state == 0 {
+        crate::features::price_oracle::publish_controlled_quote(
+            world,
+            gem.floorPrice
+                .checked_add(U256::ONE)
+                .expect("qualifying quote"),
+        );
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            gem = eth::read_call(
+                &url,
+                addresses::GEM_ADDR,
+                &eth::IGem::getGemStatusCall { gemId: gem_id },
+            )
+            .expect("read the same reward Gem during qualification");
+            if gem.state == 1 {
+                break;
+            }
+            assert_eq!(gem.state, 0, "unexpected reward Gem lifecycle transition");
+            assert!(
+                Instant::now() < deadline,
+                "reward Gem qualification timed out"
+            );
+            sleep(Duration::from_millis(250));
+        }
+    }
+    assert_eq!(gem.state, 1, "reward Gem must be Qualified");
+
+    // The preceding Nod redemption already registered a real settlement vault.
+    // Reuse it and assert a balance delta, not an empty-vault fixture balance.
+    let vault = eth::read_call(
+        &url,
+        addresses::VAULT_ROUTER_ADDR,
+        &eth::IVaultRouter::referenceCurrencyVaultAtCall {
+            isoCode: USD_ISO,
+            index: U256::ZERO,
+        },
+    )
+    .expect("existing USD settlement vault");
+    assert_ne!(vault, Address::ZERO);
+    let asset = eth::read_call(&url, vault, &ISettlementVault::assetCall {})
+        .expect("existing settlement vault asset");
+    let payable = eth::read_call(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::quoteSettlementCall {
+            gemId: gem_id,
+            asset,
+        },
+    )
+    .expect("quote reward Gem settlement")
+    .payableUnits;
+    assert!(!payable.is_zero());
+    let reserve_before = eth::read_call(
+        &url,
+        asset,
+        &ISettlementAsset::balanceOfCall { account: vault },
+    )
+    .expect("reserve before deposit");
+    let proof = paynote::deposit_and_prove(
+        world,
+        port,
+        &key,
+        owner,
+        asset,
+        u128::try_from(payable).expect("Gem cost fits PayNote amount"),
+    );
+    assert_eq!(
+        eth::read_call(
+            &url,
+            asset,
+            &ISettlementAsset::balanceOfCall { account: vault }
+        )
+        .expect("reserve after deposit"),
+        reserve_before + payable,
+        "PayNote must credit the exact additional Gem cost"
+    );
+
+    let keys = eth::derive_account_keys(&url, &key, Ledger::Promis)
+        .expect("derive validator Promis keys through TEE");
+    let finalize = |tx: String, label: &str| {
+        let receipt = successful_receipt(&url, &tx, label);
+        let outcome = crate::world::rpc::TxOutcome {
+            transaction_hash: tx,
+            success: true,
+            receipt,
+        };
+        let checkpoint = world
+            .rpc
+            .finalize_outcome(&outcome, &ports, 120)
+            .expect("paid redemption receipt must finalize identically on all validators");
+        eprintln!("settlement_evidence kind=paid_reward_gem stage={label} gem_id={gem_id} tx={} finalized_height={} block_hash={}",
+            outcome.transaction_hash, checkpoint.height, checkpoint.block_hash);
+        (outcome, checkpoint)
+    };
+    let (settle, settled) = finalize(
+        eth::send_call_with_gas_reserve(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            &key,
+            &eth::IGemFactory::settleGemCall {
+                gemId: gem_id,
+                payNoteProof: proof.into(),
+            },
+            None,
+        )
+        .expect("paid settle reward Gem"),
+        "settle",
+    );
+    for &p in &ports {
+        let observed = eth::read_call_at_result(
+            &world.rpc.url(p),
+            addresses::GEM_ADDR,
+            &eth::IGem::getGemStatusCall { gemId: gem_id },
+            settled.height,
+        )
+        .expect("finalized settled reward Gem");
+        assert_eq!(observed.state, 3, "reward Gem must be Settled");
+        assert_eq!(observed.owner, owner);
+        assert_eq!(observed.promisLoad, gem.promisLoad);
+    }
+    let promis_before = promis_balance_at(&url, owner, &keys.view, settled.height);
+    let nonce = eth::read_call(
+        &url,
+        addresses::PROMIS_ADDR,
+        &eth::IPromis::opNonceOfCall { account: owner },
+    )
+    .expect("Promis mint nonce");
+    let chain_id = chain_id_b256(world);
+    let mac = outbe_tee_enclave::promis::modify_mac(
+        &keys.modify,
+        owner,
+        PromisOp::Mint,
+        gem.promisLoad,
+        nonce,
+        chain_id,
+    );
+    let (mint, minted) = finalize(
+        eth::send_call_with_gas_reserve(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            &key,
+            &eth::IGemFactory::minePromisCall {
+                gemId: gem_id,
+                nonce: find_pow_nonce(gem_id),
+                mac: B256::from(mac),
+                opNonce: nonce,
+            },
+            None,
+        )
+        .expect("paid mine Promis from reward Gem"),
+        "mint_promis",
+    );
+    assert_receipt_event(
+        &mint.receipt,
+        addresses::GEM_FACTORY_ADDR,
+        &eth::IGemFactory::GemMined {
+            gemId: gem_id,
+            owner,
+            promisLoad: gem.promisLoad,
+        },
+    );
+    for &p in &ports {
+        let peer_url = world.rpc.url(p);
+        assert_eq!(
+            promis_balance_at(&peer_url, owner, &keys.view, minted.height),
+            promis_before + gem.promisLoad,
+            "exact finalized Promis mint"
+        );
+        let count = eth::read_call_at_result(
+            &peer_url,
+            addresses::GEM_ADDR,
+            &eth::IGem::balanceOfCall { owner },
+            minted.height,
+        )
+        .expect("Gem enumeration count");
+        for index in 0..u64::try_from(count).expect("Gem enumeration fits u64") {
+            let remaining = eth::read_call_at_result(
+                &peer_url,
+                addresses::GEM_ADDR,
+                &eth::IGem::tokenOfOwnerByIndexCall {
+                    owner,
+                    index: U256::from(index),
+                },
+                minted.height,
+            )
+            .expect("read remaining Gem, not RPC failure as absence");
+            assert_ne!(
+                remaining, gem_id,
+                "mined Gem must leave the owner's inventory"
+            );
+        }
+    }
+    let nonce = eth::read_call(
+        &url,
+        addresses::PROMIS_ADDR,
+        &eth::IPromis::opNonceOfCall { account: owner },
+    )
+    .expect("Promis burn nonce");
+    let mac = outbe_tee_enclave::promis::modify_mac(
+        &keys.modify,
+        owner,
+        PromisOp::Burn,
+        gem.promisLoad,
+        nonce,
+        chain_id,
+    );
+    let (burn, burned) = finalize(
+        eth::send_call_with_gas_reserve(
+            &url,
+            addresses::PROMIS_FACTORY_ADDR,
+            &key,
+            &eth::IPromisFactory::mineCoenCall {
+                amount: gem.promisLoad,
+                mac: B256::from(mac),
+                opNonce: nonce,
+            },
+            None,
+        )
+        .expect("paid mine COEN from validator Promis"),
+        "mint_coen",
+    );
+    let native_mint = checked_protocol_to_native(gem.promisLoad).expect("native COEN amount");
+    assert_receipt_event(
+        &burn.receipt,
+        addresses::PROMIS_FACTORY_ADDR,
+        &eth::IPromisFactory::CoenMined {
+            sender: owner,
+            amount: native_mint,
+        },
+    );
+    let fee = crate::world::rpc::Rpc::receipt_gas_cost(&burn.receipt).expect("paid COEN mint fee");
+    for &p in &ports {
+        let peer_url = world.rpc.url(p);
+        assert_eq!(
+            promis_balance_at(&peer_url, owner, &keys.view, burned.height),
+            promis_before,
+            "exact finalized Promis burn"
+        );
+        let before = native_balance_at(&peer_url, owner, burned.height - 1);
+        let after = native_balance_at(&peer_url, owner, burned.height);
+        assert_eq!(
+            after + fee,
+            before + native_mint,
+            "exact finalized COEN credit plus paid gas"
+        );
+    }
+    eprintln!("settlement_evidence kind=paid_gem_to_promis_to_coen owner={owner:#x} gem_id={gem_id} promis={} coen={native_mint} settle_tx={} promis_tx={} coen_tx={} gas={fee}",
+        gem.promisLoad, settle.transaction_hash, mint.transaction_hash, burn.transaction_hash);
+}
+
+fn promis_balance_at(url: &str, owner: Address, view_key: &[u8; 32], height: u64) -> U256 {
+    let blob = eth::read_call_at_result(
+        url,
+        addresses::PROMIS_ADDR,
+        &eth::IPromis::balanceOfCall { account: owner },
+        height,
+    )
+    .expect("finalized Promis ciphertext");
+    if blob.is_empty() {
+        U256::ZERO
+    } else {
+        outbe_tee_enclave::promis::decrypt_balance(view_key, owner, blob.as_ref())
+            .expect("decrypt finalized Promis balance")
+    }
+}
+
+fn native_balance_at(url: &str, owner: Address, height: u64) -> U256 {
+    let value = eth::raw_json_result(
+        url,
+        "eth_getBalance",
+        serde_json::json!([format!("{owner:#x}"), format!("{height:#x}")]),
+    )
+    .expect("native balance RPC must succeed");
+    serde_json::from_value(value).expect("native balance must decode")
+}
+
+fn assert_receipt_event<E: alloy_sol_types::SolEvent>(
+    receipt: &serde_json::Value,
+    emitter: Address,
+    event: &E,
+) {
+    let expected = event.encode_log_data();
+    let topics: Vec<String> = expected
+        .topics()
+        .iter()
+        .map(|topic| format!("{topic:#x}"))
+        .collect();
+    let logs = receipt["logs"].as_array().expect("receipt logs");
+    let matches = logs
+        .iter()
+        .filter(|log| {
+            log["address"] == serde_json::json!(format!("{emitter:#x}"))
+                && log["topics"] == serde_json::json!(topics)
+                && log["data"] == serde_json::json!(format!("0x{}", hex::encode(&expected.data)))
+        })
+        .count();
+    assert_eq!(
+        matches,
+        1,
+        "receipt must contain exactly one matching {} event",
+        E::SIGNATURE
     );
 }
 
@@ -1140,6 +1466,40 @@ fn successful_receipt(url: &str, tx: &str, label: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redemption_event_requires_exact_emitter_amount_and_one_occurrence() {
+        let emitter = addresses::PROMIS_FACTORY_ADDR;
+        let event = eth::IPromisFactory::CoenMined {
+            sender: Address::repeat_byte(1),
+            amount: U256::from(123),
+        };
+        let encoded = event.encode_log_data();
+        let log = serde_json::json!({
+            "address": format!("{emitter:#x}"),
+            "topics": encoded.topics().iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>(),
+            "data": format!("0x{}", hex::encode(&encoded.data)),
+        });
+        let valid = serde_json::json!({"logs": [log.clone()]});
+        assert_receipt_event(&valid, emitter, &event);
+        let mut wrong_amount = valid.clone();
+        wrong_amount["logs"][0]["data"] = serde_json::json!(format!("{:#066x}", U256::from(124)));
+        for invalid in [
+            serde_json::json!({"logs": []}),
+            serde_json::json!({"logs": [log.clone(), log]}),
+            wrong_amount,
+            serde_json::json!({}),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| assert_receipt_event(&invalid, emitter, &event))
+                    .is_err()
+            );
+        }
+        assert!(std::panic::catch_unwind(|| {
+            assert_receipt_event(&valid, Address::repeat_byte(2), &event)
+        })
+        .is_err());
+    }
 
     fn delivery_fixture(gem_id: U256) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
         let topic = format!("{:#x}", eth::IGemFactory::GemIssued::SIGNATURE_HASH);

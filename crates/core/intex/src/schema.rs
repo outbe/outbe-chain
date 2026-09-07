@@ -2,11 +2,11 @@
 //! identity + lifecycle ledger. One record per `seriesId`.
 
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
+use outbe_primitives::time::WorldwideDay;
 use std::fmt;
 
 use crate::errors::IntexError;
@@ -109,6 +109,7 @@ impl SeriesId {
     /// How a currency is spelled inside an id: its alpha-3 code, or its numeric
     /// code when ISO assigns none.
     pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
+        // todo validate iso and refactor this code
         match iso_4217_alpha(iso) {
             Some(alpha) => Ok(alpha),
             None => Self::numeric_code(iso),

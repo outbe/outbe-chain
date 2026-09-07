@@ -8,7 +8,6 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, derive_poseidon_entity_id};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
@@ -24,6 +23,7 @@ use outbe_ocomp_protocol::{
     unit::{PlanCommitmentV1, UnitArtifactV1, UnitPhase, UnitSpecV1},
     CasObjectRefV1, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::{

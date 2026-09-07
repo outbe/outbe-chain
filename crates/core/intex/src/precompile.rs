@@ -47,7 +47,7 @@ pub fn dispatch(
             certifiedContributorGeneration(c) => view(c, |c| {
                 Ok(to_abi_generation(
                     registry.ocomp_certified_contributor_generation(
-                        outbe_common::WorldwideDay::new(c.worldwideDay),
+                        outbe_primitives::time::WorldwideDay::new(c.worldwideDay),
                     )?,
                 ))
             }),

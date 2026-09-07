@@ -60,8 +60,7 @@ wire_enum_u8! {
     pub enum OcompTerminalOutcome {
         Completed = 1,
         Expired = 2,
-        Conflicted = 3,
-        Canceled = 4,
+        Failed = 3,
     }
 }
 
@@ -70,7 +69,6 @@ wire_struct! {
         pub outcome: OcompTerminalOutcome,
         pub terminal_height: u64,
         pub terminal_time: u64,
-        pub next_pending_nonce: Option<u64>,
         pub completed_binding: Option<OcompCompletedBindingV1>,
     }
     validate = validate_lysis_terminal;
@@ -83,8 +81,7 @@ wire_enum_u8! {
         VotingOpen = 2,
         Completed = 4,
         Expired = 5,
-        Conflicted = 6,
-        Canceled = 7,
+        Failed = 6,
     }
 }
 
@@ -120,8 +117,7 @@ impl OcompCompletedBindingV1 {
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
         require(
-            self.terminal_receipt.outcome == ActivationOutcome::Applied
-                || self.terminal_receipt.outcome == ActivationOutcome::ConflictResolved,
+            self.terminal_receipt.outcome == ActivationOutcome::Applied,
             "completed binding receipt outcome",
         )?;
         require(
@@ -173,8 +169,8 @@ impl LysisTerminalV1 {
 
     pub fn validate_shape(&self) -> Result<(), ProtocolError> {
         match (&self.outcome, &self.completed_binding) {
-            (OcompTerminalOutcome::Completed | OcompTerminalOutcome::Conflicted, Some(_)) => Ok(()),
-            (OcompTerminalOutcome::Expired | OcompTerminalOutcome::Canceled, None) => Ok(()),
+            (OcompTerminalOutcome::Completed, Some(_))
+            | (OcompTerminalOutcome::Expired | OcompTerminalOutcome::Failed, None) => Ok(()),
             _ => Err(ProtocolError::InvalidInvariant(
                 "Lysis terminal outcome shape",
             )),
@@ -211,8 +207,7 @@ impl OcompJobRecordV1 {
             }
             (OcompJobStatus::Completed, Some(finalized), Some(terminal)) => {
                 require(
-                    terminal.outcome == OcompTerminalOutcome::Completed
-                        && terminal.next_pending_nonce.is_none(),
+                    terminal.outcome == OcompTerminalOutcome::Completed,
                     "completed terminal shape",
                 )?;
                 let binding = terminal
@@ -234,38 +229,16 @@ impl OcompJobRecordV1 {
                     .as_ref()
                     .is_none_or(|finalized| finalized.quorum.is_none())
                     && terminal.outcome == OcompTerminalOutcome::Expired
-                    && terminal.next_pending_nonce.is_some()
                     && terminal.completed_binding.is_none(),
                 "expired terminal shape",
             ),
-            (OcompJobStatus::Conflicted, Some(finalized), Some(terminal)) => {
-                require(
-                    terminal.outcome == OcompTerminalOutcome::Conflicted
-                        && terminal.next_pending_nonce.is_some(),
-                    "conflicted terminal shape",
-                )?;
-                let binding = terminal
-                    .completed_binding
-                    .as_ref()
-                    .ok_or(ProtocolError::InvalidInvariant("conflict binding present"))?;
-                let quorum = finalized
-                    .quorum
-                    .as_ref()
-                    .ok_or(ProtocolError::InvalidInvariant("conflict quorum present"))?;
-                binding.validate_semantics(quorum, limits)?;
-                require(
-                    binding.terminal_receipt.outcome == ActivationOutcome::ConflictResolved,
-                    "conflict resolved receipt",
-                )
-            }
-            (OcompJobStatus::Canceled, finalized, Some(terminal)) => require(
+            (OcompJobStatus::Failed, finalized, Some(terminal)) => require(
                 finalized
                     .as_ref()
                     .is_none_or(|finalized| finalized.quorum.is_none())
-                    && terminal.outcome == OcompTerminalOutcome::Canceled
-                    && terminal.next_pending_nonce.is_none()
+                    && terminal.outcome == OcompTerminalOutcome::Failed
                     && terminal.completed_binding.is_none(),
-                "canceled terminal shape",
+                "failed terminal shape",
             ),
             _ => Err(ProtocolError::InvalidInvariant("job status terminal shape")),
         }

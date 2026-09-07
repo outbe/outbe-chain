@@ -58,11 +58,15 @@ fn every_enclave_log_shows_telemetry(world: &mut World) {
         assert!(
             world
                 .localnet
-                .enclave_log_has(index, "req=process_tribute_offer_batch"),
+                .enclave_log_has(index, "req=process_tribute_offer_batch")
+                .expect("read required owned process log"),
             "validator-{index} enclave log has no canary-decrypt telemetry line"
         );
         assert!(
-            world.localnet.enclave_log_has(index, "req=get_public_keys"),
+            world
+                .localnet
+                .enclave_log_has(index, "req=get_public_keys")
+                .expect("read required owned process log"),
             "validator-{index} enclave log has no get_public_keys telemetry line"
         );
     }
@@ -88,10 +92,13 @@ fn enclave_session_reconnects(world: &mut World) {
         "validator-1's node must have kept running across the enclave restart"
     );
     assert!(
-        world.localnet.enclave_log_has(
-            1,
-            "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
-        ),
+        world
+            .localnet
+            .enclave_log_has(
+                1,
+                "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
+            )
+            .expect("read restarted enclave log"),
         "restarted enclave did not restore its sealed offer key"
     );
 }

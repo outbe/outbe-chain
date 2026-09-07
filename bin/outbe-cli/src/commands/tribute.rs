@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use serde_json::Value;
 
 use crate::abi::{

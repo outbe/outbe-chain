@@ -5,7 +5,6 @@ use std::sync::{
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
@@ -15,6 +14,7 @@ use outbe_nod::{
     NodItemState, NodRepositoryReader,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},

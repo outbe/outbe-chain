@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_macros::contract;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
+use outbe_primitives::time::WorldwideDay;
 pub use outbe_primitives::units::SCALE_1E18;
 
 /// Which pair a parallel-column group is talking about: the registry's 1-based

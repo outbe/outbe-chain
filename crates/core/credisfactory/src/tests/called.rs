@@ -48,12 +48,12 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
 }
 
 #[test]
-fn a_full_window_at_the_call_price_calls_the_position() {
+fn a_full_window_above_the_call_price_calls_the_position() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
@@ -86,13 +86,40 @@ fn a_full_window_at_the_call_price_calls_the_position() {
     teardown();
 }
 
+/// The breach test is strictly above the call price, as it is for Nod, Gem and
+/// Intex. A window that closes exactly on the call price every single day must
+/// therefore leave the position open.
+#[test]
+fn a_full_window_exactly_at_the_call_price_does_not_call_the_position() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+
+        // One minor unit higher on every day is a breach window.
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+    });
+    teardown();
+}
+
 #[test]
 fn the_window_absorbs_below_call_days_up_to_the_slack() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // Scatter the full slack of below-call days through the window. The rule
         // counts breach days rather than requiring a run, so their position must
@@ -123,7 +150,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // One more below-call day than the window can absorb.
         let below = CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS + 1;
@@ -135,7 +162,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         assert_eq!(state_of(&storage, position_id), CredisState::Open);
 
         // Raising one of them back over the call price completes the threshold.
-        set_vwap(&storage, day_back(at, 1), at_call());
+        set_vwap(&storage, day_back(at, 1), above_call());
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
     });
@@ -155,7 +182,7 @@ fn missing_days_do_not_count_as_breaches() {
         // unpublished. section 11.3's placeholder: a day with no reference price is not
         // a breach, so it can only delay a call.
         for i in 0..CALL_BREACH_DAYS - 1 {
-            set_vwap(&storage, day_back(at, i), at_call());
+            set_vwap(&storage, day_back(at, i), above_call());
         }
         // The watermark must still cover the window, or the run would skip.
         finalize_through(&storage, at);
@@ -165,7 +192,7 @@ fn missing_days_do_not_count_as_breaches() {
 
         // Filling one more published day reaches the threshold, even though the
         // rest of the window still has no price at all.
-        set_vwap(&storage, day_back(at, CALL_BREACH_DAYS - 1), at_call());
+        set_vwap(&storage, day_back(at, CALL_BREACH_DAYS - 1), above_call());
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
     });
@@ -186,7 +213,7 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
             &storage,
             last_closed_day(at),
             CALL_LOOKBACK_DAYS + 10,
-            at_call(),
+            above_call(),
         );
 
         assert_eq!(scan(&storage, at), 0);
@@ -200,7 +227,7 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
             &storage,
             last_closed_day(later),
             CALL_LOOKBACK_DAYS,
-            at_call(),
+            above_call(),
         );
         assert_eq!(scan(&storage, later), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
@@ -214,7 +241,7 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // Rewind the watermark behind the last closed day: the oracle has not
         // closed it yet, so the run must skip rather than read it as missing.
@@ -236,7 +263,7 @@ fn the_call_and_the_void_compose_across_runs() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
@@ -299,7 +326,12 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         // The seeded reference series is a full breach window, but this position is
         // no longer anchored to it.
         advance_to(&storage, at);
-        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
         assert_eq!(
             scan(&storage, at),
             0,
@@ -333,7 +365,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
             REFERENCE_ISO,
             last_closed_day(at),
             CALL_LOOKBACK_DAYS,
-            at_call(),
+            above_call(),
         );
         // COEN/840 stays silent for the whole window.
         assert_eq!(scan(&storage, at), 1);
@@ -354,7 +386,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
             ISSUANCE_ISO,
             last_closed_day(at),
             CALL_LOOKBACK_DAYS,
-            at_call(),
+            above_call(),
         );
         assert_eq!(
             scan(&storage, at),
@@ -398,7 +430,12 @@ fn a_completed_pass_resets_the_cursor() {
 
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
-        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
 
         assert_eq!(scan(&storage, at), 3);
         for id in &ids {
@@ -424,7 +461,12 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
 
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
-        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
 
         // Only indices 1 and 0 are visited; the position at index 2 is untouched.
         assert_eq!(scan(&storage, at), 2);
@@ -512,7 +554,7 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
             &storage,
             last_closed_day(lapsed),
             CALL_LOOKBACK_DAYS,
-            at_call(),
+            above_call(),
         );
 
         // A void costs two enclave round-trips, so the run stops voiding at the

@@ -24,7 +24,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
@@ -40,6 +39,7 @@ use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
 };
 use outbe_primitives::chain::CHAIN_ID;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},

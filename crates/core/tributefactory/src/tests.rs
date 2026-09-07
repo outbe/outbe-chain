@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_digest, EntityRef, ExecutionScope, IdPage, IdPageRequest,
     ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
@@ -19,6 +18,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
+use outbe_primitives::time::WorldwideDay;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 use outbe_tribute::TributeContract;
 

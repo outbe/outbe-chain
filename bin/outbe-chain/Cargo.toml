@@ -25,6 +25,7 @@ outbe-evm.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
+outbe-offchain-storage.workspace = true
 outbe-ocomp.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-ocompregistry.workspace = true
@@ -33,7 +34,6 @@ outbe-engine.workspace = true
 outbe-metadosis.workspace = true
 outbe-update.workspace = true
 outbe-nod.workspace = true
-outbe-common.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-operator.workspace = true
@@ -45,6 +45,7 @@ outbe-zkproof.workspace = true
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
+reth-cli-runner.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
 reth-provider.workspace = true
@@ -71,6 +72,7 @@ metrics.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-consensus.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true

@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, RetirementOutcome};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -13,7 +13,7 @@ use crate::{
     aggregate::{ValidatedWwdAggregate, WwdStatus},
     commit::commit_outer_transition,
     constants::MAX_RETAINED_WWDS,
-    ocomp::{schema::poc_schema_limits, OcompRequestProfileExt},
+    ocomp::schema::poc_schema_limits,
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind},
 };
@@ -144,7 +144,6 @@ pub(crate) struct MetadosisFailureReceipt {
 pub(crate) fn fail_worldwide_day(
     storage: StorageHandle<'_>,
     block_number: u64,
-    block_timestamp: u64,
     scope: &ExecutionScope,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
@@ -176,18 +175,12 @@ pub(crate) fn fail_worldwide_day(
         ));
     }
 
-    let profile = metadosis
+    let _profile = metadosis
         .read_ocomp_request_profile(&limits)?
         .ok_or_else(|| {
             crate::errors::storage_corruption("Metadosis failure has no OCOMP profile".into())
         })?;
-    metadosis.cancel_ocomp_for_failed_day(
-        worldwide_day,
-        block_number,
-        block_timestamp,
-        &limits,
-        profile.fsm_limits(),
-    )?;
+    metadosis.clear_ready_ocomp_for_failed_day(worldwide_day, &limits)?;
     let credit = PromisLimitContract::new(storage.clone()).checked_add_carry_over(unused_limit)?;
     // Retirement is deliberately the final compressed-entity mutation. All
     // other failure effects are prepared first and the enclosing checkpoint
@@ -217,13 +210,13 @@ pub(crate) fn fail_worldwide_day(
     })
 }
 
-/// Completes the last allowed OCOMP expiry as the same atomic FAILED contract
+/// Completes an OCOMP expiry as the same atomic FAILED contract
 /// used by every other exact-WWD business failure. The expiry transition has
 /// already written immutable `Expired` attempt evidence, but the live FSM and
 /// outer WWD remain active until this function credits the retained budget,
 /// retires Tribute as the final CE mutation, and commits the terminal state.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn fail_exhausted_ocomp_day(
+pub(crate) fn fail_expired_ocomp_day(
     storage: StorageHandle<'_>,
     block_number: u64,
     scope: &ExecutionScope,
@@ -234,47 +227,34 @@ pub(crate) fn fail_exhausted_ocomp_day(
 ) -> Result<()> {
     if !matches!(
         outer_transition.kind(),
-        OuterWwdTransitionKind::OcompAttemptsExhausted
+        OuterWwdTransitionKind::OcompExpired
     ) {
         return Err(crate::errors::storage_corruption(
-            "exhausted OCOMP failure requires attempts-exhausted transition".into(),
+            "expired OCOMP failure requires the typed expiry transition".into(),
         ));
     }
 
     let limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(storage.clone());
-    let profile = metadosis
-        .read_ocomp_request_profile(&limits)?
-        .ok_or_else(|| {
-            crate::errors::storage_corruption("exhausted OCOMP failure has no profile".into())
-        })?;
-    let fsm_limits = profile.fsm_limits();
     let record = metadosis
         .ocomp_job_record(intent_id, &limits)?
-        .ok_or_else(|| {
-            crate::errors::storage_corruption("exhausted OCOMP job is missing".into())
-        })?;
+        .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing".into()))?;
     if record.intent.wwd != worldwide_day.value()
         || record.intent.frozen_metadosis_values.lysis_budget != unused_limit
-        || metadosis.terminal_intent_count(worldwide_day)? != fsm_limits.max_terminal_records
+        || metadosis.terminal_intent_count(worldwide_day)? != 1
         || metadosis
             .ocomp_fsm_states
             .get_bytes(&worldwide_day)
             .is_empty()?
         || metadosis.get_wwd_status(worldwide_day)? != WwdStatus::OffchainPending
-        // Either retained shape may be the one that filled the cap; the day fails
-        // because attempts ran out, not because of which terminal ended the last.
+        || record.status != outbe_ocomp_protocol::state::OcompJobStatus::Expired
         || record.terminal.as_ref().is_none_or(|terminal| {
-            crate::ocomp::classify_retained_terminal(
-                record.status,
-                terminal.outcome,
-                terminal.completed_binding.is_some(),
-            )
-            .is_err()
+            terminal.outcome != outbe_ocomp_protocol::state::OcompTerminalOutcome::Expired
+                || terminal.completed_binding.is_some()
         })
     {
         return Err(crate::errors::storage_corruption(
-            "exhausted OCOMP failure pre-state is inconsistent".into(),
+            "expired OCOMP failure pre-state is inconsistent".into(),
         ));
     }
 

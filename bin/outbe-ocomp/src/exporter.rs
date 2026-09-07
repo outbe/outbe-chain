@@ -1,6 +1,6 @@
 //! Bounded, authenticated Tribute body stream for the LYSIS_V1 exporter.
 //!
-//! Mongo is used only to discover candidate identities and transport canonical
+//! Projection storage is used only to discover candidate identities and transport canonical
 //! body bytes. Every candidate is reconciled with the exact CE partition view,
 //! and final completeness closes against CE count plus JobIntent nominal total.
 
@@ -376,7 +376,7 @@ struct BodyCandidate {
 
 struct CurrentPager<'a> {
     reader: &'a TributeRepositoryReader,
-    day: outbe_common::WorldwideDay,
+    day: outbe_primitives::time::WorldwideDay,
     limit: u32,
     cursor: Option<WwdEntityId>,
     buffered: VecDeque<WwdEntityId>,
@@ -387,7 +387,7 @@ struct CurrentPager<'a> {
 impl<'a> CurrentPager<'a> {
     fn new(
         reader: &'a TributeRepositoryReader,
-        day: outbe_common::WorldwideDay,
+        day: outbe_primitives::time::WorldwideDay,
         page_limit: usize,
     ) -> Result<Self, FinalizedTributeError> {
         Ok(Self {

@@ -15,8 +15,8 @@ use outbe_ocomp::{
     control::poc_schema_limits as exporter_schema_limits,
     discovery_control::{DiscoveryAckRefV1, DiscoveryOfferRefV1},
     discovery_spool::{
-        CheckpointAdvanceOutcomeV1, ContiguousCheckpointStoreV1, DiscoverySpoolError,
-        DiscoverySpoolV1, PutOutcomeV1,
+        AckPutOutcomeV1, CheckpointAdvanceOutcomeV1, ContiguousCheckpointStoreV1,
+        DiscoverySpoolError, DiscoverySpoolV1, PutOutcomeV1,
     },
     export_receipt::{ExportReceiptCandidate, ExportReceiptStore, VerifiedExportReceipt},
 };
@@ -366,7 +366,7 @@ fn retirement_waits_for_the_durable_closure_checkpoint_then_removes_history() {
 }
 
 #[test]
-fn prepared_retirement_survives_restart_and_late_ack() {
+fn prepared_retirement_survives_restart_and_fences_late_ack() {
     let temp = TempDir::new().expect("tempdir");
     let job = spec(0x46, 8);
     let first = spool(&temp);
@@ -383,18 +383,31 @@ fn prepared_retirement_survives_restart_and_late_ack() {
     assert_eq!(waiting.waiting_for_checkpoint, 1);
     assert!(reopened
         .pending(&offer.observation_id)
-        .expect("offer remains pending")
-        .is_some());
+        .expect("retired offer lookup")
+        .is_none());
 
     let receipt = verified_receipt(&job, 8, 0x86);
-    reopened
-        .put_ack(&offer, &receipt, &support::protocol_bundle())
-        .expect("late ACK before checkpoint advance");
+    assert_eq!(
+        reopened
+            .put_ack(&offer, &receipt, &support::protocol_bundle())
+            .expect("late ACK is handled without reopening the offer"),
+        AckPutOutcomeV1::Retired
+    );
+    assert!(reopened
+        .ack(&offer.observation_id)
+        .expect("retired ACK lookup")
+        .is_none());
     let completed = reopened
         .complete_retirements_through(20)
         .expect("restart completion");
     assert_eq!(completed.completed, 1);
     assert_eq!(completed.waiting_for_checkpoint, 0);
+    assert_eq!(
+        reopened
+            .put_ack(&offer, &receipt, &support::protocol_bundle())
+            .expect("late ACK after physical retirement"),
+        AckPutOutcomeV1::Retired
+    );
 }
 
 #[test]
@@ -533,9 +546,15 @@ fn ack_before_restart_and_ack_after_restart_are_durable() {
     let first = spool(&temp);
     let (first_offer, _) = first.put_offer(8, &first_job).expect("offer");
     let first_receipt = verified_receipt(&first_job, 8, 0x81);
-    let (first_ack, outcome) = first
+    let AckPutOutcomeV1::Committed {
+        reference: first_ack,
+        outcome,
+    } = first
         .put_ack(&first_offer, &first_receipt, &support::protocol_bundle())
-        .expect("ack before restart");
+        .expect("ack before restart")
+    else {
+        panic!("live offer was unexpectedly retired");
+    };
     assert_eq!(outcome, PutOutcomeV1::Inserted);
     assert_eq!(
         first_ack.export_receipt_digest,
@@ -574,16 +593,32 @@ fn duplicate_ack_is_idempotent_and_conflicting_ack_latches() {
     assert_eq!(
         spool
             .put_ack(&offer, &receipt, &support::protocol_bundle())
-            .expect("ack")
-            .1,
-        PutOutcomeV1::Inserted
+            .expect("ack"),
+        AckPutOutcomeV1::Committed {
+            reference: DiscoveryAckRefV1::from_committed(
+                &offer,
+                &receipt.committed(),
+                receipt.receipt_ref().transport_digest,
+                &poc_schema_limits(),
+            )
+            .expect("ACK reference"),
+            outcome: PutOutcomeV1::Inserted,
+        }
     );
     assert_eq!(
         spool
             .put_ack(&offer, &receipt, &support::protocol_bundle())
-            .expect("duplicate ack")
-            .1,
-        PutOutcomeV1::ExactDuplicate
+            .expect("duplicate ack"),
+        AckPutOutcomeV1::Committed {
+            reference: DiscoveryAckRefV1::from_committed(
+                &offer,
+                &receipt.committed(),
+                receipt.receipt_ref().transport_digest,
+                &poc_schema_limits(),
+            )
+            .expect("ACK reference"),
+            outcome: PutOutcomeV1::ExactDuplicate,
+        }
     );
     let conflict = verified_receipt(&job, 11, 0xA2);
     assert!(matches!(

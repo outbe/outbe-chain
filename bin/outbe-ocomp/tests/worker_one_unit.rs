@@ -8,7 +8,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_finalized_output_run,
@@ -77,6 +76,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
+use outbe_primitives::time::WorldwideDay;
 use tempfile::tempdir;
 
 struct RunningWorker {
@@ -274,7 +274,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 checkpoint: CheckpointIdentityV1 {
                     finalized_block_number: 90,
                     finalized_block_hash: B256::repeat_byte(0x53),
@@ -338,7 +338,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     let spec = UnitSpecV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::Enumerate,
         interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
             start: interval_start,
@@ -359,7 +359,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     let plan = PlanCommitmentV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         input_manifest_hash: published.manifest_hash,
         wwd: day.value(),
         lysis_budget: U256::from(99_000_000_u64),
@@ -561,7 +561,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         input_manifest_hash: published.manifest_hash,
         input_manifest_encoded_bytes: published.manifest_ref.encoded_bytes,
         fidelity_opening_root: manifest.fidelity_opening_root,
@@ -624,7 +624,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 plan_hash,
                 unit_index: plan.primary_work_unit_count,
                 canonical_unit_spec: BoundedBytes(
@@ -749,7 +749,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 plan_hash,
                 unit_index: plan.primary_work_unit_count * 2,
                 canonical_unit_spec: BoundedBytes(
@@ -881,7 +881,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             RunUnitV1 {
                 protocol_bundle_hash,
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 plan_hash,
                 unit_index: 3,
                 canonical_unit_spec: BoundedBytes(
@@ -1638,8 +1638,8 @@ fn real_worker_processes_execute_through_output_finalize() {
         genesis_hash: B256::repeat_byte(0x41),
         fork_id: B256::repeat_byte(0x42),
         wwd: day.value(),
-        pending_nonce: 1,
-        attempt: 1,
+        pending_nonce: 0,
+        attempt: 0,
         protocol_bundle_hash,
         ce_sealed_root: manifest.checkpoint.finalized_ce_root,
         sealed_tribute_collection_key: manifest.sealed_tribute_collection_key,
@@ -1690,7 +1690,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day.value(),
-                pending_nonce: 1,
+                pending_nonce: 0,
                 expected_status: MetadosisExpectedStatus::OffchainPending,
                 state_version: 1,
             },

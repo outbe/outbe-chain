@@ -25,7 +25,6 @@ use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::localnet::StartOpts;
-use crate::world::mongodb::MongoDb;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::ocomp::{
     OcompLaunchIdentityV1, OcompProcessRole, OcompRuntimeCountsV1, OcompTopology,
@@ -218,6 +217,8 @@ impl LocalnetCli {
             repo: Some(self.repo.clone()),
             data_dir: Some(self.data_dir.clone()),
             evidence_dir: None,
+            artifact_manifest: None,
+            scenario_timeout_secs: 3_600,
             metadosis_p0_case: None,
             chain_bin: Some(self.repo.join("target/release/outbe-chain")),
             ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),
@@ -232,7 +233,6 @@ impl LocalnetCli {
                     .clone()
                     .unwrap_or_else(|| self.repo.join("scripts/seed-testnet-lowstake.json")),
             ),
-            projection_mongodb_uri: "auto".to_owned(),
         };
         let mut env = Environment::from_cli(&cli);
         if let Some(starts) = persisted_blocks {
@@ -663,13 +663,12 @@ async fn serve_with_ocomp(cli: &LocalnetCli) -> Result<()> {
     ensure_not_running(&cli.data_dir)?;
     let env = cli.environment(Some(&receipt.port_blocks))?;
     env.ports.ensure_available(cli.validators)?;
-    let mut config = Config::resolve(&env);
+    let config = Config::resolve(&env);
     let rpc_ports = rpc_ports(&config);
     ensure!(
         rpc_ports == receipt.rpc_ports,
         "serve RPC layout differs from bootstrap"
     );
-    let _mongo = MongoDb::connect_or_start(&mut config)?;
     let mut localnet = Localnet::new(config.clone());
     let mut ocomp = OcompTopology::new(config);
     let ocomp_identity = ocomp.prepare_bootstrapped_runtime()?;
@@ -831,7 +830,7 @@ async fn wait_for_advancing_heights(
     timeout: Duration,
 ) -> Result<Vec<u64>> {
     let deadline = Instant::now() + timeout;
-    let mut baseline = None;
+    let mut baseline: Option<Vec<u64>> = None;
     loop {
         localnet.ensure_committee_alive()?;
         if let Some(heights) = observe_heights(ports) {
@@ -865,8 +864,7 @@ fn cleanup_run_scoped(cli: &LocalnetCli) -> Result<()> {
     let env = cli.environment(Some(&receipt.port_blocks))?;
     let config = Config::resolve(&env);
     let mut localnet = Localnet::new(config);
-    localnet.teardown();
-    MongoDb::teardown_managed_for_run(&env);
+    localnet.teardown()?;
     Ok(())
 }
 

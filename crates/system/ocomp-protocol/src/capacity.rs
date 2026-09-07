@@ -495,8 +495,7 @@ impl VerifiedCapacityEvidenceV1 {
             max_activations_per_block: 1,
             max_ready_inspections_per_block: 1,
             max_expirations_per_block: 1,
-            retry_backoff_blocks: 1,
-            max_terminal_job_records: 365,
+            ready_backoff_blocks: 1,
             max_reference_currencies: 8,
             max_oracle_wwd_pair_entries: u32::try_from(candidate.max_oracle_wwd_pair_entries)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,

@@ -13,7 +13,6 @@ ark-ff.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 hex.workspace = true
-outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true

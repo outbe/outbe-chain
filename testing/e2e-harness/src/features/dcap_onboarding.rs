@@ -18,7 +18,11 @@ fn wait_for_live_follower_log(
     attempts: u32,
 ) -> bool {
     for _ in 0..attempts {
-        if world.localnet.log_has(index, needle) {
+        if world
+            .localnet
+            .log_has(index, needle)
+            .expect("read required owned process log")
+        {
             return true;
         }
         if !world.localnet.follower_running(name) {
@@ -44,7 +48,7 @@ fn require_live_validator_progress(
     let target = world
         .rpc
         .finalized(primary)
-        .unwrap_or(baseline)
+        .expect("primary finalized height before validator progress check")
         .max(baseline.saturating_add(1));
     assert!(
         world.rpc.wait_finalized_at_least(primary, target, 60),
@@ -172,7 +176,8 @@ fn validator_reopens_exact_key(world: &mut World) {
     assert!(
         world
             .localnet
-            .enclave_log_has(index, "unsealed offer key + group signature"),
+            .enclave_log_has(index, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "validator enclave did not restore the permanent key from SGX sealed state"
     );
 }
@@ -235,14 +240,14 @@ fn full_node_joins_starts_and_restarts(world: &mut World) {
         .localnet
         .launch_dcap_full_node(FULL_NODE_NAME, index, 0)
         .expect("launch joined production FullNode");
-    let checkpoint = world.rpc.head(world.validators.primary_port()).unwrap_or(1);
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(index), checkpoint, 24)
-            .is_some(),
-        "production FullNode did not start and sync"
-    );
+    let checkpoint = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .expect("primary finalized checkpoint before FullNode launch");
+    world
+        .rpc
+        .wait_block(world.validators.http_port(index), checkpoint, 24)
+        .unwrap_or_else(|error| panic!("production FullNode did not start and sync: {error:#}"));
     world
         .localnet
         .stop_follower(FULL_NODE_NAME)
@@ -255,13 +260,10 @@ fn full_node_joins_starts_and_restarts(world: &mut World) {
         .localnet
         .launch_dcap_full_node(FULL_NODE_NAME, index, 0)
         .expect("restart production FullNode");
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(index), checkpoint, 24)
-            .is_some(),
-        "restarted FullNode did not resume sync"
-    );
+    world
+        .rpc
+        .wait_block(world.validators.http_port(index), checkpoint, 24)
+        .unwrap_or_else(|error| panic!("restarted FullNode did not resume sync: {error:#}"));
 }
 
 #[then("the full node reopens the exact permanent key before execution sync")]
@@ -280,16 +282,20 @@ fn full_node_reopens_exact_key(world: &mut World) {
         "FullNode restart changed permanent offer key"
     );
     assert!(
-        world.localnet.log_has(
-            index,
-            "full-node resident offer key matched upstream before execution launch"
-        ),
+        world
+            .localnet
+            .log_has(
+                index,
+                "full-node resident offer key matched upstream before execution launch"
+            )
+            .expect("read required owned process log"),
         "FullNode startup did not gate execution on the exact upstream offer key"
     );
     assert!(
         world
             .localnet
-            .enclave_log_has(index, "unsealed offer key + group signature"),
+            .enclave_log_has(index, "unsealed offer key + group signature")
+            .expect("read required owned process log"),
         "FullNode enclave did not restore the permanent key from SGX sealed state"
     );
 }

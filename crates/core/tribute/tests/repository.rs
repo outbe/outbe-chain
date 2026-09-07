@@ -9,7 +9,6 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use mongodb::sync::Client;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_tribute_v1, encode_tribute_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
@@ -18,6 +17,7 @@ use outbe_offchain_storage::{
     StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
     MAX_SCAN_ENTRIES,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     TributeData, TributePageRequest, TributeRepositoryError, TributeRepositoryReader,
     TributeRepositoryWriter,

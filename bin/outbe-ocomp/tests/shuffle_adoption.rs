@@ -45,7 +45,7 @@ fn owner_shuffle_spec() -> UnitSpecV1 {
     UnitSpecV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
         job_id: B256::repeat_byte(2),
-        attempt: 1,
+        attempt: 0,
         phase: UnitPhase::OwnerShuffle,
         interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan {
             start_run: 0,
@@ -90,7 +90,7 @@ fn supervisor_adopts_the_complete_verified_descendant_closure_into_cas() {
         ShuffleRunBuildContextV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
             job_id: B256::repeat_byte(2),
-            attempt: 1,
+            attempt: 0,
             unit_id: B256::repeat_byte(3),
             run_span: CanonicalRunSpan {
                 start_run: 0,

@@ -1,10 +1,10 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_tribute_v1, encode_tribute_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{canonical_body, from_canonical_body, precompile::ITribute, TributeData};
 
 fn identity(day: WorldwideDay, seed: U256) -> WwdEntityId {

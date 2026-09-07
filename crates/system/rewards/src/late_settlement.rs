@@ -312,10 +312,10 @@ mod tests {
     use super::*;
     use crate::constants::LATE_FINALIZE_W_MAX;
     use alloy_primitives::address;
-    use outbe_common::WorldwideDay;
     use outbe_metadosis::test_support::ForkInstallScenario;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag};
+    use outbe_primitives::time::WorldwideDay;
     use outbe_promislimit::PromisLimitContract;
 
     const CHAIN_ID: u64 = 1;

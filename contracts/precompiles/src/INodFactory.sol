@@ -68,9 +68,7 @@ interface INodFactory {
     /// under the caller's Gratis modify key.
     /// @param opNonce MUST equal the caller's current on-chain gratis op-nonce;
     /// binds `mac` to exactly this mint.
-    /// @param payNoteProof `outbe.paynote` spend proof, carrying one of the assets the
-    /// VaultRouter registers under the Nod's `referenceCurrency`, and covering at
-    /// least `costAmountMinor`.
+    /// @param payNoteProof `outbe.paynote` spend proof.
     /// @return Gratis minor units minted to the caller.
     function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
         external

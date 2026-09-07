@@ -3,12 +3,12 @@
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_lysis::program_v1::{
     execute, FidelityPhaseV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
+use outbe_primitives::time::WorldwideDay;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 

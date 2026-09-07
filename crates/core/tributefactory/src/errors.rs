@@ -1,5 +1,5 @@
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

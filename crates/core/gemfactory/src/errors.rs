@@ -59,9 +59,6 @@ pub enum GemFactoryError {
     #[error("settlement asset has unsupported decimals {0}")]
     UnsupportedPaymentDecimals(u8),
 
-    #[error("vault returned zero shares for the settlement")]
-    ZeroSharesReceived,
-
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
 
@@ -70,6 +67,21 @@ pub enum GemFactoryError {
 
     #[error("overflow")]
     Overflow,
+
+    #[error("promis load must be positive")]
+    ZeroPromisLoad,
+
+    #[error("PayNote proof names spender {actual}, expected {expected}")]
+    PayNoteSpenderMismatch {
+        expected: alloy_primitives::Address,
+        actual: alloy_primitives::Address,
+    },
+
+    #[error("PayNote spends {covered}, settlement costs {required}")]
+    PayNoteUndercoversCost {
+        covered: u128,
+        required: alloy_primitives::U256,
+    },
 }
 
 impl From<GemFactoryError> for PrecompileError {

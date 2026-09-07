@@ -78,10 +78,16 @@ pub fn below_call() -> U256 {
     U256::from(2_200_000u64)
 }
 
-/// Exactly every position's call price (3.28). The breach test is `>=`, so a day
-/// at this value counts.
+/// Exactly every position's call price (3.28). The breach test is strictly `>`,
+/// so a day at this value does not count.
 pub fn at_call() -> U256 {
     U256::from(3_280_000u64)
+}
+
+/// One minor unit above every position's call price (3.28), the tightest price
+/// that counts as a breach day.
+pub fn above_call() -> U256 {
+    at_call() + U256::from(1u64)
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that

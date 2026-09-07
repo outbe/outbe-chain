@@ -5,7 +5,7 @@
 //! the same immutable MDBX transaction used for every leaf authentication.
 
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::{

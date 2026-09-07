@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
@@ -11,6 +10,7 @@ use outbe_nod::{
     NodRepositoryReader,
 };
 use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
@@ -538,6 +538,46 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     assert!(spent, "mining must burn the note it was paid with");
 }
 
+/// The surplus of an over-covering spend has already reached the reserve vault
+/// and nothing returns it, so the spend must equal the cost exactly.
+#[test]
+fn a_paynote_over_the_cost_leaves_the_nod_and_the_note_intact() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x66));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = cost_of(&input);
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost + 1, cost + 1);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::PayNoteCostMismatch {
+                covered: cost + 1,
+                required: cost,
+            }
+            .to_string()),
+        "unexpected error: {error:?}"
+    );
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+    let spent =
+        world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap());
+    assert!(!spent, "a rejected over-cover must not consume the note");
+}
+
 #[test]
 fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     let mut world = World::new();
@@ -560,7 +600,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PayNoteUndercoversCost {
+            if reason == &NodFactoryError::PayNoteCostMismatch {
                 covered: cost - 1,
                 required: cost,
             }

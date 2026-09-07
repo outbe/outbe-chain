@@ -24,10 +24,9 @@ use crate::{
     },
     fixture_kernel::FixtureKernelExt,
     ocomp::{
-        expiry::run_lifecycle_begin,
+        expiry::run_lifecycle_begin_with_scope,
         request::run_terminal_request_with_completed_fixture as run_terminal_request,
-        schema::poc_schema_limits,
-        state::{DayPhase, JobFsmLimits},
+        schema::poc_schema_limits, state::DayPhase,
     },
     precompile::IMetadosis,
     schema::{status, MetadosisContract, WorldwideDayEntryExt},
@@ -35,7 +34,6 @@ use crate::{
 };
 
 mod fatal_recovery;
-mod p5_models;
 
 fn seed_active_ocomp_snapshot(
     storage: StorageHandle<'_>,
@@ -69,7 +67,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0708);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7100000000000000000000000000000000000071");
@@ -117,15 +115,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
         metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
-        metadosis
-            .enqueue_ocomp_ready(
-                wwd,
-                block_number,
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap();
+        metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();
@@ -164,13 +154,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
-            .ocomp_fsm_state(
-                wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(wwd, &poc_schema_limits())
             .unwrap();
         let requested = fsm.projection();
         assert_eq!(requested.phase, DayPhase::OffchainPending);
@@ -299,7 +283,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             BlockContext::empty_for_tests(finalized.open_height, block_time + 6, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_lifecycle_begin(&open).unwrap();
+        run_lifecycle_begin_with_scope(&open, &scope).unwrap();
         record = MetadosisContract::new(storage.clone())
             .ocomp_job_record(intent_id, &poc_schema_limits())
             .unwrap()
@@ -310,23 +294,25 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             BlockContext::empty_for_tests(expiry_height, block_time + 64, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_lifecycle_begin(&expiry).unwrap();
-        run_terminal_request(&expiry, &scope).unwrap();
+        let expiry_scope = fatal_recovery::begin_recovery_scope_from_storage(
+            storage.clone(),
+            &scope,
+            wwd,
+            expiry_height,
+        );
+        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
+        run_terminal_request(&expiry, &expiry_scope).unwrap();
+        end_block(storage.clone(), &expiry_scope).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
-        let after = metadosis
-            .ocomp_fsm_state(
-                wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap()
-            .projection();
-        assert_eq!(after.phase, DayPhase::Ready);
-        assert_eq!(after.pending_nonce, 1);
-        assert_eq!(after.next_check_height, Some(expiry_height + 1));
+        assert_eq!(
+            metadosis.get_wwd_status(wwd).unwrap(),
+            crate::WwdStatus::Failed
+        );
+        assert!(metadosis
+            .ocomp_fsm_state(wwd, &poc_schema_limits(),)
+            .is_err());
+        assert!(metadosis.ocomp_scheduler.is_empty().unwrap());
         assert_eq!(
             metadosis
                 .request_budget_receipt(wwd, &poc_schema_limits())
@@ -350,85 +336,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             OcompTerminalOutcome::Expired
         );
         assert_eq!(
-            terminal.terminal.as_ref().unwrap().next_pending_nonce,
-            Some(1)
-        );
-
-        let mut validators = ValidatorSet::new(storage.clone());
-        validators.set_config_max_validators(6).unwrap();
-        let sixth = alloy_primitives::Address::repeat_byte(0xA5);
-        validators
-            .register_validator(
-                address!("0A0000000000000000000000000000000000000A"),
-                sixth,
-                &[0x25; 48],
-            )
-            .unwrap();
-        let next_snapshot_key = validators
-            .activate_validator_via_boundary_for_test(sixth)
-            .unwrap();
-        let next_ocomp_snapshot = read_ocomp_snapshot_extension(storage.clone(), next_snapshot_key)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            next_ocomp_snapshot.member_count, 6,
-            "the five validators remain active during their OCOMP recovery window"
-        );
-
-        let retry_height = expiry_height + 1;
-        let retry = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(retry_height, block_time + 65, chain::CHAIN_ID),
-            storage.clone(),
-        );
-        run_lifecycle_begin(&retry).unwrap();
-        run_terminal_request(&retry, &scope).unwrap();
-
-        let metadosis = MetadosisContract::new(storage.clone());
-        let retried = metadosis
-            .ocomp_fsm_state(
-                wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap()
-            .projection();
-        assert_eq!(retried.phase, DayPhase::OffchainPending);
-        assert_eq!(retried.pending_nonce, 1);
-        assert_eq!(retried.deadline_height, Some(retry_height + 64));
-        let retry_intent_id = retried.live_intent_id.unwrap();
-        assert_ne!(retry_intent_id, intent_id);
-        let retried_record = metadosis
-            .ocomp_job_record(retry_intent_id, &poc_schema_limits())
-            .unwrap()
-            .unwrap();
-        assert_eq!(retried_record.status, OcompJobStatus::AwaitingFinality);
-        assert_eq!(retried_record.intent.pending_nonce, 1);
-        assert_eq!(retried_record.intent.attempt, 1);
-        assert_eq!(
-            retried_record.intent.result_committee_set_hash,
-            next_ocomp_snapshot.committee_set_hash
-        );
-        assert_eq!(
-            retried_record.intent.result_ocomp_binding_hash,
-            next_ocomp_snapshot.ocomp_binding_hash
-        );
-        assert_eq!(retried_record.intent.result_member_count, 6);
-        assert_eq!(retried_record.intent.result_quorum_threshold, 5);
-        assert_eq!(terminal.intent.result_member_count, 5);
-        assert_eq!(terminal.intent.result_quorum_threshold, 4);
-        assert_eq!(
-            retried_record
-                .intent
-                .frozen_metadosis_values
-                .request_budget_split_receipt_hash,
-            record
-                .intent
-                .frozen_metadosis_values
-                .request_budget_split_receipt_hash
-        );
-        assert_eq!(
             metadosis
                 .request_budget_receipt(wwd, &poc_schema_limits())
                 .unwrap(),
@@ -446,7 +353,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             TributeContract::new(storage.clone())
                 .total_supply()
                 .unwrap(),
-            1
+            0
         );
     });
 
@@ -457,7 +364,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     );
     assert_eq!(
         IMetadosis::OffchainJobExpired::SIGNATURE_HASH,
-        b256!("9ca54d8b0ae876fcd3b6e519643b9409e3694c8110d3e17f72f8baa51cea320d")
+        b256!("b64fbb190e984aacb53ee095943ebdf40566c8da9a5811e168f546cb796d6c26")
     );
     let requested = logs
         .iter()
@@ -470,21 +377,18 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         .find_map(|log| IMetadosis::OffchainJobExpired::decode_log(log).ok())
         .expect("OffchainJobExpired event");
     assert_eq!(expired.data.intentId, requested.data.intentId);
-    assert_eq!(expired.data.nextPendingNonce, 1);
     let requests = logs
         .iter()
         .filter_map(|log| IMetadosis::OffchainJobRequested::decode_log(log).ok())
         .collect::<Vec<_>>();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].data.pendingNonce, 0);
     assert_eq!(requests[0].data.attempt, 0);
-    assert_eq!(requests[1].data.pendingNonce, 1);
-    assert_eq!(requests[1].data.attempt, 1);
-    assert_ne!(requests[0].data.intentId, requests[1].data.intentId);
     assert!(logs.iter().all(|log| log.address != METADOSIS_ADDRESS
         || log.data.topics().first() == Some(&IMetadosis::OffchainJobRequested::SIGNATURE_HASH)
         || log.data.topics().first() == Some(&IMetadosis::OffchainJobExpired::SIGNATURE_HASH)
-        || log.data.topics().first() == Some(&IMetadosis::OcompVoteMissed::SIGNATURE_HASH)));
+        || log.data.topics().first() == Some(&IMetadosis::OcompVoteMissed::SIGNATURE_HASH)
+        || log.data.topics().first() == Some(&IMetadosis::MetadosisExecuted::SIGNATURE_HASH)));
 }
 
 #[test]
@@ -549,25 +453,14 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 
         let metadosis = MetadosisContract::new(storage.clone());
         let first = metadosis
-            .ocomp_fsm_state(
-                fixture.first_wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.first_wwd, &poc_schema_limits())
             .unwrap()
             .projection();
         assert_eq!(first.phase, DayPhase::Ready);
         assert_eq!(first.next_check_height, Some(fixture.block_number + 1));
         assert_eq!(
             metadosis
-                .next_ocomp_ready(
-                    &poc_schema_limits(),
-                    JobFsmLimits {
-                        max_terminal_records: 365,
-                    },
-                )
+                .next_ocomp_ready(&poc_schema_limits(),)
                 .unwrap()
                 .unwrap()
                 .worldwide_day,
@@ -590,13 +483,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 
         let metadosis = MetadosisContract::new(storage);
         let later = metadosis
-            .ocomp_fsm_state(
-                fixture.later_wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.later_wwd, &poc_schema_limits())
             .unwrap()
             .projection();
         assert_eq!(later.phase, DayPhase::OffchainPending);
@@ -644,25 +531,13 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
             run_terminal_request(&ctx, &fixture.scope).unwrap();
         }
 
-        let mut metadosis = MetadosisContract::new(storage);
+        let mut metadosis = MetadosisContract::new(storage.clone());
         let first = metadosis
-            .ocomp_fsm_state(
-                fixture.first_wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.first_wwd, &poc_schema_limits())
             .unwrap()
             .projection();
         let second = metadosis
-            .ocomp_fsm_state(
-                fixture.later_wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.later_wwd, &poc_schema_limits())
             .unwrap()
             .projection();
 
@@ -689,58 +564,50 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
                 &poc_schema_limits(),
             )
             .unwrap();
-        assert!(metadosis
-            .open_due_ocomp_voting(
-                finalized.open_height,
+        let second_finalized = metadosis
+            .record_ocomp_finality(
+                second_intent_id,
+                B256::repeat_byte(0x83),
+                B256::repeat_byte(0x84),
+                fixture.block_number + 3,
+                request_profile().capacity_profile.result_deadline_blocks,
                 &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap());
-        let outer_transition = crate::commit::plan_outer_transition_for_test_fixture(
-            &metadosis,
-            fixture.first_wwd,
-            crate::reducer::OuterWwdEvent::OcompRetryScheduled(
-                crate::reducer::OcompRetryCause::Expired,
-            ),
-        )
-        .unwrap();
-        metadosis
-            .expire_ocomp_job(
-                &outer_transition,
-                first_intent_id,
-                finalized.deadline_height,
-                fixture.block_time + 64,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
             )
             .unwrap();
-
-        assert_eq!(
-            metadosis
-                .ocomp_fsm_state(
-                    fixture.first_wwd,
-                    &poc_schema_limits(),
-                    JobFsmLimits {
-                        max_terminal_records: 365,
-                    },
-                )
-                .unwrap()
-                .projection()
-                .phase,
-            DayPhase::Ready
+        assert!(metadosis
+            .open_due_ocomp_voting(finalized.open_height, &poc_schema_limits(),)
+            .unwrap());
+        assert!(metadosis
+            .open_due_ocomp_voting(second_finalized.open_height, &poc_schema_limits(),)
+            .unwrap());
+        drop(metadosis);
+        let expiry = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                finalized.deadline_height,
+                fixture.block_time + 64,
+                chain::CHAIN_ID,
+            ),
+            storage.clone(),
         );
+        let expiry_scope = fatal_recovery::begin_recovery_scope_for_wwds_from_storage(
+            storage.clone(),
+            &fixture.scope,
+            &[fixture.first_wwd, fixture.later_wwd],
+            finalized.deadline_height,
+        );
+        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
+        end_block(storage.clone(), &expiry_scope).unwrap();
+
+        let metadosis = MetadosisContract::new(storage);
+        assert_eq!(
+            metadosis.get_wwd_status(fixture.first_wwd).unwrap(),
+            crate::WwdStatus::Failed
+        );
+        assert!(metadosis
+            .ocomp_fsm_state(fixture.first_wwd, &poc_schema_limits(),)
+            .is_err());
         let survivor = metadosis
-            .live_ocomp_fsm_state_by_intent(
-                second_intent_id,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .live_ocomp_fsm_state_by_intent(second_intent_id, &poc_schema_limits())
             .unwrap()
             .unwrap()
             .projection();
@@ -824,13 +691,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
         run_terminal_request(&ctx, &fixture.scope).unwrap();
         let metadosis = MetadosisContract::new(storage.clone());
         let first_intent_id = metadosis
-            .ocomp_fsm_state(
-                fixture.first_wwd,
-                &limits,
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.first_wwd, &limits)
             .unwrap()
             .projection()
             .live_intent_id
@@ -865,13 +726,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
 
         let metadosis = MetadosisContract::new(storage.clone());
         let second_intent_id = metadosis
-            .ocomp_fsm_state(
-                fixture.later_wwd,
-                &limits,
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.later_wwd, &limits)
             .unwrap()
             .projection()
             .live_intent_id
@@ -923,12 +778,7 @@ fn three_eligible_days_create_independently_progressing_live_jobs() {
 
         let metadosis = MetadosisContract::new(storage);
         let live = metadosis
-            .live_ocomp_fsm_states(
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .live_ocomp_fsm_states(&poc_schema_limits())
             .unwrap();
         assert_eq!(live.len(), 3);
 
@@ -980,12 +830,9 @@ fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
             run_terminal_request(&ctx, &fixture.scope).unwrap();
         }
 
-        let limits = JobFsmLimits {
-            max_terminal_records: 365,
-        };
         let metadosis = MetadosisContract::new(storage.clone());
         let live = metadosis
-            .live_ocomp_fsm_states(&poc_schema_limits(), limits)
+            .live_ocomp_fsm_states(&poc_schema_limits())
             .unwrap();
         assert_eq!(live.len(), 2);
         let expiring = live
@@ -1004,12 +851,19 @@ fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
             ),
             storage.clone(),
         );
-        run_lifecycle_begin(&expiry).unwrap();
+        let expiry_scope = fatal_recovery::begin_recovery_scope_from_storage(
+            storage.clone(),
+            &fixture.scope,
+            expiring.worldwide_day,
+            fixture.block_number + 64,
+        );
+        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
+        end_block(storage.clone(), &expiry_scope).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
             metadosis
-                .live_ocomp_fsm_states(&poc_schema_limits(), limits)
+                .live_ocomp_fsm_states(&poc_schema_limits())
                 .unwrap()
                 .len(),
             1
@@ -1149,13 +1003,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             status::OFFCHAIN_PENDING
         );
         let live = metadosis
-            .ocomp_fsm_state(
-                fixture.wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(fixture.wwd, &poc_schema_limits())
             .unwrap()
             .projection();
         let intent_id = live.live_intent_id.unwrap();
@@ -1301,16 +1149,16 @@ fn seed_ce_genesis(storage: &StorageHandle<'_>) {
 
 struct PreparedRequestFixture {
     scope: ExecutionScope,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
 
 struct ReadyDaysFixture {
     scope: ExecutionScope,
-    first_wwd: outbe_common::WorldwideDay,
-    later_wwd: outbe_common::WorldwideDay,
-    third_wwd: outbe_common::WorldwideDay,
+    first_wwd: outbe_primitives::time::WorldwideDay,
+    later_wwd: outbe_primitives::time::WorldwideDay,
+    third_wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
@@ -1329,7 +1177,7 @@ fn prepare_request_fixture_with_day_type(
 ) -> PreparedRequestFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0709);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 23;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7200000000000000000000000000000000000072");
@@ -1380,15 +1228,7 @@ fn prepare_request_fixture_with_day_type(
         metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
         metadosis.set_metadosis_limit(wwd, U256::from(100)).unwrap();
         metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
-        metadosis
-            .enqueue_ocomp_ready(
-                wwd,
-                block_number,
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap();
+        metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();
@@ -1433,9 +1273,9 @@ fn prepare_ready_days_fixture(
 ) -> ReadyDaysFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let first_wwd = outbe_common::WorldwideDay::new(2026_0710);
-    let later_wwd = outbe_common::WorldwideDay::new(2026_0711);
-    let third_wwd = outbe_common::WorldwideDay::new(2026_0712);
+    let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0710);
+    let later_wwd = outbe_primitives::time::WorldwideDay::new(2026_0711);
+    let third_wwd = outbe_primitives::time::WorldwideDay::new(2026_0712);
     let block_number = 29;
     let block_time = third_wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let mut profile = request_profile();
@@ -1483,15 +1323,7 @@ fn prepare_ready_days_fixture(
             metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
             metadosis.set_metadosis_limit(wwd, U256::from(100)).unwrap();
             metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
-            metadosis
-                .enqueue_ocomp_ready(
-                    wwd,
-                    block_number,
-                    JobFsmLimits {
-                        max_terminal_records: 365,
-                    },
-                )
-                .unwrap();
+            metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
         }
 
         let mut tribute = TributeContract::new(storage.clone());
@@ -1553,17 +1385,11 @@ struct RequestObservables {
 
 fn request_observables(
     storage: StorageHandle<'_>,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
 ) -> RequestObservables {
     RequestObservables {
         fsm: MetadosisContract::new(storage.clone())
-            .ocomp_fsm_state(
-                wwd,
-                &poc_schema_limits(),
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
+            .ocomp_fsm_state(wwd, &poc_schema_limits())
             .unwrap()
             .projection(),
         receipt: MetadosisContract::new(storage.clone())
@@ -1593,7 +1419,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
-    let wwd = outbe_common::WorldwideDay::new(2026_0709);
+    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
     let owner = address!("7200000000000000000000000000000000000072");
@@ -1642,15 +1468,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         metadosis.set_wwd_vwap(wwd, U256::from(2)).unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
         metadosis.initialize_ocomp_pre_admission(wwd).unwrap();
-        metadosis
-            .enqueue_ocomp_ready(
-                wwd,
-                block_number,
-                JobFsmLimits {
-                    max_terminal_records: 365,
-                },
-            )
-            .unwrap();
+        metadosis.enqueue_ocomp_ready(wwd, block_number).unwrap();
 
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();

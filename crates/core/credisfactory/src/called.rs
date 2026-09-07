@@ -236,11 +236,11 @@ fn visit_price_path(
     })
 }
 
-/// True when the daily COEN price in the position's reference currency sat at or
-/// above its call price on at least [`CALL_BREACH_DAYS`] of the window.
+/// True when the daily COEN price in the position's reference currency sat
+/// strictly above its call price on at least [`CALL_BREACH_DAYS`] of the window.
 ///
-/// Days below the call price and days with no published price both simply fail
-/// to count, so the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS`
+/// Days at or below the call price and days with no published price both simply
+/// fail to count, so the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS`
 /// of either. section 11.3 leaves missing-data days undecided; treating them as
 /// non-breaches is conservative - it can only delay a call, never trigger one.
 ///
@@ -255,7 +255,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
         if *day < originated_day {
             break;
         }
-        if vwap.is_some_and(|value| value >= position.call_price) {
+        if vwap.is_some_and(|value| value > position.call_price) {
             breaches = breaches.saturating_add(1);
         }
     }

@@ -1129,7 +1129,7 @@ mod tests {
         let spec = UnitSpecV1 {
             protocol_bundle_hash: identity().protocol_bundle_hash,
             job_id: B256::repeat_byte(marker),
-            attempt: 1,
+            attempt: 0,
             phase: UnitPhase::Enumerate,
             interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
                 start: B256::from([marker; 32]),
@@ -1215,7 +1215,7 @@ mod tests {
         let request = RunUnitV1 {
             protocol_bundle_hash: identity().protocol_bundle_hash,
             job_id: B256::repeat_byte(0x71),
-            attempt: 1,
+            attempt: 0,
             plan_hash: B256::repeat_byte(0x72),
             unit_index: 0,
             canonical_unit_spec: outbe_ocomp_protocol::common::BoundedBytes(Vec::new()),

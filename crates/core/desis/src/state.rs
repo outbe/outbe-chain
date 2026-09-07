@@ -1,8 +1,8 @@
 //! Local storage helpers for the Desis module.
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,

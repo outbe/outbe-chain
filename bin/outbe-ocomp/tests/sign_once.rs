@@ -64,7 +64,7 @@ fn subject(result_digest: B256) -> SignOnceSubjectV1 {
         genesis_hash: B256::repeat_byte(0x10),
         fork_id: B256::repeat_byte(0x20),
         job_id: B256::repeat_byte(0x11),
-        attempt: 3,
+        attempt: 0,
         protocol_bundle_hash: B256::repeat_byte(0x22),
         result_validator_set_epoch: 7,
         result_committee_set_hash: B256::repeat_byte(0x33),

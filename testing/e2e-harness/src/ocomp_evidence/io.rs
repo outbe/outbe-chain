@@ -8,9 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use eyre::{ensure, Result, WrapErr};
 use sha2::{Digest, Sha256};
 
-use super::schema::{
-    AssertionRecordV1, ClosureReportV1, MemberDigestV1, RunManifestV1, SourceIdentityV1,
-};
+use super::schema::{AssertionRecordV1, ClosureReportV1, MemberDigestV1, SourceIdentityV1};
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -48,7 +46,10 @@ pub fn publish_assertions(
 }
 
 /// Publish `run-manifest.json` after every referenced member exists.
-pub fn publish_manifest(root: &Path, manifest: &RunManifestV1) -> Result<PathBuf> {
+pub fn publish_manifest<T: serde::Serialize + ?Sized>(
+    root: &Path,
+    manifest: &T,
+) -> Result<PathBuf> {
     let mut bytes = serde_json::to_vec_pretty(manifest)?;
     bytes.push(b'\n');
     let path = root.join("run-manifest.json");
@@ -213,5 +214,29 @@ fn list_or_none(values: &[String]) -> String {
         "none".to_owned()
     } else {
         values.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_manifest_has_one_dedicated_immutable_publication_path() {
+        let directory = tempfile::tempdir().expect("temporary evidence directory");
+        let manifest = serde_json::json!({"result": "failed", "complete": false});
+
+        let path = publish_manifest(directory.path(), &manifest)
+            .expect("publish generic final run manifest");
+        let published: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).expect("read published final run manifest"))
+                .expect("decode published final run manifest");
+        assert_eq!(published, manifest);
+
+        let error = publish_manifest(directory.path(), &manifest)
+            .expect_err("final run manifest must not be replaceable");
+        assert!(error
+            .to_string()
+            .contains("refusing to replace immutable evidence"));
     }
 }

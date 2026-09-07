@@ -45,8 +45,8 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
         genesis_hash: identity.genesis_hash,
         fork_id,
         wwd: 7,
-        pending_nonce: 1,
-        attempt: 1,
+        pending_nonce: 0,
+        attempt: 0,
         protocol_bundle_hash: identity.protocol_bundle_hash,
         ce_sealed_root: hash(42),
         sealed_tribute_collection_key: hash(30),
@@ -97,7 +97,7 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: 7,
-                pending_nonce: 1,
+                pending_nonce: 0,
                 expected_status: MetadosisExpectedStatus::OffchainPending,
                 state_version: 12,
             },
@@ -167,7 +167,7 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
         },
         metadosis_completion_summary: MetadosisCompletionSummaryV1 {
             wwd: 7,
-            pending_nonce: 1,
+            pending_nonce: 0,
             day_type: DayType::Green,
             tribute_nominal_total: U256::ZERO,
             day_limit: U256::ZERO,

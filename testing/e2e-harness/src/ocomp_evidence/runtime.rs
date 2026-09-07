@@ -3,7 +3,7 @@
 //! This builder is deliberately observational: it cannot create a JobIntent,
 //! snapshot, manifest, result or state. It only closes a record after the
 //! harness has retained a successful public receipt/finality reference and one
-//! independently observed Mongo/CE source package per pinned validator.
+//! independently observed RocksDB/CE source package per pinned validator.
 
 use std::collections::BTreeMap;
 use std::error::Error;

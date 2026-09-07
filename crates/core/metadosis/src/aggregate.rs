@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::state::OcompJobStatus;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -11,11 +11,8 @@ use outbe_primitives::{
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     errors::storage_corruption_message,
+    ocomp::state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
-    ocomp::{
-        state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
-        OcompRequestProfileExt,
-    },
     schema::{day_type, status, terminal_outcome, MetadosisContract},
     terminal::{
         validate_capacity_forfeiture_detail, validate_terminal_receipt_state,
@@ -427,7 +424,7 @@ fn validate_ocomp_index_equivalence(
     active_set: &BTreeSet<WorldwideDay>,
 ) -> Result<()> {
     let schema_limits = poc_schema_limits();
-    let Some(profile) = contract.read_ocomp_request_profile(&schema_limits)? else {
+    let Some(_profile) = contract.read_ocomp_request_profile(&schema_limits)? else {
         let indexed_fsm_exists = records.keys().try_fold(false, |found, wwd| {
             Ok::<_, PrecompileError>(found || !contract.ocomp_fsm_states.get_bytes(wwd).is_empty()?)
         })?;
@@ -442,7 +439,6 @@ fn validate_ocomp_index_equivalence(
         }
         return Ok(());
     };
-    let limits = profile.fsm_limits();
     let mut pending_fsm_wwds = BTreeSet::new();
     for projection in records.values() {
         if !contract
@@ -450,8 +446,7 @@ fn validate_ocomp_index_equivalence(
             .get_bytes(&projection.worldwide_day)
             .is_empty()?
         {
-            let state =
-                contract.ocomp_fsm_state(projection.worldwide_day, &schema_limits, limits)?;
+            let state = contract.ocomp_fsm_state(projection.worldwide_day, &schema_limits)?;
             if state.projection().phase == DayPhase::OffchainPending {
                 pending_fsm_wwds.insert(projection.worldwide_day);
             }
@@ -459,7 +454,7 @@ fn validate_ocomp_index_equivalence(
     }
     let mut unmatched_voting_windows = BTreeSet::new();
     let mut live_scheduler_wwds = BTreeSet::new();
-    for live in contract.live_ocomp_fsm_states(&schema_limits, limits)? {
+    for live in contract.live_ocomp_fsm_states(&schema_limits)? {
         let projection = live.projection();
         if !active_set.contains(&projection.worldwide_day) {
             return Err(storage_corruption_message(
@@ -543,8 +538,7 @@ fn validate_ocomp_index_equivalence(
                     ));
                 }
             }
-            OcompJobStatus::Completed | OcompJobStatus::Conflicted
-                if finalized.quorum.is_some() => {}
+            OcompJobStatus::Completed if finalized.quorum.is_some() => {}
             _ => {
                 return Err(storage_corruption_message(
                     "OCOMP response index points to a job without an open window",
@@ -572,7 +566,7 @@ fn validate_ocomp_index_equivalence(
                 "OCOMP READY index points to a missing FSM",
             ));
         }
-        let state = contract.ocomp_fsm_state(ready.worldwide_day, &schema_limits, limits)?;
+        let state = contract.ocomp_fsm_state(ready.worldwide_day, &schema_limits)?;
         let projection = state.projection();
         if projection.phase != DayPhase::Ready
             || projection.next_check_height != Some(ready.next_check_height)

@@ -11,7 +11,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{MetadosisMutationPurposeTag, StorageHandle},
 };
-use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 use outbe_validatorset::{
     contract::ValidatorSet, runtime::status as validator_status, ValidatorHistory,
@@ -28,42 +27,23 @@ use crate::{
     WwdStatus,
 };
 
-fn assert_failed_activation_recovery(fixture: &mut ActivationFixture) {
+fn assert_open_job_after_activation_rejection(fixture: &mut ActivationFixture) {
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
             metadosis.get_wwd_status(TEST_WWD).unwrap(),
-            WwdStatus::Failed
+            WwdStatus::OffchainPending
         );
         let job = metadosis
             .ocomp_job_record(fixture.intent_id, &fixture.limits)
             .unwrap()
             .unwrap();
-        assert_eq!(job.status, OcompJobStatus::Canceled);
+        assert_eq!(job.status, OcompJobStatus::VotingOpen);
+        assert!(job.terminal.is_none());
         assert!(metadosis
             .read_metadosis_failure_receipt(TEST_WWD, U256::from(60))
             .unwrap()
-            .is_some());
-
-        let tribute = TributeContract::new(storage.clone());
-        let totals = tribute.get_day_totals(TEST_WWD).unwrap();
-        assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
-        assert_eq!(tribute.total_supply().unwrap(), 0);
-        assert_eq!(
-            tribute
-                .pre_admission_projection(TEST_WWD)
-                .unwrap()
-                .source_generation,
-            1
-        );
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .total_unallocated
-                .read()
-                .unwrap(),
-            U256::from(60)
-        );
+            .is_none());
     });
 }
 
@@ -81,8 +61,238 @@ fn close_completed_response_window(
             BlockContext::empty_for_tests(deadline_height, 1_011, 1),
             storage,
         );
-        crate::commands::run_ocomp_lifecycle_begin(&ctx)
+        crate::commands::run_ocomp_lifecycle_begin_with_scope(&ctx, &fixture.scope)
     })
+}
+
+/// Retire the completed fixture's V1 through the production Registry lifecycle.
+/// Clear the fixture-only authority copy so it cannot hide the missing V1.
+fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
+    use outbe_ocompregistry::{OcompProtocolAuthorityV1, OcompRegistry, OcompSuccessorV1};
+
+    let proposal_id = U256::from(7);
+    let promotion_height = StorageHandle::enter(&mut fixture.provider, |storage| {
+        let contract = MetadosisContract::new(storage.clone());
+        let initial = OcompProtocolAuthorityV1 {
+            request_profile: contract
+                .read_ocomp_request_profile(&fixture.limits)
+                .unwrap()
+                .unwrap(),
+            protocol_bundle: contract
+                .read_ocomp_activation_authority(&fixture.limits)
+                .unwrap()
+                .unwrap()
+                .bundle,
+        };
+        let height = storage.block_number().unwrap();
+        let mut registry = OcompRegistry::new(storage);
+        registry
+            .initialize_genesis_authority(
+                &initial,
+                B256::repeat_byte(0x99),
+                height,
+                height,
+                &fixture.limits,
+            )
+            .unwrap();
+        let mut successor = initial.clone();
+        successor.protocol_bundle.protocol_version += 1;
+        successor.protocol_bundle.request_semantics_version += 1;
+        successor.protocol_bundle.fork_id = B256::repeat_byte(0xA1);
+        successor.protocol_bundle.lysis_program_semantics_hash = B256::repeat_byte(0xA2);
+        successor.request_profile.fork_id = successor.protocol_bundle.fork_id;
+        successor.request_profile.protocol_bundle_hash = successor
+            .protocol_bundle
+            .protocol_bundle_hash(&fixture.limits)
+            .unwrap();
+        registry
+            .stage_successor(
+                proposal_id,
+                &OcompSuccessorV1 {
+                    activation_height: height + 1,
+                    predecessor_protocol_bundle_hash: initial.request_profile.protocol_bundle_hash,
+                    authority: successor,
+                },
+                &fixture.limits,
+            )
+            .unwrap();
+        height + 1
+    });
+    fixture.provider.set_block_number(promotion_height);
+    let bundle_hash = fixture.result.protocol_bundle_hash;
+    let retirement_height = StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut registry = OcompRegistry::new(storage.clone());
+        registry
+            .promote_staged_successor(proposal_id, promotion_height, &fixture.limits)
+            .unwrap();
+        assert!(registry
+            .authority_by_bundle_hash(bundle_hash, &fixture.limits)
+            .unwrap()
+            .is_some());
+        assert!(!registry
+            .try_retire_predecessor(promotion_height, &fixture.limits)
+            .unwrap());
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+        registry.retention_until.read(&bundle_hash).unwrap()
+    });
+    fixture.provider.set_block_number(retirement_height);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let mut registry = OcompRegistry::new(storage.clone());
+        assert!(registry
+            .try_retire_predecessor(retirement_height, &fixture.limits)
+            .unwrap());
+        assert!(MetadosisContract::new(storage)
+            .read_ocomp_activation_authority_for_bundle(bundle_hash, &fixture.limits)
+            .unwrap()
+            .is_none());
+    });
+    retirement_height
+}
+
+#[test]
+fn completed_vote_replay_after_authority_retirement_is_a_noop() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    retire_completed_vote_authority(&mut fixture);
+    let before = fixture.rollback_snapshot();
+
+    assert_eq!(fixture.dispatch_current().unwrap(), Bytes::new());
+    assert_eq!(fixture.rollback_snapshot(), before);
+}
+
+#[test]
+fn fourth_timely_vote_after_authority_retirement_preserves_completed_lysis() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    let height = retire_completed_vote_authority(&mut fixture);
+    let before = fixture.semantic_snapshot();
+    let vote = fixture.signed_result_vote(3);
+    let quorum_before = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .quorum
+    });
+
+    assert_eq!(
+        submit_vote_result(&mut fixture, &vote, height + 1).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.semantic_snapshot(), before);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let accountability = MetadosisContract::new(storage)
+            .result_vote_accountability(vote.job_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accountability.quorum, quorum_before);
+        assert_eq!(accountability.slots.iter().flatten().count(), 4);
+    });
+}
+
+#[test]
+fn invalid_votes_after_authority_retirement_revert_without_blocking_valid_votes() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    let height = retire_completed_vote_authority(&mut fixture);
+    let valid = fixture.signed_result_vote(2);
+    let before = fixture.rollback_snapshot();
+    let mut wrong_signature = valid.clone();
+    wrong_signature.signature_rs[0] ^= 1;
+    let mut wrong_binding = valid.clone();
+    wrong_binding.result_ocomp_binding_hash = B256::repeat_byte(0xEE);
+    let mut wrong_signer = valid.clone();
+    wrong_signer.ocomp_key_hash = B256::repeat_byte(0xEF);
+    for vote in [wrong_signature, wrong_binding, wrong_signer] {
+        assert!(matches!(
+            submit_vote_result(&mut fixture, &vote, height + 1),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+        assert_eq!(fixture.rollback_snapshot(), before);
+    }
+    assert_eq!(
+        submit_vote_result(&mut fixture, &valid, height + 2).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+}
+
+#[test]
+fn completed_vote_after_authority_retirement_still_obeys_exclusive_deadline() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    fixture.apply().unwrap();
+    retire_completed_vote_authority(&mut fixture);
+    let vote = fixture.signed_result_vote(2);
+    let deadline = StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap()
+            .deadline_height
+    });
+    let before = fixture.rollback_snapshot();
+    assert_eq!(
+        submit_vote_result(&mut fixture, &vote, deadline - 1).unwrap(),
+        Bytes::new()
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert!(matches!(
+        submit_vote_result(&mut fixture, &vote, deadline),
+        Err(PrecompileError::RevertBytes(_))
+    ));
+    assert_eq!(fixture.rollback_snapshot(), before);
+
+    fixture.seed_ocomp_recovery_stake_for_test();
+    close_completed_response_window(&mut fixture, deadline).unwrap();
+    let after_close = fixture.rollback_snapshot();
+    let error = submit_vote_result(&mut fixture, &vote, deadline + 1).unwrap_err();
+    assert!(crate::ocomp::vote::is_deadline_passed_result_vote_revert(
+        &error
+    ));
+    assert_eq!(fixture.rollback_snapshot(), after_close);
+}
+
+#[test]
+fn subquorum_vote_without_activation_authority_remains_fatal_and_atomic() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+    });
+    let before = fixture.rollback_snapshot();
+    // Repeating one of the two existing votes does not form quorum.
+    let vote = fixture.signed_result_vote(0);
+    assert!(
+        matches!(submit_vote_result(&mut fixture, &vote, 20), Err(PrecompileError::Fatal(message))
+        if message == "OCOMP activation authority is not installed")
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert_open_job_after_activation_rejection(&mut fixture);
+}
+
+#[test]
+fn first_quorum_without_activation_authority_remains_fatal_and_atomic() {
+    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        MetadosisContract::new(storage)
+            .ocomp_active_protocol_bundle
+            .clear()
+            .unwrap();
+    });
+    let before = fixture.rollback_snapshot();
+    assert!(
+        matches!(fixture.apply(), Err(PrecompileError::Fatal(message))
+        if message == "OCOMP activation authority is not installed")
+    );
+    assert_eq!(fixture.rollback_snapshot(), before);
+    assert_open_job_after_activation_rejection(&mut fixture);
 }
 
 fn transition_validator_to_status_for_test(
@@ -706,18 +916,18 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ActivationReceiptFault::RequestSplit,
     ] {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
-        assert_eq!(
-            fixture.apply_with_receipt_fault(fault).unwrap(),
-            Bytes::new()
+        let before = fixture.rollback_snapshot();
+        let error = fixture
+            .apply_with_receipt_fault(fault)
+            .expect_err("invalid activation receipt must reject the forming vote");
+        assert!(
+            matches!(error, PrecompileError::Revert(_)),
+            "invalid activation receipt returned the wrong error class: {error}"
         );
-        assert_failed_activation_recovery(&mut fixture);
-        let failed = fixture.rollback_snapshot();
-        assert!(matches!(
-            fixture.apply(),
-            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
-        ));
-        assert_eq!(fixture.rollback_snapshot(), failed);
-        assert_failed_activation_recovery(&mut fixture);
+        assert_eq!(fixture.rollback_snapshot(), before);
+        assert_open_job_after_activation_rejection(&mut fixture);
+        assert_eq!(fixture.apply().unwrap(), Bytes::new());
+        assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
     }
 
     let mut control = ActivationFixture::new(20, 1_010, true);
@@ -758,7 +968,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
 }
 
 #[test]
-fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
+fn changed_activation_preconditions_reject_quorum_commit_without_closing_the_job() {
     let prepare_conflicted = || {
         let mut fixture = ActivationFixture::new(20, 1_010, true);
         StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -774,36 +984,33 @@ fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
         fixture
     };
 
-    let mut control = prepare_conflicted();
-    control.provider.fail_after_mutation_at(usize::MAX);
-    assert_eq!(control.apply().unwrap(), Bytes::new());
-    let mutation_count = control.provider.clear_mutation_failure();
-    assert!(
-        mutation_count >= 7,
-        "conflict q-forming must persist vote, quorum, terminal, scheduler, outer state and events"
-    );
-    assert_eq!(
-        control.terminal_outcome(),
-        ActivationOutcome::ConflictResolved
-    );
-    let clean_after = control.rollback_snapshot();
+    let mut fixture = prepare_conflicted();
+    let before = fixture.rollback_snapshot();
+    let PrecompileError::RevertBytes(expected) =
+        crate::errors::result_vote_rejection(crate::errors::vote_rejection_code::PROTOCOL_VOTE)
+    else {
+        unreachable!("activation rejection is encoded bytes")
+    };
 
-    for operation in 0..mutation_count {
-        let mut fixture = prepare_conflicted();
-        let before = fixture.rollback_snapshot();
-        fixture.provider.fail_after_mutation_at(operation);
+    let PrecompileError::RevertBytes(actual) = fixture.apply().unwrap_err() else {
+        panic!("changed activation preconditions returned the wrong error class")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(fixture.rollback_snapshot(), before);
+    let PrecompileError::RevertBytes(actual) = fixture.apply().unwrap_err() else {
+        panic!("replayed changed activation preconditions returned the wrong error class")
+    };
+    assert_eq!(actual, expected);
+    assert_eq!(fixture.rollback_snapshot(), before);
 
-        assert!(matches!(fixture.apply(), Err(PrecompileError::Storage(_))));
-        assert_eq!(fixture.provider.clear_mutation_failure(), operation + 1);
-        assert_eq!(fixture.rollback_snapshot(), before);
-
-        assert_eq!(fixture.apply().unwrap(), Bytes::new());
-        assert_eq!(fixture.rollback_snapshot(), clean_after);
-        assert_eq!(
-            fixture.terminal_outcome(),
-            ActivationOutcome::ConflictResolved
-        );
-    }
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        let job = MetadosisContract::new(storage)
+            .ocomp_job_record(fixture.intent_id, &fixture.limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.status, OcompJobStatus::VotingOpen);
+        assert!(job.terminal.is_none());
+    });
 }
 
 #[test]

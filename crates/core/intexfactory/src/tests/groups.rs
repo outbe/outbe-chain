@@ -3,10 +3,10 @@ mod group_index {
     //! groups, and each group holds its series.
 
     use alloy_primitives::U256;
-    use outbe_common::WorldwideDay;
     use outbe_intex::SeriesId;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::time::WorldwideDay;
 
     use crate::schema::IntexFactoryContract;
 
@@ -208,10 +208,10 @@ mod group_scans {
     //! all of its series together.
 
     use alloy_primitives::U256;
-    use outbe_common::WorldwideDay;
     use outbe_intex::{IntexState, SeriesId};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::time::WorldwideDay;
 
     use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
     use crate::qualified::{self, ScanBudget};

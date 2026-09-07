@@ -1,9 +1,9 @@
 use crate::program_v1::{self, ProgramErrorV1, TributeInputV1};
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     list, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,

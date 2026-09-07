@@ -1,10 +1,10 @@
 //! Private OCOMP/Fidelity snapshot boundary used while CE is still active.
 
 use alloy_primitives::Address;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_ocomp_protocol::league_snapshot::{fidelity_league_snapshot_root, league_snapshot_key};
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::TributeContract;
 
 use crate::schema::MetadosisContract;

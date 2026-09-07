@@ -5,10 +5,10 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::{fresh_coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::storage::types::Storable;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,

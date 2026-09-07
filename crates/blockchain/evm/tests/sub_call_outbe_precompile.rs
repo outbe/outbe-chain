@@ -16,7 +16,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
     Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
@@ -30,6 +29,7 @@ use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
     ZKPROOF_POSEIDON_ADDRESS,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},

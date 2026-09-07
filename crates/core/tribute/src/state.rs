@@ -1,10 +1,10 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, list, read, EntityRef, ExecutionScope, IdPageRequest,
     ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::TributeError;
 use crate::schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};

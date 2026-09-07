@@ -624,49 +624,6 @@
   },
   {
     "type": "event",
-    "name": "OffchainJobConflicted",
-    "inputs": [
-      {
-        "name": "intentId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "jobId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "attempt",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "nextPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "resultDigest",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "OffchainJobExpired",
     "inputs": [
       {
@@ -680,18 +637,6 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
-      },
-      {
-        "name": "oldPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "nextPendingNonce",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
       },
       {
         "name": "expiredAtHeight",

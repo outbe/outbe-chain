@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::{B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
@@ -60,6 +59,7 @@ use outbe_ocomp_protocol::{
     UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_oracle::{evaluate_oracle_opening_v1, OracleOcompError};
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 use zeromq::util::PeerIdentity;
 use zeromq::{DealerSocket, Socket, SocketOptions, SocketRecv, SocketSend, ZmqMessage};
@@ -2873,12 +2873,12 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use alloy_primitives::{Address, B256, U256};
-    use outbe_common::WorldwideDay;
     use outbe_compressed_entities::derive_poseidon_entity_id;
     use outbe_lysis::program_v1::phases::{
         output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
     };
     use outbe_ocomp_protocol::unit::{PlanCommitmentV1, WorkOutputHeaderV1};
+    use outbe_primitives::time::WorldwideDay;
 
     use super::{
         poc_schema_limits, require_complete_root_values, require_lease_active,
@@ -2915,7 +2915,7 @@ mod tests {
         PlanCommitmentV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
             job_id: B256::repeat_byte(2),
-            attempt: 3,
+            attempt: 0,
             input_manifest_hash: B256::repeat_byte(4),
             wwd: 20_260_724,
             lysis_budget: U256::from(99_000_000_u64),

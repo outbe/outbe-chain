@@ -1,7 +1,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
@@ -46,6 +45,7 @@ use outbe_ocomp_protocol::{
     unit::{UnitArtifactV1, UnitPhase, UnitSpecV1, WorkOutputHeaderV1},
     CasObjectRefV1, ListKind, StreamingOrderedListRoot,
 };
+use outbe_primitives::time::WorldwideDay;
 
 const CAS_LIMITS: CasLimits = CasLimits {
     max_object_bytes: 1_048_576,
@@ -228,7 +228,7 @@ fn synthetic_fixture_with_options(
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 checkpoint: CheckpointIdentityV1 {
                     finalized_block_number: 90,
                     finalized_block_hash: hash(0x31),
@@ -305,7 +305,7 @@ fn synthetic_fixture_with_options(
     let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
         protocol_bundle_hash: bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         input_manifest_hash: manifest.manifest_hash(&limits).unwrap(),
         input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
         fidelity_opening_root: manifest.fidelity_opening_root,
@@ -407,7 +407,7 @@ fn synthetic_fixture_with_options(
                 let chunk = ResultChunkV1 {
                     protocol_bundle_hash: bundle_hash,
                     job_id,
-                    attempt: 1,
+                    attempt: 0,
                     chunk_ordinal: index,
                     first_nod_ordinal: u32::try_from(start).unwrap(),
                     ordered_nod_actions: actions.clone(),
@@ -449,7 +449,7 @@ fn synthetic_fixture_with_options(
                 let mut summary = RootReduceSummaryV1 {
                     protocol_bundle_hash: bundle_hash,
                     job_id,
-                    attempt: 1,
+                    attempt: 0,
                     plan_hash,
                     covered_primary_start: index,
                     covered_primary_count: 1,

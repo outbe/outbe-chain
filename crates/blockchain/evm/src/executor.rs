@@ -4452,7 +4452,6 @@ mod tests {
     };
     use alloy_sol_types::{SolCall, SolEvent};
     use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-    use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
@@ -4481,6 +4480,7 @@ mod tests {
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+    use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::OutbeHeader;
     use outbe_primitives::{
         stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
@@ -8468,7 +8468,7 @@ mod tests {
                     feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                     formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
                         storage,
-                        outbe_common::WorldwideDay::new(PREVIOUS_DAY),
+                        outbe_primitives::time::WorldwideDay::new(PREVIOUS_DAY),
                     )
                     .unwrap()
                     .is_some(),

@@ -16,7 +16,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
     EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
@@ -60,6 +59,7 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(test)]
 use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
     error::{PrecompileError, Result as PrecompileResult},
@@ -83,7 +83,6 @@ use crate::{
         activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
         fork::{OcompForkInstallClassification, OcompForkInstallV1},
         schema::{poc_schema_limits, OcompRequestProfile},
-        state::JobFsmLimits,
     },
     schema::{day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
 };
@@ -485,8 +484,7 @@ fn capacity_profile() -> CapacityProfileV1 {
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
         max_expirations_per_block: 1,
-        retry_backoff_blocks: 1,
-        max_terminal_job_records: 365,
+        ready_backoff_blocks: 1,
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
@@ -1442,11 +1440,8 @@ impl ActivationFixture {
                 })
                 .unwrap();
             contract.active_wwd.insert(TEST_WWD).unwrap();
-            let fsm_limits = JobFsmLimits {
-                max_terminal_records: 365,
-            };
             contract
-                .enqueue_ocomp_ready(TEST_WWD, TEST_REQUEST_HEIGHT, fsm_limits)
+                .enqueue_ocomp_ready(TEST_WWD, TEST_REQUEST_HEIGHT)
                 .unwrap();
             let profile = OcompRequestProfile {
                 chain_id: 1,
@@ -1470,13 +1465,7 @@ impl ActivationFixture {
             )
             .unwrap();
             contract
-                .commit_ocomp_request(
-                    &outer_transition,
-                    &intent,
-                    &request_receipt,
-                    &limits,
-                    fsm_limits,
-                )
+                .commit_ocomp_request(&outer_transition, &intent, &request_receipt, &limits)
                 .unwrap();
             let finalized = contract
                 .record_ocomp_finality(
@@ -1493,7 +1482,7 @@ impl ActivationFixture {
                 TEST_REQUEST_HEIGHT + RESULT_VOTE_MIN_FINALITY_DEPTH
             );
             contract
-                .open_due_ocomp_voting(finalized.open_height, &limits, fsm_limits)
+                .open_due_ocomp_voting(finalized.open_height, &limits)
                 .unwrap();
             for index in 0..initial_vote_count {
                 let mut vote = ResultVoteV1 {

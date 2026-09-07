@@ -5,9 +5,9 @@
 //! touch local storage; orchestration and validation live in `api.rs`.
 
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Storable;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::IntexError;
 use crate::schema::{CertifiedPayoutRound, DistProgress, IntexContract, SeriesId, SeriesRecord};

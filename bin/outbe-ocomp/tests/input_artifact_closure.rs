@@ -3,7 +3,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas},
@@ -27,6 +26,7 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     ListKind, OrderedListLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 
 #[test]
 fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
@@ -160,7 +160,7 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
     let manifest = InputManifestV1 {
         protocol_bundle_hash: bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 90,
             finalized_block_hash: B256::repeat_byte(0x31),
@@ -305,7 +305,7 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
-                attempt: 1,
+                attempt: 0,
                 checkpoint: CheckpointIdentityV1 {
                     finalized_block_number: 91,
                     finalized_block_hash: B256::repeat_byte(0x62),

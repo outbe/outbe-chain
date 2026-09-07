@@ -15,7 +15,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
     with_storage_at(timestamp, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
+        let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(timestamp);
         let last_closed = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(timestamp),
         );

@@ -1,8 +1,10 @@
+mod lifecycle;
 mod metrics;
 mod network;
 mod sidecar;
 mod status;
 
+pub use lifecycle::EndpointTaskOwner;
 pub use metrics::RadicleMetrics;
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,

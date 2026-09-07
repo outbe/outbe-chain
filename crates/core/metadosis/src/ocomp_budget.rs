@@ -58,9 +58,8 @@ impl RequestBudgetSplit {
 /// Apply the request effect for a split that the authoritative Metadosis job
 /// state has proven fresh.
 ///
-/// This function intentionally does not perform receipt lookup. OCM-08 owns
-/// that lookup and must call [`validate_replayed_request_budget_effect`] when
-/// the effect receipt already exists.
+/// The single-attempt FSM invokes this exactly once for a WorldwideDay. An
+/// existing receipt is an invariant violation rather than a replay path.
 pub(crate) fn apply_fresh_request_budget_effect(
     storage: StorageHandle<'_>,
     request: RequestBudgetEffect,
@@ -99,32 +98,6 @@ pub(crate) fn apply_fresh_request_budget_effect(
         .validate_semantics()
         .map_err(protocol_error_to_revert)?;
     Ok(receipt)
-}
-
-/// Validate an authoritative receipt for a replay without touching owner
-/// storage. OCM-08 decides between fresh apply and replay from persisted job
-/// state; callers cannot accidentally select the replay path with `None`.
-pub(crate) fn validate_replayed_request_budget_effect(
-    request: RequestBudgetEffect,
-    existing: &RequestBudgetSplitReceiptV1,
-) -> Result<RequestBudgetSplitReceiptV1> {
-    if existing.pending_nonce > request.pending_nonce {
-        return Err(MetadosisError::OcompBudgetEffectFromFuture {
-            effect_nonce: existing.pending_nonce,
-            current_nonce: request.pending_nonce,
-        }
-        .into());
-    }
-    let split = RequestBudgetSplit::derive(
-        request.day_limit,
-        request.lysis_budget,
-        request.nominal_total,
-    )?;
-    let expected = expected_receipt(&request, split, existing.pending_nonce)?;
-    if existing != &expected {
-        return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
-    }
-    Ok(existing.clone())
 }
 
 fn expected_receipt(

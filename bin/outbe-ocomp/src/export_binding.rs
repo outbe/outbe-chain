@@ -922,7 +922,7 @@ mod tests {
             finalized_cursor: 11,
             finalized_job_spec_hash: B256::repeat_byte(0x11),
             job_id: B256::repeat_byte(0x12),
-            attempt: 3,
+            attempt: 0,
             protocol_bundle_hash: B256::repeat_byte(0x13),
             source_pin_generation: 5,
             lease_generation: 9,

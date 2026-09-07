@@ -1,7 +1,7 @@
 """Render the per-machine launch bundle that goes with a generated genesis.
 
 `create_genesis.py` calls this once the genesis is written. For each founding
-validator it emits one directory of runnable scripts - MongoDB, TEE enclave,
+validator it emits one directory of runnable scripts - storage setup, TEE enclave,
 Radicle sidecar, the node itself, and the price feeder - plus the reth bootnode
 list and a DEPLOY.md that walks an operator through bringing the network up.
 
@@ -20,6 +20,8 @@ import shlex
 import stat
 from pathlib import Path
 from typing import Any
+
+from offchain_storage import ensure as ensure_storage, settings as storage_settings
 
 # One layout for every founder: they run on separate machines, so they share
 # the same ports. Any of these is overridable from the yaml.
@@ -73,30 +75,6 @@ def embedded_ocomp_endpoint_port(config: dict[str, Any], consensus_port: int) ->
         )
     endpoint_port = consensus_port + 1
     return endpoint_port
-
-
-def ocomp_discovery_control_port(config: dict[str, Any], ocomp_endpoint_port: int) -> int:
-    """Allocate the exporter-side durable discovery control endpoint.
-
-    The port is an explicit deployment choice. It is accepted only when it
-    does not collide with bundle lanes or another configured listener.
-    """
-    if "ocomp_discovery_control_port" not in config:
-        raise ValueError("ocomp_discovery_control_port is required")
-    candidate = int(config["ocomp_discovery_control_port"])
-    if not 1 <= candidate <= 65535:
-        raise ValueError(f"invalid OCOMP discovery control port: {candidate}")
-    lane_end = ocomp_endpoint_port + 12
-    if lane_end > 65535:
-        raise ValueError(
-            f"OCOMP endpoint leaves no complete lane/control window: {ocomp_endpoint_port}"
-        )
-    configured_listeners = {port_of(config, name) for name in DEFAULT_PORTS}
-    if candidate in configured_listeners or ocomp_endpoint_port <= candidate <= lane_end:
-        raise ValueError(
-            f"OCOMP discovery control port collides with another listener: {candidate}"
-        )
-    return candidate
 
 
 def write_script(path: Path, body: str) -> None:
@@ -186,6 +164,19 @@ def format_enode_host(host: str) -> str:
 # ---------------------------------------------------------------------------
 # Per-component scripts
 # ---------------------------------------------------------------------------
+
+
+def storage_script(*, index: int, base_dir: str, mongo_uri: str) -> str:
+    directory = f"{base_dir}/validator-{index}"
+    return f"""
+cd {quote(directory)}
+backend="$(python3 {quote(base_dir)}/offchain_storage.py backend offchain-storage.toml)"
+if python3 {quote(base_dir)}/offchain_storage.py matches-mongodb offchain-storage.toml --mongo-uri {quote(mongo_uri)} && [ -x ./run-mongodb.sh ]; then
+  exec ./run-mongodb.sh
+fi
+# RocksDB is opened by the node. An external MongoDB is managed by its operator.
+echo "projection backend: $backend (offchain-storage.toml)"
+"""
 
 
 def mongodb_script(*, config: dict[str, Any], index: int) -> str:
@@ -359,7 +350,6 @@ def node_script(
     consensus_port: int,
     host: str,
     identity: dict[str, Any],
-    discovery_control_port: int,
 ) -> str:
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
@@ -407,7 +397,6 @@ printf '%s' "$(tr -d '[:space:]' < "$KEYS/reth-p2p-secret.hex")" > "$KEYS/reth-p
 # A debug build needs a larger thread stack: block 1 lazily initializes k256's
 # secp256k1 tables in an unoptimized frame that overflows reth's default.
 export RUST_MIN_STACK="${{RUST_MIN_STACK:-16777216}}"
-export OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS="127.0.0.1:{discovery_control_port}"
 
 exec {quote(binary)} node \\
   --validator \\
@@ -423,9 +412,7 @@ exec {quote(binary)} node \\
   --radicle.control-socket {quote(radicle_home + "/node/outbe-control.sock")} \\
   --radicle.status-address 127.0.0.1:{port_of(config, "radicle_status_port")} \\
   --tee-enclave-socket 127.0.0.1:{port_of(config, "tee_enclave_port")} \\
-  --projection.mongodb-uri "mongodb://127.0.0.1:{port_of(config, "mongodb_port")}/?replicaSet=rs0" \\
-  --projection.mongodb-database {quote(f"outbe_projection_validator_{index}")} \\
-  --projection.start-block 1 \\
+  --projection.storage-config {quote(base_dir + f"/validator-{index}/offchain-storage.toml")} \\
   --http --http.addr 127.0.0.1 --http.port {port_of(config, "rpc_port")} \\
   --http.api eth,net,web3,outbe \\
   --authrpc.port {port_of(config, "authrpc_port")} \\
@@ -519,12 +506,11 @@ def start_all_script(
     status_port = port_of(config, "radicle_status_port")
     rpc_port = port_of(config, "rpc_port")
     return f"""
-# Bring up validator-{index} in dependency order: MongoDB and the enclave must
-# answer before the node starts, and Radicle before the node's preflight.
+# Bring up the configured storage, enclave, Radicle and node in dependency order.
 cd {quote(directory)}
 mkdir -p logs
 
-./run-mongodb.sh
+./run-storage.sh
 
 # run-enclave.sh execs into the enclave, so it must be backgrounded: calling it
 # directly would replace this script and nothing below would ever run.
@@ -582,7 +568,9 @@ echo "  radicle: logs/radicle.log (pid $(cat radicle.pid))"
 echo "  feeder:  logs/feeder.log  (pid $(cat feeder.pid))"
 echo "  ocomp:   embedded Supervisor in node, logs/ocomp-exporter.log, logs/ocomp-worker.log"
 echo "  enclave: docker logs outbe-enclave-{index}"
-echo "  mongo:   docker logs outbe-mongo-{index}"
+if [ "$(python3 {quote(base_dir)}/offchain_storage.py backend offchain-storage.toml)" = mongodb ]; then
+  echo "  mongo:   docker logs outbe-mongo-{index}"
+fi
 """
 
 
@@ -601,7 +589,9 @@ for name in ocomp-worker ocomp-exporter feeder node radicle enclave; do
   fi
 done
 docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo "stopped enclave" || true
-echo "MongoDB left running; stop it with: docker stop outbe-mongo-{index}"
+if [ "$(python3 {quote(base_dir)}/offchain_storage.py backend offchain-storage.toml)" = mongodb ]; then
+  echo "MongoDB left running; stop it with: docker stop outbe-mongo-{index}"
+fi
 """
 
 
@@ -678,10 +668,8 @@ def ocomp_exporter_script(
     base_dir: str,
     identity: dict[str, Any],
     ocomp_endpoint_port: int,
-    discovery_control_port: int,
 ) -> str:
     binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    database = f"outbe_projection_validator_{index}"
     return f"""
 # OCOMP SnapshotExporter: materializes the finalized inputs the Workers read.
 {ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
@@ -691,9 +679,7 @@ if [ -f {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")} ]; then
   source {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")}
   export OCOMP_PROTOCOL_BUNDLE_HASHES
 fi
-export OUTBE_OCOMP_PROJECTION_MONGODB_URI="mongodb://127.0.0.1:{port_of(config, "mongodb_port")}/?replicaSet=rs0"
-export OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE={quote(database)}
-export OUTBE_OCOMP_DISCOVERY_CONTROL_ADDRESS="127.0.0.1:{discovery_control_port}"
+export OUTBE_OCOMP_STORAGE_CONFIG={quote(base_dir + f"/validator-{index}/offchain-storage.toml")}
 
 exec {quote(binary)} snapshot-exporter \\
   --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
@@ -975,8 +961,8 @@ INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
 sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# MongoDB stays a container; bring it up before anything that projects into it.
-{quote(base_dir)}/validator-"$INDEX"/run-mongodb.sh
+# Prepare the backend selected in this validator's offchain-storage.toml.
+{quote(base_dir)}/validator-"$INDEX"/run-storage.sh
 
 for role in enclave radicle node ocomp-exporter ocomp-worker feeder; do
   sudo systemctl enable --now "outbe-$role@$INDEX.service"
@@ -991,9 +977,7 @@ echo "follow one with: journalctl -u outbe-node@$INDEX -f"
     write_script(output_dir / "install-systemd.sh", install)
 
 
-def preflight_script(
-    *, config: dict[str, Any], base_dir: str, index: int, discovery_control_port: int
-) -> str:
+def preflight_script(*, config: dict[str, Any], base_dir: str, index: int) -> str:
     """Check, on this machine, everything that silently breaks a launch.
 
     Every item here cost a real debugging session: a genesis that differs
@@ -1026,13 +1010,13 @@ fi
 for stale in validator-{index}/data validator-{index}/consensus tee; do
   [ -e "$stale" ] && {{ note "leftover state" "$stale - remove before a new genesis"; fail=1; }}
 done
-if command -v docker >/dev/null; then
+if [ "$(python3 offchain_storage.py backend validator-{index}/offchain-storage.toml)" = mongodb ] && command -v docker >/dev/null; then
   dbs=$(docker exec outbe-mongo-{index} mongosh --quiet --eval \\
     'db.adminCommand({{listDatabases:1}}).databases.map(x=>x.name).filter(n=>/outbe/.test(n)).length' 2>/dev/null | tail -1)
   [ "${{dbs:-0}}" != "0" ] && {{ note "mongo projections" "$dbs left from an earlier run"; fail=1; }}
 fi
 
-for port in {tee_port} {rpc_port} {discovery_control_port}; do
+for port in {tee_port} {rpc_port}; do
   ss -ltn 2>/dev/null | grep -q ":$port " && {{ note "port $port" "already in use"; fail=1; }}
 done
 
@@ -1070,6 +1054,7 @@ def build_distribution(
         output_dir / "reth-bootnodes.txt",
         output_dir / "DEPLOY.md",
         output_dir / "install-systemd.sh",
+        output_dir / "offchain_storage.py",
     ]
     enclave_dir = output_dir / "enclave"
     systemd_dir = output_dir / "systemd"
@@ -1211,13 +1196,14 @@ Everything else stays on loopback and must not be exposed: RPC
 `{port_of(config, "rpc_port")}`, authrpc `{port_of(config, "authrpc_port")}`,
 metrics `{port_of(config, "metrics_port")}`, Radicle status
 `{port_of(config, "radicle_status_port")}`, the enclave socket
-`{port_of(config, "tee_enclave_port")}`, MongoDB
+`{port_of(config, "tee_enclave_port")}`, optional MongoDB
 `{port_of(config, "mongodb_port")}`, and the feeder health endpoint
 `{port_of(config, "feeder_health_port")}`.
 
 ## 3. Prerequisites on every machine
 
-- Docker - MongoDB and the TEE enclave run as containers
+- Python 3.11+ - reads the shared storage TOML at launch
+- Docker - the TEE enclave and optional MongoDB run as containers
 - `outbe-cli` on the machine you verify from (step 5)
 - the `outbe-chain`, `outbe-ocomp`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to
@@ -1239,10 +1225,10 @@ come back on failure. `preflight.sh` is read-only: run it first and compare the
 genesis and enclave digests it prints across all four machines - they must be
 identical.
 
-`start-all.sh` starts the components in dependency order - MongoDB, enclave,
+`start-all.sh` starts the components in dependency order - configured storage, enclave,
 Radicle sidecar, node, feeder - and writes pids and logs into
 `{base_dir}/validator-N/`. To run one component in the foreground instead, call
-its script directly: `run-mongodb.sh`, `run-enclave.sh`, `run-radicle.sh`,
+its script directly: `run-storage.sh`, `run-enclave.sh`, `run-radicle.sh`,
 `run-node.sh`, `run-feeder.sh`. `stop-all.sh` reverses it.
 
 **Start all four machines within a few minutes of each other.** Block 1 carries
@@ -1280,14 +1266,35 @@ number and `validator list` shows four active validators.
 | TEE enclave | Docker container | the node refuses to start without it |
 | Radicle | `outbe-radicle` | validator startup requires its control socket |
 | Price feeder | `outbe-feeder` | submits oracle votes |
-| Projection store | MongoDB container | replica set `rs0`, mandatory |
+| Projection store | `offchain-storage.toml` | RocksDB by default; MongoDB requires a replica set |
+
+## Storage configuration
+
+Node and SnapshotExporter share `validator-N/offchain-storage.toml`. New bundles
+select RocksDB with `data/offchain` and `ocomp/domain-v1/exporter-v1/rocksdb-secondary`,
+relative to that TOML. There is one node-owned primary and an exporter secondary
+per protocol bundle. Both processes must run on the same host.
+
+To select MongoDB when generating a bundle, set `offchain_storage.backend: mongodb`
+in the network YAML. The generator creates per-validator databases and a managed
+local replica-set script. Override `offchain_storage.mongodb.uri` for an external
+replica set; that service is managed by its operator. A custom `mongodb.database`
+is a prefix and receives `_validator_N`. Inspect the resulting TOML
+before launching. Runtime backend changes require editing that file and restarting
+both processes. Existing data is not migrated when the backend changes.
+
+Regeneration preserves existing TOML bytes, including operator settings. The old
+`projection.mongodb-*`, `projection.start-block`, and Mongo runtime environment
+variables are removed. The node accepts `--projection.storage-config`; the exporter
+reads `OUTBE_OCOMP_STORAGE_CONFIG`.
 
 ## Notes
 
 - The OCOMP Supervisor is the node-owned ExEx. `start-all.sh` waits for its
   embedded registration endpoint, then starts only the external SnapshotExporter
   and Worker clients over loopback. The SnapshotExporter reads the node's
-  projection database without a writer lease. Durable discovery authority lives
+  projection through an independent read session. RocksDB uses a local secondary
+  directory per protocol bundle; MongoDB uses primary/majority reads. Durable discovery authority lives
   under its local spool; ZeroMQ on the separately allocated loopback control port
   carries only fixed-size OfferRef/AckRef values.
 - The embedded OCOMP Supervisor signs its submissions with `ocomp-evm-key.hex`,
@@ -1336,6 +1343,7 @@ def render(
             f"enode://{node_id}@{format_enode_host(host)}:{port_of(config, 'reth_p2p_port')}"
         )
     (output_dir / "reth-bootnodes.txt").write_text("\n".join(enodes) + "\n")
+    shutil.copy2(Path(__file__).with_name("offchain_storage.py"), output_dir / "offchain_storage.py")
     identity = ocomp_identity(genesis_path, keys_dir)
     bundle_catalog = output_dir / "protocol-bundles-v1"
     bundle_catalog.mkdir(parents=True, exist_ok=True)
@@ -1348,9 +1356,14 @@ def render(
         directory = output_dir / f"validator-{index}"
         host, _, consensus_port = validator["p2p_address"].rpartition(":")
         ocomp_endpoint_port = embedded_ocomp_endpoint_port(config, int(consensus_port))
-        discovery_control_port = ocomp_discovery_control_port(config, ocomp_endpoint_port)
 
-        write_script(directory / "run-mongodb.sh", mongodb_script(config=config, index=index))
+        storage = ensure_storage(directory / "offchain-storage.toml", storage_settings(
+            config, database=f"outbe_projection_validator_{index}", validator_index=index,
+            mongo_uri=f"mongodb://127.0.0.1:{port_of(config, 'mongodb_port')}/?replicaSet=rs0",
+        ))
+        if storage["backend"] == "mongodb":
+            write_script(directory / "run-mongodb.sh", mongodb_script(config=config, index=index))
+        write_script(directory / "run-storage.sh", storage_script(index=index, base_dir=base_dir, mongo_uri=f"mongodb://127.0.0.1:{port_of(config, 'mongodb_port')}/?replicaSet=rs0"))
         write_script(
             directory / "run-enclave.sh",
             enclave_script(config=config, index=index, base_dir=base_dir),
@@ -1376,7 +1389,6 @@ def render(
                 consensus_port=int(consensus_port),
                 host=host,
                 identity=identity,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(
@@ -1390,7 +1402,6 @@ def render(
                 config=config,
                 base_dir=base_dir,
                 index=index,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(
@@ -1405,7 +1416,6 @@ def render(
                 base_dir=base_dir,
                 identity=identity,
                 ocomp_endpoint_port=ocomp_endpoint_port,
-                discovery_control_port=discovery_control_port,
             ),
         )
         write_script(

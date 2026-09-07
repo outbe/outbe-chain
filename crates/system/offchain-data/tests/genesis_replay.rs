@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
     end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
@@ -22,6 +21,7 @@ use outbe_offchain_data::{
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     canonical_body, precompile::ITribute, TributeContract, TributeData, TributeRepositoryReader,
 };

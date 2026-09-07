@@ -10,10 +10,10 @@ pub mod bidders;
 pub mod forge;
 pub mod hardhat;
 pub mod localnet;
-pub mod mongodb;
 pub mod ocomp;
 pub mod origin_venue;
 pub mod price_oracle;
+pub mod projection;
 pub mod relay;
 pub mod rpc;
 #[cfg(feature = "ocomp-integration")]
@@ -28,9 +28,9 @@ use crate::env::environment;
 use crate::internal::config::Config;
 use crate::ocomp_capacity::OcompCapacityResourceMeterV1;
 use localnet::Localnet;
-use mongodb::MongoDb;
 use ocomp::OcompTopology;
 use price_oracle::PriceOracleTopology;
+use projection::ProjectionFixture;
 use rpc::Rpc;
 use state::FixtureState;
 use std::time::Instant;
@@ -47,8 +47,8 @@ pub struct World {
     /// The localnet and every owned node: bootstrap/start/stop the committee,
     /// provision/launch the joiner + followers, kill/restart validators.
     pub localnet: Localnet,
-    /// Projection database, either supplied by the caller or owned by this scenario.
-    pub mongodb: MongoDb,
+    /// Scenario-owned RocksDB projection and read-only observation sessions.
+    pub projection: ProjectionFixture,
     /// Chain reads/sends/waits.
     pub rpc: Rpc,
     /// Validator/operator identities and committee size.
@@ -78,7 +78,9 @@ impl Default for World {
         env.ports
             .start_scenario(env.validators)
             .expect("allocate this scenario's port blocks");
-        let mut cfg = Config::for_scenario(&env, id);
+        let cfg = Config::for_scenario(&env, id);
+        cfg.validate_committee_ipc_paths(env.validators)
+            .expect("validate scenario node IPC paths before starting services");
         let capacity_meter = std::env::var("OUTBE_OCOMP_CAPACITY_RUN_ID")
             .ok()
             .map(|run_id| {
@@ -86,13 +88,13 @@ impl Default for World {
                     |error| panic!("start dedicated OCOMP capacity meter: {error:#}"),
                 )
             });
-        let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
+        let projection = ProjectionFixture::new(&cfg);
         let target_chain = TargetChain::new(cfg.clone());
         Self {
             relay: None,
             started_at: Instant::now(),
             localnet: Localnet::new(cfg.clone()),
-            mongodb,
+            projection,
             rpc: Rpc::new(cfg.clone()),
             validators: Validators::new(cfg.clone(), env.validators),
             ocomp: OcompTopology::new(cfg.clone()),

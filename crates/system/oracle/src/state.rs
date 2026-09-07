@@ -5,11 +5,11 @@
 //! orchestration live in `runtime.rs`.
 
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::constants::{reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;

@@ -9,6 +9,8 @@
 //! keeps only the frontier on chain — the auth path exists nowhere but in the
 //! deposit history.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_paynote::hash::{
     address_field, field_from_be_bytes, field_to_be_bytes, note_commitment, note_nullifier,
@@ -35,11 +37,14 @@ pub(crate) struct Note {
 }
 
 impl Note {
-    /// Derives a note for `amount` of `asset` under a fixed spend key. The key
-    /// is a constant because the scenario is single-shot and deterministic
-    /// evidence beats an unreproducible random draw.
+    /// Derives a note for `amount` of `asset` under its own spend key, counted
+    /// up from a fixed base: the commitment follows from the serial, so one
+    /// shared key would make two notes of equal value identical and the pool
+    /// refuses the second. Counting keeps the evidence reproducible where a
+    /// random draw would not.
     pub(crate) fn new(chain_id: u64, asset: Address, amount: u128) -> Self {
-        let spend_key = Field::from(0x005e_771e_u64);
+        static NEXT_SPEND_KEY: AtomicU64 = AtomicU64::new(0x005e_771e);
+        let spend_key = Field::from(NEXT_SPEND_KEY.fetch_add(1, Ordering::Relaxed));
         let serial = note_sn(spend_key).expect("note serial");
         let commitment =
             note_commitment(chain_id, serial, asset.into(), amount).expect("note commitment");

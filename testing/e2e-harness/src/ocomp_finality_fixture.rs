@@ -30,7 +30,6 @@ use commonware_cryptography::{
     Signer as _,
 };
 use commonware_utils::{ordered::Set, Participant};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::TributeBodyV1;
 use outbe_consensus::{
     block::ConsensusBlock,
@@ -55,6 +54,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, ORACLE_COUNT_SLOTS_V1};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS},
     header::OutbeHeader,

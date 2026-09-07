@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     constants::MAX_RECORDS_KEPT, errors::storage_corruption_message, schema::MetadosisContract,

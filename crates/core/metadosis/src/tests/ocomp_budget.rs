@@ -8,8 +8,7 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::PrecompileError;
 
 use crate::ocomp_budget::{
-    apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
-    RequestBudgetEffect, RequestBudgetSplit,
+    apply_fresh_request_budget_effect, RequestBudgetEffect, RequestBudgetSplit,
 };
 
 /// The day's frozen price table: one dollar row, as a single-currency day carries.
@@ -170,106 +169,9 @@ fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
 }
 
 #[test]
-fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
-    with_storage(|storage| {
-        let green = RequestBudgetEffect {
-            protocol_bundle_hash: B256::repeat_byte(0x41),
-            wwd: 20_260_103,
-            pending_nonce: 1,
-            day_type: DayType::Green,
-            day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
-            nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
-            logical_anchor: 1_699_920_005,
-        };
-        let green_receipt = apply_fresh_request_budget_effect(storage.clone(), green.clone())
-            .expect("GREEN first effect");
-        let green_retry = RequestBudgetEffect {
-            pending_nonce: 2,
-            ..green.clone()
-        };
-        assert_eq!(
-            validate_replayed_request_budget_effect(green_retry, &green_receipt)
-                .expect("GREEN retry"),
-            green_receipt
-        );
-        let desis = DesisContract::new(storage.clone());
-        assert_eq!(desis.sched_active_count.read().unwrap(), 1);
-        assert_eq!(
-            desis.pending_supply_promis.read(&green.wwd.into()).unwrap(),
-            U256::from(60)
-        );
-
-        let red = RequestBudgetEffect {
-            wwd: 20_260_104,
-            day_type: DayType::Red,
-            ..green.clone()
-        };
-        let red_receipt = apply_fresh_request_budget_effect(storage.clone(), red.clone())
-            .expect("RED first effect");
-        let red_retry = RequestBudgetEffect {
-            pending_nonce: 2,
-            ..red.clone()
-        };
-        assert_eq!(
-            validate_replayed_request_budget_effect(red_retry, &red_receipt).expect("RED retry"),
-            red_receipt
-        );
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
-            U256::from(60)
-        );
-    });
-}
-
-#[test]
-fn retry_rejects_tampered_or_future_receipts_without_writing() {
-    with_storage(|storage| {
-        let request = RequestBudgetEffect {
-            protocol_bundle_hash: B256::repeat_byte(0x41),
-            wwd: 20_260_107,
-            pending_nonce: 1,
-            day_type: DayType::Red,
-            day_limit: U256::from(100),
-            lysis_budget: U256::from(40),
-            nominal_total: U256::from(100),
-            auction_entry_prices: entry_prices(),
-            logical_anchor: 1_699_920_005,
-        };
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone()).unwrap();
-        let before = PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
-            .unwrap();
-
-        let mut tampered = receipt.clone();
-        tampered.auction_entry_prices[0].entry_price_minor += U256::from(1);
-        assert!(matches!(
-            validate_replayed_request_budget_effect(request.clone(), &tampered),
-            Err(PrecompileError::Fatal(_))
-        ));
-
-        let mut future = receipt;
-        future.pending_nonce = request.pending_nonce + 1;
-        assert!(matches!(
-            validate_replayed_request_budget_effect(request, &future),
-            Err(PrecompileError::Fatal(_))
-        ));
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
-            before
-        );
-    });
-}
-
-#[test]
 fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
     with_storage(|storage| {
-        let wwd = outbe_common::WorldwideDay::new(20_260_105);
+        let wwd = outbe_primitives::time::WorldwideDay::new(20_260_105);
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             wwd,
@@ -352,7 +254,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
 }
 
 #[test]
-fn an_unpriced_day_commits_and_replays_against_the_same_empty_table() {
+fn an_unpriced_day_commits_a_canonical_empty_price_table() {
     with_storage(|storage| {
         let request = RequestBudgetEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -384,8 +286,9 @@ fn an_unpriced_day_commits_and_replays_against_the_same_empty_table() {
                 .unwrap()
             )
         );
-        validate_replayed_request_budget_effect(request, &receipt)
-            .expect("the empty table round-trips through the receipt");
+        receipt
+            .validate_semantics()
+            .expect("the empty table is a canonical request receipt");
     });
 }
 

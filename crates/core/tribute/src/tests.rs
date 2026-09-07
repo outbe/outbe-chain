@@ -45,7 +45,10 @@ impl TestTribute<'_, '_> {
         self.contract.burn(self.scope, &self.reader, tribute_id)
     }
 
-    fn burn_all_by_wwd(&mut self, day: outbe_common::WorldwideDay) -> PrecompileResult<()> {
+    fn burn_all_by_wwd(
+        &mut self,
+        day: outbe_primitives::time::WorldwideDay,
+    ) -> PrecompileResult<()> {
         self.contract.burn_all_by_wwd(self.scope, &self.reader, day)
     }
 
@@ -73,7 +76,7 @@ impl TestTribute<'_, '_> {
 
     fn get_tribute_ids_by_day(
         &self,
-        day: outbe_common::WorldwideDay,
+        day: outbe_primitives::time::WorldwideDay,
     ) -> PrecompileResult<Vec<WwdEntityId>> {
         self.contract
             .get_tribute_ids_by_day(self.scope, &self.reader, day)
@@ -89,7 +92,7 @@ impl TestTribute<'_, '_> {
 
     fn get_all_day_tributes(
         &self,
-        day: outbe_common::WorldwideDay,
+        day: outbe_primitives::time::WorldwideDay,
     ) -> PrecompileResult<Vec<TributeData>> {
         self.contract
             .get_all_day_tributes(self.scope, &self.reader, day)
@@ -172,7 +175,7 @@ fn sample_tribute() -> TributeData {
     }
 }
 
-fn entity_id(seed: u64, day: outbe_common::WorldwideDay) -> WwdEntityId {
+fn entity_id(seed: u64, day: outbe_primitives::time::WorldwideDay) -> WwdEntityId {
     derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day).unwrap()
 }
 
@@ -181,7 +184,7 @@ fn set_owner(tribute: &mut TributeData, owner: alloy_primitives::Address) {
     tribute.tribute_id = derive_poseidon_entity_id(owner, tribute.worldwide_day).unwrap();
 }
 
-fn set_day(tribute: &mut TributeData, day: outbe_common::WorldwideDay) {
+fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay) {
     tribute.worldwide_day = day;
     tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day).unwrap();
 }
@@ -543,7 +546,7 @@ fn pre_fork_tribute_issue_is_unchanged_and_cannot_backfill_ocomp_lazily() {
 
 fn assert_pre_admission_matches_fold(
     tc: &TestTribute<'_, '_>,
-    day: outbe_common::WorldwideDay,
+    day: outbe_primitives::time::WorldwideDay,
     entries: &[(TributeData, bool)],
 ) {
     let mut count = 0_u32;

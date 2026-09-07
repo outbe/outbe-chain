@@ -54,6 +54,15 @@ pub enum PutOutcomeV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AckPutOutcomeV1 {
+    Committed {
+        reference: DiscoveryAckRefV1,
+        outcome: PutOutcomeV1,
+    },
+    Retired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingDiscoveryV1 {
     pub reference: DiscoveryOfferRefV1,
     pub spec: FinalizedJobSpecV1,
@@ -193,13 +202,29 @@ impl DiscoverySpoolV1 {
         offer: &DiscoveryOfferRefV1,
         receipt: &VerifiedExportReceipt,
         bundle: &ProtocolBundleV1,
-    ) -> Result<(DiscoveryAckRefV1, PutOutcomeV1), DiscoverySpoolError> {
+    ) -> Result<AckPutOutcomeV1, DiscoverySpoolError> {
         let committed = receipt.committed();
         let export_receipt_digest = receipt.receipt_ref().transport_digest;
         let _lock = FileLock::acquire(&self.root, LOCK_FILE)?;
         self.require_not_quarantined(offer.observation_id)?;
+        let retirement_path = self.retirement_path(&offer.observation_id);
+        if regular_file_exists(&retirement_path)? {
+            let retirement = self.read_retirement_at(&retirement_path)?;
+            if retirement.reference == *offer {
+                return Ok(AckPutOutcomeV1::Retired);
+            }
+            return self.latch_conflict(offer.observation_id, "retired ACK authority");
+        }
         let offer_path = self.offer_path(&offer.observation_id);
         if !regular_file_exists(&offer_path)? {
+            if !regular_file_exists(&self.ack_path(&offer.observation_id))?
+                && !regular_file_exists(&self.pending_path(&offer.observation_id))?
+            {
+                // `put_ack` is reached only from work previously read from this
+                // spool. With every record gone, a completed retirement won the
+                // cross-process race; the late completion has no authority.
+                return Ok(AckPutOutcomeV1::Retired);
+            }
             return Err(DiscoverySpoolError::MissingOffer(offer.observation_id));
         }
         let stored_offer = self.read_offer_at(&offer_path)?;
@@ -237,11 +262,14 @@ impl DiscoverySpoolV1 {
             let stored = self.read_ack_for_offer(&path, &stored_offer)?;
             if stored.reference == reference && stored.committed == committed {
                 self.remove_pending_marker_unlocked(offer.observation_id)?;
-                return Ok((reference, PutOutcomeV1::ExactDuplicate));
+                return Ok(AckPutOutcomeV1::Committed {
+                    reference,
+                    outcome: PutOutcomeV1::ExactDuplicate,
+                });
             }
             return self
                 .latch_conflict(offer.observation_id, "ack replay")
-                .map(|outcome| (reference, outcome));
+                .map(|outcome| AckPutOutcomeV1::Committed { reference, outcome });
         }
         let encoded = encode_ack_record(
             &reference,
@@ -251,7 +279,10 @@ impl DiscoverySpoolV1 {
         )?;
         persist_immutable_atomic(&self.acks, &path, &encoded)?;
         self.remove_pending_marker_unlocked(offer.observation_id)?;
-        Ok((reference, PutOutcomeV1::Inserted))
+        Ok(AckPutOutcomeV1::Committed {
+            reference,
+            outcome: PutOutcomeV1::Inserted,
+        })
     }
 
     pub fn pending(
@@ -516,6 +547,16 @@ impl DiscoverySpoolV1 {
         observation: &B256,
     ) -> Result<Option<PendingDiscoveryV1>, DiscoverySpoolError> {
         self.require_not_quarantined(*observation)?;
+        let retirement_path = self.retirement_path(observation);
+        if regular_file_exists(&retirement_path)? {
+            let retirement = self.read_retirement_at(&retirement_path)?;
+            if retirement.reference.observation_id != *observation {
+                return Err(DiscoverySpoolError::CorruptRecord {
+                    path: retirement_path,
+                });
+            }
+            return Ok(None);
+        }
         let path = self.offer_path(observation);
         if !regular_file_exists(&path)? {
             return Ok(None);

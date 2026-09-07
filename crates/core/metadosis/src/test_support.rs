@@ -6,11 +6,11 @@
 //! production command seam.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::JobIntentV1, receipts::ActivationOutcome, result::LysisResultV1, vote::ResultVoteV1,
     SchemaLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use std::fmt;
 
@@ -90,11 +90,11 @@ pub fn fresh_devnet_sentinel_is_pristine(
 
 mod kernel {
     use alloy_primitives::{Address, Bytes, B256};
-    use outbe_common::WorldwideDay;
     use outbe_ocomp_protocol::{
         committee::OcompKeyRegistrationV1, intent::JobIntentV1, receipts::ActivationOutcome,
         result::LysisResultV1, vote::ResultVoteV1, SchemaLimits,
     };
+    use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
         error::{PrecompileError, Result},
         storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag},

@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_nod::NodContract;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};

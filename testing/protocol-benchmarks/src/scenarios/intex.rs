@@ -1,11 +1,11 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_intexfactory::{bench_support::IssuanceLeg, IssuanceParams};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};

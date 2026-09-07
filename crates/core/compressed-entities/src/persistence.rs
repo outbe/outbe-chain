@@ -255,7 +255,7 @@ mod adr010_tests {
                     },
                 ],
                 &[crate::PartitionRef::TributeWwd(
-                    outbe_common::WorldwideDay::new(20_260_717),
+                    outbe_primitives::time::WorldwideDay::new(20_260_717),
                 )],
             )
             .unwrap()

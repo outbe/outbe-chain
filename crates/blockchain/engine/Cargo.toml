@@ -75,6 +75,7 @@ thiserror.workspace = true
 jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }
 
 [dev-dependencies]
+alloy-rpc-types-engine.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }

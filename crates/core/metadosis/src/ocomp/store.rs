@@ -1,13 +1,13 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::intent_storage_key,
     receipts::RequestBudgetSplitReceiptV1,
-    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
     vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     aggregate::WwdStatus,
@@ -22,46 +22,8 @@ use super::{
         read_canonical_optional, scheduler_snapshot,
     },
     index::ReadyIndexKey,
-    state::{
-        DayPhase, JobFsmLimits, JobFsmState, RetryTerminalOutcome, TerminalAttempt,
-        OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
-    },
+    state::{DayPhase, JobFsmState, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
 };
-
-/// The single definition of which retained terminal shapes a retry may build on.
-pub(crate) fn classify_retained_terminal(
-    status: OcompJobStatus,
-    outcome: OcompTerminalOutcome,
-    has_completed_binding: bool,
-) -> Result<RetryTerminalOutcome> {
-    match (status, outcome) {
-        (OcompJobStatus::Expired, OcompTerminalOutcome::Expired) if !has_completed_binding => {
-            Ok(RetryTerminalOutcome::Expired)
-        }
-        (OcompJobStatus::Conflicted, OcompTerminalOutcome::Conflicted) if has_completed_binding => {
-            Ok(RetryTerminalOutcome::Conflicted)
-        }
-        // Completion clears the day's FSM in the same transition, so a
-        // completed entry surfacing through a live FSM read means the
-        // day's FSM was recreated after completion.
-        (OcompJobStatus::Completed, OcompTerminalOutcome::Completed) => Err(
-            storage_corruption_message("completed OCOMP WorldwideDay retains a live FSM"),
-        ),
-        (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => {
-            Err(storage_corruption_message(
-                "OCOMP expired terminal entry has an inconsistent status/binding",
-            ))
-        }
-        (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => {
-            Err(storage_corruption_message(
-                "OCOMP conflicted terminal entry has an inconsistent status/binding",
-            ))
-        }
-        _ => Err(storage_corruption_message(
-            "OCOMP terminal index points to a non-retry job",
-        )),
-    }
-}
 
 impl MetadosisContract<'_> {
     pub(crate) fn request_budget_receipt(
@@ -156,34 +118,10 @@ impl MetadosisContract<'_> {
         )
     }
 
-    pub(crate) fn latest_terminal_job_record(
-        &self,
-        wwd: WorldwideDay,
-        limits: &SchemaLimits,
-    ) -> Result<Option<(B256, OcompJobRecordV1)>> {
-        let count = self.terminal_intent_count(wwd)?;
-        let Some(last) = count.checked_sub(1) else {
-            return Ok(None);
-        };
-        let intent_id = self.terminal_intent_at(wwd, last)?.ok_or_else(|| {
-            storage_corruption_message("OCOMP terminal index is sparse below its recorded count")
-        })?;
-        let record = self.ocomp_job_record(intent_id, limits)?.ok_or_else(|| {
-            storage_corruption_message("OCOMP terminal index points to a missing job")
-        })?;
-        if record.intent.wwd != wwd.value() {
-            return Err(storage_corruption_message(
-                "OCOMP terminal index entry belongs to another WorldwideDay",
-            ));
-        }
-        Ok(Some((intent_id, record)))
-    }
-
     pub(crate) fn ocomp_fsm_state(
         &self,
         wwd: WorldwideDay,
         schema_limits: &SchemaLimits,
-        fsm_limits: JobFsmLimits,
     ) -> Result<JobFsmState> {
         let encoded = self.ocomp_fsm_states.get_bytes(&wwd).read()?;
         if encoded.is_empty() {
@@ -191,52 +129,14 @@ impl MetadosisContract<'_> {
                 "OCOMP WWD FSM is not initialized",
             ));
         }
-        let mut snapshot = decode_scheduler(&encoded)?;
+        let snapshot = decode_scheduler(&encoded)?;
         if snapshot.worldwide_day != wwd {
             return Err(storage_corruption_message(
                 "OCOMP WWD FSM storage key mismatch",
             ));
         }
 
-        let terminal_ids = self.terminal_intents_for(wwd, fsm_limits.max_terminal_records)?;
-        let mut terminal_attempts = Vec::new();
-        terminal_attempts
-            .try_reserve_exact(terminal_ids.len())
-            .map_err(|_| storage_corruption_message("allocate bounded OCOMP terminal evidence"))?;
-        for intent_id in terminal_ids {
-            let record = self
-                .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP terminal index points to a missing job")
-                })?;
-            if record.intent.wwd != wwd.value() {
-                return Err(storage_corruption_message(
-                    "OCOMP terminal index entry belongs to another WorldwideDay",
-                ));
-            }
-            let terminal = record.terminal.as_ref().ok_or_else(|| {
-                storage_corruption_message("OCOMP terminal job has no terminal evidence")
-            })?;
-            let outcome = classify_retained_terminal(
-                record.status,
-                terminal.outcome,
-                terminal.completed_binding.is_some(),
-            )?;
-            let next_pending_nonce = terminal.next_pending_nonce.ok_or_else(|| {
-                storage_corruption_message("retryable OCOMP terminal job lacks next nonce")
-            })?;
-            terminal_attempts.push(TerminalAttempt {
-                intent_id,
-                pending_nonce: record.intent.pending_nonce,
-                terminal_height: terminal.terminal_height,
-                terminal_time: terminal.terminal_time,
-                next_pending_nonce,
-                outcome,
-            });
-        }
-        snapshot.terminal = terminal_attempts;
-
-        let state = JobFsmState::restore(snapshot, fsm_limits)
+        let state = JobFsmState::restore(snapshot)
             .map_err(|error| storage_corruption_message(format!("restore OCOMP FSM: {error}")))?;
         self.validate_persisted_equivalences(&state, schema_limits)?;
         Ok(state)
@@ -246,10 +146,9 @@ impl MetadosisContract<'_> {
         &self,
         intent_id: B256,
         schema_limits: &SchemaLimits,
-        fsm_limits: JobFsmLimits,
     ) -> Result<Option<JobFsmState>> {
         Ok(self
-            .live_ocomp_fsm_states(schema_limits, fsm_limits)?
+            .live_ocomp_fsm_states(schema_limits)?
             .into_iter()
             .find(|state| state.projection().live_intent_id == Some(intent_id)))
     }
@@ -257,7 +156,6 @@ impl MetadosisContract<'_> {
     pub(crate) fn live_ocomp_fsm_states(
         &self,
         schema_limits: &SchemaLimits,
-        fsm_limits: JobFsmLimits,
     ) -> Result<Vec<JobFsmState>> {
         let snapshots = decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?;
         let mut states = Vec::new();
@@ -265,7 +163,7 @@ impl MetadosisContract<'_> {
             .try_reserve_exact(snapshots.len())
             .map_err(|_| storage_corruption_message("allocate bounded OCOMP live scheduler"))?;
         for snapshot in snapshots {
-            let state = self.ocomp_fsm_state(snapshot.worldwide_day, schema_limits, fsm_limits)?;
+            let state = self.ocomp_fsm_state(snapshot.worldwide_day, schema_limits)?;
             if state.projection().phase != DayPhase::OffchainPending
                 || encode_scheduler(&state)? != encode_scheduler_snapshot(&snapshot)?
             {
@@ -285,6 +183,11 @@ impl MetadosisContract<'_> {
         let expected_status = match projection.phase {
             DayPhase::Ready => WwdStatus::Ready.as_u8(),
             DayPhase::OffchainPending => WwdStatus::OffchainPending.as_u8(),
+            DayPhase::Terminal => {
+                return Err(storage_corruption_message(
+                    "terminal OCOMP FSM must not be persisted",
+                ))
+            }
         };
         if self
             .worldwide_days
@@ -395,6 +298,11 @@ impl MetadosisContract<'_> {
                         "OCOMP live WWD remains in the READY index",
                     ));
                 }
+            }
+            DayPhase::Terminal => {
+                return Err(storage_corruption_message(
+                    "terminal OCOMP FSM must not be persisted",
+                ))
             }
         }
         Ok(())

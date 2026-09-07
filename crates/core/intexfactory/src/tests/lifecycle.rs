@@ -339,7 +339,6 @@ mod call_sweep {
     //! day it opened on.
 
     use alloy_primitives::U256;
-    use outbe_common::WorldwideDay;
     use outbe_intex::SeriesId;
     use outbe_oracle::api::AddressPair;
     use outbe_oracle::schema::OracleContract;
@@ -347,6 +346,7 @@ mod call_sweep {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::types::Storable;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
     use crate::called;
@@ -1163,13 +1163,13 @@ mod called_pstar {
     //! statement; these check that they stay the same statement.
 
     use alloy_primitives::U256;
-    use outbe_common::WorldwideDay;
     use outbe_intex::SeriesId;
     use outbe_oracle::api::AddressPair;
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::previous_date_key;
+    use outbe_primitives::time::WorldwideDay;
 
     use crate::called::{self, DayVwaps};
     use crate::schema::IntexFactoryContract;

@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, B256, U256};
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::Result,
     storage::{MetadosisCycleLifecycle, MetadosisMutationPurpose, StorageHandle},
@@ -454,9 +454,8 @@ fn commit_outer_transition_inner(
         }
         OuterWwdTransitionKind::ProcessReady(_)
         | OuterWwdTransitionKind::OcompRequestCommitted
-        | OuterWwdTransitionKind::OcompRetryScheduled(_)
-        | OuterWwdTransitionKind::OcompCompleted
-        | OuterWwdTransitionKind::OcompAttemptsExhausted => {
+        | OuterWwdTransitionKind::OcompExpired
+        | OuterWwdTransitionKind::OcompCompleted => {
             if transition.target() != source {
                 commit_status(
                     permit,
@@ -541,12 +540,12 @@ mod tests {
     use std::cell::Cell;
 
     use alloy_primitives::{B256, U256};
-    use outbe_common::WorldwideDay;
     use outbe_ocomp_protocol::profile::CapacityProfileV1;
     use outbe_primitives::storage::{
         hashmap::HashMapStorageProvider, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
         MetadosisMutationPurposeTag,
     };
+    use outbe_primitives::time::WorldwideDay;
 
     use super::*;
     use crate::{
@@ -554,7 +553,6 @@ mod tests {
         constants::MAX_RECORDS_KEPT,
         fixture_kernel::ActivationFixture,
         ocomp::schema::{poc_schema_limits, OcompRequestProfile, ResponseDeadlineKey},
-        ocomp::OcompRequestProfileExt,
         schema::{
             day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
             WorldwideDayEntryExt,
@@ -629,8 +627,7 @@ mod tests {
                 max_activations_per_block: 1,
                 max_ready_inspections_per_block: 1,
                 max_expirations_per_block: 1,
-                retry_backoff_blocks: 1,
-                max_terminal_job_records: 365,
+                ready_backoff_blocks: 1,
                 max_reference_currencies: 256,
                 max_oracle_wwd_pair_entries: 256,
                 max_active_scurve_entries: 256,
@@ -740,7 +737,7 @@ mod tests {
             contract.ocomp_fsm_states.get_bytes(&wwd()).write(&[1])
         });
         assert_ocomp_state_without_profile_is_rejected(|contract| {
-            contract.enqueue_ocomp_ready(wwd(), 10, request_profile().fsm_limits())?;
+            contract.enqueue_ocomp_ready(wwd(), 10)?;
             contract.ocomp_fsm_states.get_bytes(&wwd()).clear()
         });
         assert_ocomp_state_without_profile_is_rejected(|contract| {
@@ -804,7 +801,7 @@ mod tests {
                 let profile = request_profile();
                 let schema_limits = poc_schema_limits();
                 contract.initialize_ocomp_request_profile(&profile, &schema_limits)?;
-                contract.enqueue_ocomp_ready(wwd(), 10, profile.fsm_limits())?;
+                contract.enqueue_ocomp_ready(wwd(), 10)?;
                 contract.ocomp_fsm_states.get_bytes(&wwd()).clear()?;
 
                 let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
@@ -823,7 +820,7 @@ mod tests {
         provider
             .enter(|storage| {
                 let mut contract = MetadosisContract::new(storage.clone());
-                contract.enqueue_ocomp_ready(wwd(), 10, request_profile().fsm_limits())?;
+                contract.enqueue_ocomp_ready(wwd(), 10)?;
                 contract
                     .worldwide_days
                     .entry(wwd())

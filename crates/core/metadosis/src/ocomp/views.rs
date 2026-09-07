@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::Result,
     storage::{dsl::missing_record_err, StorageHandle},

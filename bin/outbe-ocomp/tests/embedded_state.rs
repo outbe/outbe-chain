@@ -241,8 +241,7 @@ fn full_node_mismatch_is_fatal() {
 fn every_non_completed_terminal_is_absorbing() {
     for (index, reason) in [
         EmbeddedTerminalReasonV1::Expired,
-        EmbeddedTerminalReasonV1::Conflicted,
-        EmbeddedTerminalReasonV1::Canceled,
+        EmbeddedTerminalReasonV1::Failed,
     ]
     .into_iter()
     .enumerate()
@@ -442,21 +441,37 @@ fn full_node_progress_waits_for_exact_completed_result() {
 }
 
 #[test]
-fn durable_checkpoint_pruning_keeps_only_live_jobs() {
+fn durable_checkpoint_pruning_removes_only_the_covered_terminal_job() {
     let terminal = id(0xb1);
     let live = id(0xb2);
+    let other_terminal = id(0xb3);
     let mut jobs = EmbeddedOcompJobsV1::new(EmbeddedOcompModeV1::FullNode);
     jobs.observe_job(terminal, 100).unwrap();
     jobs.observe_job(live, 120).unwrap();
+    jobs.observe_job(other_terminal, 140).unwrap();
     reduce(
         &mut jobs,
         terminal,
         EmbeddedJobEventV1::CanonicalClosed {
-            reason: EmbeddedTerminalReasonV1::Canceled,
+            reason: EmbeddedTerminalReasonV1::Failed,
+        },
+    );
+    reduce(
+        &mut jobs,
+        other_terminal,
+        EmbeddedJobEventV1::CanonicalClosed {
+            reason: EmbeddedTerminalReasonV1::Expired,
         },
     );
 
-    assert_eq!(jobs.prune_terminal(), 1);
+    assert!(jobs.prune_terminal_job(terminal).unwrap());
     assert_eq!(jobs.state(terminal), None);
     assert_eq!(jobs.state(live), Some(EmbeddedJobStateV1::Computing));
+    assert_eq!(jobs.state(other_terminal), Some(EmbeddedJobStateV1::Closed));
+    assert!(matches!(
+        jobs.prune_terminal_job(live),
+        Err(outbe_ocomp::embedded::EmbeddedOcompStateErrorV1::JobNotTerminal {
+            job_id
+        }) if job_id == live
+    ));
 }

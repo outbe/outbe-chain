@@ -13,7 +13,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-004
   # PFS-TEST-ID: PFS-011-01
   Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
-    Given a fresh four-validator Metadosis capacity localnet at FORMING
+    Given a fresh four-validator Metadosis capacity localnet at FORMING with a 600-block OCOMP vote window
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
@@ -26,7 +26,7 @@ Feature: Off-chain computation and Metadosis
     And every validator serves the same independently verified compressed tribute
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
-    When the committee logical clock reaches the fresh capacity processing time
+    When the committee reaches fresh capacity processing with V1 workers held for the test-only V2 activation
     Then the same fresh capacity day advances through WAITING and READY
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When an OCOMP successor is preloaded and activated while that V1 job remains pending
@@ -43,9 +43,7 @@ Feature: Off-chain computation and Metadosis
     Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
-    When validator 0 SnapshotExporter restarts from a prepared-only crash state
-    And the managed projection MongoDB is paused
-    Then consensus finality advances before and after projection MongoDB resumes
+    When validator 0 SnapshotExporter restarts with its committed export intact
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
     When a late follower replays the finalized OCOMP request and quorum blocks
@@ -59,6 +57,7 @@ Feature: Off-chain computation and Metadosis
     Then every validator observes the same nonzero WAA and SRA AgentReward
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
+    And validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
@@ -74,7 +73,9 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
 
-  @ocomp-capacity
+  # Temporarily ignored at the owner's request; keep the complete 257-Tribute
+  # scenario for a later run. @todo is the runner's unconditional skip tag.
+  @ocomp-capacity @todo
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
     When all 257 capacity owners submit one encrypted Tribute each
@@ -104,7 +105,7 @@ Feature: Off-chain computation and Metadosis
     And validator 0 OCOMP worker restarts through the typed topology
 
   @ocomp-late-local-result
-  Scenario: A validator accepts its local result after the network completes the job
+  Scenario: A validator safely handles its correct late result after the network completes the job
     Given a fresh four-validator OCOMP public measurement localnet
     When validator 3 OCOMP worker is stopped before the job
     And an operator submits one encrypted tribute offer
@@ -114,7 +115,7 @@ Feature: Off-chain computation and Metadosis
     When the production OCOMP domains process that finalized JobIntent
     Then validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing
     When validator 3 OCOMP worker restarts after the finalized quorum
-    Then validator 3 accepts its late local result without shutting down
+    Then validator 3 safely handles its correct late result without changing the canonical outcome or votes
 
   @ocomp-fullnode-deadline
   Scenario: A FullNode restores its deadline barrier and resumes after an exact late result
@@ -162,9 +163,9 @@ Feature: Off-chain computation and Metadosis
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
 
-  @ocomp-public-expiry-retry
+  @ocomp-public-expiry-terminal
   # OCOMP-TEST-ID: OCM-PUB-005
-  Scenario: An expired public job retries with its frozen receipt and completes
+  Scenario: An expired public job remains terminal after workers recover
     Given a fresh four-validator OCOMP short-window public measurement localnet
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
@@ -175,8 +176,38 @@ Feature: Off-chain computation and Metadosis
     And validator 2 prepares one valid vote without broadcasting it
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
-    When the stopped OCOMP workers restart for the automatic retry
-    Then the retry preserves the frozen receipt and completes on every validator
+    When the stopped OCOMP workers restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+
+  @ocomp-zero-vote-exporter-outage
+  # OCOMP-TEST-ID: OCM-PUB-006
+  Scenario: Complete snapshot-exporter outage cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public recovery localnet
+    When all four OCOMP snapshot exporters are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then the unexported zero-vote job expires and reaches Released without an ACK
+    When all stopped OCOMP snapshot exporters restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+    When one independent next-day Tribute is submitted after OCOMP recovery
+    Then the independent OCOMP job completes on every validator
+
+  @ocomp-zero-vote-worker-outage
+  # OCOMP-TEST-ID: OCM-PUB-007
+  Scenario: Complete worker outage preserves exports and cannot halt consensus
+    Given a fresh four-validator OCOMP short-window public recovery localnet
+    When an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    When all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent
+    Then the exported zero-vote job expires at its exclusive deadline and finality continues
+    When all stopped OCOMP workers restart after canonical expiry
+    Then the expired job remains terminal with no successor after process recovery
+    When one independent next-day Tribute is submitted after OCOMP recovery
+    Then the independent OCOMP job completes on every validator
 
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002

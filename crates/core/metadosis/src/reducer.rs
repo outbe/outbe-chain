@@ -42,17 +42,6 @@ pub(crate) enum WwdTransitionPlan {
     MissedOffering,
 }
 
-/// Closed set of production causes that may change the persisted outer WWD FSM.
-///
-/// OCOMP keeps its own attempt/vote FSM and can only report a validated signal
-/// through this enum; it cannot select an outer status directly.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) enum OcompRetryCause {
-    Expired,
-    Conflicted,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum ReadyDisposition {
@@ -74,9 +63,8 @@ pub(crate) enum OuterWwdEvent {
     },
     ProcessReady(ReadyDisposition),
     OcompRequestCommitted,
-    OcompRetryScheduled(OcompRetryCause),
+    OcompExpired,
     OcompCompleted,
-    OcompAttemptsExhausted,
     EmergencyFail,
 }
 
@@ -91,9 +79,8 @@ pub(crate) enum OuterWwdTransitionKind {
     },
     ProcessReady(ReadyDisposition),
     OcompRequestCommitted,
-    OcompRetryScheduled(OcompRetryCause),
+    OcompExpired,
     OcompCompleted,
-    OcompAttemptsExhausted,
     EmergencyFail,
 }
 
@@ -238,27 +225,16 @@ pub(crate) fn reduce_outer_wwd(
             WwdStatus::OffchainPending,
             OuterWwdTransitionKind::OcompRequestCommitted,
         ),
-        OuterWwdEvent::OcompRetryScheduled(cause)
-            if current.status == WwdStatus::OffchainPending =>
-        {
-            transition(
-                Some(current.status),
-                WwdStatus::Ready,
-                OuterWwdTransitionKind::OcompRetryScheduled(cause),
-            )
-        }
+        OuterWwdEvent::OcompExpired if current.status == WwdStatus::OffchainPending => transition(
+            Some(current.status),
+            WwdStatus::Failed,
+            OuterWwdTransitionKind::OcompExpired,
+        ),
         OuterWwdEvent::OcompCompleted if current.status == WwdStatus::OffchainPending => {
             transition(
                 Some(current.status),
                 WwdStatus::Completed,
                 OuterWwdTransitionKind::OcompCompleted,
-            )
-        }
-        OuterWwdEvent::OcompAttemptsExhausted if current.status == WwdStatus::OffchainPending => {
-            transition(
-                Some(current.status),
-                WwdStatus::Failed,
-                OuterWwdTransitionKind::OcompAttemptsExhausted,
             )
         }
         OuterWwdEvent::EmergencyFail if !current.status.is_terminal() => transition(

@@ -210,7 +210,7 @@ pub fn collection_root(
 /// supply bodies, but they are accepted only when their recomputed leaves close
 /// to the collection root committed by the finalized `JobIntent`.
 pub fn tribute_partition_root_from_leaves(
-    day: outbe_common::WorldwideDay,
+    day: outbe_primitives::time::WorldwideDay,
     leaves: impl IntoIterator<Item = (WwdEntityId, crate::Commitment)>,
 ) -> Result<B256, CollectionError> {
     use crate::{

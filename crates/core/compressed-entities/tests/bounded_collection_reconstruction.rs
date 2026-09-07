@@ -1,10 +1,10 @@
 use alloy_primitives::Address;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, tribute_partition_root_from_leaves, BoundedTributePartitionVerifier,
     Commitment, TributePartitionExpectationV1, TributePartitionReconstructionError,
     TributePartitionWorkConfig,
 };
+use outbe_primitives::time::WorldwideDay;
 use std::cell::Cell;
 use std::io::Write;
 

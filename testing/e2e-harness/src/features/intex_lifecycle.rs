@@ -349,16 +349,32 @@ fn settle_part(world: &mut World) {
             "series {series} quoted a zero settlement cost"
         );
 
-        test_issuance::settle(
-            &url,
-            DEPLOYER_KEY,
-            series,
-            holder,
-            COMMITTEE_UNITS + TRADABLE_HOP_UNITS,
-            currency.asset,
-        )
-        .expect("settle the units at home");
+        let units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
+        let proof = settlement_note(world, holder, currency.asset, cost, units);
+        test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
+            .expect("settle the units at home");
     }
+}
+
+/// One note per settle: a nullifier is booked once, so notes never carry over.
+fn settlement_note(
+    world: &World,
+    holder: alloy_primitives::Address,
+    asset: alloy_primitives::Address,
+    per_unit: U256,
+    units: u32,
+) -> Vec<u8> {
+    let total = per_unit
+        .checked_mul(U256::from(units))
+        .expect("settlement cost fits a U256");
+    crate::features::paynote::deposit_and_prove(
+        world,
+        world.validators.primary_port(),
+        DEPLOYER_KEY,
+        holder,
+        asset,
+        u128::try_from(total).expect("settlement cost fits a PayNote spend amount"),
+    )
 }
 
 #[then("those units move from issued to settled")]
@@ -531,15 +547,12 @@ fn settle_remainder(world: &mut World) {
             .expect("series balances")
             .0;
         assert!(issued > 0, "series {series} has nothing left to settle");
-        test_issuance::settle(
-            &url,
-            DEPLOYER_KEY,
-            series,
-            holder,
-            u32::try_from(issued).expect("issued units fit a uint32"),
-            currency.asset,
-        )
-        .expect("settle the remainder under Called");
+        let units = u32::try_from(issued).expect("issued units fit a uint32");
+        let cost = test_issuance::quote_cost(&url, series, currency.asset)
+            .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
+        let proof = settlement_note(world, holder, currency.asset, cost, units);
+        test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
+            .expect("settle the remainder under Called");
     }
 }
 

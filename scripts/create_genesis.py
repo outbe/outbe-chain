@@ -110,6 +110,7 @@ SEED_SECTIONS = (
 )
 
 TOP_LEVEL_KEYS = {
+    "offchain_storage",
     "network",
     "validators",
     "keys_dir",
@@ -119,7 +120,6 @@ TOP_LEVEL_KEYS = {
     "chain_binary",
     "keygen_binary",
     "consensus_p2p_port",
-    "ocomp_discovery_control_port",
     "gas_limit",
     "timestamp",
     "epoch_length_blocks",
@@ -363,6 +363,7 @@ def validate_config(config: dict[str, Any]) -> None:
             f"unknown key(s): {', '.join(unknown)}; "
             f"allowed: {', '.join(sorted(TOP_LEVEL_KEYS))}"
         )
+    launch_bundle.storage_settings(config, database="validation", mongo_uri="mongodb://localhost")
     hosts = config.get("validators")
     if not isinstance(hosts, list) or len(hosts) != FOUNDER_COUNT:
         raise ValueError(
@@ -426,9 +427,6 @@ def validate_config(config: dict[str, Any]) -> None:
     ports["consensus_p2p_port"] = consensus_port
     ports["ocomp_embedded_port"] = launch_bundle.embedded_ocomp_endpoint_port(
         config, consensus_port
-    )
-    ports["ocomp_discovery_control_port"] = launch_bundle.ocomp_discovery_control_port(
-        config, ports["ocomp_embedded_port"]
     )
     seen: dict[int, str] = {}
     for name, port_value in sorted(ports.items()):

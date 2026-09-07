@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::api;
 use crate::precompile::{dispatch, IIntex};

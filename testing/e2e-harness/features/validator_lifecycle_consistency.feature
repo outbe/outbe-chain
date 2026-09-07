@@ -62,7 +62,7 @@ Feature: Validator lifecycle state remains internally consistent
   Scenario: Early unjail never leaves a pending validator with a live share
     Given an active validator is jailed by valid felony evidence
     When it requests unjail before an exclusion boundary
-    Then unjail is rejected or commits PENDING without a BLS share
+    Then early unjail is rejected and preserves the retained jailed committee member
     And the validator cannot participate until readiness is reconfirmed and a fresh reshare commits
 
   @risk-s-01 @tee

@@ -2,29 +2,20 @@
 //! recovery/promotion scenarios.
 
 use std::fs;
-#[cfg(any(test, feature = "ocomp-integration"))]
 use std::fs::File;
-#[cfg(feature = "ocomp-integration")]
-use std::io::{BufRead as _, BufReader};
-#[cfg(any(test, feature = "ocomp-integration"))]
 use std::io::{Read as _, Seek as _, SeekFrom};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "ocomp-integration")]
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::thread::sleep;
-#[cfg(feature = "ocomp-integration")]
 use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use eyre::bail;
 use eyre::{ensure, Result, WrapErr};
 use serde::Serialize;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use crate::internal::proc::{first_hex, run_capture};
+use crate::internal::proc::{first_hex, run_capture, ChildGuard};
 
 use super::Localnet;
 
@@ -39,6 +30,175 @@ fn read_required_node_log(path: &Path, node: &str) -> Result<String> {
             path.display()
         )
     })
+}
+
+fn has_required_signing_share(node_dir: &Path) -> Result<bool> {
+    let mut found = false;
+    for path in [
+        node_dir.join("keys/dkg_share.hex"),
+        node_dir.join("data/keys/dkg_share.hex"),
+    ] {
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).wrap_err_with(|| format!("inspect share {}", path.display()));
+            }
+            Ok(metadata) => ensure!(
+                metadata.is_file(),
+                "share is not a regular file: {}",
+                path.display()
+            ),
+        }
+        outbe_consensus::bls::load_signing_share(
+            &path,
+            &outbe_consensus::bls::KeyBackend::Plaintext,
+        )
+        .wrap_err_with(|| format!("decode existing share {}", path.display()))?;
+        found = true;
+    }
+    Ok(found)
+}
+
+#[derive(Debug)]
+struct HeaderCaptureTimeout {
+    status: ExitStatus,
+    stdout: PathBuf,
+    stderr: PathBuf,
+}
+
+impl std::fmt::Display for HeaderCaptureTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "canonical header read exceeded its deadline; exit={}; stdout={}; stderr={}",
+            self.status,
+            self.stdout.display(),
+            self.stderr.display()
+        )
+    }
+}
+
+impl std::error::Error for HeaderCaptureTimeout {}
+
+fn header_capture_timeout(
+    status: ExitStatus,
+    stdout: tempfile::NamedTempFile,
+    stderr: tempfile::NamedTempFile,
+) -> Result<Output> {
+    let (_, stdout) = stdout.keep().wrap_err("preserve timed-out header stdout")?;
+    let (_, stderr) = stderr.keep().wrap_err("preserve timed-out header stderr")?;
+    Err(HeaderCaptureTimeout {
+        status,
+        stdout,
+        stderr,
+    }
+    .into())
+}
+
+fn header_stream_before(file: &mut File, deadline: Instant) -> Result<Option<Vec<u8>>> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(Some(output));
+        }
+        output.extend_from_slice(&buffer[..count]);
+    }
+}
+
+/// Tempfile-backed capture avoids pipe backpressure. Timeout preserves streams
+/// on disk without reading beyond the acceptance budget. Owned reap may need
+/// its existing cleanup allowance, but can never extend a successful proof.
+fn capture_header_command_until(mut command: Command, deadline: Instant) -> Result<Output> {
+    ensure!(
+        Instant::now() < deadline,
+        "canonical header read deadline already expired"
+    );
+    let mut stdout = tempfile::NamedTempFile::new()?;
+    let mut stderr = tempfile::NamedTempFile::new()?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout.as_file().try_clone()?))
+        .stderr(Stdio::from(stderr.as_file().try_clone()?));
+    let mut child = ChildGuard::spawn("readonly-canonical-header", command)?;
+    let status = loop {
+        let observed = child.exit_status()?;
+        if Instant::now() >= deadline {
+            let status = match observed {
+                Some(status) => status,
+                None => child
+                    .fault_and_reap()
+                    .wrap_err("reap timed-out owned canonical-header reader")?,
+            };
+            return header_capture_timeout(status, stdout, stderr);
+        }
+        if let Some(status) = observed {
+            break status;
+        }
+        sleep(Duration::from_millis(20).min(deadline.saturating_duration_since(Instant::now())));
+    };
+    let Some(captured_stdout) = header_stream_before(stdout.as_file_mut(), deadline)? else {
+        return header_capture_timeout(status, stdout, stderr);
+    };
+    let Some(captured_stderr) = header_stream_before(stderr.as_file_mut(), deadline)? else {
+        return header_capture_timeout(status, stdout, stderr);
+    };
+    if Instant::now() >= deadline {
+        return header_capture_timeout(status, stdout, stderr);
+    }
+    Ok(Output {
+        status,
+        stdout: captured_stdout,
+        stderr: captured_stderr,
+    })
+}
+
+fn stopped_header_command(
+    binary: &Path,
+    data: &Path,
+    genesis: &Path,
+    height: u64,
+) -> Result<Command> {
+    for relative in ["db", "static_files", "rocksdb"] {
+        ensure!(
+            fs::symlink_metadata(data.join(relative))?.is_dir(),
+            "canonical header storage is not a directory: {}",
+            data.join(relative).display()
+        );
+    }
+    // Reth's readonly CLI creates RocksDB when CURRENT is missing. Refuse to
+    // invoke it in that state: collecting evidence must never repair storage.
+    ensure!(
+        fs::symlink_metadata(data.join("rocksdb/CURRENT"))?.is_file(),
+        "canonical header storage lacks regular rocksdb/CURRENT"
+    );
+    ensure!(
+        fs::symlink_metadata(genesis)?.is_file(),
+        "canonical header genesis is not a regular file"
+    );
+    let mut command = Command::new(binary);
+    command
+        .arg("db")
+        .arg("--datadir")
+        .arg(data)
+        .arg("--chain")
+        .arg(genesis)
+        .args([
+            "--color",
+            "never",
+            "--log.file.max-files",
+            "0",
+            "get",
+            "static-file",
+            "headers",
+        ])
+        .arg(height.to_string());
+    Ok(command)
 }
 
 /// One successful testnet startup-recovery span observed from a validator.
@@ -231,118 +391,6 @@ impl Localnet {
         &self.cfg.dir
     }
 
-    /// Returns the real Reth processing duration for one exact canonical block
-    /// on one validator. This observes the runtime record emitted by the block
-    /// import path; it does not re-execute the block through debug RPC.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn validator_block_processing_micros(
-        &self,
-        validator_index: usize,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Result<u64> {
-        ensure!(
-            validator_index < self.committee_size(),
-            "validator index {validator_index} is outside the committee"
-        );
-        let mut observed = None;
-        let root = self.cfg.validator_dir(validator_index).join("logs");
-        for path in reth_log_paths(&root)? {
-            let file = File::open(&path)
-                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line
-                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
-                let Some(micros) =
-                    parse_canonical_block_processing_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse canonical block record in {}", path.display())
-                        })?
-                else {
-                    continue;
-                };
-                ensure!(
-                    observed.replace(micros).is_none(),
-                    "validator {validator_index} has multiple canonical block records for \
-                     {block_number}/{block_hash:#x}"
-                );
-            }
-        }
-        observed.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no canonical block record for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })
-    }
-
-    /// Returns the observed wall-clock latency between canonical application
-    /// and finalization acknowledgement for one exact block on one validator.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn validator_finality_latency_micros(
-        &self,
-        validator_index: usize,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Result<u64> {
-        ensure!(
-            validator_index < self.committee_size(),
-            "validator index {validator_index} is outside the committee"
-        );
-        let mut canonical_at = None;
-        let mut finalized_at = None;
-        let root = self.cfg.validator_dir(validator_index).join("logs");
-        for path in reth_log_paths(&root)? {
-            let file = File::open(&path)
-                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line
-                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
-                if let Some(observed_at) =
-                    parse_canonical_block_observed_at_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse canonical block timestamp in {}", path.display())
-                        })?
-                {
-                    ensure!(
-                        canonical_at.replace(observed_at).is_none(),
-                        "validator {validator_index} has multiple canonical timestamps for \
-                         {block_number}/{block_hash:#x}"
-                    );
-                }
-                if let Some(observed_at) =
-                    parse_finalized_block_observed_at_micros(&line, block_number, block_hash)
-                        .wrap_err_with(|| {
-                            format!("parse finalized block timestamp in {}", path.display())
-                        })?
-                {
-                    ensure!(
-                        finalized_at.replace(observed_at).is_none(),
-                        "validator {validator_index} has multiple finalization timestamps for \
-                         {block_number}/{block_hash:#x}"
-                    );
-                }
-            }
-        }
-        let canonical_at = canonical_at.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no canonical timestamp for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })?;
-        let finalized_at = finalized_at.ok_or_else(|| {
-            eyre::eyre!(
-                "validator {validator_index} has no finalization timestamp for \
-                 {block_number}/{block_hash:#x}"
-            )
-        })?;
-        let latency = finalized_at
-            .checked_sub(canonical_at)
-            .ok_or_else(|| eyre::eyre!("finalization timestamp precedes canonical application"))?;
-        ensure!(latency > 0, "observed finality latency must be positive");
-        Ok(latency)
-    }
-
     /// Forces one validator to reconstruct CE from preserved canonical Reth
     /// history and returns the exact successful replay span emitted by the
     /// testnet startup gate.
@@ -386,9 +434,9 @@ impl Localnet {
         }
     }
 
-    fn node_log(&self, node: &str) -> String {
+    fn node_log(&self, node: &str) -> Result<String> {
         let path = self.cfg.dir.join(node).join("node.log");
-        fs::read_to_string(path).unwrap_or_default()
+        read_required_node_log(&path, node)
     }
 
     /// Parse bounded OCOMP runtime markers for one exact owned node.
@@ -484,18 +532,78 @@ impl Localnet {
         }
     }
 
+    /// Observe/reap the exact retained child, without signalling it or treating
+    /// a missing owner as an expected process exit.
+    pub(crate) fn owned_validator_process(
+        &mut self,
+        index: usize,
+    ) -> Result<(u32, Option<ExitStatus>)> {
+        let guard = self
+            .validators
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned process"))?;
+        Ok((guard.pid(), guard.exit_status()?))
+    }
+
+    /// Read evidence only after this exact validator has exited. No node
+    /// restart, database initialization or latest/head fallback is permitted.
+    pub(crate) fn stopped_validator_header_output(
+        &mut self,
+        index: usize,
+        expected_pid: u32,
+        height: u64,
+        deadline: Instant,
+    ) -> Result<Output> {
+        let deadline = self.scenario_deadline.map_or(deadline, |outer| {
+            deadline.min(outer.checked_sub(Duration::from_secs(20)).unwrap_or(outer))
+        });
+        let data = self.cfg.validator_dir(index).join("data");
+        let guard = self
+            .validators
+            .get_mut(&index)
+            .ok_or_else(|| eyre::eyre!("validator-{index} has no retained process"))?;
+        ensure!(
+            guard.pid() == expected_pid && guard.owns_node_data_dir(&data),
+            "canonical header read does not match the owned validator-{index} PID/datadir"
+        );
+        ensure!(
+            guard.exit_status()?.is_some(),
+            "validator-{index} is still running during offline header read"
+        );
+        let command = stopped_header_command(
+            &self.cfg.bin_chain,
+            &data,
+            &self.cfg.dir.join("genesis.json"),
+            height,
+        )?;
+        let output = capture_header_command_until(command, deadline).wrap_err_with(|| {
+            format!(
+                "read stopped validator-{index} canonical header h{height} from {}",
+                data.display()
+            )
+        })?;
+        let (pid, status) = self.owned_validator_process(index)?;
+        ensure!(
+            pid == expected_pid && status.is_some(),
+            "canonical header reader lost its stopped validator owner"
+        );
+        Ok(output)
+    }
+
     /// Whether validator `index`'s log contains `needle` (`e2e_joiner_log_has`).
-    pub fn log_has(&self, index: usize, needle: &str) -> bool {
-        self.node_log(&format!("validator-{index}"))
-            .contains(needle)
+    pub fn log_has(&self, index: usize, needle: &str) -> Result<bool> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
+            .contains(needle))
     }
 
     /// Count of log LINES containing `needle` (matches shell `grep -c`).
-    pub fn log_count(&self, index: usize, needle: &str) -> usize {
-        self.node_log(&format!("validator-{index}"))
+    pub fn log_count(&self, index: usize, needle: &str) -> Result<usize> {
+        Ok(self
+            .node_log(&format!("validator-{index}"))?
             .lines()
             .filter(|l| l.contains(needle))
-            .count()
+            .count())
     }
 
     /// First runtime-log line containing `needle`, including its path and line.
@@ -507,11 +615,11 @@ impl Localnet {
     }
 
     /// Whether validator `index`'s enclave log contains `needle`.
-    pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
+    pub fn enclave_log_has(&self, index: usize, needle: &str) -> Result<bool> {
         let path = self.cfg.validator_dir(index).join("enclave.log");
-        fs::read_to_string(path)
-            .unwrap_or_default()
-            .contains(needle)
+        let log = fs::read_to_string(&path)
+            .wrap_err_with(|| format!("read validator-{index} enclave log {}", path.display()))?;
+        Ok(log.contains(needle))
     }
 
     /// The `--consensus.keys-dir` for validator `index` (persisted-share restart).
@@ -555,6 +663,11 @@ impl Localnet {
             .is_ok()
         })
     }
+
+    /// Absence is distinct from an unreadable or malformed existing share.
+    pub(crate) fn has_share_file_result(&self, index: usize) -> Result<bool> {
+        has_required_signing_share(&self.cfg.validator_dir(index))
+    }
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
@@ -590,98 +703,6 @@ fn collect_reth_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_canonical_block_processing_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("Block added to canonical chain") {
-        return Ok(None);
-    }
-    let Some(number) = structured_field(line, "number") else {
-        bail!("canonical block record has no number");
-    };
-    let number = number
-        .parse::<u64>()
-        .wrap_err("canonical block number is not u64")?;
-    let Some(hash) = structured_field(line, "hash") else {
-        bail!("canonical block record has no hash");
-    };
-    let hash = hash
-        .parse::<B256>()
-        .wrap_err("canonical block hash is not B256")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    let Some(elapsed) = structured_field(line, "elapsed") else {
-        bail!("canonical block record has no elapsed duration");
-    };
-    Ok(Some(parse_duration_micros_ceil(elapsed)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_canonical_block_observed_at_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("Block added to canonical chain") {
-        return Ok(None);
-    }
-    let number = required_log_u64_field(line, "number", "canonical block")?;
-    let hash = required_log_hash_field(line, "hash", "canonical block")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    Ok(Some(parse_log_timestamp_micros(line)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_finalized_block_observed_at_micros(
-    line: &str,
-    expected_number: u64,
-    expected_hash: B256,
-) -> Result<Option<u64>> {
-    if !line.contains("marshal-delivered block finalized and acked") {
-        return Ok(None);
-    }
-    let number = required_log_u64_field(line, "height", "finalized block")?;
-    let hash = required_log_hash_field(line, "digest", "finalized block")?;
-    if number != expected_number || hash != expected_hash {
-        return Ok(None);
-    }
-    Ok(Some(parse_log_timestamp_micros(line)?))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn required_log_u64_field(line: &str, name: &str, record: &str) -> Result<u64> {
-    structured_field(line, name)
-        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
-        .parse::<u64>()
-        .wrap_err_with(|| format!("{record} {name} is not u64"))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn required_log_hash_field(line: &str, name: &str, record: &str) -> Result<B256> {
-    structured_field(line, name)
-        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
-        .parse::<B256>()
-        .wrap_err_with(|| format!("{record} {name} is not B256"))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_log_timestamp_micros(line: &str) -> Result<u64> {
-    let timestamp = line
-        .split_ascii_whitespace()
-        .next()
-        .ok_or_else(|| eyre::eyre!("runtime log record has no timestamp"))?;
-    let timestamp = OffsetDateTime::parse(timestamp, &Rfc3339)
-        .wrap_err("runtime log timestamp is not RFC3339")?;
-    let micros = timestamp.unix_timestamp_nanos() / 1_000;
-    u64::try_from(micros).wrap_err("runtime log timestamp is before Unix epoch or exceeds u64")
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
@@ -736,67 +757,226 @@ fn structured_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
         .find_map(|(field, value)| (field == name).then_some(value))
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
-    let (number, nanos_per_unit) = [
-        ("ms", 1_000_000_u128),
-        ("us", 1_000_u128),
-        ("us", 1_000_u128),
-        ("ns", 1_u128),
-        ("s", 1_000_000_000_u128),
-    ]
-    .into_iter()
-    .find_map(|(suffix, scale)| encoded.strip_suffix(suffix).map(|value| (value, scale)))
-    .ok_or_else(|| eyre::eyre!("unsupported duration unit in {encoded}"))?;
-    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
-    ensure!(
-        !whole.is_empty()
-            && whole.bytes().all(|byte| byte.is_ascii_digit())
-            && fraction.bytes().all(|byte| byte.is_ascii_digit())
-            && fraction.len() <= 18,
-        "malformed duration {encoded}"
-    );
-    let whole = whole.parse::<u128>().wrap_err("duration whole overflow")?;
-    let whole_nanos = whole
-        .checked_mul(nanos_per_unit)
-        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
-    let fraction_nanos = if fraction.is_empty() {
-        0
-    } else {
-        let numerator = fraction
-            .parse::<u128>()
-            .wrap_err("duration fraction overflow")?
-            .checked_mul(nanos_per_unit)
-            .ok_or_else(|| eyre::eyre!("duration fraction nanoseconds overflow"))?;
-        let denominator = 10_u128
-            .checked_pow(u32::try_from(fraction.len()).wrap_err("duration precision overflow")?)
-            .ok_or_else(|| eyre::eyre!("duration denominator overflow"))?;
-        numerator
-            .checked_add(denominator - 1)
-            .ok_or_else(|| eyre::eyre!("duration fraction rounding overflow"))?
-            / denominator
-    };
-    let nanos = whole_nanos
-        .checked_add(fraction_nanos)
-        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
-    let micros = nanos
-        .checked_add(999)
-        .ok_or_else(|| eyre::eyre!("duration microsecond rounding overflow"))?
-        / 1_000;
-    let micros = u64::try_from(micros).wrap_err("duration exceeds u64 microseconds")?;
-    ensure!(micros > 0, "duration must be positive");
-    Ok(micros)
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use crate::env::Environment;
+    use crate::internal::{config::Config, proc::ChildGuard};
 
     use super::{
-        parse_canonical_block_observed_at_micros, parse_canonical_block_processing_micros,
-        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, read_required_node_log,
+        has_required_signing_share, parse_ce_startup_replay, read_required_node_log,
         validator_slot_node_log_path, CeStartupReplayObservationV1, RethLogTail,
     };
+
+    #[test]
+    fn canonical_header_capture_preserves_both_streams_and_nonzero_exit() {
+        for code in [0, 23] {
+            let mut command = Command::new("sh");
+            command
+                .args([
+                    "-c",
+                    "printf header; printf diagnostic >&2; exit \"$1\"",
+                    "reader",
+                ])
+                .arg(code.to_string());
+            let output = super::capture_header_command_until(
+                command,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
+            assert_eq!(output.status.code(), Some(code));
+            assert_eq!(output.stdout, b"header");
+            assert_eq!(output.stderr, b"diagnostic");
+        }
+    }
+
+    #[test]
+    fn canonical_header_capture_deadline_never_becomes_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("invoked");
+        let mut command = Command::new("touch");
+        command.arg(&marker);
+        assert!(super::capture_header_command_until(command, Instant::now()).is_err());
+        assert!(!marker.exists());
+
+        let mut survivor = Command::new("sleep");
+        survivor.arg("60");
+        let mut survivor = ChildGuard::spawn("header-timeout-unrelated", survivor).unwrap();
+        let mut reader = Command::new("sleep");
+        reader.arg("60");
+        let error = super::capture_header_command_until(
+            reader,
+            Instant::now() + Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeded its deadline"));
+        let timeout = error.downcast_ref::<super::HeaderCaptureTimeout>().unwrap();
+        assert!(!timeout.status.success());
+        assert!(timeout.stdout.is_file() && timeout.stderr.is_file());
+        std::fs::remove_file(&timeout.stdout).unwrap();
+        std::fs::remove_file(&timeout.stderr).unwrap();
+        assert!(survivor.exit_status().unwrap().is_none());
+        survivor.fault_and_reap().unwrap();
+    }
+
+    #[test]
+    fn expired_capture_collection_preserves_complete_diagnostic_files() {
+        let mut stdout = tempfile::NamedTempFile::new().unwrap();
+        let stderr = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(stdout.path(), b"header diagnostic").unwrap();
+        std::fs::write(stderr.path(), b"storage diagnostic").unwrap();
+        assert!(
+            super::header_stream_before(stdout.as_file_mut(), Instant::now())
+                .unwrap()
+                .is_none()
+        );
+        let status = Command::new("true").status().unwrap();
+        let error = super::header_capture_timeout(status, stdout, stderr).unwrap_err();
+        let timeout = error.downcast_ref::<super::HeaderCaptureTimeout>().unwrap();
+        assert_eq!(timeout.status, status);
+        assert_eq!(
+            std::fs::read(&timeout.stdout).unwrap(),
+            b"header diagnostic"
+        );
+        assert_eq!(
+            std::fs::read(&timeout.stderr).unwrap(),
+            b"storage diagnostic"
+        );
+        std::fs::remove_file(&timeout.stdout).unwrap();
+        std::fs::remove_file(&timeout.stderr).unwrap();
+    }
+
+    #[test]
+    fn stopped_header_command_requires_existing_storage_and_exact_readonly_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("data");
+        let genesis = directory.path().join("genesis.json");
+        let binary = Path::new("/configured/release/outbe-chain");
+        for relative in ["db", "static_files", "rocksdb"] {
+            std::fs::create_dir_all(data.join(relative)).unwrap();
+        }
+        std::fs::write(&genesis, "{}").unwrap();
+        assert!(super::stopped_header_command(binary, &data, &genesis, 42).is_err());
+        assert!(!data.join("rocksdb/CURRENT").exists());
+        std::fs::write(data.join("rocksdb/CURRENT"), "MANIFEST-000001\n").unwrap();
+        let command = super::stopped_header_command(binary, &data, &genesis, 42).unwrap();
+        assert_eq!(command.get_program(), binary);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "db".to_owned(),
+                "--datadir".into(),
+                data.display().to_string(),
+                "--chain".into(),
+                genesis.display().to_string(),
+                "--color".into(),
+                "never".into(),
+                "--log.file.max-files".into(),
+                "0".into(),
+                "get".into(),
+                "static-file".into(),
+                "headers".into(),
+                "42".into()
+            ]
+        );
+        std::fs::remove_file(data.join("rocksdb/CURRENT")).unwrap();
+        std::os::unix::fs::symlink(&genesis, data.join("rocksdb/CURRENT")).unwrap();
+        assert!(super::stopped_header_command(binary, &data, &genesis, 42).is_err());
+    }
+
+    #[test]
+    fn offline_header_read_requires_exact_owned_exited_node_before_invocation() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = Environment {
+            validators: 1,
+            data_dir: directory.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(1).unwrap();
+        let mut net = super::Localnet::new(Config::resolve(&env));
+        let data = net.cfg.validator_dir(0).join("data");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(net.owned_validator_process(0).is_err());
+        assert!(net
+            .stopped_validator_header_output(0, 0, 42, deadline)
+            .is_err());
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "exec sleep 60", "node", "--datadir"])
+            .arg(&data);
+        let child = ChildGuard::spawn("header-owned-node", command).unwrap();
+        let pid = child.pid();
+        net.validators.insert(0, child);
+        assert_eq!(net.owned_validator_process(0).unwrap(), (pid, None));
+        assert!(net
+            .stopped_validator_header_output(0, pid + 1, 42, deadline)
+            .unwrap_err()
+            .to_string()
+            .contains("PID/datadir"));
+        assert!(net
+            .stopped_validator_header_output(0, pid, 42, deadline)
+            .unwrap_err()
+            .to_string()
+            .contains("still running"));
+        assert_eq!(net.owned_validator_process(0).unwrap(), (pid, None));
+        net.validators
+            .get_mut(&0)
+            .unwrap()
+            .fault_and_reap()
+            .unwrap();
+        let (observed_pid, status) = net.owned_validator_process(0).unwrap();
+        assert_eq!(observed_pid, pid);
+        assert!(status.is_some());
+        assert!(net
+            .stopped_validator_header_output(0, pid, 42, deadline)
+            .is_err());
+        assert!(
+            !data.exists(),
+            "evidence collection must not initialize missing storage"
+        );
+    }
+
+    #[test]
+    fn absent_signing_share_is_not_a_malformed_share() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!has_required_signing_share(root.path()).unwrap());
+        for relative in ["keys/dkg_share.hex", "data/keys/dkg_share.hex"] {
+            let path = root.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "not a share").unwrap();
+            assert!(has_required_signing_share(root.path()).is_err());
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn dangling_or_non_file_share_is_an_observation_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("keys/dkg_share.hex");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(root.path().join("absent"), &path).unwrap();
+        assert!(has_required_signing_share(root.path()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(has_required_signing_share(root.path()).is_err());
+        std::fs::remove_dir(&path).unwrap();
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(has_required_signing_share(root.path())
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+    }
 
     #[test]
     fn follower_trace_path_uses_its_owned_validator_slot() {
@@ -819,53 +999,6 @@ mod tests {
         assert!(error
             .to_string()
             .contains("read OCOMP runtime trace for follower from owned log"));
-    }
-
-    #[test]
-    fn exact_canonical_block_record_reports_conservative_processing_micros() {
-        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
-            .parse()
-            .unwrap();
-        let record = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
-            Block added to canonical chain number=162 \
-            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
-            peers=3 txs=11 elapsed=590.757245ms";
-
-        assert_eq!(
-            parse_canonical_block_processing_micros(record, 162, block_hash).unwrap(),
-            Some(590_758)
-        );
-        assert_eq!(
-            parse_canonical_block_processing_micros(record, 163, block_hash).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn exact_runtime_records_report_positive_q_block_finality_latency() {
-        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
-            .parse()
-            .unwrap();
-        let canonical = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
-            Block added to canonical chain number=162 \
-            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
-            peers=3 txs=11 elapsed=590.757245ms";
-        let finalized = "2026-07-27T10:42:12.707842Z INFO \
-            outbe_consensus::executor::actor: marshal-delivered block finalized and acked \
-            height=162 \
-            digest=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7";
-
-        let canonical_at = parse_canonical_block_observed_at_micros(canonical, 162, block_hash)
-            .unwrap()
-            .unwrap();
-        let finalized_at = parse_finalized_block_observed_at_micros(finalized, 162, block_hash)
-            .unwrap()
-            .unwrap();
-        assert_eq!(finalized_at - canonical_at, 535_443);
-        assert_eq!(
-            parse_finalized_block_observed_at_micros(finalized, 163, block_hash).unwrap(),
-            None
-        );
     }
 
     #[test]

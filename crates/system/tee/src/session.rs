@@ -75,6 +75,7 @@ impl DevPinnedIdentity {
     }
 }
 
+#[derive(Clone)]
 enum SessionContext {
     Development {
         endpoint: String,
@@ -110,6 +111,20 @@ pub struct EnclaveSession {
 }
 
 impl EnclaveSession {
+    /// Open a separate connection on first use, retaining the installed identity
+    /// and credentials. Never clone live Noise state or reconnect under the
+    /// execution session's mutex.
+    pub(crate) fn fork_connection(&self) -> Self {
+        Self {
+            client: None,
+            context: self.context.clone(),
+            pinned_offer_public: self.pinned_offer_public,
+            generation: 0,
+            revoked: self.revoked,
+            poison_recovered: false,
+        }
+    }
+
     /// Wrap an installed development client. Probes `GetPublicKeys` once to pin
     /// the resident offer key state.
     pub fn development(client: EnclaveClient, endpoint: String) -> Result<Self, TransportError> {
@@ -259,7 +274,7 @@ impl EnclaveSession {
             None => {
                 return Err(TransportError::EnclaveError(
                     "enclave session has no connection after reconnect".into(),
-                ))
+                ));
             }
         };
         let result = match first {
@@ -492,6 +507,9 @@ mod tests {
 
     #[derive(Default)]
     struct ServerScript {
+        /// Hold a Health response until the test releases it. Other connections
+        /// must remain usable while this request is in flight.
+        health_gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         /// Offer pubkey reported by `GetPublicKeys`; `None` = keyless.
         offer_key: Mutex<Option<[u8; 32]>>,
         /// Drop the connection after serving this many post-handshake requests
@@ -576,6 +594,13 @@ mod tests {
                 let request = decode_request(&pt[..n]).map_err(|e| e.to_string())?;
                 if let Ok(mut served) = self.script.served.lock() {
                     served.push(request.label());
+                }
+                if matches!(request, EnclaveRequest::Health) {
+                    let gate = self.script.health_gate.lock().expect("health gate").take();
+                    if let Some((entered, release)) = gate {
+                        entered.send(()).map_err(|e| e.to_string())?;
+                        release.recv().map_err(|e| e.to_string())?;
+                    }
                 }
                 served_here += 1;
                 let drop_after = self.script.drop_after_requests.load(Ordering::Relaxed);
@@ -663,6 +688,81 @@ mod tests {
     fn connect_session(server: &RunningServer) -> EnclaveSession {
         let client = EnclaveClient::connect_endpoint(&server.endpoint).expect("connect");
         EnclaveSession::development(client, server.endpoint.clone()).expect("session")
+    }
+
+    #[test]
+    fn blocked_canary_does_not_block_execution_connection() {
+        use crate::client_global::EnclaveSessions;
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+
+        let script = ready_script();
+        let server = spawn_server(Arc::new(FakeEnclave::generate(Arc::clone(&script))));
+        let sessions = Arc::new(EnclaveSessions::new(connect_session(&server)));
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        *script.health_gate.lock().unwrap() = Some((entered_tx, release_rx));
+        let canary_sessions = Arc::clone(&sessions);
+        let canary =
+            std::thread::spawn(move || canary_sessions.canary_request(&EnclaveRequest::Health));
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("canary in flight");
+        let execution_sessions = Arc::clone(&sessions);
+        let (finished_tx, finished_rx) = channel();
+        let execution = std::thread::spawn(move || {
+            let result = execution_sessions
+                .with_execution(|session| session.request(&EnclaveRequest::GetPublicKeys));
+            finished_tx.send(result).unwrap();
+        });
+        let completed_while_canary_blocked = finished_rx.recv_timeout(Duration::from_secs(5));
+        // Release before asserting so a broken implementation cannot strand
+        // either request thread holding a session lock.
+        release_tx.send(()).unwrap();
+        canary.join().unwrap().expect("canary response");
+        execution.join().unwrap();
+        assert!(matches!(
+            completed_while_canary_blocked.unwrap().unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        server.stop.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn canary_rejects_non_probe_requests_without_transport_io() {
+        let script = ready_script();
+        let server = spawn_server(Arc::new(FakeEnclave::generate(Arc::clone(&script))));
+        let sessions = crate::client_global::EnclaveSessions::new(connect_session(&server));
+        let before = script.served.lock().unwrap().clone();
+        let error = sessions
+            .canary_request(&EnclaveRequest::GetQuote { nonce: [0; 32] })
+            .expect_err("not a canary probe");
+        assert!(matches!(error, TransportError::EnclaveError(_)));
+        assert_eq!(*script.served.lock().unwrap(), before);
+        server.stop.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn forked_connection_preserves_offer_key_pin_and_revocation() {
+        let script = ready_script();
+        let server = spawn_server(Arc::new(FakeEnclave::generate(Arc::clone(&script))));
+        let installed = connect_session(&server);
+        let mut fork = installed.fork_connection();
+        assert_eq!(fork.attestation_pub(), installed.attestation_pub());
+        *script.offer_key.lock().unwrap() = Some([0x99; 32]);
+        assert!(matches!(
+            fork.request(&EnclaveRequest::GetPublicKeys),
+            Err(TransportError::IdentityMismatch(_))
+        ));
+        assert!(matches!(
+            fork.request(&EnclaveRequest::Health),
+            Err(TransportError::SessionRevoked(_))
+        ));
+        assert!(matches!(
+            fork.fork_connection().request(&EnclaveRequest::Health),
+            Err(TransportError::SessionRevoked(_))
+        ));
+        server.stop.store(true, Ordering::Relaxed);
     }
 
     #[test]

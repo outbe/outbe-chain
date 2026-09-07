@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, decode_stored_tribute_v1, EntityRef,
     IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, WwdEntityId,
@@ -13,6 +12,7 @@ use outbe_offchain_storage::{
     StorageErrorKind, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle,
     StoredValue, Value,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{TributeData, TributeRepositoryWriter};
 
 fn entity(seed: u64) -> WwdEntityId {

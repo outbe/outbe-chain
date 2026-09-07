@@ -1337,7 +1337,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
 
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
-        let wwd = outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
+        let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
         let iso: u16 = 840;
         // The exact key `openings.rs` derives for a reference ISO. Writing it
         // through the typed schema and reading it back at the raw slot pins the

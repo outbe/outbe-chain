@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_common::WorldwideDay;
 use outbe_poseidon::{Poseidon, PoseidonHasher};
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::WwdEntityId;

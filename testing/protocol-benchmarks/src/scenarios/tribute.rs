@@ -22,7 +22,6 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody,
@@ -36,6 +35,7 @@ use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     address_pair::AddressPair,
     addresses::{

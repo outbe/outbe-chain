@@ -28,7 +28,6 @@ use commonware_cryptography::{
     Signer,
 };
 use commonware_utils::Participant;
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, end_block, CandidateCacheLimits, CeMdbx, CeTopologyV1, CeWorkConfig,
     CompressedTreeService, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
@@ -70,6 +69,7 @@ use outbe_ocomp_protocol::{
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS, REWARDS_ADDRESS, TRIBUTE_FACTORY_ADDRESS,

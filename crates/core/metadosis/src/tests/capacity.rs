@@ -81,7 +81,7 @@ impl AuthenticatedParentTree for FixedPartitionTree {
 
 fn seed_day(
     storage: &StorageHandle<'_>,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     state: u8,
     day_limit: U256,
 ) -> u64 {
@@ -114,7 +114,7 @@ fn seed_day(
 fn seed_empty_waiting_candidate(
     storage: &StorageHandle<'_>,
     tribute: &mut TributeContract<'_>,
-    wwd: outbe_common::WorldwideDay,
+    wwd: outbe_primitives::time::WorldwideDay,
     scheduled_process_time: u64,
 ) {
     seed_day(storage, wwd, status::WAITING, U256::from(10));
@@ -133,7 +133,10 @@ fn seed_empty_waiting_candidate(
         .unwrap();
 }
 
-fn wwd_words(metadosis: &MetadosisContract<'_>, wwd: outbe_common::WorldwideDay) -> Vec<U256> {
+fn wwd_words(
+    metadosis: &MetadosisContract<'_>,
+    wwd: outbe_primitives::time::WorldwideDay,
+) -> Vec<U256> {
     let record = metadosis.worldwide_days.get(wwd).unwrap().unwrap();
     vec![
         U256::from(record.status),
@@ -155,7 +158,7 @@ fn seed_capacity_fixture(
     tribute_count: u32,
     tribute_nominal: U256,
     initial_carry: U256,
-) -> (outbe_common::WorldwideDay, u64) {
+) -> (outbe_primitives::time::WorldwideDay, u64) {
     seed_capacity_fixture_with_victim_state(
         provider,
         retained_count,
@@ -173,7 +176,7 @@ fn seed_capacity_fixture_with_victim_state(
     tribute_nominal: U256,
     initial_carry: U256,
     victim_state: u8,
-) -> (outbe_common::WorldwideDay, u64) {
+) -> (outbe_primitives::time::WorldwideDay, u64) {
     StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let mut tribute = TributeContract::new(storage.clone());
@@ -181,12 +184,12 @@ fn seed_capacity_fixture_with_victim_state(
         for offset in 0..retained_count {
             seed_day(
                 &storage,
-                outbe_common::WorldwideDay::new(2026_0101 + offset as u32),
+                outbe_primitives::time::WorldwideDay::new(2026_0101 + offset as u32),
                 status::READY,
                 U256::from(1),
             );
         }
-        let victim = outbe_common::WorldwideDay::new(2099_1231);
+        let victim = outbe_primitives::time::WorldwideDay::new(2099_1231);
         let scheduled = seed_day(&storage, victim, victim_state, U256::from(100));
         tribute
             .day_totals
@@ -303,8 +306,8 @@ fn validated_snapshot_rejects_a_pending_fsm_missing_from_the_live_scheduler() {
 #[test]
 fn validated_snapshot_orders_ready_days_by_scheduled_time_then_wwd() {
     let expected = [
-        outbe_common::WorldwideDay::new(2026_0201),
-        outbe_common::WorldwideDay::new(2026_0202),
+        outbe_primitives::time::WorldwideDay::new(2026_0201),
+        outbe_primitives::time::WorldwideDay::new(2026_0202),
     ];
     for insertion in [[expected[0], expected[1]], [expected[1], expected[0]]] {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -345,10 +348,10 @@ fn active_protocol_order_matches_btreeset_across_insert_remove_and_requeue_histo
     use std::collections::BTreeSet;
 
     let wwds = [
-        outbe_common::WorldwideDay::new(2026_0301),
-        outbe_common::WorldwideDay::new(2026_0302),
-        outbe_common::WorldwideDay::new(2026_0303),
-        outbe_common::WorldwideDay::new(2026_0304),
+        outbe_primitives::time::WorldwideDay::new(2026_0301),
+        outbe_primitives::time::WorldwideDay::new(2026_0302),
+        outbe_primitives::time::WorldwideDay::new(2026_0303),
+        outbe_primitives::time::WorldwideDay::new(2026_0304),
     ];
     let scheduled = [
         2_000_000_300_u64,
@@ -453,9 +456,9 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
 fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let candidates = [
-        outbe_common::WorldwideDay::new(2026_0401),
-        outbe_common::WorldwideDay::new(2026_0402),
-        outbe_common::WorldwideDay::new(2026_0403),
+        outbe_primitives::time::WorldwideDay::new(2026_0401),
+        outbe_primitives::time::WorldwideDay::new(2026_0402),
+        outbe_primitives::time::WorldwideDay::new(2026_0403),
     ];
     let timestamp = StorageHandle::enter(&mut provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
@@ -531,7 +534,7 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
         let mut tribute = TributeContract::new(storage.clone());
         tribute.initialize_fresh_ocomp_profile().unwrap();
         for sequence in 0..MAX_PIPELINE_WWDS {
-            let wwd = outbe_common::WorldwideDay::from_timestamp(
+            let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(
                 BASE_DAY_TIMESTAMP
                     + u64::try_from(sequence).unwrap()
                         * WWD_CREATION_CADENCE_HOURS
@@ -572,7 +575,7 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
         });
 
         if tick % 2 == 0 && next_sequence < total_candidates {
-            let wwd = outbe_common::WorldwideDay::from_timestamp(
+            let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(
                 BASE_DAY_TIMESTAMP
                     + u64::try_from(next_sequence).unwrap()
                         * WWD_CREATION_CADENCE_HOURS
@@ -611,8 +614,8 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
 #[test]
 fn start_metadosis_settles_one_ready_day_per_tick_oldest_first() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let older = outbe_common::WorldwideDay::new(2026_0501);
-    let newer = outbe_common::WorldwideDay::new(2026_0502);
+    let older = outbe_primitives::time::WorldwideDay::new(2026_0501);
+    let newer = outbe_primitives::time::WorldwideDay::new(2026_0502);
     let timestamp = StorageHandle::enter(&mut provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let newer_time = seed_day(&storage, newer, status::READY, U256::ZERO);
@@ -779,8 +782,8 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
 fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_byte() {
     let mut fixture = crate::fixture_kernel::ActivationFixture::new_voting(50, 5_000, true);
     let pending = crate::fixture_kernel::TEST_WWD;
-    let ready = outbe_common::WorldwideDay::new(2026_0724);
-    let victim = outbe_common::WorldwideDay::new(2026_0725);
+    let ready = outbe_primitives::time::WorldwideDay::new(2026_0724);
+    let victim = outbe_primitives::time::WorldwideDay::new(2026_0725);
     let intent_id = fixture.intent_id;
     let limits = fixture.limits;
     let scheduled = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -1167,7 +1170,7 @@ fn active_cap_rejects_create_before_an_orphan_record_or_event() {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let start = 1_700_000_000_u64;
         for offset in 0..MAX_ACTIVE_WWDS {
-            let wwd = outbe_common::WorldwideDay::from_timestamp(
+            let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(
                 start + offset as u64 * WWD_CREATION_CADENCE_HOURS * SECONDS_PER_HOUR,
             );
             let mut metadosis = MetadosisContract::new(storage.clone());
@@ -1182,7 +1185,7 @@ fn active_cap_rejects_create_before_an_orphan_record_or_event() {
             metadosis.add_active_wwd(wwd).unwrap();
         }
     });
-    let rejected = outbe_common::WorldwideDay::from_timestamp(
+    let rejected = outbe_primitives::time::WorldwideDay::from_timestamp(
         1_700_000_000 + MAX_ACTIVE_WWDS as u64 * WWD_CREATION_CADENCE_HOURS * SECONDS_PER_HOUR,
     );
     let storage_before = provider.storage.clone();

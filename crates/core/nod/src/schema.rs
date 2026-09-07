@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::storage::types::StorageKey;
+use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via

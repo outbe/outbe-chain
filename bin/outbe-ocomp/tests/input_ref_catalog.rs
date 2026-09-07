@@ -7,7 +7,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
@@ -28,6 +27,7 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     CasObjectRefV1, ListKind, OrderedListLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
@@ -171,7 +171,7 @@ fn one_chunk_stage_fixture() -> OneChunkStageFixture {
         subject: InputRefCatalogSubjectV1 {
             protocol_bundle_hash,
             job_id,
-            attempt: 1,
+            attempt: 0,
         },
         reference,
         day,
@@ -194,7 +194,7 @@ fn fixture() -> Fixture {
     let manifest = InputManifestV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
-        attempt: 3,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 4,
             finalized_block_hash: hash(5),
@@ -391,7 +391,7 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
     let manifest = InputManifestV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 40,
             finalized_block_hash: hash(41),
@@ -511,7 +511,7 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
     let subject = InputRefCatalogSubjectV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
     };
     {
         let mut publisher =
@@ -536,7 +536,7 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
     let manifest = InputManifestV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 62,
             finalized_block_hash: hash(63),
@@ -581,7 +581,7 @@ fn staged_append_rejects_gaps_kind_regressions_and_latches_conflicts() {
     let subject = InputRefCatalogSubjectV1 {
         protocol_bundle_hash: hash(70),
         job_id: hash(71),
-        attempt: 1,
+        attempt: 0,
     };
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("input-refs");
@@ -629,7 +629,7 @@ fn staged_reopen_discards_regular_orphan_temps_but_rejects_symlinks() {
     let subject = InputRefCatalogSubjectV1 {
         protocol_bundle_hash: hash(80),
         job_id: hash(81),
-        attempt: 1,
+        attempt: 0,
     };
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("input-refs");
@@ -911,7 +911,7 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
     let subject = InputRefCatalogSubjectV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
     };
     let mut publisher =
         InputRefCatalogPublisher::open_or_resume(&catalog_root, subject, limits, list_limits)
@@ -941,7 +941,7 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
     let manifest = InputManifestV1 {
         protocol_bundle_hash,
         job_id,
-        attempt: 1,
+        attempt: 0,
         checkpoint: CheckpointIdentityV1 {
             finalized_block_number: 112,
             finalized_block_hash: hash(113),

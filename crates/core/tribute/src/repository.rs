@@ -1,7 +1,6 @@
 //! Typed off-chain persistence boundary for Tribute bodies and indexes.
 
 use alloy_primitives::{Address, B256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityRef, IdPage,
     IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
@@ -11,6 +10,7 @@ use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
     StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
+use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::TributeData;

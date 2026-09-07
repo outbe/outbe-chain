@@ -1,10 +1,10 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_common::WorldwideDay;
 use outbe_gemfactory::{GemFactoryContract, GemTypes};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},

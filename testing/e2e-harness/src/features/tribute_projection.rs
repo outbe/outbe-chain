@@ -1,4 +1,4 @@
-//! Focused encrypted-offer -> execution -> MongoDB projection tracer bullet.
+//! Focused encrypted-offer -> execution -> durable projection tracer bullet.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -138,6 +138,7 @@ fn successful_receipt_and_supply(world: &mut World) {
                     if world
                         .localnet
                         .enclave_log_has(index, "req=process_tribute_offer_batch")
+                        .expect("read required owned process log")
                     {
                         telemetry_visible = true;
                         break;
@@ -176,15 +177,17 @@ fn successful_receipt_and_supply(world: &mut World) {
 fn projection_parity(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(tx_hash, 60)
         .expect("all validator projection databases contain the same tribute");
-    world
-        .rpc
-        .trace_tribute_state(tx_hash, "mongo-visible", world.validators.primary_port());
+    world.rpc.trace_tribute_state(
+        tx_hash,
+        "projection-visible",
+        world.validators.primary_port(),
+    );
     world.state.tribute_projection_before_duplicate = Some(
         world
-            .mongodb
+            .projection
             .tribute_projection_snapshot(0, tx_hash)
             .expect("capture exact Tribute projection before a duplicate offer"),
     );
@@ -194,7 +197,7 @@ fn projection_parity(world: &mut World) {
 fn projected_cross_currency_golden(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     let projected = world
-        .mongodb
+        .projection
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
     let body = decode_stored_tribute_v1(&projected.stored_body)
@@ -229,11 +232,11 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .as_deref()
         .expect("original tribute tx");
     world
-        .mongodb
+        .projection
         .wait_for_tribute_projection(original, 1)
         .expect("duplicate offer changed or duplicated a validator projection");
     let after = world
-        .mongodb
+        .projection
         .tribute_projection_snapshot(0, original)
         .expect("load exact Tribute projection after duplicate rejection");
     assert_eq!(
@@ -261,11 +264,9 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .expect("worldwide day")
         .parse()
         .expect("numeric worldwide day");
-    let expected_id = after.documents[0]
-        .get_str("_id")
-        .expect("projected primary _id");
-    let expected_id = hex::decode(expected_id).expect("hex projected primary _id");
-    let expected_ids = vec![alloy_primitives::U256::from_be_slice(&expected_id)];
+    let expected_ids = vec![alloy_primitives::U256::from_be_slice(
+        after.records[0].key.as_bytes(),
+    )];
     for port in world.validators.committee_ports() {
         let mut owner_ids = None;
         let mut day_ids = None;
@@ -296,7 +297,7 @@ fn duplicate_rejected_without_effects(world: &mut World) {
 fn compressed_tribute_parity(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     let projected = world
-        .mongodb
+        .projection
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
     let request = PointReadRequestV1 {
@@ -320,7 +321,7 @@ fn compressed_tribute_parity(world: &mut World) {
                     assert_eq!(
                         body_bytes.as_ref(),
                         projected.stored_body,
-                        "RPC body must equal Mongo bytes"
+                        "RPC body must equal RocksDB bytes"
                     );
                     verified = true;
                     break;
@@ -339,7 +340,7 @@ fn compressed_tribute_parity(world: &mut World) {
 fn entity_absent_in_existing_collection(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     let projected = world
-        .mongodb
+        .projection
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
     let mut unknown: [u8; 32] = projected.raw_id.into();
@@ -366,7 +367,7 @@ fn collection_absent(world: &mut World) {
 #[then("no validator projects a tribute")]
 fn no_tribute_projection(world: &mut World) {
     world
-        .mongodb
+        .projection
         .assert_no_tribute_projection()
         .expect("no primary or secondary Tribute projections");
 }

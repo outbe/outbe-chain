@@ -5,7 +5,6 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::ContributorTargetPreconditionV1,
     receipts::{
@@ -14,6 +13,7 @@ use outbe_ocomp_protocol::{
     },
     SchemaLimits,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::INTEX_ADDRESS,
     error::{PrecompileError, Result},

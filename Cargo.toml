@@ -216,6 +216,7 @@ reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", 
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-cli-runner = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
@@ -223,6 +224,7 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0
 reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-revm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
@@ -296,6 +298,7 @@ postcard = { version = "1", features = ["use-std"] }
 clap = { version = "4", features = ["derive"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 mongodb = { version = "3.6.0", features = ["sync"] }
+rocksdb = { version = "0.24.0", default-features = false, features = ["lz4", "bindgen-runtime"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Runtime

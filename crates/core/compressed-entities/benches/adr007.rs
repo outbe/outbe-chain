@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, U256};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     list, mint, BodyInput, CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext,
     EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
     QueryRef, StoredBody, TributeBodyV1, WwdEntityId,
 };
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     error::PrecompileError,

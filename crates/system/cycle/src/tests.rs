@@ -39,9 +39,9 @@ const SECONDS_PER_DAY: u64 = 86_400;
 const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProtocolCycle.as_u32();
 
 fn retained_days_before(
-    victim: outbe_common::WorldwideDay,
+    victim: outbe_primitives::time::WorldwideDay,
     count: usize,
-) -> Vec<outbe_common::WorldwideDay> {
+) -> Vec<outbe_primitives::time::WorldwideDay> {
     (0..count)
         .map(|offset| {
             let days_before = count - offset;
@@ -49,7 +49,7 @@ fn retained_days_before(
                 .unwrap()
                 .checked_mul(SECONDS_PER_DAY)
                 .unwrap();
-            outbe_common::WorldwideDay::from_timestamp(
+            outbe_primitives::time::WorldwideDay::from_timestamp(
                 victim
                     .start_timestamp()
                     .checked_sub(seconds_before)
@@ -559,7 +559,7 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
             assert!(
                 outbe_metadosis::api::day_limit_formation_receipt(
                     fire.storage.clone(),
-                    outbe_common::WorldwideDay::new(day),
+                    outbe_primitives::time::WorldwideDay::new(day),
                 )
                 .unwrap()
                 .is_none(),
@@ -568,7 +568,7 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
         }
 
         for day in [20_240_102, 20_240_103] {
-            let wwd = outbe_common::WorldwideDay::new(day);
+            let wwd = outbe_primitives::time::WorldwideDay::new(day);
             assert!(
                 outbe_metadosis::api::worldwide_day(fire.storage.clone(), wwd)
                     .unwrap()
@@ -591,7 +591,7 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
         assert!(
             outbe_metadosis::api::worldwide_day(
                 fire.storage.clone(),
-                outbe_common::WorldwideDay::new(20_240_104),
+                outbe_primitives::time::WorldwideDay::new(20_240_104),
             )
             .unwrap()
             .is_some(),
@@ -623,7 +623,7 @@ fn contiguous_day_settlement_failure_preserves_the_calendar_cursor() {
         outbe_metadosis::commands::apply_cycle_day_limit(&inconsistent, U256::from(17_u8)).unwrap();
         assert!(outbe_metadosis::api::day_limit_formation_receipt(
             handle.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .is_some());
@@ -792,7 +792,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
 
         let wallet = Address::repeat_byte(0x71);
         let sra = Address::repeat_byte(0x72);
-        let reward_day = outbe_common::WorldwideDay::new(REWARD_UTC_DAY);
+        let reward_day = outbe_primitives::time::WorldwideDay::new(REWARD_UTC_DAY);
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         agent_reward
             .increment_waa_tribute(reward_day, wallet)
@@ -894,7 +894,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
         }
         let formation = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .unwrap();
@@ -966,7 +966,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
                 .unwrap();
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .unwrap();
@@ -1016,7 +1016,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
         assert!(outbe_metadosis::api::day_limit_formation_receipt(
             fire.storage.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .is_none());
@@ -1055,7 +1055,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             retry.storage.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .unwrap();
@@ -1182,7 +1182,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
-            outbe_common::WorldwideDay::new(20_240_101),
+            outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .unwrap();
@@ -1283,7 +1283,7 @@ fn repeated_settled_cycle_slot_replays_without_any_storage_or_event_write() {
         assert!(matches!(
             outbe_metadosis::api::day_limit_formation_receipt(
                 fire.storage.clone(),
-                outbe_common::WorldwideDay::new(20_240_101),
+                outbe_primitives::time::WorldwideDay::new(20_240_101),
             )
             .unwrap(),
             Some(outbe_metadosis::DayLimitFormationReceipt::Formed(_))
@@ -1341,7 +1341,7 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
 
 #[test]
 fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
-    let wwd = outbe_common::WorldwideDay::new(20_240_105);
+    let wwd = outbe_primitives::time::WorldwideDay::new(20_240_105);
     let day_limit = U256::from(109);
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
@@ -1425,8 +1425,8 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
 
 #[test]
 fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candidate() {
-    use outbe_common::WorldwideDay;
     use outbe_metadosis::constants::MAX_RETAINED_WWDS;
+    use outbe_primitives::time::WorldwideDay;
 
     let victim = WorldwideDay::new(20_260_910);
     let retained = retained_days_before(victim, MAX_RETAINED_WWDS);
@@ -1551,7 +1551,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, DAY_D_10AM), handle.clone());
         anchor_genesis(&ctx_anchor);
         run_cycle_lifecycle(&ctx_anchor).unwrap();
-        let canonical_wwd = outbe_common::WorldwideDay::new(20_240_102);
+        let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
         assert_eq!(
             outbe_metadosis::api::worldwide_days(ctx_anchor.storage.clone())
                 .unwrap()
@@ -1576,7 +1576,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
                 .map(|day| day.worldwide_day)
                 .collect::<Vec<_>>(),
             vec![
-                outbe_common::WorldwideDay::new(20_240_101),
+                outbe_primitives::time::WorldwideDay::new(20_240_101),
                 canonical_wwd,
             ],
             "the first UTC midnight must retain the canonical genesis WWD and add only the explicitly settled previous UTC day"

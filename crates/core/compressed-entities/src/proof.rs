@@ -708,7 +708,7 @@ mod tests {
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use alloy_primitives::{Address, U256};
-    use outbe_common::WorldwideDay;
+    use outbe_primitives::time::WorldwideDay;
     use proptest::prelude::*;
 
     use super::*;

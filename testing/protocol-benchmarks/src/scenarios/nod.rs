@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
@@ -12,6 +11,7 @@ use outbe_ocomp_protocol::{
     ListKind,
 };
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::time::WorldwideDay;
 
 use super::support::{
     capture_execution, elapsed_ns, seed_compressed_entities_genesis, EmptyParentBodies,

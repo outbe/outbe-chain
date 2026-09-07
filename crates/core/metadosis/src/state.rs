@@ -6,8 +6,8 @@ use crate::schema::{
     WorldwideDay, WorldwideDayEntryExt,
 };
 use alloy_primitives::U256;
-use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompDayLimitFormation {

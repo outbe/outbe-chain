@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     math::{constants::MAX_BIN_ID, tree_math},

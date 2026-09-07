@@ -5,9 +5,9 @@
 //! user-facing surface (settle / minePromis / setAuthorizedSettler) lives in
 //! the precompile.
 
-use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::WorldwideDay;
 
 use crate::config::{self, IntexParams};
 use crate::runtime;

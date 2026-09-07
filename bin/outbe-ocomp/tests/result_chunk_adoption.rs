@@ -43,7 +43,7 @@ fn leaf_spec(chunk_ordinal: u32) -> UnitSpecV1 {
     UnitSpecV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
         job_id: B256::repeat_byte(2),
-        attempt: 3,
+        attempt: 0,
         phase: UnitPhase::RootReduce,
         interval: UnitInterval::BinaryReducerNode(BinaryReducerNode {
             level: 0,

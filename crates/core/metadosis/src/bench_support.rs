@@ -1,6 +1,6 @@
 //! Narrow benchmark-only adapters over production Metadosis transitions.
 
-use outbe_common::WorldwideDay;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,

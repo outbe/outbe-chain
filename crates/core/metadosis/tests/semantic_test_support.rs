@@ -1,12 +1,12 @@
 #![cfg(feature = "test-utils")]
 
 use alloy_primitives::{Bytes, B256};
-use outbe_common::WorldwideDay;
 use outbe_metadosis::test_support::{
     ActivationCorruption, ActivationScenario, EmergencyFailScenario, ForkInstallScenario,
 };
 use outbe_metadosis::{OcompForkInstallClassification, WwdMembership, WwdStatus};
 use outbe_ocomp_protocol::receipts::ActivationOutcome;
+use outbe_primitives::time::WorldwideDay;
 
 #[test]
 fn activation_scenario_executes_the_production_command_and_exposes_a_typed_outcome() {

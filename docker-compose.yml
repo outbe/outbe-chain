@@ -8,19 +8,20 @@
 # Before bootstrapping a different genesis, run `docker compose down -v` so the fixed per-validator
 # projection databases cannot be reused across chain identities.
 #
+# Each node reads its generated validator-N/offchain-storage.toml (RocksDB default).
+# To use the optional Mongo service, select mongodb in all TOMLs and start with
+# `docker compose --profile mongodb up`; use mongodb://mongodb:27017/?replicaSet=rs0.
 # Each validator gets unique P2P, RPC, and metrics ports.
 
 x-validator-defaults: &validator-defaults
   image: outbe-chain
   restart: unless-stopped
-  depends_on:
-    mongodb:
-      condition: service_healthy
   networks:
     - outbe-net
 
 services:
   mongodb:
+    profiles: ["mongodb"]
     image: mongo:7
     container_name: outbe-mongodb
     restart: unless-stopped
@@ -41,9 +42,6 @@ services:
   validator-0:
     <<: *validator-defaults
     container_name: outbe-validator-0
-    environment:
-      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
-      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_0
     volumes:
       - ./testnet/validator-0:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -56,6 +54,7 @@ services:
     command:
       - node
       - --datadir=/data
+      - --projection.storage-config=/data/offchain-storage.toml
       - --chain=/genesis.json
       - --http
       - --http.addr=0.0.0.0
@@ -75,9 +74,6 @@ services:
   validator-1:
     <<: *validator-defaults
     container_name: outbe-validator-1
-    environment:
-      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
-      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_1
     volumes:
       - ./testnet/validator-1:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -90,6 +86,7 @@ services:
     command:
       - node
       - --datadir=/data
+      - --projection.storage-config=/data/offchain-storage.toml
       - --chain=/genesis.json
       - --http
       - --http.addr=0.0.0.0
@@ -109,9 +106,6 @@ services:
   validator-2:
     <<: *validator-defaults
     container_name: outbe-validator-2
-    environment:
-      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
-      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_2
     volumes:
       - ./testnet/validator-2:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -124,6 +118,7 @@ services:
     command:
       - node
       - --datadir=/data
+      - --projection.storage-config=/data/offchain-storage.toml
       - --chain=/genesis.json
       - --http
       - --http.addr=0.0.0.0
@@ -143,9 +138,6 @@ services:
   validator-3:
     <<: *validator-defaults
     container_name: outbe-validator-3
-    environment:
-      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
-      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_3
     volumes:
       - ./testnet/validator-3:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -158,6 +150,7 @@ services:
     command:
       - node
       - --datadir=/data
+      - --projection.storage-config=/data/offchain-storage.toml
       - --chain=/genesis.json
       - --http
       - --http.addr=0.0.0.0

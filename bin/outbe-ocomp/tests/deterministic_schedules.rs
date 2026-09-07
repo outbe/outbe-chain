@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
@@ -55,6 +54,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::time::WorldwideDay;
 use tempfile::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
@@ -677,8 +677,8 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
         genesis_hash: B256::repeat_byte(0x41),
         fork_id: B256::repeat_byte(0x42),
         wwd: day.value(),
-        pending_nonce: 1,
-        attempt: 1,
+        pending_nonce: 0,
+        attempt: 0,
         protocol_bundle_hash,
         ce_sealed_root: B256::repeat_byte(0x50),
         sealed_tribute_collection_key: collection_key,
@@ -729,7 +729,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day.value(),
-                pending_nonce: 1,
+                pending_nonce: 0,
                 expected_status: MetadosisExpectedStatus::OffchainPending,
                 state_version: 1,
             },
