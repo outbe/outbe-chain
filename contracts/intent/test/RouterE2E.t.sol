@@ -179,6 +179,37 @@ contract RouterE2E is BaseTest {
 
     // ========== Tests ==========
 
+    function _ids(bytes32 orderId) internal pure returns (bytes32[] memory ids) {
+        ids = new bytes32[](1);
+        ids[0] = orderId;
+    }
+
+    function test_emergencyWithdraw_releasesInputToOwner() public {
+        (bytes32 orderId,) = _openOrder();
+
+        uint256 before = inputToken.balanceOf(owner);
+        originRouter.emergencyWithdraw(_ids(orderId));
+
+        assertEq(inputToken.balanceOf(owner), before + amount, "input released");
+        assertEq(originRouter.orderStatus(orderId), originRouter.REFUNDED(), "status");
+    }
+
+    function test_emergencyWithdraw_onlyOwner() public {
+        (bytes32 orderId,) = _openOrder();
+
+        vm.prank(vegeta);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, vegeta));
+        originRouter.emergencyWithdraw(_ids(orderId));
+    }
+
+    function test_emergencyWithdraw_revertsWhenAlreadyWithdrawn() public {
+        (bytes32 orderId,) = _openOrder();
+
+        originRouter.emergencyWithdraw(_ids(orderId));
+        vm.expectRevert("order not open");
+        originRouter.emergencyWithdraw(_ids(orderId));
+    }
+
     function test_open_ungatedUntilWhitelistIsSet() public {
         assertEq(address(originRouter.whitelist()), address(0));
         _openOrder(); // vegeta is not on any list; open() must still work

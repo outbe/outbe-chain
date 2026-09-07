@@ -60,6 +60,15 @@ contract Router is BaseRouter, IERC7786Recipient {
         _setWhitelist(registry);
     }
 
+    /// @notice TEMPORARY: recovers open orders' inputs to the owner when a remote chain is down and
+    ///         no delivery can release them.
+    /// @dev TODO: remove before production - it also pays out orders a solver already filled.
+    function emergencyWithdraw(bytes32[] calldata orderIds) external onlyOwner {
+        for (uint256 i = 0; i < orderIds.length; i++) {
+            _emergencyWithdraw(orderIds[i], owner());
+        }
+    }
+
     /// @notice Registers the matching Router on `domain`. Pass empty bytes to remove it.
     /// @param interop ERC-7930 interoperable address of the remote Router (encodes chainId + address).
     function setRemoteRouter(uint32 domain, bytes calldata interop) external onlyOwner {
