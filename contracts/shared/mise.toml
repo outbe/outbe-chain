@@ -28,3 +28,10 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/DeployWhitelist.s.sol:DeployWhitelist --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
 '''
 
+
+[tasks.deploy-whitelist-hooks]
+description = "Deploy the Whitelist registry together with the swap gates (v4 and/or Infinity)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/DeployWhitelistHooks.s.sol:DeployWhitelistHooks --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
+'''
