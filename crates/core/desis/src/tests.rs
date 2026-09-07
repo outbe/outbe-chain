@@ -26,8 +26,7 @@ const SRC_CHAIN: u32 = 1;
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
-/// The load any first priced brief picks: the launch rung, pinned by
-/// `the_fixture_load_is_the_one_the_ladder_picks`.
+/// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
 const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 
@@ -36,8 +35,7 @@ const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
-/// The anchor a 0.001 launch captures, and the grid the ladder ran on before the
-/// anchor was stored. Every deadband fixture below runs on it.
+/// The anchor a 0.001 launch captures; every deadband fixture below runs on it.
 const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
 
 fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {

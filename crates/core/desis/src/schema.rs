@@ -292,9 +292,8 @@ pub struct DesisContract {
     /// chain has briefed a day it could price, which the deadband has nothing to hold.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
-    /// Digits of the launch pair `promis_load_minor x rate_minor`, captured on the
-    /// first day the chain could price the strike currency. The ladder re-anchors
-    /// against it. Zero until captured, which a real anchor never is.
+    /// Digits of the launch pair the ladder re-anchors against, captured on the first
+    /// day the chain could price the anchor currency. Zero until captured.
     #[attribute(order = 39)]
     pub promis_load_anchor_digits: outbe_primitives::storage::dsl::Value<u32>,
 }

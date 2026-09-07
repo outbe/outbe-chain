@@ -19,8 +19,8 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
     MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT,
-    PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_DEADBAND_BPS,
+    PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
     SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -94,14 +94,10 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// Decades of decline the ladder covers before the load pins and the band starts
-/// riding the price down.
-const PROMIS_LOAD_DECADES_OF_HEADROOM: u32 = 6;
+/// Six decades of decline before the load pins and the band rides the price down.
+const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_LAUNCH_EXPONENT + 6;
 
-const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_LAUNCH_EXPONENT + PROMIS_LOAD_DECADES_OF_HEADROOM;
-
-/// One entry past the widest rung: the deadband brackets a rung against the top of
-/// the decade above the one it holds.
+/// One entry past the widest rung: the deadband brackets against the decade above.
 const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
     let mut table = [1u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2];
     let mut i = 1;
@@ -133,13 +129,11 @@ fn decimal_digits(rate: U256) -> u32 {
     digits
 }
 
-/// Digits of the launch pair: the launch rung plus the rate's own. Captured once, on
-/// the first day the chain can price the strike currency, and never moved again.
+/// Digits of the launch pair, captured once and never moved again.
 pub(crate) fn launch_anchor_digits(rate: U256) -> u32 {
     PROMIS_LOAD_LAUNCH_EXPONENT + decimal_digits(rate)
 }
 
-/// The decade the ladder alone picks, relative to the captured launch pair.
 fn anchor_exponent(anchor_digits: u32, rate: U256) -> u32 {
     anchor_digits
         .saturating_sub(decimal_digits(rate))
@@ -154,8 +148,7 @@ pub(crate) fn promis_load_exponent(anchor_digits: u32, current: Option<u32>, rat
         return anchor_exponent(anchor_digits, rate);
     };
     let exponent = exponent.min(PROMIS_LOAD_MAX_EXPONENT);
-    // The anchor and the rung are independent cells; neither is trusted to keep
-    // their difference inside the table.
+    // Independent cells: their difference is not trusted to stay inside the table.
     let decade = anchor_digits
         .saturating_sub(exponent)
         .clamp(1, POW10.len() as u32 - 1) as usize;
@@ -169,9 +162,8 @@ pub(crate) fn promis_load_exponent(anchor_digits: u32, current: Option<u32>, rat
     }
 }
 
-/// Read before `choose_reference_prices` trims the table: it caps the day at
-/// `MAX_REFERENCE_PRICES` by ISO ascending and keeps one currency per series-id
-/// letter, either of which would drop the strike currency and the ladder with it.
+/// Read before `choose_reference_prices` trims the table: either of its rules would
+/// drop the anchor currency and the ladder with it.
 fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -180,17 +172,14 @@ fn step_promis_load(
     if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
         return Ok(fixed);
     }
-    // A stored zero is "never set": the exponent it would stand for needs a rate
-    // no chain will ever see.
+    // A stored zero is "never set": no rate reaches the rung it would stand for.
     let stored = contract.promis_load_exponent.read()?;
     let current = (stored != 0).then_some(stored);
-    // A day the strike currency is missing from leaves the ladder where it is;
-    // Metadosis has already announced the currency it could not price. With nothing
-    // stored either, the launch rung is the honest answer: nothing is anchored yet,
-    // and the launch pair needs a rate to be a pair.
+    // Without the anchor currency the ladder holds; nothing is captured, since the
+    // launch pair needs a rate to be a pair.
     let Some(rate) = reference_prices
         .iter()
-        .find(|row| row.iso_code == PROMIS_LOAD_STRIKE_ISO)
+        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
         .map(|row| row.entry_price_minor)
     else {
         return Ok(promis_load_minor(
