@@ -29,9 +29,16 @@ forge script script/DeployWhitelist.s.sol:DeployWhitelist --rpc-url "$NETWORK" -
 '''
 
 
-[tasks.deploy-whitelist-hooks]
-description = "Deploy the Whitelist registry together with the swap gates (v4 and/or Infinity)"
+[tasks.deploy-whitelist-hook-infinity]
+description = "Deploy the PancakeSwap Infinity swap gate on top of WHITELIST_ADDRESS"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/DeployWhitelistHooks.s.sol:DeployWhitelistHooks --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
+forge script script/DeployWhitelistHooks.s.sol:DeployWhitelistHooks --sig "deployInfinity()" --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
+'''
+
+[tasks.deploy-whitelist-hook-v4]
+description = "Deploy the Uniswap v4 swap gate on top of WHITELIST_ADDRESS"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/DeployWhitelistHooks.s.sol:DeployWhitelistHooks --sig "deployV4()" --rpc-url "$NETWORK" --broadcast --verify --slow --legacy -vvv
 '''

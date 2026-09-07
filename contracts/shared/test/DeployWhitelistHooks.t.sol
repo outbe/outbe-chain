@@ -2,6 +2,8 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {IWhitelist, Whitelist} from "../src/Whitelist.sol";
+import {V4SwapWhitelistHook, InfinitySwapWhitelistHook} from "../src/SwapWhitelistHook.sol";
 import {DeployWhitelistHooks} from "../script/DeployWhitelistHooks.s.sol";
 
 contract DeployWhitelistHooksTest is Test {
@@ -19,34 +21,31 @@ contract DeployWhitelistHooksTest is Test {
         deployScript = new DeployWhitelistHooks();
     }
 
-    function _seed() internal view returns (address[] memory initial) {
-        initial = new address[](1);
+    /// @dev The registry is deployed by its own script; the gates only take its address.
+    function _registry() internal returns (IWhitelist) {
+        address[] memory initial = new address[](1);
         initial[0] = router;
+        return new Whitelist(owner, initial);
     }
 
-    function test_DeployAll_WiresBothHooksToOneRegistry() public {
-        deployScript.deployAll(owner, _seed(), v4PoolManager, infinityPoolManager);
+    /// @dev Deploying the gates separately must still leave them on one registry - that shared
+    ///      registry is the whole point of splitting the deploy into two tasks.
+    function test_BothHooks_ShareOneRegistry() public {
+        IWhitelist whitelist = _registry();
 
-        address registry = address(deployScript.registry());
-        assertEq(deployScript.registry().owner(), owner, "registry owner");
-        assertTrue(deployScript.registry().isWhitelisted(router), "seed not applied");
+        V4SwapWhitelistHook v4Hook = deployScript.deployV4Hook(v4PoolManager, whitelist);
+        InfinitySwapWhitelistHook infinityHook = deployScript.deployInfinityHook(infinityPoolManager, whitelist);
 
-        assertEq(address(deployScript.v4Hook().registry()), registry, "v4 hook wired elsewhere");
-        assertEq(deployScript.v4Hook().poolManager(), v4PoolManager, "v4 pool manager");
-        assertEq(address(deployScript.infinityHook().registry()), registry, "infinity hook wired elsewhere");
-        assertEq(deployScript.infinityHook().poolManager(), infinityPoolManager, "infinity pool manager");
+        assertEq(address(v4Hook.registry()), address(whitelist), "v4 hook wired elsewhere");
+        assertEq(v4Hook.poolManager(), v4PoolManager, "v4 pool manager");
+        assertEq(address(infinityHook.registry()), address(whitelist), "infinity hook wired elsewhere");
+        assertEq(infinityHook.poolManager(), infinityPoolManager, "infinity pool manager");
     }
 
     /// @dev v4 calls exactly the callbacks the address advertises, so the mined address must carry
     ///      beforeSwap and no other flag - anything else means a callback this hook cannot answer.
-    function test_DeployAll_V4HookAddressAdvertisesBeforeSwapOnly() public {
-        deployScript.deployAll(owner, _seed(), v4PoolManager, address(0));
-        assertEq(uint160(address(deployScript.v4Hook())) & ALL_HOOK_MASK, BEFORE_SWAP_FLAG, "wrong hook flags");
-        assertEq(address(deployScript.infinityHook()), address(0), "infinity hook deployed unasked");
-    }
-
-    function test_DeployAll_RevertsWhenNoPoolManagerConfigured() public {
-        vm.expectRevert("set V4_POOL_MANAGER and/or INFINITY_CL_POOL_MANAGER");
-        deployScript.deployAll(owner, _seed(), address(0), address(0));
+    function test_DeployV4Hook_AddressAdvertisesBeforeSwapOnly() public {
+        V4SwapWhitelistHook hook = deployScript.deployV4Hook(v4PoolManager, _registry());
+        assertEq(uint160(address(hook)) & ALL_HOOK_MASK, BEFORE_SWAP_FLAG, "wrong hook flags");
     }
 }
