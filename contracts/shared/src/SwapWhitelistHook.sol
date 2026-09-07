@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 import {IWhitelist, requireWhitelisted} from "./Whitelist.sol";
 
 /// @notice Thrown when anyone other than the pool manager calls a hook callback.
@@ -54,16 +56,24 @@ struct SwapParams {
 /// @dev The address the hook sees is whoever called the pool manager inside the lock - the router,
 ///      not the end user. Whitelist the router you control and let it check its own callers, or
 ///      restrict routing to a router that forwards a verified swapper.
-abstract contract BaseSwapWhitelistHook {
+abstract contract BaseSwapWhitelistHook is Ownable {
     /// @notice The only address allowed to invoke the hook callbacks.
     address public immutable poolManager;
 
     /// @notice Registry consulted on every swap.
-    IWhitelist public immutable registry;
+    /// @dev Settable rather than immutable: a pool is keyed by its hook address, so repointing the
+    ///      gate by redeploying the hook would strand the pools built on it.
+    IWhitelist public registry;
 
-    constructor(address _poolManager, IWhitelist _registry) {
+    constructor(address _poolManager, IWhitelist _registry, address _owner) Ownable(_owner) {
         if (address(_registry) == address(0)) revert ZeroRegistry();
         poolManager = _poolManager;
+        registry = _registry;
+    }
+
+    /// @notice Points the swap gate at a different registry.
+    function setWhitelist(IWhitelist _registry) external onlyOwner {
+        if (address(_registry) == address(0)) revert ZeroRegistry();
         registry = _registry;
     }
 
@@ -78,7 +88,9 @@ abstract contract BaseSwapWhitelistHook {
 /// @dev The pool manager derives permissions from the hook address, so this must be deployed to an
 ///      address with `BEFORE_SWAP_FLAG` (1 << 7) set - mine the CREATE2 salt (forge's `HookMiner`).
 contract V4SwapWhitelistHook is BaseSwapWhitelistHook {
-    constructor(address _poolManager, IWhitelist _registry) BaseSwapWhitelistHook(_poolManager, _registry) {}
+    constructor(address _poolManager, IWhitelist _registry, address _owner)
+        BaseSwapWhitelistHook(_poolManager, _registry, _owner)
+    {}
 
     function beforeSwap(address sender, V4PoolKey calldata, SwapParams calldata, bytes calldata)
         external
@@ -100,7 +112,9 @@ contract InfinitySwapWhitelistHook is BaseSwapWhitelistHook {
     /// @dev Bit 6 is `HOOKS_BEFORE_SWAP_OFFSET`; every other callback stays off.
     uint16 private constant _BEFORE_SWAP_BITMAP = uint16(1) << 6;
 
-    constructor(address _poolManager, IWhitelist _registry) BaseSwapWhitelistHook(_poolManager, _registry) {}
+    constructor(address _poolManager, IWhitelist _registry, address _owner)
+        BaseSwapWhitelistHook(_poolManager, _registry, _owner)
+    {}
 
     /// @notice Callbacks this hook subscribes to, checked against `poolKey.parameters` on initialize.
     function getHooksRegistrationBitmap() external pure returns (uint16) {

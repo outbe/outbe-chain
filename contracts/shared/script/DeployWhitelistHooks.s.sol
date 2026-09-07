@@ -14,7 +14,7 @@ import {V4SwapWhitelistHook, InfinitySwapWhitelistHook} from "../src/SwapWhiteli
 /// the same WHITELIST_ADDRESS, so one add()/remove() governs every gated pool.
 ///
 /// Required env vars:
-///   DEPLOYER_PK              - deployer private key
+///   DEPLOYER_PK              - deployer private key; its address becomes the hook owner
 ///   WHITELIST_ADDRESS        - the registry both gates read
 ///   V4_POOL_MANAGER          - Uniswap v4 PoolManager                  (deployV4 only)
 ///   INFINITY_CL_POOL_MANAGER - PancakeSwap Infinity CLPoolManager      (deployInfinity only)
@@ -36,7 +36,7 @@ contract DeployWhitelistHooks is Script {
         address poolManager = vm.envAddress("V4_POOL_MANAGER");
 
         vm.startBroadcast(deployerPrivateKey);
-        v4Hook = deployV4Hook(poolManager, registry());
+        v4Hook = deployV4Hook(poolManager, registry(), vm.addr(deployerPrivateKey));
         vm.stopBroadcast();
 
         console2.log("V4_SWAP_WHITELIST_HOOK=", address(v4Hook));
@@ -48,7 +48,7 @@ contract DeployWhitelistHooks is Script {
         address poolManager = vm.envAddress("INFINITY_CL_POOL_MANAGER");
 
         vm.startBroadcast(deployerPrivateKey);
-        infinityHook = deployInfinityHook(poolManager, registry());
+        infinityHook = deployInfinityHook(poolManager, registry(), vm.addr(deployerPrivateKey));
         vm.stopBroadcast();
 
         console2.log("INFINITY_SWAP_WHITELIST_HOOK=", address(infinityHook));
@@ -65,10 +65,13 @@ contract DeployWhitelistHooks is Script {
     /// @dev v4 reads a hook's callbacks off its address, so this one has to be mined onto an address
     ///      carrying beforeSwap and nothing else. Deployed through the canonical CREATE2 proxy so the
     ///      mined address holds both under `forge script` and in tests.
-    function deployV4Hook(address poolManager, IWhitelist whitelist) public returns (V4SwapWhitelistHook hook) {
+    function deployV4Hook(address poolManager, IWhitelist whitelist, address owner)
+        public
+        returns (V4SwapWhitelistHook hook)
+    {
         require(CREATE2_FACTORY.code.length != 0, "Arachnid CREATE2 deployer not present on this chain");
 
-        bytes memory initCode = v4InitCode(poolManager, address(whitelist));
+        bytes memory initCode = v4InitCode(poolManager, address(whitelist), owner);
         (bytes32 salt, address predicted) = mineV4Salt(keccak256(initCode));
 
         (bool ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, initCode));
@@ -76,12 +79,18 @@ contract DeployWhitelistHooks is Script {
         hook = V4SwapWhitelistHook(predicted);
     }
 
-    function deployInfinityHook(address poolManager, IWhitelist whitelist) public returns (InfinitySwapWhitelistHook) {
-        return new InfinitySwapWhitelistHook(poolManager, whitelist);
+    function deployInfinityHook(address poolManager, IWhitelist whitelist, address owner)
+        public
+        returns (InfinitySwapWhitelistHook)
+    {
+        return new InfinitySwapWhitelistHook(poolManager, whitelist, owner);
     }
 
-    function v4InitCode(address poolManager, address whitelist) public pure returns (bytes memory) {
-        return abi.encodePacked(type(V4SwapWhitelistHook).creationCode, abi.encode(poolManager, IWhitelist(whitelist)));
+    function v4InitCode(address poolManager, address whitelist, address owner) public pure returns (bytes memory) {
+        return
+            abi.encodePacked(
+                type(V4SwapWhitelistHook).creationCode, abi.encode(poolManager, IWhitelist(whitelist), owner)
+            );
     }
 
     /// @notice First salt whose CREATE2 address carries the beforeSwap flag and nothing else - v4
