@@ -41,13 +41,13 @@ abstract contract Routes is BaseRoute {
         });
         list[0] = Route(usdt, _usdtInitCode(_isCanonicalHere(usdt)), true);
 
-        // Canonical USDC on the external chain, factory-issued stablecoin on Outbe - governance places that one.
+        // The same shape as USDT: canonical USDC on the external chain, ERC-7802 synthetic on Outbe.
         RouteSpec memory usdc = RouteSpec({
             tokenLabel: "USDC",
             canonicalOnOutbe: false,
             canonicalTokenEnv: "CANONICAL_USDC_TOKEN",
-            syntheticTokenEnv: "SYNTHETIC_USDC_TOKEN",
-            syntheticSource: SyntheticSource.TokenFactory
+            syntheticTokenEnv: "",
+            syntheticSource: SyntheticSource.Erc7802
         });
         list[1] = Route(usdc, _usdcInitCode(_isCanonicalHere(usdc)), true);
 
@@ -103,7 +103,11 @@ abstract contract Routes is BaseRoute {
     }
 
     function _usdcInitCode(bool canonical) internal returns (bytes memory) {
-        return canonical ? type(USDC).creationCode : bytes("");
+        return canonical
+            ? type(USDC).creationCode
+            : abi.encodePacked(
+                type(BridgeableERC20Stable).creationCode, abi.encode("USDC", "USDC", uint8(6), uint16(840), _owner())
+            );
     }
 
     function _wcoenInitCode(bool canonical) internal returns (bytes memory) {
