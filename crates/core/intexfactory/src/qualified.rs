@@ -19,8 +19,8 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
-    NOTIFY_CHUNK_LIMIT, ORIGIN_ROUTER_ADDRESS,
+    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_ACTIONS_PER_BLOCK,
+    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -59,7 +59,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let factory = IntexFactoryContract::new(ctx.storage.clone());
-    let start = factory.qualify_currency_cursor.read()? as usize % currencies.len();
+    let start = currency_position(&currencies, factory.qualify_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut promoted: u32 = 0;
@@ -77,8 +77,18 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         promoted =
             promoted.saturating_add(qualify_currency(ctx, currencies[at], rate, &mut budget)?);
     }
-    factory.qualify_currency_cursor.write(resume_at as u32)?;
+    factory
+        .qualify_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     Ok(promoted)
+}
+
+/// Index of the currency the cursor names, or the head when the registry dropped it.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
 }
 
 /// Qualifies one reference currency's groups, drawing on the shared `budget`.
@@ -257,8 +267,8 @@ pub const NOTICE_QUALIFIED: u8 = 0;
 /// A notice carrying one Called series, which its group no longer holds.
 pub const NOTICE_CALLED: u8 = 1;
 
-/// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves free,
-/// so the origin's stamp reaches the target instead of its delivery time.
+/// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
+/// free, so the origin's stamp reaches the target instead of its delivery time.
 pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
     series_id.to_word() | U256::from(called_at)
 }
@@ -288,9 +298,10 @@ pub(crate) fn enqueue_notice(
     Ok(())
 }
 
-/// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
-/// entries per firing. This is where every outbound mark leaves from - the scans
-/// that queue them run in a block hook, which cannot call contracts.
+/// Cycle-trigger entry: send the queued notices, at most
+/// [`MAX_ROUTER_CALLS_PER_FIRING`] router calls' worth. This is where every
+/// outbound mark leaves from - the scans that queue them run in a block hook,
+/// which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let factory = IntexFactoryContract::new(storage.clone());
@@ -299,18 +310,31 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     if head >= tail {
         return Ok(());
     }
-    let stop = tail.min(head.saturating_add(NOTIFY_CHUNK_LIMIT));
+    let stop = tail;
     let mut index = head;
-    while index < stop {
+    let mut messages: u32 = 0;
+    while index < stop && messages < MAX_ROUTER_CALLS_PER_FIRING {
         let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
+        let calls_left = MAX_ROUTER_CALLS_PER_FIRING - messages;
         let consumed = if kind == NOTICE_CALLED {
-            drain_called_run(&factory, &storage, index, stop, entry)?
+            drain_called_run(
+                &factory,
+                &storage,
+                index,
+                stop,
+                entry,
+                &mut messages,
+                calls_left,
+            )?
         } else {
             factory.notify_at.clear(&index)?;
             factory.notify_kind.clear(&index)?;
+            messages = messages.saturating_add(1);
             // Best-effort: a notice that cannot be sent is dropped, never left to wedge the drain.
-            if let Err(error) = storage.with_checkpoint(|| send_notice(&storage, kind, entry)) {
+            if let Err(error) =
+                storage.with_checkpoint(|| send_notice(&storage, kind, entry, &mut messages))
+            {
                 tracing::warn!(target: "outbe::intexfactory", kind, error = ?error, "notice: dropping");
             }
             1
@@ -334,6 +358,8 @@ fn drain_called_run(
     at: u32,
     stop: u32,
     first: U256,
+    messages: &mut u32,
+    calls_left: u32,
 ) -> Result<u32> {
     let (first_id, called_at) = unpack_called_notice(first);
     // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
@@ -341,6 +367,7 @@ fn drain_called_run(
     if called_at == 0 {
         factory.notify_at.clear(&at)?;
         factory.notify_kind.clear(&at)?;
+        *messages = messages.saturating_add(1);
         tracing::warn!(
             target: "outbe::intexfactory",
             series = %first_id,
@@ -351,8 +378,11 @@ fn drain_called_run(
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
 
+    // The run is what one message carries, so it is cut to the calls still budgeted
+    // rather than to the whole firing's window.
+    let run_cap = (calls_left as usize).saturating_mul(MAX_SERIES_PER_MARK);
     let mut index = at.saturating_add(1);
-    while index < stop {
+    while index < stop && run.len() < run_cap {
         if factory.notify_kind.read(&index)? != NOTICE_CALLED {
             break;
         }
@@ -368,8 +398,9 @@ fn drain_called_run(
         factory.notify_at.clear(&slot)?;
         factory.notify_kind.clear(&slot)?;
     }
-    // Best-effort, like the Qualified branch: a batch that cannot be sent is dropped, never left to
-    // wedge the drain and with it the whole cycle trigger.
+    *messages = messages.saturating_add(router_calls(run.len()));
+    // Best-effort: a batch that cannot be sent is dropped, never left to wedge the
+    // drain and with it the whole cycle trigger.
     if let Err(error) = storage
         .with_checkpoint(|| crate::called::notify_called(storage, worldwide_day, called_at, &run))
     {
@@ -387,7 +418,12 @@ fn drain_called_run(
 
 /// Send one Qualified notice. Called entries never reach here - the drain routes them through
 /// [`drain_called_run`] so a whole group leaves as one message.
-fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
+fn send_notice(
+    storage: &StorageHandle<'_>,
+    kind: u8,
+    entry: U256,
+    messages: &mut u32,
+) -> Result<()> {
     // Only the Qualified shape is readable here; anything else is a scoped key this cannot decode,
     // and narrowing it would panic rather than revert.
     if kind != NOTICE_QUALIFIED {
@@ -405,7 +441,16 @@ fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()>
     if members.is_empty() {
         return Ok(());
     }
+    // Charged before the send, and a group wider than the budget still goes whole:
+    // it has no cursor to resume from, so the overshoot is one group at most.
+    *messages = messages.saturating_add(router_calls(members.len()));
     notify_qualified(storage, worldwide_day, &members)
+}
+
+/// Router calls a batch of this many series costs: the wire caps a mark at
+/// [`MAX_SERIES_PER_MARK`], and each call fans out to the day's target chains.
+fn router_calls(series: usize) -> u32 {
+    series.div_ceil(MAX_SERIES_PER_MARK) as u32
 }
 
 /// One message per group, split only where the wire's cap forces it.

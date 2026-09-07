@@ -5,7 +5,7 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::NOTIFY_CHUNK_LIMIT;
+use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
 use outbe_intexfactory::qualified::{
     drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
 };
@@ -21,6 +21,8 @@ const DAY: u32 = 20_260_101;
 const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
+    // Three digits of currency, so a long queue wraps; these tests measure the walk.
+    let index = index % 1000;
     let iso = [
         b'0' + (index / 100) as u8,
         b'0' + ((index / 10) % 10) as u8,
@@ -92,14 +94,16 @@ fn a_run_longer_than_the_wire_cap_still_empties() {
 fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = NOTIFY_CHUNK_LIMIT + 5;
+        // One coalesced run: the wire cap turns every eight entries into one call.
+        let run_cap = MAX_ROUTER_CALLS_PER_FIRING * MAX_SERIES_PER_MARK as u32;
+        let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);
         }
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (NOTIFY_CHUNK_LIMIT, queued),
+            (run_cap, queued),
             "head lands on the first unconsumed entry, not past it"
         );
 
@@ -175,25 +179,20 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        // A qualified entry at 27 leaves the next Called run starting at 28, so it would reach
-        // 35 if nothing stopped it - four entries past this firing's limit of 32.
-        for index in 0..27 {
-            push_called(&handle, index, CALLED_AT);
-        }
-        push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
-        for index in 28..40 {
-            push_called(&handle, index, CALLED_AT);
+        let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
+        for index in 0..queued {
+            push_called(&handle, index, CALLED_AT + index);
         }
 
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (NOTIFY_CHUNK_LIMIT, 40),
-            "the run stops at the limit"
+            (MAX_ROUTER_CALLS_PER_FIRING, queued),
+            "the firing stops on its router-call budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in NOTIFY_CHUNK_LIMIT..40 {
+        for index in MAX_ROUTER_CALLS_PER_FIRING..queued {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

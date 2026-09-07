@@ -12,7 +12,7 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_FORFEITS_PER_RUN, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -28,6 +28,7 @@ impl BlockLifecycle for GemLifecycle {
         // A call sweep the daily trigger could not finish in one go carries on
         // here, block by block, rather than waiting a day for the next trigger.
         run_call_slice(ctx)?;
+        sweep_expired(ctx)?;
         Ok(())
     }
 
@@ -48,7 +49,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
         return Ok(());
     }
     let gem = GemContract::new(ctx.storage.clone());
-    let start = gem.qualify_currency_cursor.read()? as usize % currencies.len();
+    let start = currency_position(&currencies, gem.qualify_currency_cursor.read()?);
 
     let mut budget = MAX_GEM_QUALIFICATIONS_PER_BLOCK;
     let mut resume_at = start;
@@ -65,8 +66,17 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
         let inspected = qualify_with_rate(ctx, currencies[at], rate, budget)?;
         budget = budget.saturating_sub(inspected);
     }
-    gem.qualify_currency_cursor.write(resume_at as u32)?;
+    gem.qualify_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     Ok(())
+}
+
+/// Index of the currency the cursor names, or the head when the registry dropped it.
+pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
 }
 
 /// Drains the floor-bins crossed by one currency's `rate`, inspecting at most
@@ -83,7 +93,13 @@ pub(crate) fn qualify_with_rate(
     budget: u32,
 ) -> Result<u32> {
     let now = ctx.block.timestamp;
-    let r_bin = GemContract::price_to_bin(rate)?;
+    let r_bin = match GemContract::price_to_bin(rate) {
+        Ok(bin) => bin,
+        Err(error) => {
+            tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "qualify scan: rate out of range, skipping currency");
+            return Ok(0);
+        }
+    };
     let mut gem = GemContract::new(ctx.storage.clone());
 
     let mut inspected: u32 = 0;
@@ -120,7 +136,12 @@ pub(crate) fn qualify_with_rate(
 
         for gem_id in bin_gems {
             inspected = inspected.saturating_add(1);
-            gem.qualify(gem_id, now, iso_code, rate)?;
+            if let Err(error) = ctx
+                .storage
+                .with_checkpoint(|| gem.qualify(gem_id, now, iso_code, rate))
+            {
+                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "qualify scan: skipping gem");
+            }
         }
 
         cursor = match next.checked_add(1) {
@@ -141,7 +162,6 @@ type VwapWindow = Vec<(u32, Option<U256>)>;
 /// Cycle daily-trigger entry: run the Called scan, discarding the count.
 pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     scan_and_call(ctx)?;
-    sweep_expired(ctx)?;
     Ok(())
 }
 
@@ -183,9 +203,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let oracle = OracleContract::new(ctx.storage.clone());
-    let start = gem.call_currency_cursor.read()? as usize % currencies.len();
-    // The window is seconds; the daily scan needs the day count.
-    let window_days = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window / 86_400;
+    let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
+    let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window;
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
@@ -212,13 +231,26 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             gem.call_scan_cursor.write(&iso_code, 0)?;
             continue;
         }
-        let index = window_for(&oracle, &mut windows, iso_code, pinned_day, window_days)?;
+        let index = window_for(
+            &gem,
+            &oracle,
+            &mut windows,
+            iso_code,
+            pinned_day,
+            live_window,
+        )?;
         let window = windows[index].1.as_slice();
         // Nothing priced above the window's high can have breached.
         let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
             continue;
         };
-        let ceiling = GemContract::price_to_bin(high)?;
+        let ceiling = match GemContract::price_to_bin(high) {
+            Ok(bin) => bin,
+            Err(error) => {
+                tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "call scan: window price out of range, skipping currency");
+                continue;
+            }
+        };
         let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, &mut budget)?;
         called = called.saturating_add(calls);
         if !finished && !resumed {
@@ -227,7 +259,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         swept &= finished;
     }
-    gem.call_currency_cursor.write(resume_at as u32)?;
+    gem.call_currency_cursor
+        .write(u32::from(currencies[resume_at]))?;
     if swept {
         // Nothing left to walk: the next daily trigger opens a fresh sweep.
         gem.call_sweep_day.write(0)?;
@@ -294,41 +327,68 @@ pub(crate) fn call_currency(
 
 /// Forfeit-burn the gems whose notice period closed; a head not due ends the pass.
 fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut gem = GemContract::new(ctx.storage.clone());
-    let head = gem.called_head.read()?;
-    let tail = gem.called_tail.read()?;
-    if head >= tail {
-        return Ok(0);
-    }
-
     let now = ctx.block.timestamp;
-    let mut budget = MAX_GEM_FORFEITS_PER_RUN;
+    let mut budget = MAX_EXPIRY_STEPS_PER_BLOCK;
     let mut burned: u32 = 0;
-    // Slots, not just actions: an entry the sweep cannot retire pins the head, and
-    // the run of emptied slots behind it would otherwise grow without bound.
-    for index in head..tail.min(head.saturating_add(MAX_GEM_FORFEITS_PER_RUN)) {
-        if budget == 0 {
+
+    while budget > 0 {
+        let mut gem = GemContract::new(ctx.storage.clone());
+        let Some(day) = gem.first_expiry_day()? else {
             break;
-        }
-        let Some(gem_id) = gem.called_queue_slot(index)? else {
-            continue;
         };
-        if now <= gem.called_deadline.read(&gem_id)? {
+        // A deadline lies inside its own bucket, so an open one holds nobody due.
+        if now < GemContract::bucket_end(day) {
             break;
         }
-        budget -= 1;
-        match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
-            Ok(true) => burned = burned.saturating_add(1),
-            // Due and still not burning: the entry no longer matches its gem.
-            Ok(false) => {
-                tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called")
+        let len = gem.expiry_bucket_len.read(&day)?;
+        let resume = match gem.expiry_sweep_day.read()? == day {
+            true => gem.expiry_cursor.read()?.min(len),
+            false => 0,
+        };
+
+        let mut slot = resume;
+        while slot < len {
+            if budget == 0 {
+                break;
             }
-            Err(error) => {
-                tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem")
+            budget -= 1;
+            let Some(gem_id) = gem.expiry_slot(day, slot)? else {
+                slot += 1;
+                continue;
+            };
+            if now <= gem.called_deadline.read(&gem_id)? {
+                slot += 1;
+                continue;
             }
+            match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
+                Ok(true) => burned = burned.saturating_add(1),
+                // Due and still not burning: the entry no longer matches its gem.
+                // Out of the bucket either way, so it cannot hold the day back.
+                Ok(false) => {
+                    tracing::warn!(target: "outbe::gem", %gem_id, "expiry sweep: queued gem is not Called");
+                    gem.remove_called(gem_id)?;
+                }
+                Err(error) => {
+                    tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: quarantining gem");
+                    gem.remove_called(gem_id)?;
+                }
+            }
+            slot += 1;
+        }
+
+        if slot < len {
+            gem.expiry_sweep_day.write(day)?;
+            gem.expiry_cursor.write(slot)?;
+            break;
+        }
+        gem.expiry_sweep_day.write(0)?;
+        gem.expiry_cursor.write(0)?;
+        // Anything left broke the invariant above; retiring it keeps the tree moving.
+        if gem.expiry_bucket_live.read(&day)? != 0 {
+            let dropped = gem.force_retire_bucket(day)?;
+            tracing::warn!(target: "outbe::gem", day, dropped, "expiry sweep: bucket outlived its day, retiring it");
         }
     }
-    gem.compact_called_queue()?;
     Ok(burned)
 }
 
@@ -339,11 +399,12 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// never register a breach, but it must still reach `forfeit`, so this is a
 /// skip of the call check rather than a skip of the gem.
 fn window_for(
+    gem: &GemContract<'_>,
     oracle: &OracleContract<'_>,
     cache: &mut Vec<(u16, VwapWindow)>,
     iso_code: u16,
     last_closed_day: u32,
-    window_days: u32,
+    live_window: u32,
 ) -> Result<usize> {
     if let Some(index) = cache.iter().position(|(code, _)| *code == iso_code) {
         return Ok(index);
@@ -351,6 +412,9 @@ fn window_for(
     let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
     let mut window = Vec::new();
     if pair_index != 0 {
+        // Widest of the live profile and anything ever issued: a gem keeps the window
+        // it was issued with, so a narrowed profile must not shorten the span.
+        let window_days = gem.max_call_window.read(&iso_code)?.max(live_window) / 86_400;
         window.reserve(window_days as usize);
         let mut day = last_closed_day;
         for _ in 0..window_days {

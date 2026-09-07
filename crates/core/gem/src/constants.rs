@@ -13,8 +13,9 @@ pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 /// next block.
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
 
-/// Gems the daily expiry sweep may forfeit before it gives out.
-pub const MAX_GEM_FORFEITS_PER_RUN: u32 = 256;
+/// Slots one block's expiry sweep may step through. Low because a forfeit compacts
+/// the owner's whole gem list and a block hook is not gas-metered.
+pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 16;
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.

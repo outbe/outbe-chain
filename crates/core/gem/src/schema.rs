@@ -173,17 +173,17 @@ pub struct GemContract {
     #[attribute(order = 19)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
-    // --- Called-gem queue, in call order. Calling is driven by price, expiry
-    // only by time, so the two stages keep separate structures.
+    // --- Called gems, bucketed by the hour their notice period closes in. Calling is
+    // driven by price and expiry only by time, so the two stages stay separate.
     #[attribute(order = 20)]
-    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
-    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> gem id; zero marks a slot already taken.
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
-    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// Gem id -> `(bucket << 32) | slot`; 0 = not queued.
     #[attribute(order = 23)]
-    pub called_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     /// Held off the record so the head check costs no record load.
     #[attribute(order = 24)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
@@ -196,6 +196,24 @@ pub struct GemContract {
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 26)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
+
+    /// Widest window ever issued in a currency; it only grows, so the span the scan
+    /// collects always covers a gem whose record outruns the live profile.
+    #[attribute(order = 27)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
+    #[attribute(order = 28)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 29)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// `keccak256(bucket_be32 ++ slot_be32)` -> gem id.
+    #[attribute(order = 30)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 31)]
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 32)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemContract<'_> {

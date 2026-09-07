@@ -6,7 +6,7 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::NOTIFY_CHUNK_LIMIT;
+use outbe_intexfactory::constants::MAX_ROUTER_CALLS_PER_FIRING;
 use outbe_intexfactory::qualified::{drain_notices, NOTICE_CALLED};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -52,17 +52,17 @@ fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 }
 
 #[test]
-fn a_backlog_drains_one_chunk_per_firing() {
+fn a_backlog_drains_one_firing_worth_at_a_time() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = NOTIFY_CHUNK_LIMIT + 5;
+        let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
         seed(&handle, queued);
 
         drain(&handle);
         assert_eq!(
             queue_bounds(&handle),
-            (NOTIFY_CHUNK_LIMIT, queued),
-            "one firing sends at most a chunk and leaves the rest queued"
+            (MAX_ROUTER_CALLS_PER_FIRING, queued),
+            "one firing spends its budget and leaves the rest queued"
         );
 
         drain(&handle);
@@ -102,10 +102,10 @@ fn an_empty_queue_is_a_noop() {
 }
 
 #[test]
-fn an_exactly_full_chunk_rewinds_the_queue() {
+fn an_exactly_full_firing_rewinds_the_queue() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
-        seed(&handle, NOTIFY_CHUNK_LIMIT);
+        seed(&handle, MAX_ROUTER_CALLS_PER_FIRING);
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
