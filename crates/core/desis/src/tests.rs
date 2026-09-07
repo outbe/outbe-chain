@@ -181,15 +181,6 @@ fn the_band_survives_integer_division_in_the_narrowest_decade() {
 fn an_absurd_rate_saturates_instead_of_underflowing() {
     assert_eq!(ladder_load(None, 0), 1_000_000_000_000_000);
     assert_eq!(ladder_load(None, u128::MAX), 1);
-    // A launch above a dollar anchors past the ceiling, which is what caps the rung.
-    assert_eq!(
-        runtime::promis_load_minor(runtime::promis_load_exponent(
-            LAUNCH_EXPONENT + 7,
-            None,
-            U256::ZERO
-        )),
-        100_000_000_000_000_000
-    );
 }
 
 #[test]

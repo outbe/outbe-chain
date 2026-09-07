@@ -94,8 +94,10 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// Six decades of decline before the load pins and the band rides the price down.
-const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_LAUNCH_EXPONENT + 6;
+/// Table bound, not a policy: a priced day carries at least one digit, so the rung
+/// the ladder can actually reach is `anchor_digits - 1`. Sized past any launch rate
+/// the six-decimal scale can carry, so it never truncates that.
+const PROMIS_LOAD_MAX_EXPONENT: u32 = 21;
 
 /// One entry past the widest rung: the deadband brackets against the decade above.
 const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
