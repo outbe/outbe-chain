@@ -549,6 +549,7 @@ mod tests {
             currency_pairs: pairs,
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
+            dex_providers: vec![],
             health: None,
         }
     }
