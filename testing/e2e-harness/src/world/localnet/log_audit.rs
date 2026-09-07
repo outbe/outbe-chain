@@ -1037,10 +1037,10 @@ fn expected_tee_lease_full_node_shutdown_records(
         let mut last = stack;
         if sink == "reth.log" {
             for marker in [
-                "reth::cli: received engine shutdown request",
+                "reth::cli: shutting down gracefully",
+                "reth::cli: shutdown signal received, terminating engine",
                 "engine::tree: received terminate request",
                 "engine::tree: persistence complete, signaling termination",
-                "reth::cli: shutting down gracefully",
             ] {
                 let matches: Vec<_> = lines
                     .iter()
@@ -1687,7 +1687,7 @@ mod tests {
                     "scenario-1/validator-{full_node}/logs/54322345/reth.log"
                 )),
                 format!(
-                    "{guard}\n{shutdown}\nDEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\nDEBUG reth::cli: shutting down gracefully\n"
+                    "{guard}\n{shutdown}\nDEBUG reth::cli: shutting down gracefully\nDEBUG reth::cli: shutdown signal received, terminating engine\nDEBUG engine::tree: received terminate request\nDEBUG engine::tree: persistence complete, signaling termination\n"
                 ),
             ),
         ]
@@ -1946,8 +1946,8 @@ mod tests {
             assert!(!check(&bad));
         }
         let mut reordered = baseline.clone();
-        reordered[1].1 = reordered[1].1.replace("DEBUG reth::cli: received engine shutdown request\nDEBUG engine::tree: received terminate request",
-            "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: received engine shutdown request");
+        reordered[1].1 = reordered[1].1.replace("DEBUG reth::cli: shutdown signal received, terminating engine\nDEBUG engine::tree: received terminate request",
+            "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: shutdown signal received, terminating engine");
         assert!(!check(&reordered));
         for replacement in [
             "WARN outbe_chain:",

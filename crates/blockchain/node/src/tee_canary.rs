@@ -11,6 +11,9 @@
 //! on `spawn_blocking`; an `in_flight`
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
+//! Shutdown stops observing the read-only probe without waiting for enclave I/O.
+//! An already running socket operation retains its transport deadline; it cannot
+//! start another request after cancellation or publish a late health result.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -66,6 +69,29 @@ impl EnclaveRequester for GlobalEnclaveRequester {
 
     fn attestation_pub(&self) -> Option<[u8; 32]> {
         outbe_tee::client_global::canary_attestation_pub()
+    }
+}
+
+/// Do not start the next phase of a probe after node shutdown. The in-progress
+/// blocking socket operation still owns its connection until it returns.
+struct ShutdownAwareRequester<R> {
+    inner: R,
+    shutdown: CancellationToken,
+}
+
+impl<R: EnclaveRequester> EnclaveRequester for ShutdownAwareRequester<R> {
+    fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        if self.shutdown.is_cancelled() {
+            return Err(TransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "canary stopped",
+            )));
+        }
+        self.inner.request(req)
+    }
+
+    fn attestation_pub(&self) -> Option<[u8; 32]> {
+        self.inner.attestation_pub()
     }
 }
 
@@ -352,7 +378,10 @@ pub async fn run_tee_canary_worker(
     status: TeeEnclaveHealthChannel,
     shutdown: CancellationToken,
 ) {
-    let requester = Arc::new(requester);
+    let requester = Arc::new(ShutdownAwareRequester {
+        inner: requester,
+        shutdown: shutdown.clone(),
+    });
     let in_flight = Arc::new(AtomicBool::new(false));
     let mut interval = tokio::time::interval(config.interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -365,6 +394,7 @@ pub async fn run_tee_canary_worker(
 
     loop {
         tokio::select! {
+            biased;
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {}
         }
@@ -384,12 +414,24 @@ pub async fn run_tee_canary_worker(
         let in_flight_guard = Arc::clone(&in_flight);
         in_flight.store(true, Ordering::Release);
         let health_supported = snapshot.health_probe_supported;
-        let probe = tokio::task::spawn_blocking(move || {
+        let mut probe = tokio::task::spawn_blocking(move || {
             let result = run_canary_probe(requester_for_probe.as_ref(), health_supported);
             in_flight_guard.store(false, Ordering::Release);
             result
         });
-        match probe.await {
+        let result = tokio::select! {
+            biased;
+            result = &mut probe => result,
+            _ = shutdown.cancelled() => {
+                // Abort prevents a queued probe from starting, but cannot stop
+                // a running blocking call. Never wait for that signal-only I/O
+                // here: launcher return must be able to initiate Reth shutdown.
+                probe.abort();
+                tracing::debug!("TEE canary worker stopped with a probe in flight");
+                break;
+            }
+        };
+        match result {
             Ok((outcome, health_supported, health_payload)) => {
                 snapshot.health_probe_supported = health_supported;
                 if let Some(payload) = health_payload {
@@ -416,6 +458,132 @@ pub async fn run_tee_canary_worker(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn shutdown_does_not_wait_for_an_in_flight_canary_request() {
+        struct BlockedRequester {
+            entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+            release: Mutex<std::sync::mpsc::Receiver<()>>,
+            finished: Option<tokio::sync::oneshot::Sender<()>>,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl Drop for BlockedRequester {
+            fn drop(&mut self) {
+                if let Some(finished) = self.finished.take() {
+                    let _ = finished.send(());
+                }
+            }
+        }
+
+        impl EnclaveRequester for BlockedRequester {
+            fn request(&self, _: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if let Some(entered) = self.entered.lock().expect("entered lock").take() {
+                    entered.send(()).expect("test awaits request entry");
+                    self.release
+                        .lock()
+                        .expect("release lock")
+                        .recv()
+                        .expect("release request");
+                }
+                Err(TransportError::Io(std::io::Error::other(
+                    "enclave unavailable",
+                )))
+            }
+
+            fn attestation_pub(&self) -> Option<[u8; 32]> {
+                None
+            }
+        }
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let status = TeeEnclaveHealthChannel::default();
+        let shutdown = CancellationToken::new();
+        let mut worker = tokio::spawn(run_tee_canary_worker(
+            BlockedRequester {
+                entered: Mutex::new(Some(entered_tx)),
+                release: Mutex::new(release_rx),
+                finished: Some(finished_tx),
+                calls: Arc::clone(&calls),
+            },
+            TeeCanaryConfig {
+                interval: Duration::from_secs(60),
+                failure_threshold: 3,
+            },
+            status.clone(),
+            shutdown.clone(),
+        ));
+        entered_rx.await.expect("probe entered the transport");
+        shutdown.cancel();
+        let stopped = tokio::time::timeout(Duration::from_secs(1), &mut worker).await;
+
+        // Always release the transport before asserting, including on the red
+        // path: the test must not strand a Tokio blocking thread during teardown.
+        release_tx.send(()).expect("release blocked transport");
+        if stopped.is_err() {
+            (&mut worker)
+                .await
+                .expect("worker eventually stops after I/O returns");
+        }
+        finished_rx
+            .await
+            .expect("blocking probe released its requester");
+        assert!(
+            stopped.is_ok(),
+            "shutdown waited for the blocked canary transport"
+        );
+        stopped
+            .expect("worker stopped")
+            .expect("worker did not panic");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "no next request after shutdown"
+        );
+        assert_eq!(
+            status.snapshot().consecutive_failures,
+            0,
+            "no late health publication"
+        );
+        assert!(status.snapshot().last_failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_worker_does_not_start_a_probe() {
+        struct NeverCalled;
+
+        impl EnclaveRequester for NeverCalled {
+            fn request(&self, _: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+                panic!("cancelled worker started enclave I/O");
+            }
+
+            fn attestation_pub(&self) -> Option<[u8; 32]> {
+                panic!("cancelled worker started a probe");
+            }
+        }
+
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        let status = TeeEnclaveHealthChannel::default();
+        run_tee_canary_worker(
+            NeverCalled,
+            TeeCanaryConfig {
+                interval: Duration::from_secs(60),
+                failure_threshold: 3,
+            },
+            status.clone(),
+            shutdown,
+        )
+        .await;
+        assert!(
+            status.snapshot().last_failure.is_none(),
+            "probe panic was not hidden"
+        );
+    }
 
     struct FakeRequester {
         /// Scripted responses per request label, popped front-first.
