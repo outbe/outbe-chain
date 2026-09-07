@@ -11,7 +11,7 @@ use outbe_primitives::time::WorldwideDay;
 
 use crate::config::{self, IntexParams};
 use crate::runtime;
-use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::schema::IssuanceParams;
 
 /// Create a series and enroll it for autonomous qualification, returning what each
 /// target chain must be told. Called by the clearing engine after a cleared auction,
@@ -42,5 +42,5 @@ pub fn discard_day_contributors(
 /// engine (Desis) reads these to source floor%/call%/call-trigger at auction
 /// start, keeping a single source of truth instead of hardcoding them.
 pub fn read_params(storage: &StorageHandle<'_>) -> Result<IntexParams> {
-    config::read(&IntexFactoryContract::new(storage.clone()))
+    config::read(storage)
 }

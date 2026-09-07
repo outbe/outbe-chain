@@ -11,7 +11,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     }
 
     let mut gem = GemContract::new(storage.clone());
-    let params_profile = crate::config::read_from(&gem)?;
+    let params_profile = crate::config::read_from(&gem, storage.chain_id()?)?;
     let gem_id = GemContract::generate_gem_id(
         params.owner,
         params.promis_load_minor,

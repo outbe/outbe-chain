@@ -185,7 +185,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = gem.call_currency_cursor.read()? as usize % currencies.len();
     // The window is seconds; the daily scan needs the day count.
-    let window_days = crate::config::read_from(&gem)?.call_window / 86_400;
+    let window_days = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window / 86_400;
 
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();

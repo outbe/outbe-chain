@@ -1,8 +1,11 @@
 //! Genesis-selectable parameter profile for IntexFactory: `PROD` (real timings)
-//! and `DEV` (short timings) are fixed here; a chain picks one via the
-//! `config_profile` selector byte seeded from genesis (unset reads 0 = prod).
+//! and `DEV` (short timings) are fixed here. A chain picks one via the
+//! `config_profile` selector byte seeded from genesis; an unset byte resolves by
+//! network, so only mainnet runs PROD.
 
+use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
@@ -10,8 +13,10 @@ use crate::constants::{
 };
 use crate::schema::IntexFactoryContract;
 
-pub const PROFILE_PROD: u8 = 0;
+/// Resolve by network: PROD on mainnet, DEV everywhere else.
+pub const PROFILE_AUTO: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
+pub const PROFILE_PROD: u8 = 2;
 
 /// Resolved IntexFactory protocol parameters. Periods are seconds; rates are
 /// percentage points over [`crate::constants::PRICE_RATE_DEN`].
@@ -27,7 +32,7 @@ pub struct IntexParams {
 }
 
 impl IntexParams {
-    /// Real protocol timings; also the default when no profile is selected.
+    /// Real protocol timings; the default on mainnet.
     pub const PROD: Self = Self {
         call_window: CALL_WINDOW,
         call_threshold: CALL_THRESHOLD,
@@ -52,10 +57,20 @@ impl IntexParams {
         commit_bond_minor: 100 * SCALE_1E18_U128,
     };
 
-    pub fn from_selector(selector: u8) -> Result<Self> {
+    /// The profile a chain runs when genesis left the selector unset.
+    pub const fn for_chain_id(chain_id: u64) -> Self {
+        if is_mainnet(chain_id) {
+            Self::PROD
+        } else {
+            Self::DEV
+        }
+    }
+
+    pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
         match selector {
-            PROFILE_PROD => Ok(Self::PROD),
+            PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
             PROFILE_DEV => Ok(Self::DEV),
+            PROFILE_PROD => Ok(Self::PROD),
             other => Err(PrecompileError::Revert(format!(
                 "unknown intex profile selector: {other}"
             ))),
@@ -63,6 +78,13 @@ impl IntexParams {
     }
 }
 
-pub(crate) fn read(factory: &IntexFactoryContract<'_>) -> Result<IntexParams> {
-    IntexParams::from_selector(factory.config_profile.read()?)
+pub fn read(storage: &StorageHandle<'_>) -> Result<IntexParams> {
+    read_from(
+        &IntexFactoryContract::new(storage.clone()),
+        storage.chain_id()?,
+    )
+}
+
+pub(crate) fn read_from(factory: &IntexFactoryContract<'_>, chain_id: u64) -> Result<IntexParams> {
+    IntexParams::from_selector(factory.config_profile.read()?, chain_id)
 }

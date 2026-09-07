@@ -233,7 +233,7 @@ SECONDS_PER_DAY = 86_400
 # Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs
 # and crates/core/gem/src/config.rs); genesis only picks one. The slots are pinned
 # by a test in each crate.
-PROFILE_SELECTORS = {"prod": 0, "dev": 1}
+PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
 INTEX_PROFILE_SLOT = 10
 GEM_PROFILE_SLOT = 42
 
@@ -1559,9 +1559,9 @@ def seed_oracle(storage: StorageBuilder, config: dict):
 def seed_profile_selector(
     storage: StorageBuilder, config: dict, section: str, slot: int
 ):
-    """Write the profile selector from `profile: "prod"|"dev"`; prod is the
-    default and seeds nothing."""
-    profile = str(config.get("profile", "prod")).lower()
+    """Write the profile selector from `profile: "auto"|"dev"|"prod"`; auto is
+    the default, seeds nothing, and lets the chain id decide."""
+    profile = str(config.get("profile", "auto")).lower()
     if profile not in PROFILE_SELECTORS:
         raise ValueError(
             f"{section}: unknown profile {profile!r}; "

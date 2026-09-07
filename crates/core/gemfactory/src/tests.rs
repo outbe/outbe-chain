@@ -111,6 +111,12 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         word(1),
     );
     StorageHandle::enter(&mut storage, |handle| {
+        // These cases assert the PROD gem terms; an unset profile would resolve
+        // by chain id, and the test chain is not mainnet.
+        outbe_gem::schema::GemContract::new(handle.clone())
+            .config_profile
+            .write(outbe_gem::config::PROFILE_PROD)
+            .unwrap();
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.
         OracleContract::new(handle.clone())

@@ -642,6 +642,11 @@ fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option
 }
 
 fn qualified_gem(storage: &StorageHandle) -> U256 {
+    // These cases reason in the PROD call terms; the test chain id resolves to DEV.
+    GemContract::new(storage.clone())
+        .config_profile
+        .write(crate::config::PROFILE_PROD)
+        .unwrap();
     let mut p = sample_params(ALICE);
     // Issue well before the window so no day is skipped as pre-issuance.
     p.issued_at = T_NOW - 100 * 86_400;
@@ -1016,13 +1021,30 @@ fn call_skips_below_threshold() {
 }
 
 #[test]
-fn config_defaults_to_prod_when_unset() {
+fn config_unset_resolves_by_chain_id() {
     with_storage(|storage| {
-        // No genesis profile selected -> selector reads 0 -> prod bundle.
+        // No genesis profile selected -> resolved by network; the test chain is not mainnet.
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::DEV);
+        // An explicit selector still wins over the network default.
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
         assert_eq!(GemParams::PROD.call_window, 28 * 24 * 3600);
         assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
     });
+}
+
+/// The network default: only mainnet runs the real timings.
+#[test]
+fn config_auto_profile_follows_the_network() {
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+
+    assert_eq!(GemParams::for_chain_id(MAINNET_CHAIN_ID), GemParams::PROD);
+    for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
+        assert_eq!(GemParams::for_chain_id(chain_id), GemParams::DEV);
+    }
 }
 
 #[test]
