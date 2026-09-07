@@ -186,16 +186,17 @@ fn step_promis_load(
     // no chain will ever see.
     let stored = contract.promis_load_exponent.read()?;
     let current = (stored != 0).then_some(stored);
-    // An unpriced anchor leaves the ladder where it is; Metadosis has already
-    // announced the currency it could not price. With nothing stored either, the
-    // widest load is the honest answer: this day cannot be priced at all.
+    // A day the strike currency is missing from leaves the ladder where it is;
+    // Metadosis has already announced the currency it could not price. With nothing
+    // stored either, the launch rung is the honest answer: nothing is anchored yet,
+    // and the launch pair needs a rate to be a pair.
     let Some(rate) = reference_prices
         .iter()
         .find(|row| row.iso_code == PROMIS_LOAD_STRIKE_ISO)
         .map(|row| row.entry_price_minor)
     else {
         return Ok(promis_load_minor(
-            current.unwrap_or(PROMIS_LOAD_MAX_EXPONENT),
+            current.unwrap_or(PROMIS_LOAD_LAUNCH_EXPONENT),
         ));
     };
     let anchor_digits = match contract.promis_load_anchor_digits.read()? {

@@ -56,6 +56,7 @@ fn a_production_build_has_no_load_override() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
     assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
     with_storage(|s| {
@@ -2320,6 +2321,43 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
 }
 
 // --- Days the oracle could not price ---
+
+/// A day with no price at all is cancelled, so the ladder only meets this when the
+/// oracle priced some currency but not the strike one.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
+    with_storage(|s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(10 * LOAD_MINOR),
+                vec![crate::schema::ReferenceCurrencyPrice {
+                    iso_code: 978,
+                    entry_price_minor: U256::from(ENTRY_PRICE),
+                }],
+                true,
+                NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract
+                .config_promis_load_minor
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR),
+            "the day carries the launch rung, not the widest one"
+        );
+        assert_eq!(contract.promis_load_exponent.read().unwrap(), 0);
+        assert_eq!(contract.promis_load_anchor_digits.read().unwrap(), 0);
+    });
+}
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
