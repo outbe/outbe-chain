@@ -188,6 +188,7 @@ contract DeployGuardsTest is Test {
         (address extWcoen, address extWcoenBridge) =
             deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("WCOEN"));
         bytes memory extUsdtCode = extUsdt.code;
+        uint8 extWcoenDecimals = BridgeableERC20(extWcoen).decimals();
         assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
 
         vm.revertToState(snapshot);
@@ -203,6 +204,8 @@ contract DeployGuardsTest is Test {
         assertEq(extUsdtBridge, outUsdtBridge, "USDT bridge address differs between chains");
         assertEq(extWcoen, outWcoen, "WCOEN token address differs between chains");
         assertEq(extWcoenBridge, outWcoenBridge, "WCOEN bridge address differs between chains");
+        assertEq(extWcoenDecimals, 18, "external WCOEN decimals differ");
+        assertEq(BridgeableERC20(outWcoen).decimals(), 18, "Outbe WCOEN decimals differ");
 
         assertTrue(keccak256(extUsdtCode) != keccak256(outUsdt.code), "same bytecode: the test proves nothing");
     }
