@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IWhitelist, Whitelist, NotWhitelisted} from "../src/Whitelist.sol";
 import {
     V4SwapWhitelistHook,
@@ -34,8 +35,8 @@ contract SwapWhitelistHookTest is Test {
         address[] memory initial = new address[](1);
         initial[0] = router;
         registry = new Whitelist(address(this), initial);
-        v4Hook = new V4SwapWhitelistHook(poolManager, registry);
-        infinityHook = new InfinitySwapWhitelistHook(poolManager, registry);
+        v4Hook = new V4SwapWhitelistHook(poolManager, registry, address(this));
+        infinityHook = new InfinitySwapWhitelistHook(poolManager, registry, address(this));
     }
 
     function _v4Key() internal view returns (V4PoolKey memory) {
@@ -94,8 +95,35 @@ contract SwapWhitelistHookTest is Test {
         v4Hook.beforeSwap(router, _v4Key(), _params(), "");
     }
 
+    function test_SetWhitelist_RepointsGate() public {
+        address[] memory allowed = new address[](1);
+        allowed[0] = stranger;
+        Whitelist next = new Whitelist(address(this), allowed);
+
+        v4Hook.setWhitelist(next);
+        assertEq(address(v4Hook.registry()), address(next));
+
+        vm.prank(poolManager);
+        v4Hook.beforeSwap(stranger, _v4Key(), _params(), "");
+
+        vm.prank(poolManager);
+        vm.expectRevert(abi.encodeWithSelector(NotWhitelisted.selector, router));
+        v4Hook.beforeSwap(router, _v4Key(), _params(), "");
+    }
+
+    function test_SetWhitelist_OnlyOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        v4Hook.setWhitelist(registry);
+    }
+
+    function test_SetWhitelist_RejectsZero() public {
+        vm.expectRevert(ZeroRegistry.selector);
+        v4Hook.setWhitelist(IWhitelist(address(0)));
+    }
+
     function test_ZeroRegistry_Reverts() public {
         vm.expectRevert(ZeroRegistry.selector);
-        new V4SwapWhitelistHook(poolManager, IWhitelist(address(0)));
+        new V4SwapWhitelistHook(poolManager, IWhitelist(address(0)), address(this));
     }
 }

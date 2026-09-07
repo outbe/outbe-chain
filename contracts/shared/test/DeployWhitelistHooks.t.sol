@@ -33,8 +33,8 @@ contract DeployWhitelistHooksTest is Test {
     function test_BothHooks_ShareOneRegistry() public {
         IWhitelist whitelist = _registry();
 
-        V4SwapWhitelistHook v4Hook = deployScript.deployV4Hook(v4PoolManager, whitelist);
-        InfinitySwapWhitelistHook infinityHook = deployScript.deployInfinityHook(infinityPoolManager, whitelist);
+        V4SwapWhitelistHook v4Hook = deployScript.deployV4Hook(v4PoolManager, whitelist, owner);
+        InfinitySwapWhitelistHook infinityHook = deployScript.deployInfinityHook(infinityPoolManager, whitelist, owner);
 
         assertEq(address(v4Hook.registry()), address(whitelist), "v4 hook wired elsewhere");
         assertEq(v4Hook.poolManager(), v4PoolManager, "v4 pool manager");
@@ -45,7 +45,7 @@ contract DeployWhitelistHooksTest is Test {
     /// @dev v4 calls exactly the callbacks the address advertises, so the mined address must carry
     ///      beforeSwap and no other flag - anything else means a callback this hook cannot answer.
     function test_DeployV4Hook_AddressAdvertisesBeforeSwapOnly() public {
-        V4SwapWhitelistHook hook = deployScript.deployV4Hook(v4PoolManager, _registry());
+        V4SwapWhitelistHook hook = deployScript.deployV4Hook(v4PoolManager, _registry(), owner);
         assertEq(uint160(address(hook)) & ALL_HOOK_MASK, BEFORE_SWAP_FLAG, "wrong hook flags");
     }
 }
