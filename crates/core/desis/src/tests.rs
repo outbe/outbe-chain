@@ -9,7 +9,6 @@ use outbe_primitives::time::WorldwideDay;
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
     IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_STRIKE_USD,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -27,8 +26,9 @@ const SRC_CHAIN: u32 = 1;
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
-/// The load the ladder picks for `ENTRY_PRICE`, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
-const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
+/// The load any first priced brief picks: the launch rung, pinned by
+/// `the_fixture_load_is_the_one_the_ladder_picks`.
+const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
 const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 
 // --- PROMIS load ladder ---
@@ -36,8 +36,12 @@ const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
+/// The anchor a 0.001 launch captures, and the grid the ladder ran on before the
+/// anchor was stored. Every deadband fixture below runs on it.
+const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
+
 fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
-    runtime::promis_load_exponent(current, U256::from(rate_minor))
+    runtime::promis_load_exponent(ANCHOR_DIGITS, current, U256::from(rate_minor))
 }
 
 fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
@@ -53,12 +57,22 @@ fn a_production_build_has_no_load_override() {
 
 #[test]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
-    assert_eq!(ladder_load(None, ENTRY_PRICE), LOAD_MINOR);
+    assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
+    with_storage(|s| {
+        brief(&s, true);
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .config_promis_load_minor
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR),
+        );
+    });
 }
 
 #[test]
-fn the_anchor_holds_the_strike_across_the_decades() {
-    let strike_minor = u128::from(PROMIS_LOAD_STRIKE_USD) * 1_000_000;
+fn the_anchor_holds_its_launch_product_across_the_decades() {
+    let launch_product = runtime::promis_load_minor(LAUNCH_EXPONENT) * 1_000 / 1_000_000;
     for (rate_minor, expected) in [
         (100u128, 1_000_000_000_000u128),
         (1_000, 100_000_000_000),
@@ -70,14 +84,14 @@ fn the_anchor_holds_the_strike_across_the_decades() {
         assert_eq!(load, expected, "load at rate {rate_minor}");
         assert_eq!(
             load * rate_minor / 1_000_000,
-            strike_minor,
-            "strike at rate {rate_minor}"
+            launch_product,
+            "product at rate {rate_minor}"
         );
     }
 }
 
 #[test]
-fn a_cold_chain_takes_the_anchors_answer() {
+fn an_anchored_chain_takes_the_anchors_answer() {
     assert_eq!(ladder(None, 1_000), LAUNCH_EXPONENT);
     assert_eq!(ladder(None, 10_000), LAUNCH_EXPONENT - 1);
 }
@@ -132,7 +146,7 @@ fn the_band_survives_integer_division_in_the_narrowest_decade() {
 }
 
 #[test]
-fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
+fn an_absurd_rate_saturates_instead_of_underflowing() {
     assert_eq!(ladder_load(None, 0), 100_000_000_000_000);
     assert_eq!(ladder_load(None, u128::MAX), 1);
 }

@@ -19,8 +19,9 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
     MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO,
-    PROMIS_LOAD_STRIKE_USD, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT,
+    PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO,
+    REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -93,15 +94,10 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-const _: () = assert!(
-    10u32.pow(PROMIS_LOAD_STRIKE_USD.ilog10()) == PROMIS_LOAD_STRIKE_USD,
-    "the strike must be a power of ten; the ladder only steps by decades"
-);
-
-/// Digits `load_minor x rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
-/// the strike's own, plus the six each of the load and the rate.
-const PROMIS_LOAD_STRIKE_DIGITS: u32 =
-    PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
+/// The digits the ladder ran on before the anchor was stored: the retired $100
+/// strike's own, plus the six each of the load and the rate. A chain that already
+/// stepped under that rule keeps its grid.
+const PROMIS_LOAD_LEGACY_ANCHOR_DIGITS: u32 = 15;
 
 /// The widest rung, and the ceiling the ladder saturates at.
 const PROMIS_LOAD_MAX_EXPONENT: u32 = 14;
@@ -118,6 +114,12 @@ const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
     table
 };
 
+const _: () = assert!(
+    POW10[PROMIS_LOAD_LAUNCH_EXPONENT as usize]
+        == 100_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
+    "the launch rung must carry 100 000 PROMIS"
+);
+
 pub(crate) fn promis_load_minor(exponent: u32) -> u128 {
     POW10[exponent.min(PROMIS_LOAD_MAX_EXPONENT) as usize]
 }
@@ -133,9 +135,15 @@ fn decimal_digits(rate: U256) -> u32 {
     digits
 }
 
-/// The decade the ladder alone picks, which strikes at `PROMIS_LOAD_STRIKE_USD`.
-fn anchor_exponent(rate: U256) -> u32 {
-    PROMIS_LOAD_STRIKE_DIGITS
+/// Digits of the launch pair: the launch rung plus the rate's own. Captured once, on
+/// the first day the chain can price the strike currency, and never moved again.
+pub(crate) fn launch_anchor_digits(rate: U256) -> u32 {
+    PROMIS_LOAD_LAUNCH_EXPONENT + decimal_digits(rate)
+}
+
+/// The decade the ladder alone picks, relative to the captured launch pair.
+fn anchor_exponent(anchor_digits: u32, rate: U256) -> u32 {
+    anchor_digits
         .saturating_sub(decimal_digits(rate))
         .min(PROMIS_LOAD_MAX_EXPONENT)
 }
@@ -143,19 +151,23 @@ fn anchor_exponent(rate: U256) -> u32 {
 /// The decade a day quoted at `rate` runs on, holding `current` while the rate stays
 /// inside it widened by the deadband. Edges are compared scaled up rather than divided
 /// down, so the band survives integer division in the narrow decades.
-pub(crate) fn promis_load_exponent(current: Option<u32>, rate: U256) -> u32 {
+pub(crate) fn promis_load_exponent(anchor_digits: u32, current: Option<u32>, rate: U256) -> u32 {
     let Some(exponent) = current else {
-        return anchor_exponent(rate);
+        return anchor_exponent(anchor_digits, rate);
     };
     let exponent = exponent.min(PROMIS_LOAD_MAX_EXPONENT);
-    let decade = (PROMIS_LOAD_STRIKE_DIGITS - exponent) as usize;
+    // The anchor and the rung are independent cells; neither is trusted to keep
+    // their difference inside the table.
+    let decade = anchor_digits
+        .saturating_sub(exponent)
+        .clamp(1, POW10.len() as u32 - 1) as usize;
     let scaled = rate * U256::from(10_000u32);
     let lo = U256::from(POW10[decade - 1]) * U256::from(10_000 - PROMIS_LOAD_DEADBAND_BPS);
     let hi = U256::from(POW10[decade]) * U256::from(10_000 + PROMIS_LOAD_DEADBAND_BPS);
     if scaled >= lo && scaled < hi {
         exponent
     } else {
-        anchor_exponent(rate)
+        anchor_exponent(anchor_digits, rate)
     }
 }
 
@@ -186,7 +198,22 @@ fn step_promis_load(
             current.unwrap_or(PROMIS_LOAD_MAX_EXPONENT),
         ));
     };
-    let exponent = promis_load_exponent(current, rate);
+    let anchor_digits = match contract.promis_load_anchor_digits.read()? {
+        0 => {
+            // A chain already stepping the ladder keeps the grid the retired strike
+            // put it on; a fresh one takes the launch pair, which puts this first
+            // Intex on the launch rung whatever the rate is.
+            let digits = if current.is_some() {
+                PROMIS_LOAD_LEGACY_ANCHOR_DIGITS
+            } else {
+                launch_anchor_digits(rate)
+            };
+            contract.promis_load_anchor_digits.write(digits)?;
+            digits
+        }
+        digits => digits,
+    };
+    let exponent = promis_load_exponent(anchor_digits, current, rate);
     let load = promis_load_minor(exponent);
     match current {
         Some(previous) if previous == exponent => {}
