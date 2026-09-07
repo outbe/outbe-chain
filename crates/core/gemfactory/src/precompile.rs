@@ -3,7 +3,7 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
+use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
 
 use crate::errors::GemFactoryError;
 use crate::runtime;
@@ -24,7 +24,7 @@ sol!(
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&IGemFactory::settleGemCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
+        Some(&IGemFactory::settleGemCall::SELECTOR) => ZK_VERIFY_GAS,
         _ => PRECOMPILE_BASE_GAS,
     }
 }

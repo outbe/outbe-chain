@@ -317,7 +317,7 @@ pub fn settle_gem(
         PaymentCurrency::Issuance => item.issuance_currency,
     };
     let amount_paid = cost_in_token(storage, &item, claim.asset, currency)?;
-    if U256::from(claim.spend_amount) < amount_paid {
+    if claim.spend_amount < amount_paid {
         return Err(GemFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
             required: amount_paid,

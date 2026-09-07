@@ -16,14 +16,13 @@ interface IEmit {
     /// nullify the note, credit `mintUnits` to `payoutRecipient`, and — when
     /// the note holds more than `mintUnits` — append the circuit-derived
     /// deterministic change commitment. The caller must be `noteOwner`; the
-    /// embedded proof statement must equal the explicit calldata fields, and
-    /// `chainId` must equal the runtime chain ID. `proof` is the combined
+    /// embedded proof statement must equal the explicit calldata fields. The
+    /// proof's chain ID must equal the runtime chain ID. `proof` is the combined
     /// UltraHonkKeccak wire for the frozen Emit mint circuit
     /// (`outbe.emit.mint`, version 1.5.0), enforced at its exact frozen
     /// length.
     function mint(
         address payoutRecipient,
-        uint64 chainId,
         bytes32 root,
         bytes32 nullifier,
         address noteOwner,
@@ -31,6 +30,18 @@ interface IEmit {
         bytes32 changeCommitment,
         bytes calldata proof
     ) external;
+
+    /// @notice Latest commitment-tree root.
+    function currentRoot() external view returns (bytes32 root);
+
+    /// @notice Number of leaves appended so far; `0` means a pristine tree.
+    function leafCount() external view returns (uint64 count);
+
+    /// @notice Whether `nullifier` has already been spent.
+    function isSpent(bytes32 nullifier) external view returns (bool spent);
+
+    /// @notice Whether `commitment` is already a leaf of the tree.
+    function hasCommitment(bytes32 commitment) external view returns (bool present);
 
     /// @notice A commitment was appended to the chain's Emit tree.
     /// @param commitment The appended commitment (indexed).

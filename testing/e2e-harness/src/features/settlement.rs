@@ -333,7 +333,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &key,
         owner,
         fixture.asset,
-        u128::try_from(payable).expect("Gem cost fits a PayNote spend amount"),
+        payable,
     );
     assert_eq!(
         eth::read_call(
@@ -569,14 +569,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &ISettlementAsset::balanceOfCall { account: vault },
     )
     .expect("reserve before deposit");
-    let proof = paynote::deposit_and_prove(
-        world,
-        port,
-        &key,
-        owner,
-        asset,
-        u128::try_from(payable).expect("Gem cost fits PayNote amount"),
-    );
+    let proof = paynote::deposit_and_prove(world, port, &key, owner, asset, payable);
     assert_eq!(
         eth::read_call(
             &url,

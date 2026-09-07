@@ -39,8 +39,8 @@ cast send "$EMIT_ADDR" 'burn(bytes32)' "$NOTE_SN" \
 
 # Redeem: prove membership + ownership; credit the payout recipient.
 cast send "$EMIT_ADDR" \
-  'mint(address,uint64,bytes32,bytes32,address,uint256,bytes32,bytes)' \
-  "$PAYOUT" "$CHAIN_ID" "$ROOT" "$NULLIFIER" "$NOTE_OWNER" "$MINT_UNITS" \
+  'mint(address,bytes32,bytes32,address,uint256,bytes32,bytes)' \
+  "$PAYOUT" "$ROOT" "$NULLIFIER" "$NOTE_OWNER" "$MINT_UNITS" \
   "$CHANGE_COMMITMENT" "$PROOF" \
   --private-key "$RECIPIENT_KEY" --rpc-url "$RPC_URL"
 ```
@@ -50,17 +50,24 @@ Methods:
 - `burn(bytes32 noteSn) external payable` — derives the commitment from the
   runtime chain ID, `noteSn`, and `msg.value`; initializes the tree on the
   first call.
-- `mint(address payoutRecipient, uint64 chainId, bytes32 root, bytes32 nullifier, address noteOwner, uint256 mintUnits, bytes32 changeCommitment, bytes proof) external` —
-  proves membership under an accepted root, nullifies, credits `mintUnits`,
-  and appends the deterministic change commitment on partial mints.
+- `mint(address payoutRecipient, bytes32 root, bytes32 nullifier, address noteOwner,
+  uint256 mintUnits, bytes32 changeCommitment, bytes proof) external` — proves
+  membership under an accepted root, nullifies, credits `mintUnits`, and
+  appends the deterministic change commitment on partial mints.
+- `currentRoot() external view returns (bytes32)` — returns the latest tree root.
+- `leafCount() external view returns (uint64)` — returns the appended leaf count.
+- `isSpent(bytes32 nullifier) external view returns (bool)` — reports whether a
+  nullifier was spent.
+- `hasCommitment(bytes32 commitment) external view returns (bool)` — reports
+  tree membership.
 
 Rules:
 
 - `msg.value` on `burn`: any positive `uint256` native-base-unit value, mapped
   1:1 to circuit units.
 - `mint` requires an initialized tree; caller must be `noteOwner`; calldata
-  statement fields must equal the proof's embedded statement; `chainId` must
-  equal the runtime chain ID.
+  statement fields must equal the proof's embedded statement, and the proof's
+  chain ID must equal the runtime chain ID.
 - `root` must be inside the 32-root window; each nullifier is single-use.
 - `proof` is the combined UltraHonkKeccak wire for the frozen
   `outbe.emit.mint@1.5.0` circuit, enforced at its exact frozen length.
@@ -80,7 +87,7 @@ Limits:
 - Tree depth 32 → 4,294,967,296 commitments (bounded to 4,294,967,295 by the u32 leaf counter).
 - Root window 32.
 - Base gas burn 530,000, mint 3,517,500 (`ZK_VERIFY_GAS` 3,000,000 +
-  517,500).
+  517,500), views 30,000.
 
 ## Interaction scenarios
 
@@ -104,10 +111,11 @@ burn(caller, native_value, note_sn)       burn(bytes32 noteSn), payable — valu
 BurnReceipt(C, note_amount, leaf_index,
 root_after)                               NewNote(commitment, leafIndex, rootAfter, noteAmount) event
 mint(caller, payout_recipient, statement,
-proof)                                    mint(payoutRecipient, chainId, root, nullifier,
-                                          noteOwner, mintUnits, changeCommitment, proof);
-                                          "statement" is the flattened calldata mirrored
-                                          by the proof's embedded public inputs
+proof)                                    mint(payoutRecipient, root, nullifier, noteOwner,
+                                          mintUnits, changeCommitment, proof);
+                                          "statement" is the flattened calldata plus
+                                          the runtime chain ID, mirrored by the proof's
+                                          embedded public inputs
 MintReceipt(N, mint_units, optional
 C_change, root_after)                     NoteUsed(noteOwner, payoutRecipient, nullifier,
                                           mintAmount) event, then an optional NewNote for

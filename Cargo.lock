@@ -8757,7 +8757,6 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultrouter",
- "outbe-zkproof",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8832,7 +8831,6 @@ dependencies = [
  "outbe-promisfactory",
  "outbe-promislimit",
  "outbe-vaultrouter",
- "outbe-zkproof",
  "ring",
  "thiserror 2.0.18",
  "tracing",

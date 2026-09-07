@@ -79,7 +79,7 @@ pub enum GemFactoryError {
 
     #[error("PayNote spends {covered}, settlement costs {required}")]
     PayNoteUndercoversCost {
-        covered: u128,
+        covered: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },
 }

@@ -155,6 +155,7 @@ fn note_proof(
     spender: Address,
     amount: u128,
 ) -> Vec<u8> {
+    let amount = U256::from(amount);
     let fixture =
         outbe_paynote::test_support::note_and_spend_proof(1, asset, spender, amount, amount);
     outbe_paynote::test_support::seed_pool(provider, 1, &[fixture.commitment]);

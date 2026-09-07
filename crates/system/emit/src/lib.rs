@@ -1,6 +1,6 @@
 //! Emit private-note tree precompile (`0x…EE13`).
 //!
-//! One native precompile exposing exactly two ABI methods, `burn` and `mint`
+//! One native precompile exposing `burn`, `mint`, and four tree-state views
 //! (see `contracts/precompiles/src/IEmit.sol`). Burn is a runtime-only
 //! native-COEN transition that derives a chain-ID- and amount-bound note
 //! commitment from a caller-supplied serial and the credited value; mint

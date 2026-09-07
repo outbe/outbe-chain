@@ -95,6 +95,17 @@ fn run(
     evm.transact_raw(tx).expect("transaction executes")
 }
 
+fn view(db: CacheDB<EmptyDB>, calldata: Bytes) -> Bytes {
+    let outcome = run(db, ALICE, EMIT_ADDRESS, 0, 100_000, calldata);
+    match outcome.result {
+        ExecutionResult::Success {
+            output: Output::Call(output),
+            ..
+        } => output,
+        other => panic!("view call failed: {other:?}"),
+    }
+}
+
 fn revert_reason(result: &ExecutionResult) -> Option<String> {
     let bytes = match result {
         ExecutionResult::Revert { output, .. } => output,
@@ -293,7 +304,6 @@ fn mint_tx(
 ) -> Bytes {
     IEmit::mintCall {
         payoutRecipient: payout,
-        chainId: CHAIN_ID,
         root: b256(root),
         nullifier: b256(nullifier),
         noteOwner: owner,
@@ -516,6 +526,35 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
         b256(tree.root_at(2)),
         "a full mint does not advance the root"
     );
+
+    let output = view(db.clone(), IEmit::currentRootCall {}.abi_encode().into());
+    assert_eq!(
+        IEmit::currentRootCall::abi_decode_returns(&output).unwrap(),
+        b256(tree.root_at(2))
+    );
+    let output = view(db.clone(), IEmit::leafCountCall {}.abi_encode().into());
+    assert_eq!(
+        IEmit::leafCountCall::abi_decode_returns(&output).unwrap(),
+        2
+    );
+    let output = view(
+        db.clone(),
+        IEmit::isSpentCall {
+            nullifier: b256(nullifier),
+        }
+        .abi_encode()
+        .into(),
+    );
+    assert!(IEmit::isSpentCall::abi_decode_returns(&output).unwrap());
+    let output = view(
+        db.clone(),
+        IEmit::hasCommitmentCall {
+            commitment: b256(change),
+        }
+        .abi_encode()
+        .into(),
+    );
+    assert!(IEmit::hasCommitmentCall::abi_decode_returns(&output).unwrap());
 
     // Replay the first partial mint on a fresh chain state: failed receipt,
     // and — asserted against the chained database, not the replay

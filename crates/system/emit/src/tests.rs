@@ -23,7 +23,7 @@ use crate::hash::{
     address_field, change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
     note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
-use crate::precompile::{base_gas, dispatch, IEmit, PAYABLE_SELECTORS};
+use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_SELECTORS};
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 
 const CHAIN_ID: u64 = 31_337;
@@ -73,7 +73,7 @@ fn selectors_and_gas_are_pinned() {
     );
     assert_eq!(
         alloy_primitives::hex::encode(IEmit::mintCall::SELECTOR),
-        "1ef9010d"
+        "5b278400"
     );
     assert_eq!(PAYABLE_SELECTORS, &[IEmit::burnCall::SELECTOR]);
     assert_eq!(
@@ -83,7 +83,6 @@ fn selectors_and_gas_are_pinned() {
     assert_eq!(base_gas(&[0xee; 4]), u64::MAX);
     let mint_calldata = IEmit::mintCall {
         payoutRecipient: CAROL,
-        chainId: CHAIN_ID,
         root: B256::ZERO,
         nullifier: B256::ZERO,
         noteOwner: BOB,
@@ -93,6 +92,32 @@ fn selectors_and_gas_are_pinned() {
     }
     .abi_encode();
     assert_eq!(base_gas(&mint_calldata), 3_517_500);
+    assert_eq!(
+        base_gas(&IEmit::currentRootCall {}.abi_encode()),
+        EMIT_VIEW_BASE_GAS
+    );
+    assert_eq!(
+        base_gas(&IEmit::leafCountCall {}.abi_encode()),
+        EMIT_VIEW_BASE_GAS
+    );
+    assert_eq!(
+        base_gas(
+            &IEmit::isSpentCall {
+                nullifier: B256::ZERO
+            }
+            .abi_encode()
+        ),
+        EMIT_VIEW_BASE_GAS
+    );
+    assert_eq!(
+        base_gas(
+            &IEmit::hasCommitmentCall {
+                commitment: B256::ZERO
+            }
+            .abi_encode()
+        ),
+        EMIT_VIEW_BASE_GAS
+    );
 }
 
 // ---- Current circuit golden formula vector -------------------------------
@@ -331,10 +356,8 @@ fn burn_calldata(note_sn: B256) -> Vec<u8> {
     IEmit::burnCall { noteSn: note_sn }.abi_encode()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mint_calldata(
     payout: Address,
-    chain_id: u64,
     root: B256,
     nullifier: B256,
     owner: Address,
@@ -344,7 +367,6 @@ fn mint_calldata(
 ) -> Vec<u8> {
     mint_calldata_u256(
         payout,
-        chain_id,
         root,
         nullifier,
         owner,
@@ -354,10 +376,8 @@ fn mint_calldata(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mint_calldata_u256(
     payout: Address,
-    chain_id: u64,
     root: B256,
     nullifier: B256,
     owner: Address,
@@ -367,7 +387,6 @@ fn mint_calldata_u256(
 ) -> Vec<u8> {
     IEmit::mintCall {
         payoutRecipient: payout,
-        chainId: chain_id,
         root,
         nullifier,
         noteOwner: owner,
@@ -538,7 +557,6 @@ fn mint_before_any_burn_is_not_initialized() {
     );
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -554,7 +572,6 @@ fn mint_before_any_burn_is_not_initialized() {
     // the only check allowed before the initialization gate (frozen matrix).
     let mismatched = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(9), // differs from every embedded word below
         small_word(3),
         BOB,
@@ -564,9 +581,8 @@ fn mint_before_any_burn_is_not_initialized() {
     );
     let result = dispatch_mint(&mut provider, BOB, &mismatched);
     assert_revert(result, "Emit is not initialized");
-    let mut noncanonical = mint_calldata(
+    let noncanonical = mint_calldata(
         CAROL,
-        CHAIN_ID,
         B256::new(alloy_primitives::hex!(
             "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
         )),
@@ -575,12 +591,6 @@ fn mint_before_any_burn_is_not_initialized() {
         40,
         small_word(25),
         &proof,
-    );
-    noncanonical[4 + 64..4 + 96].copy_from_slice(
-        B256::new(alloy_primitives::hex!(
-            "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
-        ))
-        .as_slice(),
     );
     let result = dispatch_mint(&mut provider, BOB, &noncanonical);
     assert_revert(result, "Emit is not initialized");
@@ -595,9 +605,9 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
     ));
     // Head word offsets after the 4-byte selector.
     for (field_name, offset) in [
-        ("root", 4 + 64),
-        ("nullifier", 4 + 96),
-        ("changeCommitment", 4 + 6 * 32),
+        ("root", 4 + 32),
+        ("nullifier", 4 + 64),
+        ("changeCommitment", 4 + 5 * 32),
     ] {
         let proof = fabricated_statement(
             CHAIN_ID,
@@ -609,7 +619,6 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
         );
         let mut data = mint_calldata(
             CAROL,
-            CHAIN_ID,
             small_word(2),
             small_word(3),
             BOB,
@@ -655,7 +664,6 @@ fn malformed_proof_tail_reverts_never_fatal() {
     ));
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -696,7 +704,6 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
     // Well-framed proof, but the explicit calldata disagrees on mintUnits.
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -712,7 +719,6 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
     truncated[..4].copy_from_slice(&5u32.to_be_bytes());
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -736,22 +742,20 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
     run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
 
     let matching = |chain_id: u64, owner: Address, units: u128| {
-        let proof = fabricated_statement(
+        fabricated_statement(
             chain_id,
             small_word(2),
             small_word(3),
             owner,
             units,
             small_word(25),
-        );
-        (proof, chain_id)
+        )
     };
 
     // Caller mismatch: statement owner is BOB, caller is ALICE.
-    let (proof, chain_id) = matching(CHAIN_ID, BOB, 40);
+    let proof = matching(CHAIN_ID, BOB, 40);
     let data = mint_calldata(
         CAROL,
-        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -765,7 +769,6 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
     // Zero recipient.
     let data = mint_calldata(
         Address::ZERO,
-        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -778,10 +781,9 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
 
     // Zero owner: the fabricated proof embeds the zero owner too, so the
     // statement matches and the owner guard fires.
-    let (proof, chain_id) = matching(CHAIN_ID, Address::ZERO, 40);
+    let proof = matching(CHAIN_ID, Address::ZERO, 40);
     let data = mint_calldata(
         CAROL,
-        chain_id,
         small_word(2),
         small_word(3),
         Address::ZERO,
@@ -793,10 +795,9 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
     assert_revert(result, "Emit note owner must be non-zero");
 
     // Zero units.
-    let (proof, chain_id) = matching(CHAIN_ID, BOB, 0);
+    let proof = matching(CHAIN_ID, BOB, 0);
     let data = mint_calldata(
         CAROL,
-        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -807,11 +808,10 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
     let result = dispatch_mint(&mut provider, BOB, &data);
     assert_revert(result, "Emit mint units must be non-zero");
 
-    // Chain-ID mismatch: statement and proof carry a different chain.
-    let (proof, other_chain_id) = matching(OTHER_CHAIN_ID, BOB, 40);
+    // Chain-ID mismatch: the proof carries a different chain.
+    let proof = matching(OTHER_CHAIN_ID, BOB, 40);
     let data = mint_calldata(
         CAROL,
-        other_chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -837,7 +837,6 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
     );
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -855,7 +854,7 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
     // ABI framing is Alloy's job now: a non-canonical dynamic offset is a
     // plain decode revert (alloy's own error text) and must not touch state.
     let mut bad_offset = data.clone();
-    bad_offset[4 + 7 * 32 + 31] = 8; // offset 8 ≠ 256
+    bad_offset[4 + 6 * 32 + 31] = 8; // offset 8 ≠ 224
     let result = dispatch_mint(&mut provider, BOB, &bad_offset);
     match result {
         Err(PrecompileError::Revert(_)) => {}
@@ -868,7 +867,6 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
     short.truncate(short.len() - 32);
     let data = mint_calldata(
         CAROL,
-        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -922,7 +920,6 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 
     let partial_data = mint_calldata(
         CAROL,
-        pool,
         b256(root_after_burn),
         b256(nullifier),
         BOB,
@@ -939,7 +936,6 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     let next_nullifier = derive_nullifier(change, next_key);
     let full_data = mint_calldata(
         DAVE,
-        pool,
         b256(root_after_change),
         b256(next_nullifier),
         BOB,
@@ -1034,7 +1030,6 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     let partial = prove_mint_u256(&tree, BOB, key, note, note_leaf, 1, minted);
     let data = mint_calldata_u256(
         CAROL,
-        CHAIN_ID,
         b256(root_after_burn),
         b256(nullifier),
         BOB,
@@ -1050,7 +1045,6 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, 2, remainder);
     let data = mint_calldata_u256(
         DAVE,
-        CHAIN_ID,
         b256(tree.root_at(2)),
         b256(next_nullifier),
         BOB,
@@ -1104,7 +1098,6 @@ fn stale_root_past_the_32_window_is_rejected() {
 
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(old_root),
         b256(nullifier),
         BOB,
@@ -1137,7 +1130,6 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     provider.set_balance(CAROL, U256::MAX);
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1189,7 +1181,6 @@ fn full_tree_rejects_burns_and_partial_mints() {
     );
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1230,7 +1221,6 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1328,7 +1318,6 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     );
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1479,7 +1468,6 @@ fn mint_rolls_back_fully_under_fault_injection() {
     let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
     let data = mint_calldata(
         CAROL,
-        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,

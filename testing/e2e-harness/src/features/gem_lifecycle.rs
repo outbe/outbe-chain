@@ -318,7 +318,7 @@ fn settle_and_mine(world: &mut World) {
         DEPLOYER_KEY,
         merchant,
         asset,
-        u128::try_from(payable).expect("gem cost fits a PayNote spend amount"),
+        payable,
     );
 
     let settle = eth::send_call_outcome(

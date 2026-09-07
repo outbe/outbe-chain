@@ -13,7 +13,7 @@ use outbe_primitives::dispatch::{
     view,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
+use outbe_primitives::storage::gas::{PRECOMPILE_BASE_GAS, ZK_VERIFY_GAS};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
@@ -33,7 +33,7 @@ sol!(
 /// repeats.
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
-        Some(&IIntexFactory::settleCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
+        Some(&IIntexFactory::settleCall::SELECTOR) => ZK_VERIFY_GAS,
         _ => PRECOMPILE_BASE_GAS,
     }
 }

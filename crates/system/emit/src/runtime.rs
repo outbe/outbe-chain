@@ -26,7 +26,6 @@ use crate::precompile::IEmit;
 use crate::schema::{EmitContract, EMIT_ROOT_WINDOW, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 /// The explicit mint statement, exactly as it arrives on the ABI.
 pub(crate) struct MintStatement {
-    pub chain_id: u64,
     pub root: B256,
     pub nullifier: B256,
     pub note_owner: Address,
@@ -169,7 +168,7 @@ pub(crate) fn mint(
     }
 
     // Statement field elements must be canonical before they are compared or
-    // hashed. `chain_id` and `mint_units` are exact ABI-decoded integers.
+    // hashed. `mint_units` is an exact ABI-decoded integer.
     let root = field_from_be_bytes(&statement.root.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
     let nullifier = field_from_be_bytes(&statement.nullifier.0)
@@ -179,8 +178,7 @@ pub(crate) fn mint(
 
     // The embedded statement must equal the explicit calldata exactly — a
     // security check, not optional redundancy.
-    let statement_matches = embedded.chain_id == statement.chain_id
-        && embedded.root == statement.root.0
+    let statement_matches = embedded.root == statement.root.0
         && embedded.nullifier == statement.nullifier.0
         && embedded.note_owner == statement.note_owner.into_array()
         && embedded.mint_units == u256_limbs_be(&statement.mint_units.to_be_bytes::<32>())
@@ -190,7 +188,7 @@ pub(crate) fn mint(
     }
 
     // A proof-supplied chain ID is never trusted.
-    if statement.chain_id != runtime_chain_id {
+    if embedded.chain_id != runtime_chain_id {
         return Err(EmitError::ChainIdMismatch.into());
     }
 

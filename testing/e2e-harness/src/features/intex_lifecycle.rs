@@ -373,7 +373,7 @@ fn settlement_note(
         DEPLOYER_KEY,
         holder,
         asset,
-        u128::try_from(total).expect("settlement cost fits a PayNote spend amount"),
+        total,
     )
 }
 
