@@ -95,8 +95,9 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     let mut record = registry.load_series(series_id)?;
     let state = record.lifecycle_state()?;
     if state != IntexState::Issued && state != IntexState::Qualified {
-        return Err(IntexError::InvalidState {
-            expected: IntexState::Qualified as u8,
+        return Err(IntexError::InvalidStateEither {
+            first: IntexState::Issued as u8,
+            second: IntexState::Qualified as u8,
             actual: record.state,
         }
         .into());

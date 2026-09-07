@@ -97,5 +97,8 @@ fn to_abi_data(item: &GemData) -> IGem::GemData {
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
+        callPrice: item.call_price_minor,
+        calledAt: item.called_at,
+        callNoticePeriod: item.call_notice_period,
     }
 }
