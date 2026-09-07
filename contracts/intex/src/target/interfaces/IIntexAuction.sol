@@ -227,6 +227,13 @@ interface IIntexAuction {
     /// @param _escrow Escrow contract address.
     function wire(address _escrow) external;
 
+    /// @notice Point the bid-commit gate at a Whitelist registry.
+    /// @param registry Registry address; the zero address leaves commitBid open to everyone.
+    function setWhitelist(address registry) external;
+
+    /// @notice Registry currently gating {commitBid}, or the zero address when ungated.
+    function whitelist() external view returns (address);
+
     // --- Lifecycle ---
 
     /// @notice Create and start a new auction for `worldwideDay`.

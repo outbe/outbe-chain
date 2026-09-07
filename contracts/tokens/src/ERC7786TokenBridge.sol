@@ -69,6 +69,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
 
     /// @notice TEMPORARY: recovers everything this bridge holds when a remote chain is down and no delivery can
     ///         release it. Only `LockUnlock` custodies tokens, so only that mode has anything to recover.
+    /// @dev TODO: remove before production.
     function emergencyWithdraw() external onlyOwner {
         if (mode != TokenBridgeMode.LockUnlock) revert NothingToWithdraw();
 

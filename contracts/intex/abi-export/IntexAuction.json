@@ -1106,6 +1106,19 @@
     },
     {
       "type": "function",
+      "name": "setWhitelist",
+      "inputs": [
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "startClearingStage",
       "inputs": [
         {
@@ -1153,6 +1166,19 @@
       ],
       "outputs": [],
       "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "whitelist",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1456,6 +1482,25 @@
       "anonymous": false
     },
     {
+      "type": "event",
+      "name": "WhitelistUpdated",
+      "inputs": [
+        {
+          "name": "previous",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "current",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
       "type": "error",
       "name": "AccessControlBadConfirmation",
       "inputs": []
@@ -1685,6 +1730,17 @@
       "type": "error",
       "name": "NotInitializing",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotWhitelisted",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
     },
     {
       "type": "error",

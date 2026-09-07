@@ -14,7 +14,8 @@ import {Router} from "../src/router/Router.sol";
 ///   1. escrow.setAuthorizedCaller(router)
 ///   2. auction.setRouter(router)
 ///   3. allocator.addOperator(router)
-///   4. router.setRemoteRouter(chainId, ...) for each REMOTE_CHAIN_IDS (same CREATE3 address across chains)
+///   4. router.setWhitelist(WHITELIST_ADDRESS) when set (gates who may open orders)
+///   5. router.setRemoteRouter(chainId, ...) for each REMOTE_CHAIN_IDS (same CREATE3 address across chains)
 /// (router->auction is immutable, bound at router construction.)
 /// ConfigureRouter.s.sol remains as a standalone helper to add/update a single remote later.
 ///
@@ -29,6 +30,7 @@ import {Router} from "../src/router/Router.sol";
 ///   AUCTION_COMMIT_PERIOD - commit window in seconds (skipped if unset; set per target chain)
 ///   AUCTION_REVEAL_PERIOD - reveal window in seconds (skipped if unset; set per target chain)
 ///   AUCTION_MAX_QUOTES    - max revealed quotes per order (skipped if unset)
+///   WHITELIST_ADDRESS     - Whitelist registry gating open() (skipped if unset, leaving it open)
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -86,7 +88,14 @@ contract ConfigureAll is Script {
 
         // Router -> Auction binding is immutable (set at router construction); no setAuction step.
 
-        // 4. Cross-chain: register the matching Router on each remote chain. The remote Router shares this Router's
+        // 4. Gate order opening on the shared Whitelist registry (left open when unset).
+        address whitelist = vm.envOr("WHITELIST_ADDRESS", address(0));
+        if (whitelist != address(0)) {
+            Router(routerAddress).setWhitelist(whitelist);
+            console2.log("  router.setWhitelist done");
+        }
+
+        // 5. Cross-chain: register the matching Router on each remote chain. The remote Router shares this Router's
         //    CREATE3 address, so its interop address is (chainId, routerAddress).
         uint256[] memory remoteChainIds = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
         for (uint256 i = 0; i < remoteChainIds.length; i++) {

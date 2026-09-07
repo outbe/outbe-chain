@@ -11,6 +11,7 @@ import {RouterAccessors} from "../common/RouterAccessors.sol";
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../../interfaces/OrderTypes.sol";
 import {IOriginSettler} from "../../interfaces/IOriginSettler.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
+import {IWhitelist, WhitelistUpdated, requireWhitelisted} from "@shared/Whitelist.sol";
 
 /**
  * @title OriginSettlerBase
@@ -35,10 +36,22 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
     /// @notice Stores the resolved orders by their ID
     mapping(bytes32 orderId => bytes orderData) public openOrders;
 
+    /// @notice Registry gating who may open orders. Zero address leaves the gate open.
+    IWhitelist public whitelist;
+
     // ============ Events ============
 
     /// @notice Emitted when a nonce is invalidated for an address
     event NonceInvalidation(address indexed owner, uint256 nonce);
+
+    // ============ Internal Configuration ============
+
+    /// @dev Points the order-opening gate at `registry`, or opens it when `registry` is zero.
+    ///      Expose behind the inheriting contract's own access control.
+    function _setWhitelist(address registry) internal {
+        emit WhitelistUpdated(address(whitelist), registry);
+        whitelist = IWhitelist(registry);
+    }
 
     // ============ External Functions ============
 
@@ -48,6 +61,8 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
      * @param _order The OnchainCrossChainOrder definition
      */
     function open(OnchainCrossChainOrder calldata _order) external payable {
+        requireWhitelisted(whitelist, msg.sender);
+
         // The deadline must leave room to run the auction and let the winner claim + fill before it
         // expires. MIN_ORDER_DURATION is strictly positive, so this also rejects past deadlines.
         if (_order.fillDeadline < block.timestamp + MIN_ORDER_DURATION) revert InvalidFillDeadline();
