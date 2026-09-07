@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "burn",
+    "inputs": [
+      {
+        "name": "noteSn",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "currentRoot",
     "inputs": [],
     "outputs": [
@@ -11,29 +24,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "deposit",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "noteSn",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -48,25 +38,6 @@
     "outputs": [
       {
         "name": "present",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isKnownRoot",
-    "inputs": [
-      {
-        "name": "root",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "known",
         "type": "bool",
         "internalType": "bool"
       }
@@ -106,6 +77,49 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "mint",
+    "inputs": [
+      {
+        "name": "payoutRecipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "nullifier",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "noteOwner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "mintUnits",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "changeCommitment",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "NewNote",
     "inputs": [
@@ -128,12 +142,6 @@
         "internalType": "bytes32"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
         "name": "noteAmount",
         "type": "uint256",
         "indexed": false,
@@ -147,13 +155,13 @@
     "name": "NoteUsed",
     "inputs": [
       {
-        "name": "asset",
+        "name": "noteOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "spender",
+        "name": "payoutRecipient",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -165,61 +173,12 @@
         "internalType": "bytes32"
       },
       {
-        "name": "spendAmount",
+        "name": "mintAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AssetVaultMissing",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CommitmentExists",
-    "inputs": [
-      {
-        "name": "commitment",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "MustBeNonZero",
-    "inputs": [
-      {
-        "name": "field",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NonCanonicalField",
-    "inputs": [
-      {
-        "name": "field",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TreeFull",
-    "inputs": []
   }
 ]

@@ -1,7 +1,7 @@
 //! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
-//! `outbe.paynote@1.0.0` statement from **Rust-computed** public inputs and
+//! `outbe.paynote@1.1.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
 //! the in-circuit ones and proving would fail — that is what pins the mirror.
@@ -15,7 +15,11 @@ use alloy_sol_types::SolCall;
 use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_zk_canonical::noir::paynote::PublicInputs;
+use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
+use outbe_zk_canonical::paynote::{
+    COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
+};
+use outbe_zk_canonical::CircuitId as _;
 
 use crate::hash::{empty_subtrees, field_to_be_bytes, Field};
 use crate::precompile::{base_gas, dispatch, IPayNote, PAYABLE_SELECTORS};
@@ -57,7 +61,13 @@ fn prove_spend(
     amount: u128,
     spend_amount: u128,
 ) -> (Vec<u8>, PublicInputs, ReferenceTree) {
-    let fixture = note_and_spend_proof(chain_id, asset, SPENDER, amount, spend_amount);
+    let fixture = note_and_spend_proof(
+        chain_id,
+        asset,
+        SPENDER,
+        U256::from(amount),
+        U256::from(spend_amount),
+    );
     (fixture.proof, fixture.public, fixture.tree)
 }
 
@@ -93,8 +103,8 @@ fn unknown_selector_is_priced_out_of_gas() {
 fn asset_separates_otherwise_identical_notes() {
     // The whole reason the commitment binds the asset: a note funded in one
     // token must not be spendable as another.
-    let usdc = note(CHAIN_ID, 17, USDC, 100);
-    let wbtc = note(CHAIN_ID, 17, WBTC, 100);
+    let usdc = note(CHAIN_ID, 17, USDC, U256::from(100));
+    let wbtc = note(CHAIN_ID, 17, WBTC, U256::from(100));
     assert_eq!(usdc.serial, wbtc.serial, "serial is asset-independent");
     assert_ne!(usdc.commitment, wbtc.commitment);
     assert_ne!(usdc.nullifier, wbtc.nullifier);
@@ -104,8 +114,8 @@ fn asset_separates_otherwise_identical_notes() {
 fn one_serial_two_amounts_stay_independently_spendable() {
     // The nullifier binds the commitment, not the serial, so two notes sharing
     // a serial do not alias onto one nullifier and lock each other out.
-    let a = note(CHAIN_ID, 17, USDC, 40);
-    let b = note(CHAIN_ID, 17, USDC, 60);
+    let a = note(CHAIN_ID, 17, USDC, U256::from(40));
+    let b = note(CHAIN_ID, 17, USDC, U256::from(60));
     assert_eq!(a.serial, b.serial);
     assert_ne!(a.commitment, b.commitment);
     assert_ne!(a.nullifier, b.nullifier);
@@ -128,7 +138,7 @@ fn incremental_append_matches_naive_recompute() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut reference = ReferenceTree::new(CHAIN_ID);
     let leaves: Vec<Field> = (0..5)
-        .map(|i| note(CHAIN_ID, 100 + i, USDC, 10 + u128::from(i)).commitment)
+        .map(|i| note(CHAIN_ID, 100 + i, USDC, U256::from(10 + u128::from(i))).commitment)
         .collect();
 
     seed_pool(&mut provider, CHAIN_ID, &leaves);
@@ -152,7 +162,7 @@ fn root_window_retains_only_the_last_entries() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     // One seeded empty root plus enough appends to overflow the window.
     let leaves: Vec<Field> = (0..PAYNOTE_ROOT_WINDOW + 4)
-        .map(|i| note(CHAIN_ID, 1_000 + u64::from(i), USDC, 7).commitment)
+        .map(|i| note(CHAIN_ID, 1_000 + u64::from(i), USDC, U256::from(7)).commitment)
         .collect();
     seed_pool(&mut provider, CHAIN_ID, &leaves);
 
@@ -180,23 +190,29 @@ fn tree_capacity_bound_exceeds_u32() {
 #[test]
 fn deposit_guards_fire_before_any_sub_call() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let serial = note(CHAIN_ID, 17, USDC, 100).serial;
+    let serial = note(CHAIN_ID, 17, USDC, U256::from(100)).serial;
 
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, USDC, 0, b256(serial));
+        let result = runtime::deposit(storage, ALICE, USDC, U256::from(0), b256(serial));
         assert_revert(result, "PayNote deposit amount must be non-zero");
     });
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, Address::ZERO, 100, b256(serial));
+        let result = runtime::deposit(storage, ALICE, Address::ZERO, U256::from(100), b256(serial));
         assert_revert(result, "PayNote asset must be non-zero");
     });
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, USDC, 100, B256::ZERO);
+        let result = runtime::deposit(storage, ALICE, USDC, U256::from(100), B256::ZERO);
         assert_revert(result, "PayNote noteSn must be non-zero");
     });
     provider.enter(|storage| {
         // All-ones is above the BN254 modulus, so it is not a canonical word.
-        let result = runtime::deposit(storage, ALICE, USDC, 100, B256::repeat_byte(0xff));
+        let result = runtime::deposit(
+            storage,
+            ALICE,
+            USDC,
+            U256::from(100),
+            B256::repeat_byte(0xff),
+        );
         assert_revert(result, "PayNote noteSn is not a canonical BN254 field");
     });
 }
@@ -223,7 +239,7 @@ fn consume_rejects_a_root_outside_the_window() {
     seed_pool(
         &mut provider,
         CHAIN_ID,
-        &[note(CHAIN_ID, 999, USDC, 5).commitment],
+        &[note(CHAIN_ID, 999, USDC, U256::from(5)).commitment],
     );
     provider.enter(|storage| {
         assert_revert(
@@ -252,7 +268,7 @@ fn consume_rejects_a_malformed_proof() {
     seed_pool(
         &mut provider,
         CHAIN_ID,
-        &[note(CHAIN_ID, 999, USDC, 5).commitment],
+        &[note(CHAIN_ID, 999, USDC, U256::from(5)).commitment],
     );
     provider.enter(|storage| {
         let result = runtime::consume(&storage, &[0u8; 8]);
@@ -274,9 +290,10 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
     // `PAYNOTE_PROOF_WORDS`.
     assert_eq!(
         proof.len(),
-        outbe_zkproof::PAYNOTE_COMBINED_LEN,
+        PAYNOTE_COMBINED_LEN,
         "combined proof length must match the pinned frozen wire"
     );
+    assert_eq!(proof.len(), 4 + (9 + PAYNOTE_PROOF_WORDS) * 32);
     assert!(
         public.change_commitment.is_zero(),
         "full spend has no change"
@@ -356,6 +373,36 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
 }
 
 #[test]
+fn full_width_u256_spend_round_trip() {
+    assert_eq!(Paynote::VERSION, "1.1.0");
+    assert_eq!(
+        Paynote::CIRCUIT_HASH,
+        alloy_primitives::hex!("3154da6976ca8ee5f00b228fe821ce0868b189ff73cefb1a9a562d2768a9f9cc")
+    );
+    assert_eq!(
+        Paynote::VK_HASH,
+        alloy_primitives::hex!("75454ca024cd3532e24663d7ae14c2d7dc42fdb1291b69f2db17262385d6f34f")
+    );
+
+    let note_amount = (U256::from(1) << 200) + U256::from(100);
+    let spend_amount = (U256::from(1) << 199) + U256::from(40);
+    let fixture = note_and_spend_proof(CHAIN_ID, USDC, SPENDER, note_amount, spend_amount);
+    assert_eq!(fixture.proof.len(), PAYNOTE_COMBINED_LEN);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, &[fixture.commitment]);
+    provider.enter(|storage| {
+        let claim = runtime::consume(&storage, &fixture.proof).expect("valid U256 spend");
+        assert_eq!(claim.spend_amount, spend_amount);
+        let paynote: PayNoteContract<'_> = storage.contract();
+        assert!(paynote
+            .commitments
+            .read(&b256(fixture.public.change_commitment))
+            .unwrap());
+    });
+}
+
+#[test]
 fn a_note_cannot_be_spent_as_a_different_asset() {
     // Bind the proof to USDC, then seed a pool whose leaf was built for WBTC:
     // membership fails, so the spend is rejected.
@@ -364,7 +411,7 @@ fn a_note_cannot_be_spent_as_a_different_asset() {
     seed_pool(
         &mut provider,
         CHAIN_ID,
-        &[note(CHAIN_ID, 17, WBTC, 100).commitment],
+        &[note(CHAIN_ID, 17, WBTC, U256::from(100)).commitment],
     );
     provider.enter(|storage| {
         assert_revert(

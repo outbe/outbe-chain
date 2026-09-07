@@ -12,7 +12,11 @@ use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zkproof::{decode_paynote_public_inputs, verify_paynote, ZkProofError};
+use outbe_zk_backend::barretenberg::verify_circuit;
+use outbe_zk_canonical::noir::paynote::Paynote;
+use outbe_zk_canonical::paynote::{
+    decode_public_inputs as decode_paynote_public_inputs, PublicInputs as PayNotePublicInputs,
+};
 
 use crate::errors::PayNoteError;
 use crate::hash::{
@@ -31,7 +35,7 @@ use crate::sol_ext::IERC20;
 pub struct PayNoteClaim {
     pub asset: Address,
     pub spender: Address,
-    pub spend_amount: u128,
+    pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
     /// paid it without learning anything that links back to the depositor.
@@ -88,11 +92,11 @@ pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
-    amount: u128,
+    amount: U256,
     note_sn: B256,
 ) -> Result<()> {
     // Guards, before any mutation.
-    if amount == 0 {
+    if amount.is_zero() {
         return Err(PayNoteError::InvalidInput("deposit amount must be non-zero".into()).into());
     }
     // `asset != 0` is enforced here such as we do not accept native currency here.
@@ -131,7 +135,7 @@ pub(crate) fn deposit(
     // initialization and the first append are atomic, so an active tree never
     // observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
-        let units = U256::from(amount);
+        let units = amount;
         // Pull into the pool, then let the router pull from the pool: the
         // router's `deposit` is a `transferFrom(caller, SELF)`, so the pool
         // must both hold the tokens and approve the router.
@@ -185,7 +189,7 @@ fn root_after_word(root: Field) -> B256 {
     B256::new(field_to_be_bytes(root))
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.0.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.1.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
@@ -200,7 +204,7 @@ fn root_after_word(root: Field) -> B256 {
 /// spender.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
-    let claim = decode_paynote_public_inputs(proof)
+    let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
         .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;
@@ -221,7 +225,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.spender.is_zero() {
         return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
     }
-    if claim.spend_amount == 0 {
+    if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
     }
 
@@ -245,21 +249,14 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::NullifierSpent.into());
     }
 
-    match verify_paynote(proof) {
+    match verify_circuit::<Paynote>(proof) {
         Ok(true) => {}
         Ok(false) => return Err(PayNoteError::InvalidInput("proof is invalid".into()).into()),
-        // CRS initialization is the distinguishable infrastructure signal and
-        // stays fatal.
-        Err(ZkProofError::CrsInitialization(message)) => {
-            return Err(PayNoteError::VerifierUnavailable(message).into())
-        }
-        // Every other verifier error is raised while verifying
-        // attacker-controllable material and fails closed as a user revert.
-        // The backend cannot distinguish rejected input from a genuine FFI
-        // failure at this seam; promoting attacker input to a fatal error
-        // would be an unprivileged consensus-visible DoS.
         Err(error) => {
-            return Err(PayNoteError::InvalidInput(format!("proof is malformed: {error}")).into())
+            return Err(PayNoteError::InvalidInput(format!(
+                "proof is malformed: zk verification backend failed: {error}"
+            ))
+            .into())
         }
     }
 
@@ -307,7 +304,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                     rootAfter: root_after_word(root_after),
                     asset: claim.asset,
                     // Sentinel: a change note's remaining value is private.
-                    noteAmount: 0,
+                    noteAmount: U256::ZERO,
                 }),
             )?;
         }

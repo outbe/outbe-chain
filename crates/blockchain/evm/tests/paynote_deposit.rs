@@ -76,6 +76,10 @@ fn block() -> BlockContext {
 /// The commitment the runtime must derive for a deposit of `amount` of
 /// `asset` under `SPEND_KEY`'s serial — computed independently here.
 fn expected_commitment(asset: Address, amount: u128) -> Field {
+    expected_commitment_u256(asset, U256::from(amount))
+}
+
+fn expected_commitment_u256(asset: Address, amount: U256) -> Field {
     let serial = note_sn(Field::from(SPEND_KEY)).unwrap();
     note_commitment(
         outbe_primitives::chain::CHAIN_ID,
@@ -120,6 +124,10 @@ fn seeded_db(register_vault: bool, authorize_paynote: bool) -> CacheDB<EmptyDB> 
 }
 
 fn deposit_calldata(asset: Address, amount: u128) -> Bytes {
+    deposit_calldata_u256(asset, U256::from(amount))
+}
+
+fn deposit_calldata_u256(asset: Address, amount: U256) -> Bytes {
     Bytes::from(
         IPayNote::depositCall {
             asset,
@@ -187,13 +195,14 @@ macro_rules! assert_pristine {
 }
 
 #[test]
-fn deposit_routes_through_vault_router_and_appends_the_derived_commitment() {
+fn deposit_routes_full_width_amount_through_vault_router_and_appends_commitment() {
     let mut ctx = evm_ctx(seeded_db(true, true));
+    let amount = (U256::from(1) << 200) + U256::from(DEPOSIT_AMOUNT);
 
     let result = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        deposit_calldata(ASSET, DEPOSIT_AMOUNT),
+        deposit_calldata_u256(ASSET, amount),
         false
     );
     assert!(
@@ -217,10 +226,8 @@ fn deposit_routes_through_vault_router_and_appends_the_derived_commitment() {
 
     // And the appended leaf is the commitment the runtime derived from the
     // asset and amount it actually moved — not anything the caller supplied.
-    let commitment = alloy_primitives::B256::new(field_to_be_bytes(expected_commitment(
-        ASSET,
-        DEPOSIT_AMOUNT,
-    )));
+    let commitment =
+        alloy_primitives::B256::new(field_to_be_bytes(expected_commitment_u256(ASSET, amount)));
     let present = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,

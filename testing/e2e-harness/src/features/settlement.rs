@@ -333,7 +333,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &key,
         owner,
         fixture.asset,
-        u128::try_from(payable).expect("Gem cost fits a PayNote spend amount"),
+        payable,
     );
     assert_eq!(
         eth::read_call(
@@ -569,14 +569,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         &ISettlementAsset::balanceOfCall { account: vault },
     )
     .expect("reserve before deposit");
-    let proof = paynote::deposit_and_prove(
-        world,
-        port,
-        &key,
-        owner,
-        asset,
-        u128::try_from(payable).expect("Gem cost fits PayNote amount"),
-    );
+    let proof = paynote::deposit_and_prove(world, port, &key, owner, asset, payable);
     assert_eq!(
         eth::read_call(
             &url,
@@ -851,10 +844,14 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     // The cost is paid by depositing a note and then spending it. The value
     // reaches the reserve vault at deposit time, so the owner funds and
     // approves the PayNote pool rather than the NodFactory.
-    let cost_minor =
-        u128::try_from(body.costAmountMinor).expect("Nod cost fits a PayNote spend amount");
-    let paynote_proof =
-        paynote::deposit_and_prove(world, port, &key, owner, fixture.asset, cost_minor);
+    let paynote_proof = paynote::deposit_and_prove(
+        world,
+        port,
+        &key,
+        owner,
+        fixture.asset,
+        body.costAmountMinor,
+    );
     assert_eq!(
         eth::read_call(
             &url,

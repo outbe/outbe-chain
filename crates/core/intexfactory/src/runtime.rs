@@ -853,7 +853,7 @@ fn discharge_cost(
     let cost = cost_in_token(storage, series, claim.asset, currency)?
         .checked_mul(amount)
         .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
-    if U256::from(claim.spend_amount) < cost {
+    if claim.spend_amount < cost {
         return Err(IntexFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
             required: cost,

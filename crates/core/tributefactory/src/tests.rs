@@ -56,6 +56,7 @@ mod l2_zk_gate {
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
+    use outbe_zk_canonical::full_proof::COMBINED_LEN as FULL_PROOF_COMBINED_LEN;
 
     use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
@@ -88,13 +89,13 @@ mod l2_zk_gate {
     }
 
     fn dummy_full_proof(root: [u8; 32]) -> Bytes {
-        let mut proof = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+        let mut proof = Vec::with_capacity(FULL_PROOF_COMBINED_LEN);
         proof.extend_from_slice(&4u32.to_be_bytes());
         proof.extend_from_slice(&[0x01; 32]);
         proof.extend_from_slice(&[0x02; 32]);
         proof.extend_from_slice(&[0x03; 32]);
         proof.extend_from_slice(&root);
-        proof.resize(outbe_zkproof::FULL_PROOF_COMBINED_LEN, 0);
+        proof.resize(FULL_PROOF_COMBINED_LEN, 0);
         proof.into()
     }
 

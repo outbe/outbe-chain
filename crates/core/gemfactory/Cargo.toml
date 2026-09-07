@@ -17,7 +17,6 @@ outbe-promislimit.workspace = true
 tracing.workspace = true
 outbe-oracle.workspace = true
 outbe-paynote.workspace = true
-outbe-zkproof.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
