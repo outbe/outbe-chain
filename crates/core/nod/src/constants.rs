@@ -15,11 +15,6 @@ pub const BIN_STEP_BP: u16 = 25;
 /// and is resumed deterministically in the next block.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
-/// The four call terms below are snapshotted onto a bucket when it qualifies,
-/// and every later check reads the bucket's copy. Retuning one of them re-terms
-/// buckets that qualify afterwards, and leaves every already-armed bucket on
-/// the terms it was armed with - the same guarantee gem and intex give.
-///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
 /// gem/intex's 128, one rung up the same ladder.

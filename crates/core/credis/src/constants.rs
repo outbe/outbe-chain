@@ -4,11 +4,6 @@
 //! carry a placeholder here plus a `ponytail:` note naming what has to be
 //! decided before launch.
 
-/// The four call terms below are snapshotted onto a position when it opens, and
-/// every later check reads the position's copy. Retuning one of them re-terms
-/// positions opened afterwards, and leaves every already-open position on the
-/// terms it was opened with - the same guarantee gem and intex give.
-///
 /// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 
