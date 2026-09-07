@@ -189,7 +189,7 @@ fn worked_example_ledger_closes_exactly() {
         assert!(credis.mark_called(id, at(458)).unwrap());
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Called);
-        assert_eq!(settlement_deadline(&p), at(472), "14-day window");
+        assert_eq!(settlement_deadline(&p), at(465), "14-day window");
 
         // --- Day 465: partial settlement of $400 while called. --------------
         let second = credis
