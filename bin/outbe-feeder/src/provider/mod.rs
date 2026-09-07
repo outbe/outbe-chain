@@ -3,6 +3,7 @@
 pub mod binance;
 pub mod chainlink;
 pub mod coinbase;
+pub(crate) mod dex;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -55,7 +56,7 @@ impl std::error::Error for ObservationError {}
 /// Provider decimals are parsed directly from their decimal lexemes into FP18.
 #[derive(Debug, Clone)]
 pub struct TickerPrice {
-    /// Last trade price at FP18.
+    /// Current provider rate at FP18 (pool spot rate for DEX providers).
     pub price: FixedValue,
     /// 24-hour trading volume at FP18.
     pub volume: FixedValue,
@@ -203,6 +204,13 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             "huobi" => Box::new(huobi::HuobiProvider::new()?),
             "mexc" => Box::new(mexc::MexcProvider::new()?),
             "coinbase" => Box::new(coinbase::CoinbaseProvider::new()?),
+            "uniswap" | "pancakeswap" => Box::new(dex::DexProvider::new(
+                config
+                    .dex_providers
+                    .iter()
+                    .find(|dex| dex.name == *name)
+                    .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
+            )?),
             other => {
                 tracing::warn!(provider = other, "unknown provider, skipping");
                 continue;

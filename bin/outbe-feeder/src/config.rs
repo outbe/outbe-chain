@@ -20,6 +20,9 @@ pub struct FeederConfig {
     pub deviation_thresholds: Vec<DeviationThreshold>,
     #[serde(default)]
     pub provider_endpoints: Vec<ProviderEndpointConfig>,
+    /// Finalized EVM pool readers; independent of the destination Outbe RPC.
+    #[serde(default)]
+    pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -149,6 +152,8 @@ impl FeederConfig {
         "mexc",
         "coinbase",
         "mock_http",
+        "uniswap",
+        "pancakeswap",
     ];
 
     /// Validates configuration at startup. Returns error for invalid values.
@@ -284,6 +289,7 @@ impl FeederConfig {
             }
         }
 
+        crate::provider::dex::validate_config(self)?;
         Ok(())
     }
 
@@ -342,6 +348,7 @@ mod tests {
             currency_pairs: vec![],
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
+            dex_providers: vec![],
             health: None,
         }
     }
