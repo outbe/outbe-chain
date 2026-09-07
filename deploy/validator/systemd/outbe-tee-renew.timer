@@ -1,8 +1,8 @@
 [Unit]
-Description=Daily Outbe TEE lease renewal check
+Description=Weekly Outbe TEE lease renewal check
 
 [Timer]
-OnCalendar=daily
+OnCalendar=weekly
 Persistent=true
 
 [Install]
