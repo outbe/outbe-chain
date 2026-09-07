@@ -238,6 +238,7 @@ chmod 0755 "$HELPER"
 install -o root -g root -m 0644 \
   "$SOURCE_DIR/systemd/"*.service \
   "$SOURCE_DIR/systemd/"*.target \
+  "$SOURCE_DIR/systemd/"*.timer \
   /etc/systemd/system/
 
 systemctl daemon-reload
