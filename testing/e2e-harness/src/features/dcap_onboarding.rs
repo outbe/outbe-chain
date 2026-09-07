@@ -244,13 +244,10 @@ fn full_node_joins_starts_and_restarts(world: &mut World) {
         .rpc
         .finalized(world.validators.primary_port())
         .expect("primary finalized checkpoint before FullNode launch");
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(index), checkpoint, 24)
-            .is_some(),
-        "production FullNode did not start and sync"
-    );
+    world
+        .rpc
+        .wait_block(world.validators.http_port(index), checkpoint, 24)
+        .unwrap_or_else(|error| panic!("production FullNode did not start and sync: {error:#}"));
     world
         .localnet
         .stop_follower(FULL_NODE_NAME)
@@ -263,13 +260,10 @@ fn full_node_joins_starts_and_restarts(world: &mut World) {
         .localnet
         .launch_dcap_full_node(FULL_NODE_NAME, index, 0)
         .expect("restart production FullNode");
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(index), checkpoint, 24)
-            .is_some(),
-        "restarted FullNode did not resume sync"
-    );
+    world
+        .rpc
+        .wait_block(world.validators.http_port(index), checkpoint, 24)
+        .unwrap_or_else(|error| panic!("restarted FullNode did not resume sync: {error:#}"));
 }
 
 #[then("the full node reopens the exact permanent key before execution sync")]

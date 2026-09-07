@@ -20,7 +20,6 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
-use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
@@ -28,6 +27,7 @@ use outbe_primitives::tee_attestation_v1::{
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+use crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS;
 use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
@@ -37,11 +37,6 @@ const VALIDATOR_BALANCE_HEX: &str = "0x21e19e0c9bab2400000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
-/// `IntexFactory.config_profile` selector slot; `1` selects the DEV parameter profile
-/// (24h qualification, 3-day call window) over PROD's unwalkable 21-day timings.
-const INTEX_CONFIG_PROFILE_SLOT: u64 = 10;
-const INTEX_PROFILE_DEV: u64 = 1;
-
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
@@ -639,8 +634,8 @@ impl Localnet {
         // Step 2c: dev felony thresholds for observable localnet slashing.
         self.patch_felony(profile)?;
 
-        // Step 2d: DEV intex timings, so a run can walk qualification and the call window.
-        self.patch_intex_profile()?;
+        // Intex and gem terms need no patch: an unset profile selector resolves by
+        // chain id, and every localnet id is a test network, so both read DEV.
         Ok(())
     }
 
@@ -912,43 +907,6 @@ impl Localnet {
         Ok(())
     }
 
-    /// Select the DEV IntexFactory parameter profile. Unset reads `0` = PROD, whose
-    /// 21-day qualification and 28-day call window no scenario can walk.
-    fn patch_intex_profile(&self) -> Result<()> {
-        let path = self.cfg.dir.join("genesis.json");
-        let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
-        let alloc = g
-            .get_mut("alloc")
-            .and_then(|a| a.as_object_mut())
-            .ok_or_else(|| eyre!("genesis has no alloc object"))?;
-
-        let key = alloc
-            .keys()
-            .find(|k| address_has_suffix(k, "1015"))
-            .cloned();
-        let key = key.unwrap_or_else(|| {
-            let k = format!("{INTEX_FACTORY_ADDRESS:?}");
-            alloc.insert(k.clone(), json!({ "balance": "0x0", "code": "0xef0000" }));
-            k
-        });
-        let entry = alloc
-            .get_mut(&key)
-            .and_then(|e| e.as_object_mut())
-            .ok_or_else(|| eyre!("intex alloc entry is not an object"))?;
-        let storage = entry
-            .entry("storage")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or_else(|| eyre!("intex storage is not an object"))?;
-        storage.insert(
-            format!("0x{INTEX_CONFIG_PROFILE_SLOT:064x}"),
-            json!(format!("0x{INTEX_PROFILE_DEV:064x}")),
-        );
-
-        fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
-        Ok(())
-    }
-
     fn validate_effective_seed_capacity(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
         let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&self.cfg.seed)?)?;
         let configured = profile.max_validators.or_else(|| {
@@ -1011,12 +969,18 @@ impl Localnet {
             }
         }
 
+        let oracle = root
+            .entry("oracle")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed oracle is not an object"))?;
+        let config = oracle
+            .entry("config")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed oracle config is not an object"))?;
+        config.insert("vote_period".into(), json!(E2E_ORACLE_VOTE_PERIOD_BLOCKS));
         if let Some(pairs) = &profile.oracle_pairs {
-            let oracle = root
-                .entry("oracle")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or_else(|| eyre!("genesis seed oracle is not an object"))?;
             oracle.insert(
                 "pairs".into(),
                 serde_json::Value::Array(
@@ -1616,6 +1580,44 @@ mod tests {
                 "0".into(),
             )
         );
+    }
+
+    #[test]
+    fn scenario_seed_always_uses_eight_block_oracle_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            validators: 4,
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::create_dir_all(&cfg.dir).unwrap();
+        let localnet = Localnet::new(cfg);
+        for seed in [
+            json!({}),
+            json!({"oracle": {"config": {"vote_period": 2, "penalties_enabled": false}}}),
+            json!({"oracle": {"config": {"vote_period": 300}}}),
+        ] {
+            let original = serde_json::to_vec(&seed).unwrap();
+            fs::write(&localnet.cfg.seed, &original).unwrap();
+            for profile in [
+                BootstrapProfile::default(),
+                BootstrapProfile::default()
+                    .with_oracle_pairs(vec![("COEN".into(), "840".into(), "1000000".into())])
+                    .unwrap(),
+            ] {
+                let path = localnet.prepare_scenario_seed(&profile).unwrap();
+                let actual: serde_json::Value =
+                    serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+                assert_eq!(actual["oracle"]["config"]["vote_period"], 8);
+                if let Some(penalties) = seed.pointer("/oracle/config/penalties_enabled") {
+                    assert_eq!(&actual["oracle"]["config"]["penalties_enabled"], penalties);
+                }
+                assert_eq!(fs::read(&localnet.cfg.seed).unwrap(), original);
+            }
+        }
     }
 
     #[test]

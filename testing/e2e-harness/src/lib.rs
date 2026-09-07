@@ -24,7 +24,6 @@ pub mod localnet_driver;
 pub mod metadosis_evidence;
 pub mod metadosis_p0;
 pub mod metadosis_process;
-pub mod mongo_fixture;
 pub mod ocomp_capacity;
 pub mod ocomp_evidence;
 #[cfg(feature = "ocomp-finality-fixture")]
@@ -52,7 +51,6 @@ use crate::artifacts::ArtifactLedger;
 use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
 use crate::world::localnet::Localnet;
-use crate::world::projection::ProjectionFixture;
 use crate::world::World;
 
 #[derive(Default)]
@@ -223,7 +221,6 @@ fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
     if let Err(error) = Localnet::new(Config::resolve(env)).teardown() {
         eprintln!("outbe-e2e: Radicle runtime cleanup failed during shutdown: {error:#}");
     }
-    ProjectionFixture::teardown_managed_for_run(env);
     std::process::exit(code);
 }
 
@@ -343,10 +340,27 @@ pub async fn run() {
             if let Some(world) = world {
                 let price_oracle = world.price_oracle.evidence_snapshot();
                 world.price_oracle.teardown();
-                world
-                    .localnet
-                    .teardown()
-                    .unwrap_or_else(|error| panic!("E2E localnet teardown failed: {error:#}"));
+                // Drain node-facing clients while their node is still alive,
+                // then collect every cleanup result before auditing final logs.
+                let ocomp_cleanup = world.ocomp.stop_clients_for_teardown();
+                let mut expected_failed_slots = Vec::new();
+                if world.state.allow_unsupported_update_fatal
+                    && world.state.proposed_version.is_some()
+                {
+                    expected_failed_slots.extend(0..world.localnet.committee_size());
+                }
+                if world.state.ocomp_full_node_mismatch_job_id.is_some() {
+                    expected_failed_slots.push(world.localnet.committee_size());
+                }
+                expected_failed_slots
+                    .extend(world.state.expected_tee_lease_guard_shutdown_validator);
+                if let Some(proof) = &world.state.expected_tee_lease_guard_shutdown_full_node {
+                    expected_failed_slots.push(proof.slot);
+                }
+                let node_cleanup = world.localnet.teardown_with_expected_exits(
+                    &expected_failed_slots,
+                    &world.state.expected_dkg_expiry_exits,
+                );
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -361,12 +375,18 @@ pub async fn run() {
                         .expected_tee_lease_guard_shutdown_full_node
                         .as_ref(),
                 );
-                let audit = match audit {
+                let mut audit = match audit {
                     Ok(audit) => audit,
                     Err(error) => {
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
+                for error in [ocomp_cleanup.err(), node_cleanup.err()]
+                    .into_iter()
+                    .flatten()
+                {
+                    audit.record_cleanup_failure(error);
+                }
                 let ocomp = match world.ocomp.evidence_snapshot() {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
@@ -408,6 +428,7 @@ pub async fn run() {
                     price_oracle: &price_oracle,
                     radicle: &world.state.radicle,
                     tee_lease: &world.state.tee_lease,
+                    restart_observations: &world.state.restart_observations,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }

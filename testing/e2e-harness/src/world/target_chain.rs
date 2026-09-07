@@ -36,7 +36,7 @@ const BRIDGE_FLOAT_WEI: u64 = 1_000_000_000_000_000_000;
 
 #[derive(Clone, Debug)]
 pub struct TargetContracts {
-    pub create_x: Address,
+    pub create3_factory: Address,
     pub mailbox: Address,
     pub bridge: Address,
     pub intex_nft: Address,
@@ -147,20 +147,21 @@ impl TargetChain {
             .rpc_url()
             .ok_or_else(|| eyre!("deploy needs a running target chain"))?;
         let crosschain = self.cfg.repo.join("contracts/crosschain");
+        let shared = self.cfg.repo.join("contracts/shared");
         let intex = self.cfg.repo.join("contracts/intex");
         let chain_id = TARGET_CHAIN_ID.to_string();
 
-        let create_x = address_from(
+        let create3_factory = address_from(
             &forge::run(
-                &crosschain,
+                &shared,
                 &[
                     "script",
-                    "script/0_DeployCreateX.s.sol:DeployCreateXDeterministic",
+                    "script/DeployCreate3Factory.s.sol:DeployCreate3Factory",
                 ],
                 &[("CONTRACT_SALT", SALT_VERSION.to_owned())],
                 &url,
             )?,
-            "CreateX deployed at:",
+            "CREATE3_FACTORY_ADDRESS=",
         )?;
 
         // A mailbox the adapter can hold. Delivery across two chains stays a relay
@@ -187,7 +188,7 @@ impl TargetChain {
                     ("REMOTE_CHAIN_IDS", origin_chain_id.to_string()),
                     ("CONTRACT_SALT", SALT_VERSION.to_owned()),
                     ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
-                    ("CREATEX_ADDRESS", format!("{create_x:?}")),
+                    ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
                     ("HYPERLANE_MAILBOX", format!("{mailbox:?}")),
                     ("ACTIVE_GATEWAY", "hyperlane".to_owned()),
                 ],
@@ -204,6 +205,7 @@ impl TargetChain {
                 ("ORIGIN_CHAIN_ID", origin_chain_id.to_string()),
                 ("TARGET_CHAIN_IDS", chain_id.clone()),
                 ("SALT_VERSION", SALT_VERSION.to_owned()),
+                ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
                 // Without a proceeds route the escrow refuses to finalise a day,
                 // exactly as it would on the committee-side venue.
                 ("WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
@@ -233,7 +235,7 @@ impl TargetChain {
         )?;
 
         Ok(TargetContracts {
-            create_x,
+            create3_factory,
             mailbox,
             bridge,
             intex_nft: address_from(&venue, "IntexNFT1155:")?,

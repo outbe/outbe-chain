@@ -61,6 +61,8 @@ interface IGemFactory {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 parkedAt;
+        /// @notice When the position stops issuing and returns its remainder.
+        uint64 expiresAt;
     }
 
     // --- Events (emitted by the GemFactory precompile) ---

@@ -16,7 +16,10 @@ mod group_index {
 
     fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        StorageHandle::enter(&mut storage, f)
+        StorageHandle::enter(&mut storage, |handle| {
+            crate::tests::select_prod_profile(&handle);
+            f(handle)
+        })
     }
 
     /// Same day, differing only in issuance currency - the members of one group.
@@ -240,7 +243,10 @@ mod group_scans {
             crate::constants::ORIGIN_ROUTER_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        StorageHandle::enter(&mut storage, f)
+        StorageHandle::enter(&mut storage, |handle| {
+            crate::tests::select_prod_profile(&handle);
+            f(handle)
+        })
     }
 
     fn day() -> WorldwideDay {

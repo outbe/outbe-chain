@@ -49,12 +49,20 @@ fn dispatch_mine_promis_routes_to_runtime() {
 }
 
 #[test]
-fn config_defaults_to_prod_when_unset() {
+fn config_unset_resolves_by_chain_id() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
-        // No genesis profile selected -> selector reads 0 -> prod bundle.
+        // Undo the fixture's explicit choice: an unset selector resolves by
+        // network, and CHAIN_ID is not mainnet.
+        f.config_profile.write(crate::config::PROFILE_AUTO).unwrap();
         assert_eq!(
-            crate::config::read(&f).unwrap(),
+            crate::config::read(&s).unwrap(),
+            crate::config::IntexParams::DEV
+        );
+        // An explicit selector still wins over the network default.
+        f.config_profile.write(crate::config::PROFILE_PROD).unwrap();
+        assert_eq!(
+            crate::config::read(&s).unwrap(),
             crate::config::IntexParams::PROD
         );
         assert_eq!(
@@ -75,7 +83,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // Select the dev profile through the single selector byte.
         f.config_profile.write(crate::config::PROFILE_DEV).unwrap();
         assert_eq!(
-            crate::config::read(&f).unwrap(),
+            crate::config::read(&s).unwrap(),
             crate::config::IntexParams::DEV
         );
 
@@ -121,8 +129,25 @@ fn config_unknown_selector_errors() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
         f.config_profile.write(99u8).unwrap();
-        assert!(crate::config::read(&f).is_err());
+        assert!(crate::config::read(&s).is_err());
     });
+}
+
+/// The network default: only mainnet runs the real timings.
+#[test]
+fn config_auto_profile_follows_the_network() {
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+
+    assert_eq!(
+        crate::config::IntexParams::for_chain_id(MAINNET_CHAIN_ID),
+        crate::config::IntexParams::PROD
+    );
+    for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
+        assert_eq!(
+            crate::config::IntexParams::for_chain_id(chain_id),
+            crate::config::IntexParams::DEV
+        );
+    }
 }
 
 /// Pin the selector slot index: the seeder writes a raw slot, so the schema must

@@ -20,8 +20,6 @@ pub struct GemAddParams {
     pub floor_price_minor: U256,
     pub call_price_minor: U256,
     pub call_rate: u16,
-    pub call_window: u32,
-    pub call_threshold: u32,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub initial_state: GemState,
@@ -194,6 +192,10 @@ pub struct GemContract {
     /// against the prices it opened with. 0 = none in flight; a date key is never 0.
     #[attribute(order = 25)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
+    #[attribute(order = 26)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl GemContract<'_> {

@@ -124,7 +124,7 @@ fn call_currency(
     budget: &mut ScanBudget,
 ) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-    let params = crate::config::read(&factory)?;
+    let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
     let secs_per_day = SECONDS_PER_DAY as u32;
 
     let mut vwaps = DayVwaps::new(pair_index);

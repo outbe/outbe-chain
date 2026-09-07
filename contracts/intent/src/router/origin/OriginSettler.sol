@@ -80,6 +80,22 @@ abstract contract OriginSettler is OriginSettlerBase {
         emit Refunded(_orderId, orderSender);
     }
 
+    /// @dev TEMPORARY: releases an open order's input when a remote chain is down and no delivery
+    ///      can trigger the normal refund. Expose behind the inheriting contract's access control.
+    ///      TODO: remove before production, with `Router.emergencyWithdraw`.
+    function _emergencyWithdraw(bytes32 _orderId, address _to) internal {
+        require(orderStatus[_orderId] == OPENED, "order not open");
+
+        (, bytes memory raw) = abi.decode(openOrders[_orderId], (bytes32, bytes));
+        OrderData memory orderData = OrderEncoder.decode(raw);
+
+        orderStatus[_orderId] = REFUNDED;
+        _allocatedTransfer(
+            TypeCasts.bytes32ToAddress(orderData.inputToken), _to, orderData.amountIn, _orderId, "refund"
+        );
+        delete openOrders[_orderId];
+    }
+
     // ========== INTERNAL FUNCTIONS ==========
 
     /**

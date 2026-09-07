@@ -544,11 +544,16 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         wait_finalized_checkpoint_match(&world.rpc, primary, joiner_port, 60),
         "warm-promoted validator did not recover canonical finalized state"
     );
-    let before = world.rpc.head(primary).expect("head before liveness check");
-    assert!(
-        world.rpc.wait_block_gt(primary, before, 30).is_some(),
-        "committee stopped producing blocks after promotion recovery"
-    );
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    let target = world
+        .rpc
+        .fresh_finality_target(&ports)
+        .expect("sample founders and warm-promoted validator after recovery");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, target, 30)
+        .expect("founders and promoted validator finalize two fresh blocks after recovery");
 }
 
 /// S2 - the promoted validator activates and stays in lockstep.

@@ -99,6 +99,13 @@ contract DeployTarget is BaseScript {
             TargetRouter(payable(router)).setProceedsRoute(wcoenBridge, predictProxy(factory, deployer, "OriginRouter"));
         }
 
+        // Gate bid commits on a Whitelist registry (left open when unset).
+        address whitelist = vm.envOr("WHITELIST_ADDRESS", address(0));
+        if (whitelist != address(0)) {
+            IntexAuction(auction).setWhitelist(whitelist);
+            console.log("IntexAuction whitelist:", whitelist);
+        }
+
         vm.stopBroadcast();
 
         console.log("Create3Factory:", address(factory));

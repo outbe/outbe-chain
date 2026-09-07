@@ -25,6 +25,8 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/opt/outbe-chain/tee
+BindReadOnlyPaths=-/opt/outbe-chain/sgx:/opt/outbe/sgx
+BindPaths=/opt/outbe-chain/tee:/var/lib/outbe/tee
 
 [Install]
 WantedBy=outbe-validator.target

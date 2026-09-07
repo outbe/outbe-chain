@@ -328,7 +328,7 @@ pub struct OcompPublicVoteAccountabilityV1 {
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
 ///
-/// Both owner projections are read at `block_number`; Mongo/CAS never supplies
+/// Both owner projections are read at `block_number`; off-chain storage never supplies
 /// any field in this record.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompCertifiedGenerationV1 {
@@ -1259,6 +1259,58 @@ impl Rpc {
         )
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn active_ocomp_protocol_bundle_hash_at_on(
+        &self,
+        port: u16,
+        height: u64,
+    ) -> Result<B256> {
+        eth::read_call_at_result(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::activeProtocolBundleHashCall {},
+            height,
+        )
+        .map_err(|error| eyre!("read active OCOMP bundle at h{height}: {error}"))
+    }
+
+    /// Observe the predecessor retention state at one exact finalized checkpoint.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn ocomp_retention_state_at_on(
+        &self,
+        port: u16,
+        bundle_hash: B256,
+        height: u64,
+    ) -> Result<(B256, u32, u64)> {
+        let url = self.url(port);
+        let retiring = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retiringProtocolBundleHashCall {},
+            height,
+        )
+        .map_err(|error| eyre!("read retiring bundle at h{height}: {error}"))?;
+        let live = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::liveLineageCountCall {
+                protocolBundleHash: bundle_hash,
+            },
+            height,
+        )
+        .map_err(|error| eyre!("read live lineage at h{height}: {error}"))?;
+        let until = eth::read_call_at_result(
+            &url,
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retentionUntilCall {
+                protocolBundleHash: bundle_hash,
+            },
+            height,
+        )
+        .map_err(|error| eyre!("read retention deadline at h{height}: {error}"))?;
+        Ok((retiring, live, until))
+    }
+
     /// Active protocol version on the node at `port`.
     pub fn active_version_on(&self, port: u16) -> Option<u64> {
         self.active_version_on_url(&self.url(port))
@@ -1628,32 +1680,38 @@ impl Rpc {
 
     // ---- waits (poll loops) --------------------------------------------
 
-    /// Wait until head on `port` reaches at least `min`; returns the last head seen.
+    /// Wait for HEAD to reach `min`, including the final observation after retries.
+    /// This positions an execution-height trigger; it does not prove finality.
     #[must_use = "a block wait must be checked; ignoring it can turn a stalled node into PASS"]
-    pub fn wait_block(&self, port: u16, min: u64, tries: u32) -> Option<u64> {
-        for _ in 0..tries {
-            if let Some(h) = self.head(port) {
-                if h >= min {
-                    return Some(h);
+    pub fn wait_block(&self, port: u16, min: u64, tries: u32) -> Result<u64> {
+        let mut remaining = tries;
+        loop {
+            match eth::block_number_result(&self.url(port)) {
+                Ok(height) if height >= min => return Ok(height),
+                Ok(height) if remaining == 0 => {
+                    return Err(eyre!(
+                        "RPC {port} did not reach HEAD {min} after {tries} retries: last height {height}"
+                    ));
                 }
+                Err(error) if remaining == 0 => {
+                    return Err(error).wrap_err_with(|| {
+                        format!("RPC {port} could not observe HEAD {min} after {tries} retries")
+                    });
+                }
+                _ => {}
             }
+            remaining -= 1;
             sleep(Duration::from_secs(3));
         }
-        self.head(port)
     }
 
     /// Wait until head on `port` is strictly greater than `height`.
     #[must_use = "a block wait must be checked; ignoring it can turn a stalled node into PASS"]
-    pub fn wait_block_gt(&self, port: u16, height: u64, tries: u32) -> Option<u64> {
-        for _ in 0..tries {
-            if let Some(h) = self.head(port) {
-                if h > height {
-                    return Some(h);
-                }
-            }
-            sleep(Duration::from_secs(3));
-        }
-        self.head(port)
+    pub fn wait_block_gt(&self, port: u16, height: u64, tries: u32) -> Result<u64> {
+        let target = height
+            .checked_add(1)
+            .ok_or_else(|| eyre!("RPC {port} cannot advance HEAD beyond u64::MAX"))?;
+        self.wait_block(port, target, tries)
     }
 
     /// Wait for the primary node's TEE bootstrap (5s polls).
@@ -1994,7 +2052,7 @@ impl Rpc {
     /// Claim the caller's complete AgentReward balance in one pool as a Gem
     /// through an ordinary paid transaction and return its public receipt.
     pub fn claim_agent_reward_gem(&self, key: &str, pool: u8) -> Result<serde_json::Value> {
-        let tx_hash = eth::send_call(
+        let tx_hash = eth::send_call_with_gas_reserve(
             &self.cfg.rpc0,
             addresses::AGENT_REWARD_ADDR,
             key,
@@ -3941,7 +3999,7 @@ impl Rpc {
     pub fn receipt_gas_cost(receipt: &serde_json::Value) -> Option<U256> {
         let gas_used = receipt.get("gasUsed")?.as_str()?;
         let gas_price = receipt.get("effectiveGasPrice")?.as_str()?;
-        Some(parse_rpc_u256(gas_used)? * parse_rpc_u256(gas_price)?)
+        parse_rpc_u256(gas_used)?.checked_mul(parse_rpc_u256(gas_price)?)
     }
 
     /// Felony slash percent from the node's authoritative typed RPC response.
@@ -4186,7 +4244,10 @@ impl Rpc {
         }
         state.zerofee_key = Some(key.to_string());
         state.zerofee_address = Some(format!("{address:#x}"));
-        state.zerofee_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_balance_before = Some(
+            eth::balance_result(&self.cfg.rpc0, address)
+                .wrap_err("read funded ZeroFee signer balance")?,
+        );
         Ok(())
     }
 
@@ -4202,8 +4263,11 @@ impl Rpc {
             .zerofee_sponsored_raw
             .as_deref()
             .ok_or_else(|| eyre!("missing exact included sponsored transaction"))?;
-        let before_balance = eth::balance(&self.cfg.rpc0, zerofee_address(state));
-        let before_counter = self.zerofee_counter(zerofee_address(state));
+        let before_balance = eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+            .wrap_err("read signer balance before sponsored replay")?;
+        let before_counter = self
+            .zerofee_counter(zerofee_address(state))
+            .ok_or_else(|| eyre!("read counter before sponsored replay"))?;
         let error = eth::raw_json_result(
             &self.cfg.rpc0,
             "eth_sendRawTransaction",
@@ -4212,12 +4276,14 @@ impl Rpc {
         .expect_err("exact included EIP-7702 transaction replay unexpectedly accepted");
         state.zerofee_replay_error = Some(error.to_string());
         assert_eq!(
-            eth::balance(&self.cfg.rpc0, zerofee_address(state)),
+            eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+                .wrap_err("read signer balance after sponsored replay")?,
             before_balance,
             "replay changed signer balance"
         );
         assert_eq!(
-            self.zerofee_counter(zerofee_address(state)),
+            self.zerofee_counter(zerofee_address(state))
+                .ok_or_else(|| eyre!("read counter after sponsored replay"))?,
             before_counter,
             "replay changed ZeroFee counter"
         );
@@ -4231,9 +4297,13 @@ impl Rpc {
             .as_deref()
             .ok_or_else(|| eyre!("missing exact included bootstrap transaction"))?;
         let address = zerofee_address(state);
-        let before_balance = eth::balance(&self.cfg.rpc0, address);
-        let before_nonce = eth::nonce(&self.cfg.rpc0, address);
-        let before_counter = self.zerofee_counter(address);
+        let before_balance = eth::balance_result(&self.cfg.rpc0, address)
+            .wrap_err("read signer balance before bootstrap replay")?;
+        let before_nonce = eth::nonce(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read nonce before bootstrap replay"))?;
+        let before_counter = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read counter before bootstrap replay"))?;
         let error = eth::raw_json_result(
             &self.cfg.rpc0,
             "eth_sendRawTransaction",
@@ -4243,13 +4313,23 @@ impl Rpc {
         if error.to_string().is_empty() {
             return Err(eyre!("bootstrap replay returned an empty RPC error"));
         }
-        if eth::balance(&self.cfg.rpc0, address) != before_balance {
+        if eth::balance_result(&self.cfg.rpc0, address)
+            .wrap_err("read signer balance after bootstrap replay")?
+            != before_balance
+        {
             return Err(eyre!("bootstrap replay changed signer balance"));
         }
-        if eth::nonce(&self.cfg.rpc0, address) != before_nonce {
+        if eth::nonce(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read nonce after bootstrap replay"))?
+            != before_nonce
+        {
             return Err(eyre!("bootstrap replay changed signer nonce"));
         }
-        if self.zerofee_counter(address) != before_counter {
+        if self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read counter after bootstrap replay"))?
+            != before_counter
+        {
             return Err(eyre!("bootstrap replay changed ZeroFee counter"));
         }
         self.assert_zerofee_delegation(state);
@@ -4259,36 +4339,79 @@ impl Rpc {
     pub fn assert_zerofee_persisted_on_ports(&self, state: &FixtureState, ports: &[u16]) {
         let address = zerofee_address(state);
         let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
-        let expected_counter = self
-            .zerofee_counter(address)
-            .expect("primary ZeroFee counter");
-        let expected_balance =
-            eth::balance(&self.cfg.rpc0, address).expect("primary delegated-account COEN balance");
+        let height = self
+            .finalized_result(self.cfg.primary_port())
+            .expect("read finalized height for preserved ZeroFee state");
+        let checkpoint = self
+            .wait_finalized_checkpoint(ports, height, 60)
+            .expect("all ZeroFee observers agree on one finalized checkpoint");
+        let (_, expected_counter, _) = self
+            .zerofee_state_at(ports[0], address, checkpoint)
+            .expect("read preserved ZeroFee state at the finalized checkpoint");
+        let expected_balance = state
+            .zerofee_balance_after_quota
+            .expect("retained signer balance after quota exhaustion");
         assert_eq!(expected_counter.1, 8, "primary quota must remain exhausted");
         for &port in ports {
-            let url = self.url(port);
+            let (code, counter, balance) = self
+                .zerofee_state_at(port, address, checkpoint)
+                .unwrap_or_else(|error| {
+                    panic!("read preserved ZeroFee state on RPC {port}: {error:#}")
+                });
             assert_eq!(
-                eth::code(&url, address).map(|code| code.to_vec()),
-                Some(expected_code.clone()),
+                code.as_ref(),
+                expected_code.as_slice(),
                 "delegation was not preserved on RPC port {port}"
             );
-            let counter = eth::read_call(
-                &url,
-                addresses::ZEROFEE_ADDR,
-                &IZeroFee::getCounterCall { signer: address },
-            )
-            .map(|value| (value.day, value.count));
             assert_eq!(
-                counter,
-                Some(expected_counter),
+                counter, expected_counter,
                 "quota/day changed on RPC port {port}"
             );
             assert_eq!(
-                eth::balance(&url, address),
-                Some(expected_balance),
+                balance, expected_balance,
                 "delegated-account COEN balance changed on RPC port {port}"
             );
         }
+    }
+
+    /// Read coupled account and quota state at one previously finalized identity.
+    fn zerofee_state_at(
+        &self,
+        port: u16,
+        address: Address,
+        checkpoint: FinalizedCheckpoint,
+    ) -> Result<(Bytes, (u32, u32), U256)> {
+        ensure!(
+            self.checkpoint_at(port, checkpoint.height)? == checkpoint,
+            "ZeroFee checkpoint changed before reading RPC {port}"
+        );
+        let url = self.url(port);
+        let selector =
+            serde_json::json!({"blockHash": checkpoint.block_hash, "requireCanonical": true});
+        let code = serde_json::from_value(eth::raw_json_result(
+            &url,
+            "eth_getCode",
+            serde_json::json!([address, selector]),
+        )?)
+        .wrap_err("decode finalized ZeroFee delegation")?;
+        let balance = serde_json::from_value(eth::raw_json_result(
+            &url,
+            "eth_getBalance",
+            serde_json::json!([address, selector]),
+        )?)
+        .wrap_err("decode finalized ZeroFee balance")?;
+        let counter = eth::read_call_at_result(
+            &url,
+            addresses::ZEROFEE_ADDR,
+            &IZeroFee::getCounterCall { signer: address },
+            checkpoint.height,
+        )
+        .map_err(|error| eyre!("read finalized ZeroFee counter: {error}"))?;
+        ensure!(
+            self.checkpoint_at(port, checkpoint.height)? == checkpoint,
+            "ZeroFee checkpoint changed while reading RPC {port}"
+        );
+        Ok((code, (counter.day, counter.count), balance))
     }
 
     pub fn submit_zerofee_quota(&self, state: &mut FixtureState) -> Result<()> {
@@ -4313,7 +4436,10 @@ impl Rpc {
             }
             state.zerofee_sponsored_receipts.push(receipt);
         }
-        state.zerofee_balance_after_quota = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_balance_after_quota = Some(
+            eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+                .wrap_err("read signer balance after sponsored quota")?,
+        );
         Ok(())
     }
 
@@ -4332,7 +4458,12 @@ impl Rpc {
             );
         }
         assert_eq!(
-            state.zerofee_balance_after_quota, state.zerofee_balance_before,
+            state
+                .zerofee_balance_after_quota
+                .expect("balance after sponsored quota"),
+            state
+                .zerofee_balance_before
+                .expect("balance before sponsored quota"),
             "sponsored calls charged the signer"
         );
         assert_eq!(
@@ -4342,15 +4473,19 @@ impl Rpc {
     }
 
     pub fn submit_zerofee_ninth(&self, state: &mut FixtureState) -> Result<()> {
-        let before = eth::balance(&self.cfg.rpc0, zerofee_address(state));
-        state.zerofee_balance_after_quota = before;
+        let before = eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+            .wrap_err("read signer balance before ninth call")?;
+        state.zerofee_balance_after_quota = Some(before);
         state.zerofee_ninth_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
             zerofee_key(state),
             addresses::AGENT_REWARD_ADDR,
             0,
         )?);
-        state.zerofee_balance_after_ninth = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_balance_after_ninth = Some(
+            eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+                .wrap_err("read signer balance after ninth call")?,
+        );
         Ok(())
     }
 
@@ -4365,8 +4500,12 @@ impl Rpc {
             "ninth receipt has no OutbeFailure(110)"
         );
         assert_eq!(
-            state.zerofee_balance_after_ninth,
-            state.zerofee_balance_after_quota
+            state
+                .zerofee_balance_after_ninth
+                .expect("balance after ninth call"),
+            state
+                .zerofee_balance_after_quota
+                .expect("balance before ninth call")
         );
         assert_eq!(
             self.zerofee_counter(zerofee_address(state)).map(|v| v.1),
@@ -4375,14 +4514,20 @@ impl Rpc {
     }
 
     pub fn submit_zerofee_paid(&self, state: &mut FixtureState) -> Result<()> {
-        state.zerofee_balance_after_ninth = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_balance_after_ninth = Some(
+            eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+                .wrap_err("read signer balance before paid fallback")?,
+        );
         state.zerofee_paid_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
             zerofee_key(state),
             addresses::AGENT_REWARD_ADDR,
             1,
         )?);
-        state.zerofee_balance_after_paid = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        state.zerofee_balance_after_paid = Some(
+            eth::balance_result(&self.cfg.rpc0, zerofee_address(state))
+                .wrap_err("read signer balance after paid fallback")?,
+        );
         Ok(())
     }
 
@@ -4390,8 +4535,27 @@ impl Rpc {
         let receipt = state.zerofee_paid_receipt.as_ref().expect("paid receipt");
         assert!(receipt_status(receipt), "paid fallback failed");
         assert!(
-            state.zerofee_balance_after_paid < state.zerofee_balance_after_ninth,
+            state
+                .zerofee_balance_after_paid
+                .expect("balance after paid fallback")
+                < state
+                    .zerofee_balance_after_ninth
+                    .expect("balance before paid fallback"),
             "paid fallback did not charge a fee"
+        );
+        let charged = state
+            .zerofee_balance_after_ninth
+            .expect("balance before paid fallback")
+            .checked_sub(
+                state
+                    .zerofee_balance_after_paid
+                    .expect("balance after paid fallback"),
+            )
+            .expect("paid fallback balance must not increase");
+        assert_eq!(
+            charged,
+            Self::receipt_gas_cost(receipt).expect("valid paid fallback receipt fee"),
+            "paid fallback balance delta differs from its exact receipt fee"
         );
         assert!(!receipt_has_log(
             receipt,
@@ -4489,14 +4653,20 @@ impl Rpc {
         // empty calldata may revert; that receipt status is not the delegation
         // postcondition, so the live account code below is authoritative.
         let _delegation = eth::install_delegation(&self.cfg.rpc0, &key, addresses::UPDATE_ADDR)?;
-        state.zerofee_wrong_target_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_wrong_target_balance_before = Some(
+            eth::balance_result(&self.cfg.rpc0, address)
+                .wrap_err("read signer balance before wrong-target call")?,
+        );
         state.zerofee_wrong_target_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
             &key,
             addresses::AGENT_REWARD_ADDR,
             0,
         )?);
-        state.zerofee_wrong_target_balance_after = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_wrong_target_balance_after = Some(
+            eth::balance_result(&self.cfg.rpc0, address)
+                .wrap_err("read signer balance after wrong-target call")?,
+        );
         Ok(())
     }
 
@@ -4517,8 +4687,27 @@ impl Rpc {
             "wrong-target delegation received ZeroFee sponsorship"
         );
         assert!(
-            state.zerofee_wrong_target_balance_after < state.zerofee_wrong_target_balance_before,
+            state
+                .zerofee_wrong_target_balance_after
+                .expect("balance after wrong-target call")
+                < state
+                    .zerofee_wrong_target_balance_before
+                    .expect("balance before wrong-target call"),
             "wrong-target call did not pay its own COEN gas charge"
+        );
+        let charged = state
+            .zerofee_wrong_target_balance_before
+            .expect("balance before wrong-target call")
+            .checked_sub(
+                state
+                    .zerofee_wrong_target_balance_after
+                    .expect("balance after wrong-target call"),
+            )
+            .expect("wrong-target call balance must not increase");
+        assert_eq!(
+            charged,
+            Self::receipt_gas_cost(receipt).expect("valid wrong-target receipt fee"),
+            "wrong-target balance delta differs from its exact receipt fee"
         );
         assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
     }
@@ -4590,14 +4779,20 @@ impl Rpc {
                  start_timestamp={start_timestamp}, last={latest_observation:?}"
             )
         })?;
-        state.zerofee_new_day_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_new_day_balance_before = Some(
+            eth::balance_result(&self.cfg.rpc0, address)
+                .wrap_err("read signer balance before new-day call")?,
+        );
         state.zerofee_new_day_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
             zerofee_key(state),
             addresses::AGENT_REWARD_ADDR,
             0,
         )?);
-        state.zerofee_new_day_balance_after = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_new_day_balance_after = Some(
+            eth::balance_result(&self.cfg.rpc0, address)
+                .wrap_err("read signer balance after new-day call")?,
+        );
         Ok(())
     }
 
@@ -4619,31 +4814,52 @@ impl Rpc {
             "first new-day call has no sponsorship event"
         );
         assert_eq!(
-            state.zerofee_new_day_balance_after, state.zerofee_new_day_balance_before,
+            state
+                .zerofee_new_day_balance_after
+                .expect("balance after new-day call"),
+            state
+                .zerofee_new_day_balance_before
+                .expect("balance before new-day call"),
             "first new-day sponsored call charged the signer COEN"
         );
-        let expected = self
-            .zerofee_counter(address)
-            .expect("primary new-day counter");
+        let outcome = TxOutcome {
+            transaction_hash: receipt["transactionHash"]
+                .as_str()
+                .expect("new-day receipt transaction hash")
+                .to_owned(),
+            success: true,
+            receipt: receipt.clone(),
+        };
+        let checkpoint = self
+            .finalize_outcome(&outcome, ports, 60)
+            .expect("new-day sponsored receipt is canonical and finalized on every observer");
+        let (_, expected, _) = self
+            .zerofee_state_at(ports[0], address, checkpoint)
+            .expect("read new-day counter at the finalized receipt checkpoint");
         assert_ne!(expected.0, old_day, "worldwide day did not change");
         assert_eq!(expected.1, 1, "new-day quota must restart at one use");
         let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
         for &port in ports {
-            let url = self.url(port);
+            let (code, counter, balance) = self
+                .zerofee_state_at(port, address, checkpoint)
+                .unwrap_or_else(|error| {
+                    panic!("read finalized new-day state on RPC {port}: {error:#}")
+                });
             assert_eq!(
-                eth::read_call(
-                    &url,
-                    addresses::ZEROFEE_ADDR,
-                    &IZeroFee::getCounterCall { signer: address },
-                )
-                .map(|value| (value.day, value.count)),
-                Some(expected),
+                counter, expected,
                 "new-day quota differs on RPC port {port}"
             );
             assert_eq!(
-                eth::code(&url, address).map(|code| code.to_vec()),
-                Some(expected_code.clone()),
+                code.as_ref(),
+                expected_code.as_slice(),
                 "delegation changed across day rollover on RPC port {port}"
+            );
+            assert_eq!(
+                balance,
+                state
+                    .zerofee_new_day_balance_before
+                    .expect("pre-rollover call balance"),
+                "finalized new-day call charged the signer on RPC port {port}"
             );
         }
     }

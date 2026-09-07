@@ -121,6 +121,7 @@ fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 
 // Solidity sources so the harness exercises the same selectors the node
 // dispatches.
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IGovernance.sol");
 sol!("../../contracts/precompiles/src/IL2Registry.sol");
@@ -382,10 +383,15 @@ pub(crate) fn simulate_call<C: SolCall>(
 
 /// Head block number (`eth_blockNumber`).
 pub(crate) fn block_number(url: &str) -> Option<u64> {
+    block_number_result(url).ok()
+}
+
+/// Head block number, preserving transport, RPC and quantity-decoding failures.
+pub(crate) fn block_number_result(url: &str) -> Result<u64> {
     let url = url.to_string();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        provider.get_block_number().await.ok()
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        Ok(provider.get_block_number().await?)
     })
 }
 
@@ -700,8 +706,38 @@ pub(crate) fn send_call<C: SolCall>(
     call: &C,
     value: Option<U256>,
 ) -> Result<String> {
+    send_call_inner(url, to, key, call, value, false)
+}
+
+/// Submit a paid claim with a 50% execution-gas reserve. This changes the
+/// transaction limit, not its gas price or its receipt success requirement.
+pub(crate) fn send_call_with_gas_reserve<C: SolCall>(
+    url: &str,
+    to: Address,
+    key: &str,
+    call: &C,
+    value: Option<U256>,
+) -> Result<String> {
+    send_call_inner(url, to, key, call, value, true)
+}
+
+fn gas_limit_with_reserve(estimate: u64) -> Result<u64> {
+    estimate
+        .checked_add(estimate.div_ceil(2))
+        .ok_or_else(|| eyre!("estimated gas with 50% reserve overflows u64"))
+}
+
+fn send_call_inner<C: SolCall>(
+    url: &str,
+    to: Address,
+    key: &str,
+    call: &C,
+    value: Option<U256>,
+    gas_reserve: bool,
+) -> Result<String> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let sender = signer.address();
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
     let data = call.abi_encode();
@@ -710,12 +746,48 @@ pub(crate) fn send_call<C: SolCall>(
             .wallet(wallet)
             .connect_http(url.parse()?);
         let mut tx = TransactionRequest::default()
+            .from(sender)
             .to(to)
             .input(Bytes::from(data).into())
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
+        }
+        if gas_reserve {
+            let anchor = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                provider.get_block_by_number(BlockNumberOrTag::Latest),
+            )
+            .await
+            .map_err(|_| eyre!("timed out reading gas-estimation anchor"))??
+            .ok_or_else(|| eyre!("gas-estimation anchor missing"))?;
+            let block = BlockId::hash_canonical(anchor.header.hash);
+            let estimate = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                provider.estimate_gas(tx.clone()).block(block),
+            )
+            .await
+            .map_err(|_| eyre!("timed out estimating paid claim gas"))??;
+            let limit = gas_limit_with_reserve(estimate)?;
+            // Compare separate executions on the very same state: a failure
+            // here cannot be attributed to intervening blocks or transactions.
+            // These probes diagnose estimation; only the mined receipt decides
+            // whether the submitted claim succeeded.
+            for probe_limit in [estimate, limit] {
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    provider
+                        .call(tx.clone().gas_limit(probe_limit))
+                        .block(block),
+                )
+                .await;
+                eprintln!(
+                    "paid claim gas probe: sender={sender} anchor_height={} anchor_hash={} estimate={estimate} limit={limit} probe_limit={probe_limit} result={probe:?}",
+                    anchor.header.number, anchor.header.hash,
+                );
+            }
+            tx = tx.gas_limit(limit);
         }
         let pending = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -727,6 +799,15 @@ pub(crate) fn send_call<C: SolCall>(
             tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
                 .await
                 .map_err(|_| eyre!("timed out waiting for public call receipt"))??;
+        if gas_reserve {
+            eprintln!(
+                "paid claim gas receipt: tx={} block={:?} gas_used={} success={}",
+                receipt.transaction_hash,
+                receipt.block_number,
+                receipt.gas_used,
+                receipt.status(),
+            );
+        }
         if !receipt.status() {
             return Err(eyre!(
                 "public contract call reverted in transaction {:#x}",
@@ -1014,13 +1095,17 @@ pub(crate) fn pool_account_at_tip(url: &str, address: Address) -> Result<PoolAcc
 
 /// Current account balance.
 pub(crate) fn balance(url: &str, address: Address) -> Option<U256> {
+    balance_result(url, address).ok()
+}
+
+/// Read an account balance without erasing transport or decoding failures.
+pub(crate) fn balance_result(url: &str, address: Address) -> Result<U256> {
     let url = url.to_string();
     block_on(async move {
-        ProviderBuilder::new()
-            .connect_http(url.parse().ok()?)
+        Ok(ProviderBuilder::new()
+            .connect_http(url.parse()?)
             .get_balance(address)
-            .await
-            .ok()
+            .await?)
     })
 }
 
@@ -1332,6 +1417,15 @@ pub(crate) fn coen(amount: u64) -> U256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paid_claim_gas_reserve_rounds_up_and_rejects_overflow() {
+        assert_eq!(gas_limit_with_reserve(160_246).unwrap(), 240_369);
+        assert_eq!(gas_limit_with_reserve(160_247).unwrap(), 240_371);
+        assert_eq!(gas_limit_with_reserve(0).unwrap(), 0);
+        assert_eq!(gas_limit_with_reserve(1).unwrap(), 2);
+        assert!(gas_limit_with_reserve(u64::MAX).is_err());
+    }
 
     fn selector(signature: &str) -> [u8; 4] {
         alloy_primitives::keccak256(signature.as_bytes())[..4]

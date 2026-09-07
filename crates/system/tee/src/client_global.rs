@@ -71,7 +71,46 @@ pub enum InstallError {
     Probe(#[from] TransportError),
 }
 
-static ENCLAVE_SESSION: OnceLock<Mutex<EnclaveSession>> = OnceLock::new();
+/// Installed atomically so canary and execution always share the same pinned
+/// identity, but never the same connection or lock.
+pub(crate) struct EnclaveSessions {
+    execution: Mutex<EnclaveSession>,
+    canary: Mutex<EnclaveSession>,
+    attestation_pub: [u8; 32],
+}
+
+impl EnclaveSessions {
+    pub(crate) fn new(session: EnclaveSession) -> Self {
+        Self {
+            attestation_pub: session.attestation_pub(),
+            canary: Mutex::new(session.fork_connection()),
+            execution: Mutex::new(session),
+        }
+    }
+
+    pub(crate) fn with_execution<R>(&self, f: impl FnOnce(&mut EnclaveSession) -> R) -> R {
+        with_session(&self.execution, f)
+    }
+
+    pub(crate) fn canary_request(
+        &self,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        if !matches!(
+            request,
+            EnclaveRequest::Health
+                | EnclaveRequest::GetPublicKeys
+                | EnclaveRequest::ProcessTributeOfferBatch { .. }
+        ) {
+            return Err(TransportError::EnclaveError(
+                "request is not permitted on the canary connection".into(),
+            ));
+        }
+        with_session(&self.canary, |session| session.request(request))
+    }
+}
+
+static ENCLAVE_SESSION: OnceLock<EnclaveSessions> = OnceLock::new();
 
 /// True once a process-global enclave session is installed.
 pub fn is_enclave_configured() -> bool {
@@ -84,7 +123,7 @@ pub fn is_enclave_configured() -> bool {
 pub fn install_enclave_client(client: EnclaveClient, endpoint: String) -> Result<(), InstallError> {
     let session = EnclaveSession::development(client, endpoint)?;
     ENCLAVE_SESSION
-        .set(Mutex::new(session))
+        .set(EnclaveSessions::new(session))
         .map_err(|_| InstallError::AlreadyInitialized)
 }
 
@@ -101,7 +140,7 @@ pub fn install_authorized_enclave_client(
 ) -> Result<(), InstallError> {
     let session = EnclaveSession::production(client, endpoint, node_data_dir, manifest, node_host)?;
     ENCLAVE_SESSION
-        .set(Mutex::new(session))
+        .set(EnclaveSessions::new(session))
         .map_err(|_| InstallError::AlreadyInitialized)
 }
 
@@ -120,7 +159,24 @@ pub fn install_authorized_enclave_client(
 /// and/or rate-limit query-path calls so consensus-path requests never queue
 /// behind them.
 pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R> {
-    let mutex = ENCLAVE_SESSION.get()?;
+    Some(ENCLAVE_SESSION.get()?.with_execution(f))
+}
+
+/// Run only the canary's existing read-only probes on its own authenticated
+/// connection. No execution-session mutex is acquired, including reconnects.
+pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+    ENCLAVE_SESSION
+        .get()
+        .ok_or_else(|| TransportError::EnclaveError("enclave session is not configured".into()))?
+        .canary_request(request)
+}
+
+/// Read the install-time attestation pin without waiting for enclave I/O.
+pub fn canary_attestation_pub() -> Option<[u8; 32]> {
+    Some(ENCLAVE_SESSION.get()?.attestation_pub)
+}
+
+fn with_session<R>(mutex: &Mutex<EnclaveSession>, f: impl FnOnce(&mut EnclaveSession) -> R) -> R {
     let mut session = match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -129,7 +185,7 @@ pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R
             guard
         }
     };
-    Some(f(&mut session))
+    f(&mut session)
 }
 
 /// Invoke the full verifier only through a production NodeHost-authorized

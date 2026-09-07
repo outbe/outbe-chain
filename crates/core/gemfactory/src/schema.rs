@@ -51,6 +51,11 @@ pub struct GemPosition {
 
     #[attribute(order = 7)]
     pub parked_at: u64,
+
+    /// Deadline snapshotted from the profile at parking, so a later profile
+    /// change cannot retroactively expire positions already in the queue.
+    #[attribute(order = 8)]
+    pub expires_at: u64,
 }
 
 #[storage_schema]
