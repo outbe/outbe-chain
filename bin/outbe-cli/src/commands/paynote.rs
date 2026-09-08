@@ -12,7 +12,7 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
 use outbe_paynote::{
-    client::Tree,
+    client::{new_tree, witness},
     hash::{
         address_field, change_key, field_from_be_bytes, field_to_be_bytes, note_commitment,
         note_nullifier, note_sn, Field,
@@ -20,6 +20,7 @@ use outbe_paynote::{
     precompile::IPayNote,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
+use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::{
     protocol::zk::{Circuit, ProofGenerator},
     OutbeV1,
@@ -477,10 +478,10 @@ fn decode_note(log: &Value) -> Result<IPayNote::NewNote> {
     Ok(event)
 }
 
-async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
+async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Imt<OutbeV1>> {
     let head = client.eth_block_number().await?;
     let tag = format!("0x{head:x}");
-    let mut tree = Tree::new(chain_id)?;
+    let mut tree = new_tree(chain_id)?;
     let mut from = 0u64;
     // ponytail: scan all history, O(leaves) memory; cache the tree when pool size warrants it.
     loop {
@@ -559,12 +560,12 @@ fn prove(
     note: &Note,
     amount: U256,
     spender: Address,
-    tree: &Tree,
+    tree: &Imt<OutbeV1>,
 ) -> Result<(Vec<u8>, Option<Note>, PublicInputs)> {
     note.validate()?;
     ensure!(!spender.is_zero(), "spender must be non-zero");
     let change = note.change(amount)?;
-    let (leaf_index, auth_path) = tree.witness(field(note.commitment)?)?;
+    let (leaf_index, auth_path) = witness(tree, field(note.commitment)?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
         root: tree.root(),

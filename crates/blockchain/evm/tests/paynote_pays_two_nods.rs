@@ -32,9 +32,10 @@ use outbe_nod::{NodContract, NodIssueParams, NodRepositoryReader};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
+use outbe_paynote::client::new_tree;
 use outbe_paynote::hash::field_to_be_bytes;
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{change_note, note, spend_proof, Note, ReferenceTree};
+use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
 };
@@ -373,8 +374,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
-    let mut tree = ReferenceTree::new(CHAIN_ID);
-    let leaf = tree.append(funding.commitment);
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
 
     // First Nod: spend half the note.
     let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
@@ -408,7 +409,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         ),
         "the appended leaf must be the change commitment the spender can derive"
     );
-    let change_leaf = tree.append(change.commitment);
+    let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
 
     // One note is one payment: the first proof cannot pay the second Nod.
     let replay = mine_gratis(&mut ctx, &scope, &readers, nods[1], &first_proof);

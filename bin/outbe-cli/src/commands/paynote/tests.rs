@@ -216,7 +216,7 @@ fn note_files_are_private_immutable_and_roundtrip_full_u256() {
 #[tokio::test]
 async fn deposit_approves_only_when_needed_and_preserves_note_on_failure() {
     let n = note();
-    let mut tree = Tree::new(CHAIN).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
     for initial in [U256::ZERO, U256::ONE, n.amount] {
         let mut calls = vec![allowance_call(initial)];
@@ -319,7 +319,7 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
         .contains("pending"));
 }
 
-fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
+fn tree_rpc(tree: &Imt<OutbeV1>, logs: Vec<Value>) -> MockRpc {
     MockRpc {
         chain_id: Ok(CHAIN),
         block_number: Ok(10),
@@ -349,7 +349,7 @@ fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
 #[tokio::test]
 async fn tree_history_requires_dense_indexes_and_matching_roots() {
     let n = note();
-    let mut tree = Tree::new(CHAIN).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
     let valid = event(&n, 0, tree.root(), n.amount);
     assert_eq!(
@@ -421,7 +421,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
     let temp = tempfile::tempdir().unwrap();
     let path = save_note(temp.path(), &n).unwrap();
     let before = fs::read(&path).unwrap();
-    let mut tree = Tree::new(CHAIN).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
     let mut rpc = tree_rpc(&tree, vec![event(&n, 0, tree.root(), n.amount)]);
     rpc.eth_call_map = Some(call_map(HashMap::from([
@@ -455,7 +455,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let n = note();
     let spender = TxSigner::new(KEY).unwrap().address();
     let temp = tempfile::tempdir().unwrap();
-    let mut tree = Tree::new(CHAIN).unwrap();
+    let mut tree = new_tree(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
     let origin_log = event(&n, 0, tree.root(), n.amount);
     let mut calls = vec![allowance_call(n.amount)];
@@ -483,7 +483,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let combined = hex::decode(output["proof"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     let change = load_note(Path::new(output["change_note"].as_str().unwrap())).unwrap();
     assert_eq!(change.amount, n.amount - amount);
-    assert!(tree.witness(field(change.commitment).unwrap()).is_err());
+    assert!(witness(&tree, field(change.commitment).unwrap()).is_err());
     assert!(load_note(Path::new(deposited["note"].as_str().unwrap())).unwrap() == n);
     let artifact = fs::read_to_string(output["proof_file"].as_str().unwrap()).unwrap();
     assert!(!artifact.contains(&format!("{:#x}", change.spend_key)));

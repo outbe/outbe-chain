@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_paynote::client::Tree;
+use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{
     address_field, field_from_be_bytes, field_to_be_bytes, note_commitment, note_nullifier,
     note_sn, Field,
@@ -123,7 +123,7 @@ pub(crate) fn deposit_and_prove(
 /// against the same root the chain will check it under — including any notes
 /// other scenarios deposited.
 pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Address) -> Vec<u8> {
-    let mut tree = Tree::new(note.chain_id).expect("paynote tree");
+    let mut tree = new_tree(note.chain_id).expect("paynote tree");
     for (index, commitment) in deposited_leaves(world, port) {
         assert_eq!(
             tree.leaves().len(),
@@ -132,9 +132,8 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         );
         tree.append(commitment).expect("append NewNote commitment");
     }
-    let (leaf_index, auth_path) = tree
-        .witness(note.commitment)
-        .expect("the scenario's own deposit must be in the pool");
+    let (leaf_index, auth_path) =
+        witness(&tree, note.commitment).expect("the scenario's own deposit must be in the pool");
 
     let public = PublicInputs {
         chain_id: note.chain_id,

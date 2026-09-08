@@ -7,6 +7,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -16,69 +17,11 @@ use outbe_zk_canonical::u256;
 use ark_ff::{BigInteger as _, PrimeField};
 
 use crate::hash::{
-    address_field, change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
-    note_nullifier, note_sn, Field,
+    address_field, change_key, empty_subtrees, field_to_be_bytes, note_commitment, note_nullifier,
+    note_sn, Field,
 };
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
-
-// ---- reference tree -------------------------------------------------------
-
-/// Naive recompute-from-leaves tree, used both to derive witnesses and to
-/// cross-check the runtime's stored incremental tree. Deliberately a different
-/// algorithm from `runtime::append` so agreement means something.
-pub struct ReferenceTree {
-    pub leaves: Vec<Field>,
-    zeros: Vec<Field>,
-}
-
-// TODO remove this implementation in a favour of generic one
-impl ReferenceTree {
-    pub fn new(chain_id: u64) -> Self {
-        Self {
-            leaves: Vec::new(),
-            zeros: empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap(),
-        }
-    }
-
-    pub fn append(&mut self, leaf: Field) -> u32 {
-        let index = self.leaves.len() as u32;
-        self.leaves.push(leaf);
-        index
-    }
-
-    pub fn root(&self) -> Field {
-        let mut nodes = self.leaves.clone();
-        for level in 0..PAYNOTE_TREE_DEPTH {
-            if nodes.len() % 2 == 1 {
-                nodes.push(self.zeros[level]);
-            }
-            nodes = nodes
-                .chunks_exact(2)
-                .map(|pair| merkle_node(pair[0], pair[1]).unwrap())
-                .collect();
-        }
-        nodes[0]
-    }
-
-    pub fn path_at(&self, leaf_index: u32) -> [Field; PAYNOTE_TREE_DEPTH] {
-        let mut index = leaf_index as usize;
-        let mut path = [Field::from(0u64); PAYNOTE_TREE_DEPTH];
-        let mut nodes = self.leaves.clone();
-        for (level, sibling) in path.iter_mut().enumerate() {
-            if nodes.len() % 2 == 1 {
-                nodes.push(self.zeros[level]);
-            }
-            *sibling = nodes.get(index ^ 1).copied().unwrap_or(self.zeros[level]);
-            nodes = nodes
-                .chunks_exact(2)
-                .map(|pair| merkle_node(pair[0], pair[1]).unwrap())
-                .collect();
-            index >>= 1;
-        }
-        path
-    }
-}
 
 /// Everything the pool and the prover need about one note.
 pub struct Note {
@@ -133,7 +76,7 @@ pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Not
 /// spend appended.
 pub fn spend_proof(
     chain_id: u64,
-    tree: &ReferenceTree,
+    tree: &Imt<OutbeV1>,
     leaf_index: u32,
     note: &Note,
     spender: Address,
@@ -145,7 +88,7 @@ pub fn spend_proof(
 
 fn prove_spend(
     chain_id: u64,
-    tree: &ReferenceTree,
+    tree: &Imt<OutbeV1>,
     leaf_index: u32,
     n: &Note,
     spender: Address,
@@ -165,7 +108,12 @@ fn prove_spend(
         note_amount: u256::to_limbs(n.amount),
         note_spend_key: n.key,
         leaf_index,
-        auth_path: tree.path_at(leaf_index),
+        auth_path: tree
+            .inclusion_path(u64::from(leaf_index))
+            .unwrap()
+            .siblings
+            .try_into()
+            .unwrap(),
     };
     let proof =
         ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
@@ -219,7 +167,7 @@ pub struct SpendFixture {
     /// The statement the proof carries.
     pub public: PublicInputs,
     /// The tree the membership path was taken from.
-    pub tree: ReferenceTree,
+    pub tree: Imt<OutbeV1>,
 }
 
 /// Builds a note of `note_amount` in `asset` and proves a `spend_amount` spend
@@ -235,8 +183,8 @@ pub fn note_and_spend_proof(
     spend_amount: U256,
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
-    let mut tree = ReferenceTree::new(chain_id);
-    let leaf_index = tree.append(n.commitment);
+    let mut tree = crate::client::new_tree(chain_id).unwrap();
+    let leaf_index = u32::try_from(tree.append(n.commitment).unwrap().0).unwrap();
     let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, spender, spend_amount);
 
     SpendFixture {
