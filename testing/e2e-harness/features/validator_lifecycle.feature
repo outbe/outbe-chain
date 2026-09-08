@@ -101,8 +101,21 @@ Feature: Validator admission, membership, recovery, and removal
 
   @pfs-006-02
   Scenario: Unconfirmed joiner remains PENDING until confirm-ready
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a short valid DKG schedule
     When a staked joiner has not confirmed readiness
-    Then the unconfirmed joiner stays pending across a full reshare cycle
+    Then the unconfirmed joiner stays pending across two full reshare cycles
     When the joiner confirms readiness
     Then the confirmed joiner activates on the next reshare
+
+  @p2p-admission-retention
+  Scenario Outline: Secondary source IP remains admitted across repeated DKG rotations
+    Given a fresh localnet with a short valid DKG schedule
+    And a <status> transport peer has its own registered source IP
+    Then its source IP is admitted before any retention eviction
+    When two complete DKG rotations exclude the transport peer
+    Then its source IP remains admitted on every active validator
+
+    Examples:
+      | status     |
+      | Registered |
+      | Pending    |

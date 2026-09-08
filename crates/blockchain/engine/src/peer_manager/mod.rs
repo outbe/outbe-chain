@@ -1,3 +1,4 @@
+mod admission;
 pub(crate) mod actor;
 pub(crate) mod ingress;
 

@@ -124,16 +124,9 @@ fn validate_boundary_predecessor(
     boundary: &BoundaryWitness,
     epoch: u64,
 ) -> Result<()> {
-    let previous = boundary
-        .planned
-        .checked_sub(epoch)
-        .ok_or_else(|| eyre!("invalid planned activation"))?;
-    if previous > 0 {
-        ensure!(
-            dkg_boundary_at(world, ports, previous)?.is_some(),
-            "DKG schedule is not anchored to a canonical previous activation"
-        );
-    }
+    validate_predecessor_certificate(boundary, epoch, |height| {
+        dkg_boundary_at(world, ports, height)
+    })?;
     let old_epoch = dkg_epoch_at(world, ports[0], boundary.freeze)?;
     ensure!(
         boundary.epoch
@@ -145,10 +138,45 @@ fn validate_boundary_predecessor(
     Ok(())
 }
 
-#[then("the unconfirmed joiner stays pending across a full reshare cycle")]
+fn validate_predecessor_certificate(
+    boundary: &BoundaryWitness,
+    epoch: u64,
+    mut boundary_at: impl FnMut(u64) -> Result<Option<BoundaryWitness>>,
+) -> Result<()> {
+    let previous = boundary
+        .planned
+        .checked_sub(epoch)
+        .ok_or_else(|| eyre!("invalid planned activation"))?;
+    if previous > 0 {
+        // The outcome certificate can land after its planned activation. Read
+        // its canonical block within the executed schedule interval instead of
+        // assuming that the planned height itself carries the certificate.
+        let mut predecessor = None;
+        for height in previous..=boundary.freeze {
+            if let Some(value) = boundary_at(height)? {
+                ensure!(predecessor.is_none(), "multiple predecessor certificates");
+                ensure!(
+                    value.height == height
+                        && value.planned == previous
+                        && value.epoch.checked_add(1) == Some(boundary.epoch)
+                        && value.cycle < boundary.cycle,
+                    "predecessor certificate disagrees with the executed schedule"
+                );
+                predecessor = Some(value);
+            }
+        }
+        ensure!(
+            predecessor.is_some(),
+            "DKG schedule is not anchored to a canonical previous activation"
+        );
+    }
+    Ok(())
+}
+
+#[then("the unconfirmed joiner stays pending across two full reshare cycles")]
 fn stays_pending(world: &mut World) {
     observe_readiness_cycle(world, false)
-        .expect("unconfirmed joiner remains excluded through one complete finalized cycle");
+        .expect("unconfirmed joiner remains excluded through two complete finalized cycles");
 }
 
 #[when("the joiner confirms readiness")]
@@ -212,10 +240,11 @@ fn observe_readiness_cycle(world: &mut World, confirmed: bool) -> Result<()> {
     let (epoch, prepare) = readiness_schedule(world)?;
     let members = dkg_addresses(world, 5)?;
     let ports = dkg_ports(world, &[0, 1, 2, 3, 4])?;
-    let deadline = Instant::now() + Duration::from_secs(400);
+    let deadline = Instant::now() + Duration::from_secs(if confirmed { 400 } else { 800 });
     let mut fresh = world.rpc.fresh_finality_target(&ports)?;
     let mut next = anchor.height;
-    let mut matched: Option<BoundaryWitness> = None;
+    let required_cycles = if confirmed { 1 } else { 2 };
+    let mut matched: Vec<BoundaryWitness> = Vec::new();
     loop {
         let ports = dkg_ports(world, &[0, 1, 2, 3, 4])?;
         let point = world.rpc.wait_finalized_checkpoint(&ports, 0, 1)?;
@@ -227,28 +256,30 @@ fn observe_readiness_cycle(world: &mut World, confirmed: bool) -> Result<()> {
             if let Some(boundary) = dkg_boundary_at(world, &ports, next)? {
                 validate_readiness_boundary(&boundary, epoch, prepare)?;
                 validate_boundary_predecessor(world, &ports, &boundary, epoch)?;
-                if let Some(previous) = &matched {
+                if boundary_covers_receipt(&boundary, anchor.height) {
                     ensure!(
-                        boundary.cycle != previous.cycle && boundary.epoch != previous.epoch,
+                        matched
+                            .iter()
+                            .all(|previous| previous.cycle != boundary.cycle
+                                && previous.epoch != boundary.epoch),
                         "readiness target activated more than once"
                     );
-                } else if boundary_covers_receipt(&boundary, anchor.height) {
                     let mut actual = boundary.members.clone();
                     actual.sort_unstable();
                     let mut expected = members[..if confirmed { 5 } else { 4 }].to_vec();
                     expected.sort_unstable();
                     ensure!(
                         actual == expected,
-                        "first eligible readiness boundary has the wrong membership"
+                        "readiness boundary has the wrong membership"
                     );
                     world.state.restart_observations.push(json!({"phase": "readiness_cycle_boundary",
                         "confirmed": confirmed, "receipt_height": anchor.height, "epoch_length": epoch,
                         "prepare_window": prepare, "boundary": boundary}));
-                    matched = Some(boundary);
+                    matched.push(boundary);
                     fresh = world.rpc.fresh_finality_target(&ports)?;
                 }
             }
-            let active = confirmed && matched.is_some();
+            let active = confirmed && !matched.is_empty();
             let at = world.rpc.checkpoint_at(ports[0], next)?;
             dkg_membership_at(
                 world,
@@ -262,7 +293,7 @@ fn observe_readiness_cycle(world: &mut World, confirmed: bool) -> Result<()> {
                 .checked_add(1)
                 .ok_or_else(|| eyre!("readiness scan height overflow"))?;
         }
-        if matched.is_some() && point.height >= fresh {
+        if matched.len() >= required_cycles && point.height >= fresh {
             dkg_ports(world, &[0, 1, 2, 3, 4])?;
             record_dkg_checkpoint(
                 world,
@@ -325,5 +356,54 @@ mod tests {
         let mut unknown = value;
         unknown.target_hash = B256::ZERO;
         assert!(validate_readiness_boundary(&unknown, 120, 30).is_err());
+    }
+    #[test]
+    fn predecessor_certificate_may_follow_its_planned_activation_height() {
+        // Actual SGX E2E evidence: certificates at 61 and 121 for planned
+        // activations 60 and 120. Scheduling stays anchored to planned heights.
+        let mut previous = boundary();
+        previous.height = 61;
+        previous.planned = 60;
+        previous.freeze = 40;
+        previous.epoch = 1;
+        previous.cycle = 1;
+        let mut current = previous.clone();
+        current.height = 121;
+        current.planned = 120;
+        current.freeze = 100;
+        current.epoch = 2;
+        current.cycle = 2;
+        validate_predecessor_certificate(&current, 60, |height| {
+            Ok((height == previous.height).then(|| previous.clone()))
+        })
+        .expect("certified predecessor after its planned height must be accepted");
+
+        assert!(validate_predecessor_certificate(&current, 60, |_| Ok(None)).is_err());
+        for invalid in [
+            BoundaryWitness {
+                epoch: 0,
+                ..previous.clone()
+            },
+            BoundaryWitness {
+                cycle: current.cycle,
+                ..previous.clone()
+            },
+            BoundaryWitness {
+                planned: 59,
+                ..previous.clone()
+            },
+            BoundaryWitness {
+                height: current.freeze + 1,
+                ..previous.clone()
+            },
+        ] {
+            assert!(
+                validate_predecessor_certificate(&current, 60, |height| {
+                    Ok((height == invalid.height).then(|| invalid.clone()))
+                })
+                .is_err(),
+                "invalid predecessor accepted"
+            );
+        }
     }
 }
