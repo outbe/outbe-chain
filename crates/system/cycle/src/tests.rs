@@ -721,6 +721,92 @@ fn dispatcher_fires_auction_advance_at_its_slot() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() {
+    let mut storage = cycle_storage();
+    let hash = B256::repeat_byte(0x77);
+    let early = Address::repeat_byte(0xB0);
+    let late = Address::repeat_byte(0xB1);
+    storage.enter(|handle| {
+        let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&ctx);
+        seed_fresh_reward_oracle(&ctx);
+        dispatch_triggers(&ctx).unwrap();
+        let ctx = BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
+        let metadata = outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata {
+            finalized_block_number: 10,
+            finalized_block_hash: hash,
+            finalized_epoch: 0,
+            finalized_view: 10,
+            parent_view: 9,
+            ordered_committee: vec![early, late],
+            signer_bitmap: vec![1],
+            proof: Default::default(),
+            committee_set_hash: B256::ZERO,
+            vrf_material_version: 0,
+            vrf_group_public_key_hash: B256::ZERO,
+            proof_kind:
+                outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
+            missed_proposers: vec![],
+        };
+        outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
+            &ctx,
+            &metadata,
+            U256::ZERO,
+            GENESIS_TS + SECONDS_PER_DAY - 1,
+            &[early],
+        )
+        .unwrap();
+    });
+    for height in 11..=13 {
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(
+                block_ctx(height, GENESIS_TS + SECONDS_PER_DAY + height - 11),
+                handle,
+            );
+            account_parent(&ctx, height);
+            dispatch_triggers(&ctx).unwrap();
+            let cycle = ctx.storage.contract::<Cycle>();
+            assert_eq!(cycle.active_utc_day.read().unwrap(), 20240101);
+            assert_eq!(
+                cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+                GENESIS_TS + 60
+            );
+            assert!(!outbe_rewards::api::is_day_settled(&ctx, 20240101).unwrap());
+            if height == 13 {
+                // Real phase order: Cycle first, then final-slot credit and GC.
+                outbe_rewards::late_settlement::record_late_credit(&ctx, hash, late, 3).unwrap();
+                outbe_rewards::late_settlement::settle_matured(&ctx, 13, 3).unwrap();
+            }
+        });
+    }
+    storage.enter(|handle| {
+        let ctx = BlockRuntimeContext::new(block_ctx(14, GENESIS_TS + SECONDS_PER_DAY + 3), handle);
+        account_parent(&ctx, 14);
+        dispatch_triggers(&ctx).unwrap();
+        assert!(outbe_rewards::api::is_day_settled(&ctx, 20240101).unwrap());
+        let cycle = ctx.storage.contract::<Cycle>();
+        assert_eq!(cycle.active_utc_day.read().unwrap(), 20240102);
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&EMISSION_LIMIT_1_ID)
+                .unwrap(),
+            14
+        );
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards>();
+        assert_eq!(
+            rewards.reward_gem_recipient_count.read(&20240101).unwrap(),
+            2
+        );
+        let loads = rewards.reward_promis_load_at.get_nested(&20240101);
+        assert_eq!(loads.read(&0).unwrap(), loads.read(&1).unwrap());
+        assert!(loads.read(&1).unwrap() > U256::ZERO);
+        dispatch_triggers(&ctx).unwrap();
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+    });
+}
+
+#[test]
 fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {

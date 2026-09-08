@@ -2,13 +2,14 @@
 //!
 //! moves CycleTick into begin-block system-transaction semantics.
 //! Phase 1 applies the immediate parent's finalization facts first; Phase 2
-//! then runs `CycleLifecycle::begin_block` so UTC-day settlement observes the
-//! complete previous-day bucket before user transactions execute.
+//! then runs `CycleLifecycle::begin_block`. At a UTC-day transition, settlement
+//! waits until the previous day's canonical late-credit windows have executed.
 //!
 //! The dispatcher itself is fully idempotent per slot via
 //! `Cycle.last_executed_at[trigger_id]`, so it is safe to invoke on
 //! every block. ProtocolCycle runs on the first block after each UTC-hour
-//! boundary and owns contiguous-day settlement and missed-day forfeiture.
+//! boundary, subject to that participation gate, and owns contiguous-day
+//! settlement and missed-day forfeiture.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{

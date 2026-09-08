@@ -103,6 +103,12 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
 
+    if !outbe_rewards::api::day_participation_complete(ctx, prev_day)? {
+        return Err(PrecompileError::Fatal(
+            "Cycle settlement before reward participation windows close".into(),
+        ));
+    }
+
     // idempotency guard. This handler issues the CCA agent pool
     // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
     // validator topup is independently idempotent via `daily_topup_settled`), so

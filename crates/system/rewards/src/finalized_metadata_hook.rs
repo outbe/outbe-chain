@@ -113,6 +113,15 @@ pub fn on_finalized_metadata(
     // but the fees themselves are now ESCROWED per finalized block (not paid
     // eagerly) and settled at N+K. Idempotent via `block_metadata_counted`.
     if first_seen {
+        let closes_at = metadata
+            .finalized_block_number
+            .checked_add(outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K)
+            .ok_or_else(|| PrecompileError::Fatal("reward window height overflow".into()))?;
+        rewards.pending_reward_day.write(&fb_hash, fb_day)?;
+        let previous_close = rewards.daily_last_window_close.read(&fb_day)?;
+        rewards
+            .daily_last_window_close
+            .write(&fb_day, previous_close.max(closes_at))?;
         let prev_raw = rewards.daily_fee_sum_raw.read(&fb_day)?;
         let next_raw = prev_raw
             .checked_add(validator_fee_sum)
@@ -142,41 +151,9 @@ pub fn on_finalized_metadata(
         voters,
     )?;
 
-    // Participation counting (daily-emission topup input) is unchanged and stays
-    // idempotent by `(fb_hash, voter)`. The per-block fee is escrowed above, not
-    // paid here.
-    let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
-    let day_participation = rewards.daily_participation.get_nested(&fb_day);
-    let day_voter_at = rewards.daily_voter_at.get_nested(&fb_day);
-
+    // Base and authenticated late voters share one per-block participation guard.
     for voter in voters {
-        if !participation_guard.read(voter)? {
-            let prev_count = day_participation.read(voter)?;
-            if prev_count == 0 {
-                // First time we see this voter for this day -> append to
-                // the deterministic ordered voter list.
-                let idx = rewards.daily_voter_count.read(&fb_day)?;
-                day_voter_at.write(&idx, *voter)?;
-                let next_idx = idx
-                    .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Revert("daily_voter_count overflow".into()))?;
-                rewards.daily_voter_count.write(&fb_day, next_idx)?;
-            }
-            let next_count = prev_count
-                .checked_add(1)
-                .ok_or_else(|| PrecompileError::Revert("daily_participation overflow".into()))?;
-            day_participation.write(voter, next_count)?;
-
-            let prev_total = rewards.daily_total_participation.read(&fb_day)?;
-            let next_total = prev_total.checked_add(1).ok_or_else(|| {
-                PrecompileError::Revert("daily_total_participation overflow".into())
-            })?;
-            rewards
-                .daily_total_participation
-                .write(&fb_day, next_total)?;
-
-            participation_guard.write(voter, true)?;
-        }
+        record_reward_participation(ctx, fb_hash, fb_day, *voter)?;
     }
 
     // 4. Advance max observed finalized day (monotonic).
@@ -185,18 +162,58 @@ pub fn on_finalized_metadata(
         rewards.max_observed_finalized_day.write(fb_day)?;
     }
 
-    // Settle is no longer triggered from this hook. As part of the
-    // begin-zone refactor, synchronous parent finalization runs
-    // in Phase 1 before `CycleLifecycle::begin_block` day-boundary
-    // orchestration. There is therefore no late-after-settle fatal guard
-    // here; `daily_settled` remains owned by Cycle as the day-dispatch
-    // completion marker.
-
-    // bound the per-`fb_hash` guard maps. Advances once per finalized
-    // block (gated on `first_seen`) and clears the guards of the block evicted
-    // `BLOCK_GUARD_RETAIN` records ago.
+    // Bound finalized-block replay guards, well beyond the late-credit window.
     if first_seen {
         prune_block_guards(&rewards, fb_hash)?;
+    }
+    Ok(())
+}
+
+/// Count one verified participant, independent of whether it arrived in the
+/// base certificate or in the canonical late-credit window. The reward belongs
+/// to the finalized block's day, never to the credit's inclusion day.
+pub(crate) fn record_reward_participation(
+    ctx: &BlockRuntimeContext,
+    fb_hash: B256,
+    fb_day: u32,
+    voter: Address,
+) -> Result<()> {
+    let rewards = ctx.storage.contract::<Rewards>();
+    let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
+    let day_participation = rewards.daily_participation.get_nested(&fb_day);
+    let day_voter_at = rewards.daily_voter_at.get_nested(&fb_day);
+
+    if !participation_guard.read(&voter)? {
+        if rewards.daily_topup_prepared.read(&fb_day)? {
+            return Err(PrecompileError::Fatal(
+                "reward participation arrived after GEM batch preparation".into(),
+            ));
+        }
+        let prev_count = day_participation.read(&voter)?;
+        if prev_count == 0 {
+            // First time we see this voter for this day -> append to
+            // the deterministic ordered voter list.
+            let idx = rewards.daily_voter_count.read(&fb_day)?;
+            day_voter_at.write(&idx, voter)?;
+            let next_idx = idx
+                .checked_add(1)
+                .ok_or_else(|| PrecompileError::Revert("daily_voter_count overflow".into()))?;
+            rewards.daily_voter_count.write(&fb_day, next_idx)?;
+        }
+        let next_count = prev_count
+            .checked_add(1)
+            .ok_or_else(|| PrecompileError::Revert("daily_participation overflow".into()))?;
+        day_participation.write(&voter, next_count)?;
+
+        let prev_total = rewards.daily_total_participation.read(&fb_day)?;
+        let next_total = prev_total
+            .checked_add(1)
+            .ok_or_else(|| PrecompileError::Revert("daily_total_participation overflow".into()))?;
+        rewards
+            .daily_total_participation
+            .write(&fb_day, next_total)?;
+
+        participation_guard.write(&voter, true)?;
     }
 
     Ok(())
@@ -258,6 +275,32 @@ mod tests {
         b256!("0x2222222222222222222222222222222222222222222222222222222222222222");
     const VAL_X: Address = address!("0x00000000000000000000000000000000000000A1");
     const VAL_Y: Address = address!("0x00000000000000000000000000000000000000B2");
+
+    #[test]
+    fn late_vote_across_midnight_counts_once_for_the_original_reward_day() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
+            on_finalized_metadata(
+                &ctx,
+                &meta_with_hash(FB_HASH_A, 10),
+                U256::ZERO,
+                GENESIS_TS + SECONDS_PER_DAY - 1,
+                &[VAL_X],
+            )
+            .unwrap();
+            crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_Y, 1).unwrap();
+            crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_Y, 2).unwrap();
+            crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_X, 1).unwrap();
+            assert_eq!(
+                crate::api::read_voters_for_day(&ctx, 20240101).unwrap(),
+                vec![(VAL_X, 1), (VAL_Y, 1)]
+            );
+            assert!(crate::api::read_voters_for_day(&ctx, 20240102)
+                .unwrap()
+                .is_empty());
+        });
+    }
 
     #[test]
     fn escrows_block_fees_and_seeds_base_voters_at_k0() {
