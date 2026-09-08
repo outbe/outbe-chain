@@ -187,6 +187,8 @@ struct ReferenceTree {
     zeros: Vec<Field>,
 }
 
+// TODO remove this implementation in a favour of generic one
+
 impl ReferenceTree {
     fn new() -> Self {
         Self {

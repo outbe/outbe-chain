@@ -25,6 +25,8 @@ piolium
 
 # Barretenberg CRS downloaded/generated for local proving and verification.
 /.bb-crs/
+# Local bearer-note secrets and generated proofs.
+/paynotes/
 /contracts/account-abstraction/lib/kernel/broadcast
 /.ruler
 

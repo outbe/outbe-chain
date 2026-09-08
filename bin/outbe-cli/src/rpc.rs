@@ -1,7 +1,9 @@
 //! Minimal JSON-RPC client for Ethereum-compatible nodes.
 
+use std::time::Duration;
+
 use alloy_primitives::{Address, U256};
-use eyre::{Result, WrapErr};
+use eyre::{ensure, Result, WrapErr};
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -96,6 +98,33 @@ pub trait Rpc {
         from_block: &str,
         to_block: &str,
     ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+}
+
+/// Wait for a matching successful transaction receipt, polling once per second.
+pub(crate) async fn wait_receipt(
+    client: &impl Rpc,
+    hash: &str,
+    timeout: Duration,
+) -> Result<Value> {
+    tokio::time::timeout(timeout, async {
+        loop {
+            if let Some(receipt) = client.eth_get_transaction_receipt(hash).await? {
+                ensure!(
+                    receipt.get("transactionHash").and_then(Value::as_str) == Some(hash),
+                    "receipt transaction hash mismatch"
+                );
+                ensure!(
+                    receipt.get("status").and_then(Value::as_str) == Some("0x1"),
+                    "transaction reverted or receipt has invalid status"
+                );
+                return Ok(receipt);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| eyre::eyre!("transaction {hash} is still pending"))?
+    .wrap_err_with(|| format!("transaction {hash}"))
 }
 
 /// JSON-RPC client backed by reqwest.
@@ -592,6 +621,9 @@ pub mod mock {
     }
 
     impl Rpc for MockRpc {
+        async fn eth_call_at(&self, to: Address, data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
+            self.eth_call(to, data).await
+        }
         async fn eth_call(&self, to: Address, data: &[u8]) -> Result<Vec<u8>> {
             match &self.eth_call_map {
                 Some(map) => map.dispatch(to, data),

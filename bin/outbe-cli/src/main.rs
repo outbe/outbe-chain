@@ -28,6 +28,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Paynote {
+        #[command(subcommand)]
+        cmd: commands::paynote::PaynoteCmd,
+    },
     /// Validator management
     Validator {
         #[command(subcommand)]
@@ -111,6 +115,7 @@ async fn main() -> Result<()> {
     let client = rpc::RpcClient::new(&cli.rpc_url);
 
     match cli.command {
+        Commands::Paynote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Staking { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Rewards { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
