@@ -1,10 +1,8 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
-use commonware_actor::Feedback;
 use commonware_consensus::{marshal::Update, types::Height, Heightable as _};
-use commonware_p2p::{Address, AddressableManager, AddressableTrackedPeers, Provider};
+use commonware_p2p::{AddressableManager, AddressableTrackedPeers, Provider};
 use commonware_runtime::{Clock, Handle, Spawner};
-use commonware_utils::ordered::Map;
 use commonware_utils::Acknowledgement as _;
 use eyre::WrapErr as _;
 use futures::{channel::mpsc, StreamExt as _};
@@ -15,7 +13,10 @@ use crate::validators::{read_admitted_non_consensus_at_block, read_consensus_val
 use outbe_consensus::{block::ConsensusBlock, config};
 use outbe_node::OutbeFullNode;
 
-use super::ingress::{Message, MessageWithCause, PublicKey};
+use super::{
+    admission::PeerAdmission,
+    ingress::{Message, MessageWithCause, PublicKey},
+};
 use crate::validators::ValidatorSet;
 
 pub(crate) struct Config<TOracle> {
@@ -23,7 +24,8 @@ pub(crate) struct Config<TOracle> {
     pub(crate) node: OutbeFullNode,
     pub(crate) executor: outbe_consensus::executor::Mailbox,
     pub(crate) bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
-    pub(crate) initial_peers: Map<PublicKey, Address>,
+    pub(crate) initial_peers: AddressableTrackedPeers<PublicKey>,
+    pub(crate) initial_height: u64,
 }
 
 struct FinalizedWaitResult {
@@ -33,66 +35,12 @@ struct FinalizedWaitResult {
 
 type FinalizedWait = Pin<Box<dyn Future<Output = FinalizedWaitResult> + Send>>;
 
-#[derive(Debug, Clone)]
-struct LastTrackedPeerSet {
-    height: u64,
-    /// Consensus participants (ACTIVE|EXITING with share) - the voting committee.
-    primary: Map<PublicKey, Address>,
-    /// Non-voting admitted peers (status in {REGISTERED, PENDING}): TEE full-nodes +
-    /// staked joiners, admitted for sync but not yet voting.
-    secondary: Map<PublicKey, Address>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PeerSetRefreshAction {
-    Track,
-    Overwrite,
-    Unchanged,
-}
-
-fn classify_peer_set_refresh(
-    last_tracked: Option<&LastTrackedPeerSet>,
-    primary: &Map<PublicKey, Address>,
-    secondary: &Map<PublicKey, Address>,
-) -> PeerSetRefreshAction {
-    let Some(tracked) = last_tracked else {
-        return PeerSetRefreshAction::Track;
-    };
-    // A membership change in EITHER tier needs a new tracked peer-set index - a
-    // PENDING joiner appearing in `secondary` must re-track even when the primary
-    // (voting) committee is unchanged, or the joiner is never admitted to P2P.
-    if primary.keys() != tracked.primary.keys() || secondary.keys() != tracked.secondary.keys() {
-        return PeerSetRefreshAction::Track;
-    }
-    if primary.values() != tracked.primary.values()
-        || secondary.values() != tracked.secondary.values()
-    {
-        return PeerSetRefreshAction::Overwrite;
-    }
-    PeerSetRefreshAction::Unchanged
-}
-
-/// Flatten the two tiers into a single address map for `oracle.overwrite` (which
-/// updates the address of already-known peers). The tiers are disjoint by status
-/// (a PENDING validator is never in the consensus set), so no dedup conflict.
-fn combine_tiers(
-    primary: &Map<PublicKey, Address>,
-    secondary: &Map<PublicKey, Address>,
-) -> Map<PublicKey, Address> {
-    Map::from_iter_dedup(
-        primary
-            .iter_pairs()
-            .chain(secondary.iter_pairs())
-            .map(|(k, v)| (k.clone(), v.clone())),
-    )
-}
-
 pub(crate) struct Actor<TContext, TOracle>
 where
     TOracle: AddressableManager<PublicKey = PublicKey>,
 {
     context: TContext,
-    oracle: TOracle,
+    admission: PeerAdmission<TOracle>,
     node: OutbeFullNode,
     executor: outbe_consensus::executor::Mailbox,
     bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
@@ -100,7 +48,6 @@ where
     pending_refresh: Option<ConsensusBlock>,
     retry_timer: Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
     finalized_wait: FinalizedWait,
-    last_tracked_peer_set: Option<LastTrackedPeerSet>,
 }
 
 impl<TContext, TOracle> Actor<TContext, TOracle>
@@ -113,7 +60,11 @@ where
         let mailbox = super::Mailbox::new(tx);
         let actor = Self {
             context,
-            oracle: config.oracle,
+            admission: PeerAdmission::new(
+                config.oracle,
+                config.initial_height,
+                config.initial_peers,
+            ),
             node: config.node,
             executor: config.executor,
             bootnode_map: config.bootnode_map,
@@ -121,11 +72,6 @@ where
             pending_refresh: None,
             retry_timer: Box::pin(std::future::pending()),
             finalized_wait: Box::pin(std::future::pending()),
-            last_tracked_peer_set: Some(LastTrackedPeerSet {
-                height: 0,
-                primary: config.initial_peers,
-                secondary: Map::from_iter_dedup(Vec::<(PublicKey, Address)>::new()),
-            }),
         };
         (actor, mailbox)
     }
@@ -171,17 +117,20 @@ where
     async fn handle_message(&mut self, cause: Span, message: Message) -> eyre::Result<()> {
         match message {
             Message::Track { id, peers } => {
-                let _ = AddressableManager::track(&mut self.oracle, id, peers);
+                self.admission.track(id, peers)?;
             }
             Message::Overwrite { peers } => {
-                let _ = AddressableManager::overwrite(&mut self.oracle, peers);
+                self.admission.overwrite(peers)?;
+            }
+            Message::PrepareDkg { peers, response } => {
+                let _ = response.send(self.admission.prepare_dkg(peers));
             }
             Message::PeerSet { id, response } => {
-                let result = Provider::peer_set(&mut self.oracle, id).await;
+                let result = Provider::peer_set(&mut self.admission.oracle, id).await;
                 let _ = response.send(result);
             }
             Message::Subscribe { response } => {
-                let receiver = Provider::subscribe(&mut self.oracle).await;
+                let receiver = Provider::subscribe(&mut self.admission.oracle).await;
                 let _ = response.send(receiver);
             }
             Message::Finalized(update) => match *update {
@@ -258,53 +207,20 @@ where
                 .wrap_err("failed to read admitted non-consensus validators for peer manager")?;
         let primary = crate::stack::build_peer_map(&consensus_set, &self.bootnode_map);
         let secondary = crate::stack::build_peer_map(&admitted_set, &self.bootnode_map);
-        let peer_set_id = crate::stack::p2p_oracle_chain_peer_set_id(block.number());
-        self.track_or_overwrite(peer_set_id, primary, secondary)
-            .await;
+        let count = primary.len() + secondary.len();
+        debug!(
+            height = block.number(),
+            primary = primary.len(),
+            secondary = secondary.len(),
+            "refreshing canonical P2P admission"
+        );
+        self.admission.refresh(
+            block.number(),
+            AddressableTrackedPeers::new(primary, secondary),
+        )?;
+        outbe_consensus::metrics::record_commonware_p2p_active_peers(count);
         self.pending_refresh = None;
         Ok(())
-    }
-
-    async fn track_or_overwrite(
-        &mut self,
-        height: u64,
-        primary: Map<PublicKey, Address>,
-        secondary: Map<PublicKey, Address>,
-    ) {
-        match classify_peer_set_refresh(self.last_tracked_peer_set.as_ref(), &primary, &secondary) {
-            PeerSetRefreshAction::Track => {
-                let feedback = self.oracle.track(
-                    height,
-                    AddressableTrackedPeers::new(primary.clone(), secondary.clone()),
-                );
-                if feedback == Feedback::Closed {
-                    warn!(height, "peer_manager oracle.track returned Closed");
-                }
-            }
-            PeerSetRefreshAction::Overwrite => {
-                let feedback = self.oracle.overwrite(combine_tiers(&primary, &secondary));
-                if feedback == Feedback::Closed {
-                    warn!(height, "peer_manager oracle.overwrite returned Closed");
-                }
-            }
-            PeerSetRefreshAction::Unchanged => {}
-        }
-        outbe_consensus::metrics::record_commonware_p2p_active_peers(
-            primary.len() + secondary.len(),
-        );
-        self.last_tracked_peer_set = Some(LastTrackedPeerSet {
-            height,
-            primary,
-            secondary,
-        });
-        if let Some(tracked) = &self.last_tracked_peer_set {
-            debug!(
-                height = tracked.height,
-                primary = tracked.primary.len(),
-                secondary = tracked.secondary.len(),
-                "peer_manager tracked latest peer set"
-            );
-        }
     }
 }
 
@@ -337,14 +253,10 @@ fn _assert_validator_set_send(_: &ValidatorSet) {}
 mod tests {
     use super::*;
     use alloy_primitives::{Bytes, B256};
-    use commonware_cryptography::{bls12381, Signer as _};
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::{primitives::SealedBlock, Block};
     use reth_provider::ProviderResult;
-    use std::{
-        collections::BTreeMap,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-    };
+    use std::collections::BTreeMap;
 
     #[derive(Default)]
     struct MockBlockHashProvider {
@@ -369,111 +281,6 @@ mod tests {
         block.header.extra_data = Bytes::from(vec![seed]);
         let block = block.map_header(OutbeHeader::new);
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn public_key(seed: u64) -> PublicKey {
-        bls12381::PublicKey::from(bls12381::PrivateKey::from_seed(seed))
-    }
-
-    fn address(port: u16) -> Address {
-        Address::Symmetric(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
-    }
-
-    fn peer_map(entries: &[(u64, u16)]) -> Map<PublicKey, Address> {
-        entries
-            .iter()
-            .map(|(seed, port)| (public_key(*seed), address(*port)))
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("test peer keys must be unique")
-    }
-
-    fn empty() -> Map<PublicKey, Address> {
-        peer_map(&[])
-    }
-
-    #[test]
-    fn seeded_startup_peer_set_is_not_retracked() {
-        let initial = peer_map(&[(1, 9001), (2, 9002)]);
-        let tracked = LastTrackedPeerSet {
-            height: 0,
-            primary: initial.clone(),
-            secondary: empty(),
-        };
-
-        assert_eq!(
-            classify_peer_set_refresh(Some(&tracked), &initial, &empty()),
-            PeerSetRefreshAction::Unchanged,
-            "unchanged startup peers must not call oracle.track again and collide with the next reshare peer-set index"
-        );
-    }
-
-    #[test]
-    fn address_only_change_uses_overwrite_without_new_peer_set_index() {
-        let initial = peer_map(&[(1, 9001), (2, 9002)]);
-        let changed_address = peer_map(&[(1, 9101), (2, 9002)]);
-        let tracked = LastTrackedPeerSet {
-            height: 0,
-            primary: initial,
-            secondary: empty(),
-        };
-
-        assert_eq!(
-            classify_peer_set_refresh(Some(&tracked), &changed_address, &empty()),
-            PeerSetRefreshAction::Overwrite
-        );
-    }
-
-    #[test]
-    fn validator_membership_change_tracks_new_peer_set() {
-        let initial = peer_map(&[(1, 9001), (2, 9002)]);
-        let changed_membership = peer_map(&[(1, 9001), (3, 9003)]);
-        let tracked = LastTrackedPeerSet {
-            height: 0,
-            primary: initial,
-            secondary: empty(),
-        };
-
-        assert_eq!(
-            classify_peer_set_refresh(Some(&tracked), &changed_membership, &empty()),
-            PeerSetRefreshAction::Track
-        );
-    }
-
-    #[test]
-    fn pending_joiner_in_secondary_tracks_new_peer_set() {
-        // A PENDING joiner appearing in the SECONDARY tier (primary committee
-        // unchanged) must re-track - otherwise the joiner is never admitted to P2P
-        // and can only connect at the reshare, mid-sync.
-        let primary = peer_map(&[(1, 9001), (2, 9002)]);
-        let tracked = LastTrackedPeerSet {
-            height: 0,
-            primary: primary.clone(),
-            secondary: empty(),
-        };
-        let new_secondary = peer_map(&[(3, 9003)]);
-
-        assert_eq!(
-            classify_peer_set_refresh(Some(&tracked), &primary, &new_secondary),
-            PeerSetRefreshAction::Track,
-            "a new PENDING secondary peer must trigger a fresh tracked peer set"
-        );
-    }
-
-    #[test]
-    fn secondary_address_only_change_uses_overwrite() {
-        let primary = peer_map(&[(1, 9001)]);
-        let tracked = LastTrackedPeerSet {
-            height: 0,
-            primary: primary.clone(),
-            secondary: peer_map(&[(3, 9003)]),
-        };
-        let changed_secondary_addr = peer_map(&[(3, 9103)]);
-
-        assert_eq!(
-            classify_peer_set_refresh(Some(&tracked), &primary, &changed_secondary_addr),
-            PeerSetRefreshAction::Overwrite
-        );
     }
 
     #[test]

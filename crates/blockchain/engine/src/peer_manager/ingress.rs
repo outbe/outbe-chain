@@ -18,6 +18,20 @@ pub(crate) struct Mailbox {
 }
 
 impl Mailbox {
+    /// Wait until the single oracle writer has published the DKG transport set.
+    pub(crate) async fn prepare_dkg(&self, peers: Map<PublicKey, Address>) -> eyre::Result<u64> {
+        let (response, receiver) = oneshot::channel();
+        self.inner
+            .unbounded_send(MessageWithCause::in_current_span(Message::PrepareDkg {
+                peers,
+                response,
+            }))
+            .map_err(|_| eyre::eyre!("peer_manager mailbox closed"))?;
+        receiver
+            .await
+            .map_err(|_| eyre::eyre!("peer_manager dropped DKG publication"))?
+    }
+
     pub(crate) fn new(inner: mpsc::UnboundedSender<MessageWithCause>) -> Self {
         Self { inner }
     }
@@ -40,7 +54,11 @@ impl MessageWithCause {
 pub(crate) enum Message {
     Track {
         id: u64,
+        peers: AddressableTrackedPeers<PublicKey>,
+    },
+    PrepareDkg {
         peers: Map<PublicKey, Address>,
+        response: oneshot::Sender<eyre::Result<u64>>,
     },
     Overwrite {
         peers: Map<PublicKey, Address>,
@@ -98,7 +116,7 @@ impl Provider for Mailbox {
 impl AddressableManager for Mailbox {
     /// As of commonware 2026.5.0 `track` is synchronous, accepts any
     /// `R: Into<AddressableTrackedPeers>`, and returns [`Feedback`]. We enqueue
-    /// the primary peer set onto the actor's unbounded mailbox (no `.await`, no
+    /// both admission tiers onto the actor's unbounded mailbox (no `.await`, no
     /// spawn) and map channel state to feedback.
     fn track<R>(&mut self, id: u64, peers: R) -> Feedback
     where
@@ -109,7 +127,7 @@ impl AddressableManager for Mailbox {
             .inner
             .unbounded_send(MessageWithCause::in_current_span(Message::Track {
                 id,
-                peers: addressable.primary,
+                peers: addressable,
             })) {
             Ok(()) => Feedback::Ok,
             Err(error) => {
@@ -173,6 +191,37 @@ mod tests {
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::{primitives::SealedBlock, Block};
     use std::time::Duration;
+
+    #[test]
+    fn track_preserves_secondary_admission_through_mailbox() {
+        use commonware_cryptography::{bls12381::PrivateKey, Signer as _};
+        use futures::StreamExt as _;
+
+        futures::executor::block_on(async {
+            let (tx, mut rx) = mpsc::unbounded();
+            let mut mailbox = Mailbox::new(tx);
+            let key = PrivateKey::from_seed(5).public_key();
+            let secondary = Map::from_iter_dedup([(
+                key.clone(),
+                Address::Symmetric("127.0.0.5:30400".parse().unwrap()),
+            )]);
+            assert_eq!(
+                mailbox.track(1, AddressableTrackedPeers::new(Map::default(), secondary)),
+                Feedback::Ok
+            );
+            let Message::Track { peers, .. } = rx.next().await.unwrap().message else {
+                panic!("expected tracked admission");
+            };
+            assert!(
+                peers.secondary.keys().position(&key).is_some(),
+                "mailbox lost secondary peer"
+            );
+            assert!(
+                peers.primary.is_empty(),
+                "secondary peer acquired primary status"
+            );
+        });
+    }
 
     fn make_test_block(seed: u8) -> ConsensusBlock {
         let mut block = Block::default();

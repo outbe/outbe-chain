@@ -63,7 +63,7 @@ fn submit_one_cross_currency_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-fn wait_for_offering(world: &World, wwd: &str) {
+pub(super) fn wait_for_offering(world: &World, wwd: &str) {
     let worldwide_day = wwd
         .parse::<u32>()
         .expect("valid worldwide-day set at setup");
@@ -100,6 +100,7 @@ fn wait_for_offering(world: &World, wwd: &str) {
 #[when("the operator submits a duplicate logical tribute offer with different parameters for the same day")]
 fn submit_duplicate_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    wait_for_offering(world, &wwd);
     let key = world
         .validators
         .by_name("validator-0")
@@ -216,16 +217,18 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .duplicate_tribute_tx_hash
         .as_deref()
         .expect("duplicate tribute tx");
-    assert!(
-        world.rpc.wait_receipt_status(duplicate, false, 240),
-        "duplicate tribute transaction did not produce a reverted receipt: {duplicate}"
+    let key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("duplicate owner key");
+    super::tribute_negatives::assert_rejection(
+        world,
+        duplicate,
+        &key,
+        super::tribute_negatives::Rejection::Duplicate,
     );
-    let primary = world.validators.primary_port();
-    assert_eq!(
-        world.rpc.supply(primary).as_deref(),
-        Some("1"),
-        "duplicate offer changed Tribute total supply"
-    );
+    super::tribute_negatives::assert_supply(world, 1);
     let original = world
         .state
         .tribute_tx_hash

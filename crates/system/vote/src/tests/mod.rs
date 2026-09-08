@@ -142,11 +142,22 @@ pub(super) fn empty_update_payload(current_height: u64) -> String {
 }
 
 pub(super) fn with_vote<F: FnOnce(StorageHandle)>(f: F) {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = test_provider();
     provider.set_block_number(1);
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
     f(storage);
+}
+
+pub(super) fn test_provider() -> HashMapStorageProvider {
+    // Runtime voting reads immutable genesis parameters, including when this
+    // test binary is built with test-protocol-overrides. Each process uses the
+    // default profile; custom profiles are covered by isolated replay tests.
+    static INITIALIZE: std::sync::Once = std::sync::Once::new();
+    INITIALIZE.call_once(|| {
+        outbe_chain_constants::initialize(None).expect("initialize vote test protocol parameters");
+    });
+    HashMapStorageProvider::new(1)
 }
 
 fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {

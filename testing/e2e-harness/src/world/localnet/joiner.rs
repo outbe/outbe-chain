@@ -1483,7 +1483,6 @@ mod tests {
         cfg.dir = root.path().to_owned();
         let mut localnet = Localnet::new(cfg);
         localnet.start_opts.unix_time_offset_secs = Some(123);
-        localnet.start_opts.voting_window = Some(42);
         fs::write(
             localnet.cfg.dir.join("validators.json"),
             r#"[{"public_key":"fixture-peer","p2p_address":"127.0.0.1:9000"}]"#,
@@ -1546,12 +1545,6 @@ mod tests {
         assert!(follower.contains(&"--testnet.unix-time-offset-secs=123".to_owned()));
         assert!(!follower.contains(&"--validator".to_owned()));
         assert!(!follower.contains(&"--validator.evm-key".to_owned()));
-        let mut command = std::process::Command::new("outbe-chain");
-        super::super::configure_node_protocol_environment(&localnet.start_opts, &mut command);
-        assert!(command
-            .get_envs()
-            .any(|(key, value)| key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS"
-                && value == Some(std::ffi::OsStr::new("42"))));
         assert_eq!(
             fs::read_to_string(vd.join("reth-p2p-secret.hex")).unwrap(),
             "11".repeat(32)

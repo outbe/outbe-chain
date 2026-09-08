@@ -1074,11 +1074,9 @@ mod tests {
             .scenarios
             .first()
             .expect("SGX-no-attest scenario");
-        let direct_feature = Feature::parse_path(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/intex.feature"),
-            cucumber::gherkin::GherkinEnv::default(),
-        )
-        .expect("parse gramine-direct feature");
+        let mut direct_feature = no_attest_feature.clone();
+        direct_feature.tags.retain(|tag| tag != "sgx-no-attest");
+        direct_feature.tags.push("gramine-direct".to_owned());
         let direct = direct_feature
             .scenarios
             .first()
@@ -1094,6 +1092,16 @@ mod tests {
             decide(&no_attest_feature, no_attest, &no_attest_env),
             Decision::Run
         );
+        let intex = Feature::parse_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("features/intex.feature"),
+            cucumber::gherkin::GherkinEnv::default(),
+        )
+        .expect("parse Intex SGX feature");
+        assert_eq!(intex.scenarios.len(), 2);
+        for scenario in &intex.scenarios {
+            assert_eq!(decide(&intex, scenario, &no_attest_env), Decision::Run);
+            assert_registered_steps(&intex, scenario);
+        }
         assert!(matches!(
             decide(&direct_feature, direct, &no_attest_env),
             Decision::Skip(_)
