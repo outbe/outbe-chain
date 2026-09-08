@@ -109,7 +109,7 @@ fn generate_zk_offer_fixture(
         let binding =
             OutbeV1::binding(&l1_owner.into_array(), tribute_draft_id.as_ref(), chain_id).unwrap();
         let signer = Signer::from_secret(NftSecret::new(secret), nonce).unwrap();
-        let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+        let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
             .unwrap()
             .empty_inclusion_path(0);
         let (witness, public) = draft

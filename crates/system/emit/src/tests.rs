@@ -402,8 +402,7 @@ fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
     let serial = scenario_serial();
     let commitment = note_commitment(CHAIN_ID, serial, U256::from(100));
     let mut reference =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
     reference.append(commitment).unwrap();
 
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -590,8 +589,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, U256::from(100)))
             .unwrap()
@@ -860,8 +858,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 
     // Burn.
     let serial = scenario_serial();
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
             .unwrap()
@@ -980,8 +977,7 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     let remainder = note - minted;
 
     let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
     let note_leaf = u32::try_from(
         tree.append(note_commitment(CHAIN_ID, serial, note))
             .unwrap()
@@ -1035,8 +1031,7 @@ fn stale_root_past_the_32_window_is_rejected() {
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let pool = CHAIN_ID;
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
 
     let serial = scenario_serial();
     let leaf = u32::try_from(
@@ -1091,8 +1086,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
             .unwrap()
@@ -1148,8 +1142,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     // A partial mint must also refuse to append past capacity; it needs a
     // real proof because the capacity guard for change runs after
     // verification.
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
             .unwrap()
@@ -1191,8 +1184,7 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
     let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
 
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
@@ -1250,12 +1242,10 @@ fn chains_derive_separate_commitments_and_roots_without_stored_configuration() {
 
     // The same serial+amount coexists on both chains with different roots.
     let mut reference_a =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(chain_id_a), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(chain_id_a), EMIT_TREE_DEPTH).unwrap();
     reference_a.append(commitment_a).unwrap();
     let mut reference_b =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(chain_id_b), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(chain_id_b), EMIT_TREE_DEPTH).unwrap();
     reference_b.append(commitment_b).unwrap();
     provider_a.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
@@ -1302,8 +1292,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
             .unwrap()
@@ -1459,8 +1448,7 @@ fn mint_rolls_back_fully_under_fault_injection() {
     let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = Imt::<OutbeV1>::new(emit_domain(), empty_leaf(pool), EMIT_TREE_DEPTH).unwrap();
     let leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
             .unwrap()

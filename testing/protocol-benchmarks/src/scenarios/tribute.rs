@@ -257,7 +257,7 @@ fn build_fixture() -> Fixture {
     let signer = Signer::from_secret(NftSecret::new(secret), owner_nonce).unwrap();
 
     let proof_started = Instant::now();
-    let path = Imt::<OutbeV1>::new(full_circuit_domain(), INCLUSION_DEPTH)
+    let path = Imt::<OutbeV1>::new(full_circuit_domain(), Fr::from(0u64), INCLUSION_DEPTH)
         .unwrap()
         .empty_inclusion_path(0);
     let (witness, public) = draft

@@ -332,8 +332,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
     let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
 
     // Alice burns all 100 units into a Bob-owned note.
     let note_leaf = u32::try_from(
@@ -620,8 +619,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
     let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
 
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
@@ -683,8 +681,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let mut tree =
-        Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-            .unwrap();
+        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
     tree.append(note_commitment(pool, serial, U256::from(100)))
         .unwrap();
 
@@ -777,8 +774,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         let key = Field::from(17u64);
         let owner_serial = derive_note_sn(BORROWER.into(), key);
         let mut owner_tree =
-            Imt::<OutbeV1>::with_empty_leaf(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH)
-                .unwrap();
+            Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
         let leaf = u32::try_from(
             owner_tree
                 .append(note_commitment(pool, owner_serial, U256::from(100)))

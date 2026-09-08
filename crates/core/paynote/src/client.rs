@@ -14,7 +14,7 @@ use crate::{
 
 /// Start a PayNote tree with the chain-specific empty leaf.
 pub fn new_tree(chain_id: u64) -> Result<Imt<OutbeV1>, PayNoteError> {
-    Imt::with_empty_leaf(paynote_domain(), empty_leaf(chain_id)?, PAYNOTE_TREE_DEPTH)
+    Imt::new(paynote_domain(), empty_leaf(chain_id)?, PAYNOTE_TREE_DEPTH)
         .map_err(|error| PayNoteError::InvalidInput(error.to_string()))
 }
 

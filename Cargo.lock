@@ -9355,7 +9355,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=daca708be7e1b30fe086c410f7ad56cf533e9f8b#daca708be7e1b30fe086c410f7ad56cf533e9f8b"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=02dc0314fe43dbe9fd991e0778ec5f5f973e5c75#02dc0314fe43dbe9fd991e0778ec5f5f973e5c75"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
@@ -9425,7 +9425,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=daca708be7e1b30fe086c410f7ad56cf533e9f8b#daca708be7e1b30fe086c410f7ad56cf533e9f8b"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=02dc0314fe43dbe9fd991e0778ec5f5f973e5c75#02dc0314fe43dbe9fd991e0778ec5f5f973e5c75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9906,7 +9906,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=daca708be7e1b30fe086c410f7ad56cf533e9f8b#daca708be7e1b30fe086c410f7ad56cf533e9f8b"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=02dc0314fe43dbe9fd991e0778ec5f5f973e5c75#02dc0314fe43dbe9fd991e0778ec5f5f973e5c75"
 dependencies = [
  "acir",
  "acvm",
@@ -9924,7 +9924,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=daca708be7e1b30fe086c410f7ad56cf533e9f8b#daca708be7e1b30fe086c410f7ad56cf533e9f8b"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=02dc0314fe43dbe9fd991e0778ec5f5f973e5c75#02dc0314fe43dbe9fd991e0778ec5f5f973e5c75"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",

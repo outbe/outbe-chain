@@ -454,7 +454,7 @@ fn client_witnesses_match_runtime_roots() {
         (crate::hash::paynote_domain(), PAYNOTE_TREE_DEPTH - 1),
         (Field::from(42), PAYNOTE_TREE_DEPTH),
     ] {
-        let mut wrong_tree = Imt::<OutbeV1>::new(domain, depth).unwrap();
+        let mut wrong_tree = Imt::<OutbeV1>::new(domain, Field::from(0), depth).unwrap();
         wrong_tree.append(Field::from(1)).unwrap();
         assert!(witness(&wrong_tree, Field::from(1)).is_err());
     }
