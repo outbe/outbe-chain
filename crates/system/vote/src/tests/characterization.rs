@@ -265,7 +265,7 @@ fn block_context(storage: StorageHandle<'_>, block_number: u64) -> BlockRuntimeC
 
 fn public_bonded_finalization_fixture() -> (HashMapStorageProvider, U256, u64) {
     let owner = Address::repeat_byte(0x99);
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
     provider.set_balance(owner, U256::from(11u64));
     let proposal_id;
@@ -294,7 +294,7 @@ fn public_bonded_finalization_fixture() -> (HashMapStorageProvider, U256, u64) {
 
 #[test]
 fn creation_preserves_original_payload_bytes_in_state_and_log() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     let proposal_id;
     {
         let storage = StorageHandle::new(&mut provider);
@@ -325,7 +325,7 @@ fn creation_preserves_original_payload_bytes_in_state_and_log() {
 
 #[test]
 fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     {
         let storage = StorageHandle::new(&mut provider);
         setup_default_validators(storage.clone());
@@ -351,7 +351,7 @@ fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
 
 #[test]
 fn execution_receives_original_payload_and_exact_context() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
     let mut vote = Vote::new(storage.clone());
@@ -407,7 +407,7 @@ fn public_bonded_admission_records_only_its_exact_liability() {
         }
     );
 
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
     let storage = StorageHandle::new(&mut provider);
     let proposal_id = {
@@ -436,7 +436,7 @@ fn public_bonded_admission_records_only_its_exact_liability() {
 fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
     let outsider = Address::repeat_byte(0x99);
 
-    let mut invalid_provider = HashMapStorageProvider::new(1);
+    let mut invalid_provider = super::test_provider();
     {
         let storage = StorageHandle::new(&mut invalid_provider);
         let mut vote = Vote::new(storage);
@@ -464,7 +464,7 @@ fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
     assert!(invalid_provider.storage.is_empty());
     assert!(invalid_provider.get_events(VOTE_ADDRESS).is_empty());
 
-    let mut identity_provider = HashMapStorageProvider::new(1);
+    let mut identity_provider = super::test_provider();
     identity_provider.set_balance(VOTE_ADDRESS, U256::from(246u64));
     {
         let storage = StorageHandle::new(&mut identity_provider);
@@ -494,7 +494,7 @@ fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
         assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
     }
 
-    let mut cap_provider = HashMapStorageProvider::new(1);
+    let mut cap_provider = super::test_provider();
     let cap = MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
     cap_provider.set_balance(VOTE_ADDRESS, U256::from(123u64) * U256::from(cap + 1));
     {
@@ -533,7 +533,7 @@ fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
 
 #[test]
 fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     {
         let storage = StorageHandle::new(&mut provider);
@@ -561,7 +561,7 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
 
 #[test]
 fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_reservation() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
@@ -625,7 +625,7 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
     let owner = Address::repeat_byte(0x99);
     let forced_surplus = U256::from(7u64);
     let starting_owner_balance = U256::from(11u64);
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
     provider.set_balance(owner, starting_owner_balance);
     let proposal_id;
@@ -702,7 +702,7 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
 fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
     let owner = Address::repeat_byte(0x99);
     let forced_surplus = U256::from(7u64);
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
     let proposal_id;
     {
@@ -766,7 +766,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
 #[test]
 fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
     let owner = Address::repeat_byte(0x99);
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     let proposal_id;
     {
@@ -955,7 +955,7 @@ fn failure_after_every_approved_finalization_mutation_rolls_back_everything() {
 
 #[test]
 fn approved_handler_failure_rolls_back_target_and_records_error_without_replay() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     let proposal_id;
     {
         let storage = StorageHandle::new(&mut provider);
@@ -1010,7 +1010,7 @@ fn approved_handler_failure_rolls_back_target_and_records_error_without_replay()
 
 #[test]
 fn infrastructure_failure_rolls_back_target_and_aborts_without_changing_proposal() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     let proposal_id;
     {
         let storage = StorageHandle::new(&mut provider);
@@ -1071,7 +1071,7 @@ fn infrastructure_failure_rolls_back_target_and_aborts_without_changing_proposal
 
 #[test]
 fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     let proposal_id;
     {
         let storage = StorageHandle::new(&mut provider);
@@ -1160,7 +1160,7 @@ fn unpublished_selectors_refuse_native_value() {
         .abi_encode(),
     ];
 
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     StorageHandle::enter(&mut provider, |storage| {
         for data in &calls {
             let funded = dispatch_with_handlers(

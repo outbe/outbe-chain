@@ -24,7 +24,7 @@ fn dispatch(
 }
 
 fn with_vote_provider<F: FnOnce(StorageHandle)>(block_number: u64, f: F) -> HashMapStorageProvider {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_block_number(block_number);
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
@@ -61,7 +61,7 @@ fn dispatch_create_proposal_emits_event() {
 
 #[test]
 fn dispatch_create_proposal_accepts_exact_public_bond_only() {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = super::test_provider();
     provider.set_block_number(100);
     provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
     {
