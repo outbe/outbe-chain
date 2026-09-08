@@ -6,9 +6,13 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::U256;
+use alloy_sol_types::{Revert, SolError};
 use cucumber::{then, when};
 
-use crate::internal::addresses::UPDATE_ADDR;
+use crate::internal::{
+    addresses::{UPDATE_ADDR, VOTE_ADDR},
+    eth::IVote,
+};
 use crate::world::World;
 
 /// Blocks past the vote window before an update may activate
@@ -57,7 +61,7 @@ fn unauthorized_proposal(world: &mut World) {
     let funding = world
         .rpc
         .fund_key(&funder, NON_VALIDATOR_KEY, 1)
-        .expect("fund non-validator with COEN for RPC preflight");
+        .expect("fund non-validator for a mined rejection");
     assert!(
         world.rpc.wait_successful_receipt(&funding, 20),
         "non-validator funding receipt failed: {funding}"
@@ -71,13 +75,19 @@ fn unauthorized_proposal(world: &mut World) {
         "info": "unauthorized e2e proposal",
     })
     .to_string();
-    let error = world
-        .rpc
-        .send_propose_rejection(NON_VALIDATOR_KEY, &format!("{UPDATE_ADDR:#x}"), &payload)
-        .expect("non-validator proposal must fail during RPC preflight");
-    assert!(
-        error.contains("caller is not an active validator"),
-        "unexpected unauthorized-proposal rejection: {error}"
+    super::negative_assertions::assert_mined_revert(
+        world,
+        VOTE_ADDR,
+        NON_VALIDATOR_KEY,
+        &IVote::createProposalCall {
+            targetModule: UPDATE_ADDR,
+            payload,
+        },
+        U256::ZERO,
+        &Revert {
+            reason: "caller is not an active validator".to_owned(),
+        }
+        .abi_encode(),
     );
 }
 
@@ -234,13 +244,19 @@ fn cast_yes_votes_for(world: &mut World, names: &str, id: u64) {
 #[when(expr = "validator {string} repeats the yes vote on proposal {int}")]
 fn repeat_yes_vote(world: &mut World, name: String, id: u64) {
     let validator = world.validators.by_name(&name).expect("resolve validator");
-    let error = world
-        .rpc
-        .cast_vote_rejection(&validator, id, true)
-        .expect("duplicate vote must be rejected during RPC preflight");
-    assert!(
-        error.contains("validator has already voted on proposal"),
-        "unexpected duplicate-vote rejection: {error}"
+    super::negative_assertions::assert_mined_revert(
+        world,
+        VOTE_ADDR,
+        &validator.evm_key().expect("duplicate voter key"),
+        &IVote::castVoteCall {
+            proposalId: U256::from(id),
+            approve: true,
+        },
+        U256::ZERO,
+        &Revert {
+            reason: "validator has already voted on proposal".to_owned(),
+        }
+        .abi_encode(),
     );
 }
 

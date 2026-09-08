@@ -1,4 +1,4 @@
-@ocomp @tee @gramine-direct @min-validators-4
+@ocomp @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once

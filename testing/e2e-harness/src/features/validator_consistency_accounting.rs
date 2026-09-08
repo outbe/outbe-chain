@@ -11,6 +11,10 @@ use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 
 use crate::features::common::start_bootstrapped_localnet;
+use crate::features::negative_assertions::{
+    assert_mined_revert_reason, assert_registration_revert,
+};
+use crate::internal::{addresses::STK_ADDR, eth::IStaking};
 use crate::validator_evidence::conflicting_notarize_for_validator;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::ValidatorRecord;
@@ -462,16 +466,13 @@ fn old_bls_key_released_once(world: &mut World) {
         .fund_key(&funder, second_rebound.evm_key(), REGISTRATION_FUNDING_COEN)
         .expect("fund duplicate old-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
-    let duplicate = world
-        .rpc
-        .register_validator(
-            second_rebound.evm_key(),
-            second_rebound.address(),
-            second_rebound.bls_public_key(),
-            second_rebound.radicle_node_id(),
-            second_rebound.registration_signature(),
-        )
-        .expect("submit duplicate old key");
+    let duplicate = assert_registration_revert(
+        world,
+        second_rebound.evm_key(),
+        &second_rebound,
+        second_rebound.registration_signature(),
+        "BLS consensus pubkey already registered by another validator",
+    );
     assert!(!duplicate.success, "old BLS key registered more than once");
 }
 
@@ -508,16 +509,13 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         )
         .expect("fund duplicate new-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
-    let outcome = world
-        .rpc
-        .register_validator(
-            duplicate_identity.evm_key(),
-            duplicate_identity.address(),
-            duplicate_identity.bls_public_key(),
-            duplicate_identity.radicle_node_id(),
-            duplicate_identity.registration_signature(),
-        )
-        .expect("submit duplicate new key");
+    let outcome = assert_registration_revert(
+        world,
+        duplicate_identity.evm_key(),
+        &duplicate_identity,
+        duplicate_identity.registration_signature(),
+        "BLS consensus pubkey already registered by another validator",
+    );
     assert!(!outcome.success, "duplicate new BLS key was accepted");
     assert_eq!(world.rpc.validator_count(port), before_count);
     assert_eq!(world.rpc.validators(port), before_index);
@@ -607,9 +605,15 @@ fn run_accounting_lifecycle(world: &mut World) {
         .expect("record before rejected stake")
         .stake;
     let total_before_rejected = world.rpc.total_staked_on(port);
-    assert!(
-        world.rpc.stake(&victim_key, 0).is_err(),
-        "zero-value stake unexpectedly succeeded"
+    assert_mined_revert_reason(
+        world,
+        STK_ADDR,
+        &victim_key,
+        &IStaking::stakeCall {
+            validatorAddress: victim_address.parse().expect("victim address"),
+            amount: U256::ZERO,
+        },
+        "amount must be non-zero",
     );
     assert_eq!(
         world

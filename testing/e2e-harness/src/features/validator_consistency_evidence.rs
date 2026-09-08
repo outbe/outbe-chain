@@ -7,10 +7,15 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 use cucumber::{given, then, when};
 
 use crate::features::common::boot_localnet;
+use crate::features::negative_assertions::assert_mined_revert_reason;
+use crate::internal::{
+    addresses::{SLASH_ADDR, STK_ADDR},
+    eth::{ISlashIndicator, IStaking},
+};
 use crate::validator_evidence::{conflicting_notarize_for_validator, ConflictingNotarizeEvidence};
 use crate::world::rpc::TxOutcome;
 use crate::world::World;
@@ -295,10 +300,16 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "reporter balance must change only by its emitted reward minus exact gas"
     );
 
-    let exact_replay = world
-        .rpc
-        .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block1, &evidence.block2)
-        .expect("submit exact evidence replay");
+    let exact_replay = assert_mined_revert_reason(
+        world,
+        SLASH_ADDR,
+        &reporter_key,
+        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+            block1: Bytes::copy_from_slice(&evidence.block1),
+            block2: Bytes::copy_from_slice(&evidence.block2),
+        },
+        "evidence already processed",
+    );
     assert!(
         !exact_replay.success,
         "the exact evidence replay must revert"
@@ -314,10 +325,16 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "an exact replay may charge gas but must not mint another reward"
     );
 
-    let reverse_replay = world
-        .rpc
-        .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block2, &evidence.block1)
-        .expect("submit canonical reverse replay");
+    let reverse_replay = assert_mined_revert_reason(
+        world,
+        SLASH_ADDR,
+        &reporter_key,
+        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+            block1: Bytes::copy_from_slice(&evidence.block2),
+            block2: Bytes::copy_from_slice(&evidence.block1),
+        },
+        "evidence already processed",
+    );
     assert!(
         !reverse_replay.success,
         "the canonical reverse evidence replay must revert"
@@ -494,10 +511,16 @@ fn partial_jailed_unstake_does_not_exit(world: &mut World) {
 #[when("it requests unjail before an exclusion boundary")]
 fn requests_early_unjail(world: &mut World) {
     let victim_key = world.validators.get(3).evm_key().expect("victim key");
-    let outcome = world
-        .rpc
-        .unjail_validator(&victim_key)
-        .expect("submit early unjail");
+    // This exact guard is reached only after Staking verifies the minimum.
+    // Exclusion during the observation window must fail this retained-member
+    // scenario, rather than accepting a different cooldown/status rejection.
+    let outcome = assert_mined_revert_reason(
+        world,
+        STK_ADDR,
+        &victim_key,
+        &IStaking::unjailValidatorCall {},
+        "jailed validator is still retained in the current committee",
+    );
     world.state.marker_count = Some(outcome.success as usize);
 }
 
@@ -695,10 +718,20 @@ fn submit_evicted_epoch_evidence(world: &mut World) {
     let epoch = world.state.proposed_version.expect("retained epoch");
     let evidence = evidence_for(world, 3, epoch);
     let reporter_key = world.validators.get(0).evm_key().expect("reporter key");
-    let outcome = world
-        .rpc
-        .submit_conflicting_notarize_evidence(&reporter_key, &evidence.block1, &evidence.block2)
-        .expect("submit evicted-epoch evidence");
+    let reason = format!(
+        "no committee snapshot for evidence epoch {epoch}; cannot verify the \
+         committee-bound vote signature"
+    );
+    let outcome = assert_mined_revert_reason(
+        world,
+        SLASH_ADDR,
+        &reporter_key,
+        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+            block1: Bytes::copy_from_slice(&evidence.block1),
+            block2: Bytes::copy_from_slice(&evidence.block2),
+        },
+        &reason,
+    );
     world.state.marker_count = Some(outcome.success as usize);
 }
 

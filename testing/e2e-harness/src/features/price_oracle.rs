@@ -35,6 +35,8 @@ pub(crate) struct PendingPricePublication {
 #[given(expr = "a fresh price oracle localnet with a {int}-block voting window")]
 fn fresh_price_oracle_localnet(world: &mut World, window: u64) {
     let profile = BootstrapProfile::default()
+        .with_governance_voting_window(window)
+        .expect("valid genesis governance voting window")
         .with_oracle_pairs(vec![
             ("COEN".into(), "840".into(), "1000000".into()),
             (format!("{BTC_TOKEN:#x}"), "840".into(), "0".into()),

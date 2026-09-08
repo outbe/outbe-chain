@@ -15,12 +15,14 @@ pub const DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 12 * 60 * 60;
 pub const DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS: u64 = 504 * 60 * 60;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 1_800;
+pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 pub const DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT: u8 = 3;
 pub const DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS: u64 = 30;
 pub const DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GenesisProtocolParametersV1 {
+    pub governance_voting_window_blocks: u64,
     pub metadosis_forming_period_seconds: u64,
     pub metadosis_lookback_delay_seconds: u64,
     pub metadosis_offering_period_seconds: u64,
@@ -34,6 +36,7 @@ pub struct GenesisProtocolParametersV1 {
 }
 
 const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
+    governance_voting_window_blocks: DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS,
     metadosis_forming_period_seconds: DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
     metadosis_lookback_delay_seconds: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
     metadosis_offering_period_seconds: DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
@@ -112,6 +115,8 @@ impl Default for GenesisProtocolParametersV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GenesisProtocolOverridesV1 {
     #[serde(default)]
+    governance: GovernanceOverridesV1,
+    #[serde(default)]
     schema_version: Option<u16>,
     #[serde(default)]
     metadosis: MetadosisOverridesV1,
@@ -146,6 +151,12 @@ struct OcompOverridesV1 {
     compute_vote_window_blocks: Option<u64>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GovernanceOverridesV1 {
+    voting_window_blocks: Option<u64>,
+}
+
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum ProtocolConstantsError {
     #[error("invalid genesis {GENESIS_CONFIG_KEY}: {0}")]
@@ -178,6 +189,10 @@ impl GenesisProtocolParametersV1 {
         }
         let defaults = Self::default();
         let resolved = Self {
+            governance_voting_window_blocks: overrides
+                .governance
+                .voting_window_blocks
+                .unwrap_or(defaults.governance_voting_window_blocks),
             metadosis_forming_period_seconds: overrides
                 .metadosis
                 .forming_period_seconds
@@ -224,6 +239,11 @@ impl GenesisProtocolParametersV1 {
     }
 
     pub fn validate(self) -> Result<(), ProtocolConstantsError> {
+        validate_nonzero_at_most(
+            "governance.votingWindowBlocks",
+            self.governance_voting_window_blocks,
+            DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS,
+        )?;
         validate_nonzero_at_most(
             "metadosis.formingPeriodSeconds",
             self.metadosis_forming_period_seconds,
@@ -372,6 +392,10 @@ pub fn get_ocomp_compute_vote_window_blocks() -> u64 {
     parameters().ocomp_compute_vote_window_blocks
 }
 
+pub fn get_governance_voting_window_blocks() -> u64 {
+    parameters().governance_voting_window_blocks
+}
+
 pub fn get_nod_materialization_batch_subtree_height() -> u8 {
     parameters().nod_materialization_batch_subtree_height
 }
@@ -418,6 +442,43 @@ fn validate_at_most(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn governance_window_is_independent_and_strictly_bounded() {
+        for blocks in [1, 6, 20, 86_400] {
+            let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
+                "governance": { "votingWindowBlocks": blocks },
+                "ocomp": { "computeVoteWindowBlocks": 120 }
+            })))
+            .unwrap();
+            assert_eq!(resolved.governance_voting_window_blocks, blocks);
+            assert_eq!(resolved.ocomp_compute_vote_window_blocks, 120);
+        }
+        for blocks in [
+            json!(0),
+            json!(86_401),
+            json!(u64::MAX),
+            json!(-1),
+            json!("6"),
+        ] {
+            assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
+                "governance": { "votingWindowBlocks": blocks }
+            })))
+            .is_err());
+        }
+        assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
+            "governance": { "votingWindowBlock": 6 }
+        })))
+        .is_err());
+        assert_eq!(
+            GenesisProtocolParametersV1::resolve(Some(&json!({
+                "governance": {}
+            })))
+            .unwrap()
+            .governance_voting_window_blocks,
+            86_400
+        );
+    }
 
     #[test]
     fn absent_fields_resolve_once_to_canonical_defaults() {

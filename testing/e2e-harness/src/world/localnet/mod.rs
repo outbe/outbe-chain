@@ -56,8 +56,8 @@ const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 /// parameters live on this struct.
 #[derive(Debug, Clone, Default)]
 pub struct StartOpts {
-    /// Shorten the governance voting window to N blocks (test hook,
-    /// `OUTBE_TEST_VOTING_WINDOW_BLOCKS`).
+    /// Expected governance voting window in the already materialized genesis.
+    /// Startup rejects a mismatch; this option never changes chain parameters.
     pub voting_window: Option<u64>,
     /// Signed wall-clock offset used only by debug-node day-boundary E2E.
     pub unix_time_offset_secs: Option<i64>,
@@ -70,7 +70,7 @@ pub struct StartOpts {
 }
 
 impl StartOpts {
-    /// A start with a shortened voting window.
+    /// A start expecting the given genesis governance voting window.
     pub fn with_voting_window(window: u64) -> Self {
         Self {
             voting_window: Some(window),
@@ -153,20 +153,6 @@ pub struct Localnet {
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
     scenario_deadline: Option<std::time::Instant>,
-}
-
-// Consensus-affecting test environment belongs to every node in this localnet,
-// including keyless, cold and recovery followers. A missing override must also
-// clear inherited values rather than depend on the harness shell environment.
-fn configure_node_protocol_environment(opts: &StartOpts, command: &mut Command) {
-    match opts.voting_window {
-        Some(window) => {
-            command.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string());
-        }
-        None => {
-            command.env_remove("OUTBE_TEST_VOTING_WINDOW_BLOCKS");
-        }
-    }
 }
 
 impl Localnet {
@@ -473,7 +459,6 @@ impl Localnet {
             .collect::<Vec<_>>();
         ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
-        configure_node_protocol_environment(&self.start_opts, &mut cmd);
         crate::world::projection::configure_node_command(&self.cfg, index, &mut cmd)?;
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();

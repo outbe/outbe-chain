@@ -616,10 +616,35 @@ mod validator_lifecycle_suite_contract {
             .cloned()
             .collect::<BTreeSet<_>>();
 
+        // D-04 and S-03's three examples were unknown-selector checks, not
+        // malformed-boundary coverage. S-02 retains that public-ABI contract.
+        let expected = [
+            "risk-d-01a",
+            "risk-d-01b",
+            "risk-d-02",
+            "risk-d-05",
+            "risk-d-06",
+            "risk-d-07",
+            "risk-d-10",
+            "risk-s-01",
+            "risk-s-02",
+            "risk-s-06",
+            "risk-s-08",
+            "risk-s-09",
+            "risk-s-12",
+            "risk-s-14",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+        assert_eq!(risk_ids, expected, "exact public-path scenario inventory");
         assert_eq!(
-            risk_ids.len(),
-            16,
-            "one scenario group per live checklist ID"
+            feature
+                .scenarios
+                .iter()
+                .map(expanded_examples)
+                .sum::<usize>(),
+            14
         );
         assert!(!LIFECYCLE_FEATURE.contains("@todo"));
     }

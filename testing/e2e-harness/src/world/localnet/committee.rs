@@ -22,6 +22,16 @@ fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
 }
 
+fn verify_genesis_governance_window(genesis: &serde_json::Value, expected: u64) -> Result<()> {
+    let parameters = outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(genesis)?;
+    ensure!(
+        parameters.governance_voting_window_blocks == expected,
+        "genesis governance voting window {} differs from requested {expected}; configure the bootstrap profile before binding identities",
+        parameters.governance_voting_window_blocks
+    );
+    Ok(())
+}
+
 fn restore_validator_argv(
     rebuilt: Vec<String>,
     recovery_original: Option<Vec<String>>,
@@ -112,6 +122,10 @@ impl Localnet {
     /// indices whose owned node is still alive are skipped, so [`restart`] only
     /// relaunches the ones that died.
     pub fn start(&mut self, opts: &StartOpts) -> Result<()> {
+        if let Some(window) = opts.voting_window {
+            let genesis = serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
+            verify_genesis_governance_window(&genesis, window)?;
+        }
         self.start_opts = opts.clone();
         let n = self.committee_size();
         if self.tee_enabled() {
@@ -1442,43 +1456,17 @@ mod tests {
     }
 
     #[test]
-    fn validator_recovery_preserves_consensus_relevant_environment() {
-        for window in [Some(41), None] {
-            for role in [
-                "validator",
-                "keyless-full-node",
-                "cold-follower",
-                "recovery-follower",
-            ] {
-                let mut command = std::process::Command::new("outbe-chain");
-                command
-                    .arg(role)
-                    .env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "stale")
-                    .env("RUST_MIN_STACK", "16777216");
-                let opts = super::StartOpts {
-                    voting_window: window,
-                    ..Default::default()
-                };
-                super::super::configure_node_protocol_environment(&opts, &mut command);
-                let configured = command
-                    .get_envs()
-                    .find(|(key, _)| *key == "OUTBE_TEST_VOTING_WINDOW_BLOCKS")
-                    .expect("shared node launch must explicitly set or remove the override")
-                    .1;
-                assert_eq!(
-                    configured.map(|value| value.to_str().unwrap()),
-                    window.map(|_| "41")
-                );
-                assert_eq!(
-                    command.get_args().collect::<Vec<_>>(),
-                    [std::ffi::OsStr::new(role)]
-                );
-                assert!(command
-                    .get_envs()
-                    .any(|(key, value)| key == "RUST_MIN_STACK"
-                        && value == Some(std::ffi::OsStr::new("16777216"))));
-            }
-        }
+    fn startup_checks_genesis_window_without_rewriting_it() {
+        let genesis = serde_json::json!({
+            "config": { "outbeProtocol": { "governance": { "votingWindowBlocks": 20 } } }
+        });
+        let before = genesis.clone();
+        super::verify_genesis_governance_window(&genesis, 20).unwrap();
+        assert!(super::verify_genesis_governance_window(&genesis, 6).is_err());
+        assert_eq!(genesis, before);
+        let missing = serde_json::json!({ "config": {} });
+        assert!(super::verify_genesis_governance_window(&missing, 6).is_err());
+        super::verify_genesis_governance_window(&missing, 86_400).unwrap();
     }
 
     #[test]

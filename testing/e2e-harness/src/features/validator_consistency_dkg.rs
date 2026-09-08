@@ -8,7 +8,6 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{keccak256, Address, B256};
 use cucumber::{given, then, when};
 
 use crate::features::common::start_bootstrapped_localnet;
@@ -55,25 +54,6 @@ fn planned_activation(world: &World) -> u64 {
         .expect("next planned activation height")
 }
 
-fn validator_address(world: &World, name: &str) -> String {
-    let key = world
-        .validators
-        .by_name(name)
-        .expect("validator name")
-        .evm_key()
-        .expect("validator key");
-    world.rpc.address_of(&key).expect("validator address")
-}
-
-fn active_set_hash(addresses: &[Address]) -> B256 {
-    let mut encoded = Vec::with_capacity(8 + addresses.len() * 20);
-    encoded.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
-    for address in addresses {
-        encoded.extend_from_slice(address.as_slice());
-    }
-    keccak256(encoded)
-}
-
 fn wait_for_schedule_advance(world: &World, previous: u64) -> u64 {
     let primary = world.validators.primary_port();
     for _ in 0..180 {
@@ -107,15 +87,6 @@ fn wait_for_safe_pre_freeze_window(world: &World) -> u64 {
         let _ = wait_for_schedule_advance(world, activation);
     }
     panic!("no safe pre-freeze interval became available across four DKG schedules");
-}
-
-fn wait_until_all_nodes_observe_height(world: &World, height: u64) {
-    for port in world.validators.committee_ports() {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, height, 60),
-            "RPC {port} did not finalize height {height}"
-        );
-    }
 }
 
 // ---- D-02: a post-freeze readiness signal waits for the periodic scheduler --
@@ -387,136 +358,6 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
         sleep(Duration::from_secs(2));
     }
     panic!("joiner never became ACTIVE in the scheduled DKG window");
-}
-
-// ---- D-04: external owners cannot manufacture an ACTIVE/shareless member ----
-
-#[given("a fresh localnet whose four active validators have BLS shares")]
-fn four_active_validators_with_shares(world: &mut World) {
-    boot_profiled_localnet(world, Some(0));
-    let primary = world.validators.primary_port();
-    world
-        .rpc
-        .wait_block(primary, 5, 30)
-        .unwrap_or_else(|error| panic!("committee did not reach a usable height: {error:#}"));
-
-    for index in 0..4 {
-        let address = validator_address(world, &format!("validator-{index}"));
-        assert_eq!(
-            world.rpc.validator_status(primary, &address),
-            Some(2),
-            "validator-{index} is not ACTIVE"
-        );
-        assert_eq!(
-            world.rpc.has_share(primary, &address),
-            Some(true),
-            "validator-{index} lacks its genesis share"
-        );
-        assert!(
-            world
-                .rpc
-                .is_participant(primary, &address)
-                .expect("observe consensus participation"),
-            "validator-{index} is not a consensus participant"
-        );
-    }
-}
-
-#[when(
-    expr = "the configured owner attempts to activate a canonical reshared set omitting {string}"
-)]
-fn owner_attempts_to_omit_active_validator(world: &mut World, omitted_name: String) {
-    let primary = world.validators.primary_port();
-    let omitted: Address = validator_address(world, &omitted_name)
-        .parse()
-        .expect("omitted validator address");
-    let mut active_set = world
-        .rpc
-        .active_consensus_set(primary)
-        .expect("current active consensus set");
-    assert_eq!(active_set.len(), 4, "expected a four-member live set");
-    active_set.retain(|address| *address != omitted);
-    assert_eq!(active_set.len(), 3, "omitted validator was not in live set");
-
-    let owner_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("ValidatorSet owner key");
-    let outcome = world
-        .rpc
-        .activate_reshared_set(&owner_key, &active_set, active_set_hash(&active_set))
-        .expect("submit forbidden owner boundary");
-    assert!(
-        !outcome.success,
-        "owner omission unexpectedly succeeded: {}",
-        outcome.transaction_hash
-    );
-    let block = outcome.block_number().expect("owner omission block");
-    wait_until_all_nodes_observe_height(world, block);
-}
-
-#[then("the owner omission is rejected with all four validators still ACTIVE with shares")]
-fn owner_omission_is_rejected_atomically(world: &mut World) {
-    for index in 0..4 {
-        let validator_name = format!("validator-{index}");
-        let address = validator_address(world, &validator_name);
-        for port in world.validators.committee_ports() {
-            assert_eq!(
-                world.rpc.validator_status(port, &address),
-                Some(2),
-                "{validator_name} is not ACTIVE on RPC {port}"
-            );
-            assert_eq!(
-                world.rpc.has_share(port, &address),
-                Some(true),
-                "{validator_name} lost its share on RPC {port}"
-            );
-            assert!(
-                world
-                    .rpc
-                    .is_participant(port, &address)
-                    .expect("observe consensus participation"),
-                "{validator_name} stopped participating on RPC {port}"
-            );
-        }
-    }
-}
-
-#[then("committee membership and state roots converge on every validator")]
-fn committee_converges(world: &mut World) {
-    let ports = world.validators.committee_ports();
-    let common_height = world
-        .rpc
-        .finalized(ports[0])
-        .expect("primary finalization after rejected owner omission");
-    wait_until_all_nodes_observe_height(world, common_height);
-    let expected_members = world
-        .rpc
-        .active_consensus_set(ports[0])
-        .expect("primary consensus set");
-    assert_eq!(
-        expected_members.len(),
-        4,
-        "consensus set changed after rejected owner omission"
-    );
-    let expected_root = world
-        .rpc
-        .state_root(ports[0], common_height)
-        .expect("primary state root");
-
-    for port in ports {
-        assert_eq!(
-            world.rpc.active_consensus_set(port),
-            Some(expected_members.clone()),
-            "committee membership diverged on RPC {port}"
-        );
-        assert_eq!(
-            world.rpc.state_root(port, common_height),
-            Some(expected_root.clone()),
-            "state root diverged on RPC {port} at height {common_height}"
-        );
-    }
 }
 
 // ---- S-01: readiness cannot survive PENDING -> REGISTERED -> PENDING --------
