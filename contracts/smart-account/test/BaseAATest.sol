@@ -1,266 +1,218 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
-
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {SmartAccountFactory} from "src/SmartAccountFactory.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
-import {CallerHook} from "src/kernel/CallerHook.sol";
-import {SudoPolicy} from "src/kernel/SudoPolicy.sol";
-import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
 import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
+import {GuardedKernel} from "src/kernel/GuardedKernel.sol";
+import {Kernel} from "src/kernel/guarded/Kernel.sol";
+import {SudoPolicy} from "src/kernel/SudoPolicy.sol";
 import {ECDSASigner} from "src/kernel/ECDSASigner.sol";
-import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
-import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
-import {MockCcaRegistry} from "src/mocks/MockCcaRegistry.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
-import {EntryPointLib} from "./utils/EntryPointLib.sol";
-import {Kernel} from "@zerodev/kernel/Kernel.sol";
+import {MockCcaRegistry} from "src/mocks/MockCcaRegistry.sol";
+import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
+import {KernelFactory} from "@zerodev/kernel/KernelFactory.sol";
 import {KernelUUPS} from "@zerodev/kernel/KernelUUPS.sol";
 import {KernelImmutableECDSA} from "@zerodev/kernel/KernelImmutableECDSA.sol";
-import {KernelFactory} from "@zerodev/kernel/KernelFactory.sol";
+import {Install} from "@zerodev/kernel/types/Structs.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
-import {PermissionId} from "@zerodev/kernel/types/Types.sol";
-import {LibERC7579} from "solady/accounts/LibERC7579.sol";
-import {ECDSA} from "solady/utils/ECDSA.sol";
+import {EntryPointLib} from "./utils/EntryPointLib.sol";
 
-/// @dev Shared harness for the Kernel v4 Credis smart-account stack.
-///      Every validation is a permission (owner + per-token CCA), so all UserOps use the
-///      permission nonce type (0x02) and the Kernel v4 `PermissionSignature` = abi.encode(bytes[]),
-///      one slice per policy (unused here) plus the signer's ECDSA signature last.
 abstract contract BaseAATest is Test {
-    struct EOA {
-        address addr;
-        uint256 privKey;
-    }
-
-    // actors
-    EOA user;
-    EOA cca;
-    EOA recipient;
-    address vault;
-
-    // contracts from Kernel stack
-    IEntryPoint entrypoint;
     SmartAccountFactory factory;
-
-    // plugin contracts
     BundleModulePlugin bundlePlugin;
-    CallerHook bundleCallerHook;
-    SudoPolicy sudoPolicy;
-    BundleSpendProtectorHook bundleSpendProtectorHook;
-    WithdrawalLimitPolicy withdrawalLimitPolicy;
-    ECDSASigner ecdsaSigner;
-    BundleWithdrawHook bundleWithdrawHook;
-
-    // token
+    BundleWithdrawHook withdrawHook;
+    GuardedKernel implementation;
+    IEntryPoint entrypoint;
     MockUSD token;
-
-    // CCA registry precompile stand-in, etched at SmartAccountFactory.CCA_REGISTRY()
-    MockCcaRegistry ccaRegistry;
-
-    address ENTRYPOINT_BENEFICIARY = address(0xdeadbeef);
+    MockCcaRegistry registry;
+    address user;
+    uint256 userKey;
+    address cca;
+    uint256 ccaKey;
+    address vault;
+    address recipient;
+    address constant BUNDLER = address(0xdead);
 
     function setUp() public virtual {
-        _setupEoa();
-
+        (user, userKey) = makeAddrAndKey("user");
+        (cca, ccaKey) = makeAddrAndKey("cca");
+        vault = makeAddr("vault");
+        recipient = makeAddr("recipient");
         entrypoint = EntryPointLib.deploy();
-
-        // Kernel v4 ships an abstract Kernel; the factory deploys UUPS ERC-1967 proxies and needs
-        // both the UUPS and immutable-ECDSA implementations at construction.
-        KernelUUPS uups = new KernelUUPS(entrypoint);
-        KernelImmutableECDSA immutableEcdsa = new KernelImmutableECDSA(entrypoint);
-        KernelFactory kf = new KernelFactory(uups, immutableEcdsa);
-
-        sudoPolicy = new SudoPolicy();
         bundlePlugin = new BundleModulePlugin(address(this));
-        bundleCallerHook = new CallerHook();
-        bundleSpendProtectorHook = new BundleSpendProtectorHook(address(bundlePlugin));
-        withdrawalLimitPolicy = new WithdrawalLimitPolicy();
-        ecdsaSigner = new ECDSASigner();
-        bundleWithdrawHook = new BundleWithdrawHook(address(bundlePlugin));
-        bundlePlugin.setWithdrawHook(address(bundleWithdrawHook));
-
+        implementation = new GuardedKernel(entrypoint, bundlePlugin);
+        KernelFactory kf =
+            new KernelFactory(KernelUUPS(payable(address(implementation))), new KernelImmutableECDSA(entrypoint));
+        withdrawHook = new BundleWithdrawHook(address(bundlePlugin));
         factory = new SmartAccountFactory(
             address(kf),
-            address(sudoPolicy),
+            address(new SudoPolicy()),
             address(bundlePlugin),
-            address(bundleCallerHook),
-            address(bundleSpendProtectorHook),
-            address(withdrawalLimitPolicy),
-            address(ecdsaSigner),
-            address(bundleWithdrawHook)
+            address(new ECDSASigner()),
+            address(withdrawHook)
         );
-
+        bundlePlugin.setFactory(address(factory));
         token = new MockUSD();
-
-        // The factory reads CCA standing from a fixed protocol address, so put the mock registry
-        // there. `vm.etch` copies runtime code only; MockCcaRegistry treats its resulting empty
-        // storage as "every agent Active", which is what the current precompile stub answers.
-        vm.etch(factory.CCA_REGISTRY(), address(new MockCcaRegistry()).code);
-        ccaRegistry = MockCcaRegistry(factory.CCA_REGISTRY());
+        vm.etch(bundlePlugin.CCA_REGISTRY(), address(new MockCcaRegistry()).code);
+        registry = MockCcaRegistry(bundlePlugin.CCA_REGISTRY());
     }
 
-    // -------------------------------------------------------------------------
-    // Shared helpers
-    // -------------------------------------------------------------------------
-
-    function _setupEoa() private {
-        (address addr, uint256 key) = makeAddrAndKey("user");
-        user.addr = addr;
-        user.privKey = key;
-
-        (addr, key) = makeAddrAndKey("cca");
-        cca.addr = addr;
-        cca.privKey = key;
-
-        (addr, key) = makeAddrAndKey("recipient");
-        recipient.addr = addr;
-        recipient.privKey = key;
-
-        vault = makeAddr("vault");
+    function _tokens() internal view returns (address[] memory a) {
+        a = new address[](1);
+        a[0] = address(token);
     }
 
-    function _topUp(address smartAccount, uint256 amount) internal {
-        // Pre-fund smart account with user's own funds (required by topUp check)
-        token.mint(smartAccount, amount);
-        // Vault tops up matching amount
-        token.mint(vault, amount);
-        vm.startPrank(vault);
-        token.approve(smartAccount, amount);
-        ITokenBundle(smartAccount).topUp(vault, address(token), amount);
-        vm.stopPrank();
+    function _senders() internal view returns (address[] memory a) {
+        a = new address[](1);
+        a[0] = vault;
     }
 
-    function _deployAccount() internal returns (address) {
-        address[] memory bundleTokens = new address[](1);
-        bundleTokens[0] = address(token);
-
-        address[] memory bundleSenders = new address[](1);
-        bundleSenders[0] = vault;
-
-        return factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 0);
+    function _account() internal returns (address a) {
+        a = factory.createAccount(user, 0);
+        vm.deal(a, 10 ether);
     }
 
-    function _ownerPermId() internal pure returns (PermissionId) {
-        return PermissionId.wrap(bytes4(keccak256("credis.owner")));
+    function _open(address a) internal {
+        _openTokens(a, _tokens());
     }
 
-    function _ccaPermId(address tok) internal pure returns (PermissionId) {
-        return PermissionId.wrap(bytes4(keccak256(abi.encode("credis.cca", tok))));
+    function _openTokens(address a, address[] memory tokens) internal {
+        Install[] memory p = factory.getBundleInstallPackages(cca, tokens, _senders());
+        uint256 nonce = Kernel(payable(a)).nonce(0);
+        factory.openBundle(
+            a, cca, tokens, _senders(), nonce, _permissionSignature(_installDigest(a, nonce, p), userKey)
+        );
     }
 
-    /// @dev Kernel v4 nonce key (top 24 bytes of userOp.nonce):
-    ///      [vMode(1)=0x00 | vType(1)=0x02 permission | vId(20) | parallel(2)=0].
-    ///      The permission id occupies the high 4 bytes of the 20-byte vId.
-    function _permNonceKey(PermissionId permId) internal pure returns (uint192) {
-        return (uint192(0x02) << 176) | (uint192(uint32(PermissionId.unwrap(permId))) << 144);
+    function _installDigest(address a, uint256 nonce, Install[] memory p) internal view returns (bytes32) {
+        bytes32[] memory hashes = new bytes32[](p.length);
+        for (uint256 i; i < p.length; ++i) {
+            hashes[i] = keccak256(
+                abi.encode(
+                    keccak256("Install(uint256 moduleType,address module,bytes moduleData,bytes internalData)"),
+                    p[i].moduleType,
+                    p[i].module,
+                    keccak256(p[i].moduleData),
+                    keccak256(p[i].internalData)
+                )
+            );
+        }
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "InstallPackages(uint256 nonce,Install[] packages)Install(uint256 moduleType,address module,bytes moduleData,bytes internalData)"
+                ),
+                nonce,
+                keccak256(abi.encodePacked(hashes))
+            )
+        );
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("Kernel"),
+                keccak256("0.4.0"),
+                block.chainid,
+                a
+            )
+        );
+        return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }
 
-    /// @dev Kernel v4 permission signature: abi.encode(bytes[] signatures), one slice per policy
-    ///      (empty - our policies read from calldata, not the signature) then the signer's ECDSA sig.
-    function _permSignature(bytes32 userOpHash, uint256 signerKey) internal pure returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, ECDSA.toEthSignedMessageHash(userOpHash));
+    function _sign(bytes32 digest, uint256 key) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _permissionSignature(bytes32 digest, uint256 key) internal pure returns (bytes memory) {
         bytes[] memory sigs = new bytes[](2);
-        sigs[0] = ""; // single policy slice (SudoPolicy / WithdrawalLimitPolicy ignore it)
-        sigs[1] = abi.encodePacked(r, s, v);
+        sigs[0] = "";
+        sigs[1] = _sign(digest, key);
         return abi.encode(sigs);
     }
 
-    function _buildCcaUserOp(address smartAccount, address to, uint256 amount)
+    function _op(address a, bytes memory callData, bytes4 id, uint256 key)
         internal
         view
         returns (PackedUserOperation memory op)
     {
-        bytes32 execMode = _execMode();
-        bytes memory transferCall = abi.encodeWithSelector(token.transfer.selector, to, amount);
-        bytes memory innerExecute = abi.encodeWithSelector(
-            Kernel.execute.selector, execMode, abi.encodePacked(address(token), uint256(0), transferCall)
+        uint192 nonceKey = (uint192(2) << 176) | (uint192(uint32(id)) << 144);
+        op = PackedUserOperation(
+            a,
+            entrypoint.getNonce(a, nonceKey),
+            "",
+            callData,
+            bytes32(abi.encodePacked(uint128(3_000_000), uint128(3_000_000))),
+            1_000_000,
+            bytes32(abi.encodePacked(uint128(1), uint128(1))),
+            "",
+            ""
         );
-        bytes memory callData = abi.encodePacked(Kernel.executeUserOp.selector, innerExecute);
-        return _buildCcaUserOpRaw(smartAccount, callData, address(token));
+        op.signature = _permissionSignature(entrypoint.getUserOpHash(op), key);
     }
 
-    function _buildCcaUserOpRaw(address smartAccount, bytes memory callData, address tok)
-        internal
-        view
-        returns (PackedUserOperation memory op)
-    {
-        PermissionId permId = _ccaPermId(tok);
-
-        op = PackedUserOperation({
-            sender: smartAccount,
-            nonce: entrypoint.getNonce(smartAccount, _permNonceKey(permId)),
-            initCode: hex"",
-            callData: callData,
-            accountGasLimits: bytes32(abi.encodePacked(uint128(2_000_000), uint128(2_000_000))),
-            preVerificationGas: 1_000_000,
-            gasFees: bytes32(abi.encodePacked(uint128(1), uint128(1))),
-            paymasterAndData: hex"",
-            signature: hex""
-        });
-
-        bytes32 userOpHash = entrypoint.getUserOpHash(op);
-        op.signature = _permSignature(userOpHash, cca.privKey);
-    }
-
-    function _ccaWithdraw(address smartAccount, address to, uint256 amount) internal {
-        _ccaWithdrawToken(smartAccount, to, amount, address(token));
-    }
-
-    function _ccaWithdrawToken(address smartAccount, address to, uint256 amount, address tok) internal {
-        bytes32 execMode = _execMode();
-        bytes memory transferCall = abi.encodeWithSelector(MockUSD(tok).transfer.selector, to, amount);
-        bytes memory innerExecute =
-            abi.encodeWithSelector(Kernel.execute.selector, execMode, abi.encodePacked(tok, uint256(0), transferCall));
-        bytes memory callData = abi.encodePacked(Kernel.executeUserOp.selector, innerExecute);
-
-        PackedUserOperation memory op = _buildCcaUserOpRaw(smartAccount, callData, tok);
+    function _submit(PackedUserOperation memory op) internal returns (bool success) {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
-        _bundle(ops, payable(ENTRYPOINT_BENEFICIARY));
+        vm.recordLogs();
+        vm.prank(BUNDLER, BUNDLER);
+        entrypoint.handleOps(ops, payable(BUNDLER));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == address(entrypoint)
+                    && logs[i].topics[0]
+                        == keccak256("UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)")
+            ) {
+                (, success,,) = abi.decode(logs[i].data, (uint256, bool, uint256, uint256));
+                return success;
+            }
+        }
+        revert("missing UserOperationEvent");
     }
 
-    /// @dev Owner-signed UserOp. The owner is a permission (SudoPolicy + ECDSASigner), so it uses
-    ///      the permission nonce/signature encoding. When bundle tokens are configured the owner
-    ///      permission carries BundleSpendProtectorHook and `callData` must be executeUserOp-wrapped;
-    ///      the caller builds the appropriate `callData` shape.
-    function _buildUserOp(address sender, bytes memory callData, uint256 signerKey)
-        internal
-        view
-        returns (PackedUserOperation memory op)
-    {
-        PermissionId permId = _ownerPermId();
-
-        op = PackedUserOperation({
-            sender: sender,
-            nonce: entrypoint.getNonce(sender, _permNonceKey(permId)),
-            initCode: hex"",
-            callData: callData,
-            accountGasLimits: bytes32(abi.encodePacked(uint128(2_000_000), uint128(2_000_000))),
-            preVerificationGas: 1_000_000,
-            gasFees: bytes32(abi.encodePacked(uint128(1), uint128(1))),
-            paymasterAndData: hex"",
-            signature: hex""
-        });
-        bytes32 userOpHash = entrypoint.getUserOpHash(op);
-        op.signature = _permSignature(userOpHash, signerKey);
+    function _executeData(address target, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            Kernel.executeUserOp.selector,
+            abi.encodeCall(Kernel.execute, (bytes32(0), abi.encodePacked(target, uint256(0), data)))
+        );
     }
 
-    /// @dev Single-call default ERC-7579 execution mode as a raw bytes32 (Kernel v4 execute()).
-    function _execMode() internal pure returns (bytes32) {
-        return LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
+    function _ownerCall(address a, address target, bytes memory data) internal returns (bool) {
+        return _submit(_op(a, _executeData(target, data), factory.OWNER_PERMISSION(), userKey));
     }
 
-    /// @dev ERC-7579 single execution calldata: target(20) || value(32) || callData (replaces v3.3 ExecLib.encodeSingle).
-    function _single(address target, uint256 value, bytes memory data) internal pure returns (bytes memory) {
-        return abi.encodePacked(target, value, data);
+    function _fund(address a, uint256 amount) internal {
+        token.mint(a, amount);
+        token.mint(vault, amount);
+        assertTrue(_ownerCall(a, address(token), abi.encodeCall(token.approve, (address(bundlePlugin), amount))));
+        vm.startPrank(vault);
+        token.approve(address(bundlePlugin), amount);
+        bundlePlugin.topUpFor(a, address(token), amount);
+        vm.stopPrank();
     }
 
-    /// @dev Submit ops through the EntryPoint. EntryPoint v0.9's `nonReentrant` guard requires the
-    ///      caller (bundler) to be an EOA with `tx.origin == msg.sender`, so prank as the beneficiary.
-    function _bundle(PackedUserOperation[] memory ops, address payable beneficiary) internal {
-        vm.prank(ENTRYPOINT_BENEFICIARY, ENTRYPOINT_BENEFICIARY);
-        entrypoint.handleOps(ops, beneficiary);
+    function _payment(address a, uint256 amount) internal view returns (ITokenBundle.Payment memory) {
+        return
+            ITokenBundle.Payment(
+                a, address(token), recipient, amount, bundlePlugin.paymentNonce(a), block.timestamp + 1 hours
+            );
+    }
+
+    function _pay(address a, uint256 amount) internal returns (bool) {
+        ITokenBundle.Payment memory p = _payment(a, amount);
+        return _submit(
+            _op(
+                a,
+                _executeData(
+                    address(bundlePlugin),
+                    abi.encodeCall(ITokenBundle.spend, (p, _sign(bundlePlugin.paymentDigest(p), ccaKey)))
+                ),
+                factory.ccaPermission(address(token)),
+                ccaKey
+            )
+        );
     }
 }

@@ -61,7 +61,6 @@ const envContext = `${envPath} or ${deploymentEnvPath}`;
 const rpcUrl = requireEnv("RPC_URL", envContext);
 const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envContext);
 const userAddress = requireEnv("USER_ADDRESS", envContext);
-const ccaAddress = requireEnv("CCA_ADDRESS", envContext);
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
@@ -171,19 +170,13 @@ async function main() {
   ]);
 
   // Predict smart account address
-  const smartAccountAddr = await saFactory.getAccountAddress(
-    userAddress,
-    ccaAddress,
-    [erc20Address],
-    [vaultRouterAddress],
-    SALT,
-  );
+  const smartAccountAddr = await saFactory.getAccountAddress(userAddress, SALT);
   console.log(`smart account:    ${smartAccountAddr}`);
 
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run top-up-sa` first.");
     process.exit(1);
   }
 
@@ -257,7 +250,7 @@ async function main() {
   // -- Build batch UserOp: approve + settle ------------------------------
 
   // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
-  // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
+  // authorizes this batch using unrestricted account funds; reserves are held in custody.
   const nonceKey = permissionNonceKey(ownerPermissionId());
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);

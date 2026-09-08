@@ -18,7 +18,9 @@
     "request-credis": "tsx src/3-request-credis.ts",
     "cca-simulate-purchase": "tsx src/4-cca-simulate-purchase.ts",
     "user-sa-withdraw": "tsx src/4.1-user-sa-withdraw.ts",
-    "user-settles": "tsx src/5-user-settles.ts"
+    "user-settles": "tsx src/5-user-settles.ts",
+    "open-bundle": "tsx src/2.1-open-bundle.ts",
+    "close-bundle": "tsx src/2.2-close-bundle.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.6.0",

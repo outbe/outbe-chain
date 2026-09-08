@@ -13,32 +13,17 @@
         "internalType": "address"
       },
       {
-        "name": "bundleModulePlugin_",
+        "name": "plugin_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "callerHook_",
+        "name": "signer_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "bundleSpendProtectorHook_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "withdrawalLimitPolicy_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "ecdsaSigner_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleWithdrawHook_",
+        "name": "withdrawHook_",
         "type": "address",
         "internalType": "address"
       }
@@ -47,39 +32,32 @@
   },
   {
     "type": "function",
-    "name": "CCA_REGISTRY",
+    "name": "OWNER_PERMISSION",
     "inputs": [],
     "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "accounts",
+    "inputs": [
       {
         "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "DAILY_LIMIT",
-    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "LIMIT_INTERVAL",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint48",
-        "internalType": "uint48"
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -87,19 +65,6 @@
   {
     "type": "function",
     "name": "bundleModulePlugin",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bundleSpendProtectorHook",
     "inputs": [],
     "outputs": [
       {
@@ -125,16 +90,22 @@
   },
   {
     "type": "function",
-    "name": "callerHook",
-    "inputs": [],
-    "outputs": [
+    "name": "ccaPermission",
+    "inputs": [
       {
-        "name": "",
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -144,21 +115,6 @@
         "name": "owner",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "cca",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleTokens",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "bundleSenders",
-        "type": "address[]",
-        "internalType": "address[]"
       },
       {
         "name": "salt",
@@ -198,21 +154,6 @@
         "internalType": "address"
       },
       {
-        "name": "cca",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bundleTokens",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "bundleSenders",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
         "name": "salt",
         "type": "uint256",
         "internalType": "uint256"
@@ -220,9 +161,60 @@
     ],
     "outputs": [
       {
-        "name": "account",
+        "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getBundleInstallPackages",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokens",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "senders",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "packages",
+        "type": "tuple[]",
+        "internalType": "struct Install[]",
+        "components": [
+          {
+            "name": "moduleType",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "module",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "moduleData",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "internalData",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -242,6 +234,44 @@
   },
   {
     "type": "function",
+    "name": "openBundle",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokens",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "senders",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sudoPolicy",
     "inputs": [],
     "outputs": [
@@ -254,32 +284,23 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "withdrawalLimitPolicy",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
+    "type": "error",
+    "name": "BundleNotUnopened",
+    "inputs": []
   },
   {
     "type": "error",
-    "name": "CcaNotActive",
-    "inputs": [
-      {
-        "name": "cca",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "state",
-        "type": "uint8",
-        "internalType": "enum ICca.State"
-      }
-    ]
+    "name": "InvalidConfiguration",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownAccount",
+    "inputs": []
   }
 ]

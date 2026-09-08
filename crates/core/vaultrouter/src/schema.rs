@@ -107,6 +107,9 @@ pub struct VaultRouterContract {
     /// slot 25: vault -> ISO-4217 code captured at registration time.
     #[attribute(order = 22)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
+    /// slot 26: trusted bundle custody, bound once by the router administrator.
+    #[attribute(order = 23)]
+    pub bundle_custody: outbe_primitives::storage::dsl::Value<Address>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

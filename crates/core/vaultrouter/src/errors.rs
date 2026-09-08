@@ -12,6 +12,16 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
+    #[error("bundle custody not configured")]
+    BundleCustodyNotConfigured,
+    #[error("bundle custody already configured")]
+    BundleCustodyAlreadyConfigured,
+    #[error("bundle is not open")]
+    BundleNotOpen,
+    #[error("requesting CCA does not match bundle CCA")]
+    BundleCcaMismatch,
+    #[error("token is not in bundle")]
+    TokenNotInBundle,
     #[error("zero address")]
     ZeroAddress,
     #[error("unauthorized")]

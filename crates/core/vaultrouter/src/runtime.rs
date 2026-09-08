@@ -43,6 +43,62 @@ fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
     Ok(())
 }
 
+/// Configures the custody trust anchor once; an account cannot supply its own registry.
+pub fn set_bundle_custody(
+    storage: StorageHandle<'_>,
+    sender: Address,
+    custody: Address,
+) -> Result<()> {
+    ensure_owner(&storage, sender)?;
+    if custody.is_zero()
+        || storage.with_account_info(custody, |info| Ok(info.is_empty_code_hash()))?
+    {
+        return Err(VaultRouterError::BundleCustodyNotConfigured.into());
+    }
+    crate::state::bind_bundle_custody(&storage, custody)?;
+    let mut contract = VaultRouterContract::new(storage);
+    contract.emit(IVaultRouter::BundleCustodyConfigured { custody })
+}
+
+pub fn bundle_custody(storage: &StorageHandle<'_>) -> Result<Address> {
+    let custody = VaultRouterContract::new(storage.clone())
+        .bundle_custody
+        .read()?;
+    if custody.is_zero()
+        || storage.with_account_info(custody, |info| Ok(info.is_empty_code_hash()))?
+    {
+        return Err(VaultRouterError::BundleCustodyNotConfigured.into());
+    }
+    Ok(custody)
+}
+
+/// Reads lifecycle and CCA from trusted custody, never from receiver-controlled code.
+pub fn bundle_cca(storage: &StorageHandle<'_>, account: Address) -> Result<Address> {
+    if storage.with_account_info(account, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(VaultRouterError::ReceiverNotDeployed.into());
+    }
+    let custody = bundle_custody(storage)?;
+    let ret = storage.staticcall(
+        custody,
+        ITokenBundle::statusCall { account }.abi_encode().into(),
+    )?;
+    let status = ITokenBundle::statusCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("bundle status"))?;
+    if !matches!(status, ITokenBundle::Status::Open) {
+        return Err(VaultRouterError::BundleNotOpen.into());
+    }
+    let ret = storage.staticcall(
+        custody,
+        ITokenBundle::linkedCcaCall { account }.abi_encode().into(),
+    )?;
+    let cca = ITokenBundle::linkedCcaCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("bundle CCA"))?;
+    if cca.is_zero() {
+        return Err(VaultRouterError::BundleNotOpen.into());
+    }
+    Ok(cca)
+}
+
 // ---------------------------------------------------------------------------
 // cross-chain configuration
 // ---------------------------------------------------------------------------
@@ -372,6 +428,23 @@ pub(crate) fn withdraw(
         return Err(VaultRouterError::InvalidLiquidityTarget.into());
     }
 
+    bundle_cca(&storage, receiver)?;
+    let custody = bundle_custody(&storage)?;
+    let ret = storage.staticcall(
+        custody,
+        ITokenBundle::isBundleTokenCall {
+            account: receiver,
+            token: asset,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    if !ITokenBundle::isBundleTokenCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("bundle token"))?
+    {
+        return Err(VaultRouterError::TokenNotInBundle.into());
+    }
+
     let vault = first_vault(&storage, asset)?;
 
     let required_shares = vault_preview_withdraw(&storage, vault, amount)?;
@@ -386,8 +459,20 @@ pub(crate) fn withdraw(
 
     let burned_shares = vault_withdraw(&storage, vault, amount, SELF, SELF)?;
 
-    erc20_approve(&storage, asset, receiver, amount)?;
-    token_bundle_top_up(&storage, receiver, SELF, asset, amount)?;
+    erc20_approve(&storage, asset, custody, U256::ZERO)?;
+    erc20_approve(&storage, asset, custody, amount)?;
+    storage.call(
+        custody,
+        U256::ZERO,
+        ITokenBundle::topUpForCall {
+            account: receiver,
+            token: asset,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    erc20_approve(&storage, asset, custody, U256::ZERO)?;
 
     let mut contract = VaultRouterContract::new(storage.clone());
     contract.emit(IVaultRouter::LiquidityWithdrawn {
@@ -658,8 +743,10 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultRouterError::UndecodableReturn("IReferenceCurrency isoCode").into())
+    let code = IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("IReferenceCurrency isoCode"))?;
+    validate_currency_code(code)?;
+    Ok(code)
 }
 
 fn vault_deposit(
@@ -715,27 +802,4 @@ fn vault_withdraw(
     )?;
     IVaultV2::withdrawCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 withdraw").into())
-}
-
-fn token_bundle_top_up(
-    storage: &StorageHandle<'_>,
-    receiver: Address,
-    sender: Address,
-    token: Address,
-    amount: U256,
-) -> Result<()> {
-    // A CALL to a codeless account succeeds and returns empty in EVM, so topUp's
-    // internal guards would be silently skipped if the bundle smart account is not
-    // deployed. Reject up front so requestCredis fails instead of half-completing.
-    if storage.with_account_info(receiver, |info| Ok(info.is_empty_code_hash()))? {
-        return Err(VaultRouterError::ReceiverNotDeployed.into());
-    }
-    let calldata = ITokenBundle::topUpCall {
-        sender,
-        token,
-        amount,
-    }
-    .abi_encode();
-    storage.call(receiver, U256::ZERO, calldata.into())?;
-    Ok(())
 }

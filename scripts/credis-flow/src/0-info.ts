@@ -103,13 +103,7 @@ async function main() {
     console.warn("\n(!) USER_PRIVATE_KEY not set - Gratis balances shown as ciphertext (the account key is needed to fetch its view key).");
   }
 
-  const smartAccountAddr = await saFactory.getAccountAddress(
-    userAddress,
-    ccaAddress,
-    [erc20Address],
-    [vaultRouterAddress],
-    SALT,
-  );
+  const smartAccountAddr = await saFactory.getAccountAddress(userAddress, SALT);
 
   await printUserInfo(provider, gratis, token, fidelity, gratisMeta, erc20Meta, userKeys, userWallet);
   await printSmartAccountInfo(provider, token, bundlePlugin, smartAccountAddr, erc20Meta);
@@ -242,7 +236,7 @@ async function printSmartAccountInfo(
   ]);
 
   const bundleBalance2 = bundleBalance / toBigInt(2);
-  const personalBalance = erc20Balance - bundleBalance;
+  const personalBalance = erc20Balance;
   console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
   console.log(`  ERC20 balance (total):   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
   console.log(`     Bundle:               ${formatTokenMeta(bundleBalance, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);

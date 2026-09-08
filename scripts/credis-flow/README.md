@@ -1,4 +1,4 @@
-# Credis User-Flow Demo (`examples/credis-flow`)
+# Credis User-Flow Demo (`scripts/credis-flow`)
 
 End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. Each
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
@@ -69,6 +69,21 @@ CLI argument (default: `local-reth`):
 
 ## Running
 
-All scripts accept `[envName]` as an optional last positional argument. Each prints
-state before / after and a `CHANGES` summary.
+Pass `[envName]` immediately after `--` (default: `local-reth`). Open-bundle also
+accepts a matching approval amount after the environment:
+
+```bash
+npm run top-up-sa -- local-reth
+npm run open-bundle -- local-reth 1000
+npm run request-credis -- local-reth
+npm run cca-simulate-purchase -- local-reth
+npm run close-bundle -- local-reth
+```
+
+Account creation needs no CCA. Opening requires an active CCA and installs its
+bundle permissions. VaultRouter must first be bound to the deployed custody by its
+administrator. Issuance pulls equal stablecoin contributions from VaultRouter and
+the account into custody. Purchases pay half the debit to the recipient and release
+half to the account. Closing requires every bundle balance to be zero and is
+permanent. See [the contract flow](../../contracts/smart-account/README.md).
 See all available scripts and their order in the `package.json`.

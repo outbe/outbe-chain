@@ -61,10 +61,7 @@ source "$DEPLOYMENT_ENV_FILE"
 
 echo ""
 echo "EntryPoint:          ${ENTRYPOINT_ADDRESS:-<unset>}"
-echo "KernelUUPS:          ${KERNEL_UUPS_ADDRESS:-<unset>}"
 echo "KernelImmutableECDSA:${KERNEL_IMMUTABLE_ECDSA_ADDRESS:-<unset>}"
-echo "KernelFactory:       ${KERNEL_FACTORY_ADDRESS:-<unset>}"
-echo "CallerHook:          ${CALLER_HOOK_ADDRESS:-<unset>}"
 echo "ECDSASigner:         ${ECDSA_SIGNER_ADDRESS:-<unset>}"
 
 echo ""
@@ -75,12 +72,14 @@ source "$DEPLOYMENT_ENV_FILE"
 
 echo ""
 echo "BundleModulePlugin:        ${BUNDLE_MODULE_PLUGIN_ADDRESS:-<unset>}"
-echo "WithdrawalLimitPolicy:     ${WITHDRAWAL_LIMIT_POLICY_ADDRESS:-<unset>}"
-echo "BundleSpendProtectorHook:  ${BUNDLE_SPEND_PROTECTOR_HOOK_ADDRESS:-<unset>}"
 echo "BundleWithdrawHook:        ${BUNDLE_WITHDRAW_HOOK_ADDRESS:-<unset>}"
 echo "SudoPolicy:                ${SUDO_POLICY_ADDRESS:-<unset>}"
+echo "GuardedKernel:            ${KERNEL_UUPS_ADDRESS:-<unset>}"
+echo "KernelFactory:            ${KERNEL_FACTORY_ADDRESS:-<unset>}"
 echo "SmartAccountFactory:       ${SMART_ACCOUNT_FACTORY_ADDRESS:-<unset>}"
 
 echo ""
 echo "=== Deployment complete ==="
 echo "All addresses written to $DEPLOYMENT_ENV_FILE"
+
+echo "Configure VaultRouter custody once with script/ConfigureBundleCustody.s.sol before issuing Credis."

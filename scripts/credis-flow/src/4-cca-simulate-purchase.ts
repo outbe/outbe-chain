@@ -37,7 +37,6 @@ const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", e
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -50,13 +49,7 @@ async function main() {
   const erc20Meta = await fetchTokenMeta(token);
 
   // Predict smart account address
-  const smartAccountAddr = await saFactory.getAccountAddress(
-    userAddress,
-    ccaAddress,
-    [erc20Address],
-    [vaultRouterAddress],
-    SALT,
-  );
+  const smartAccountAddr = await saFactory.getAccountAddress(userAddress, SALT);
 
   console.log("=== CCA Simulate Purchase ===");
   console.log(`Env:              ${envName}`);
@@ -71,10 +64,14 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run top-up-sa` first.");
     process.exit(1);
   }
 
+  if (await bundlePlugin.status(smartAccountAddr) !== 1n ||
+      (await bundlePlugin.linkedCca(smartAccountAddr)).toLowerCase() !== ccaWallet.address.toLowerCase()) {
+    throw new Error("Bundle must be open and linked to this CCA");
+  }
   // State before
   const [bundleBalBefore, accountBalBefore, ccaBalBefore] = await Promise.all([
     bundlePlugin.balanceOf(smartAccountAddr, erc20Address).catch(() => 0n),
@@ -85,8 +82,8 @@ async function main() {
   console.log("\n=== State BEFORE ===");
   printBalances(smartAccountAddr, accountBalBefore, bundleBalBefore, ccaBalBefore, erc20Meta);
 
-  if (bundleBalBefore < WITHDRAW_AMOUNT) {
-    console.error(`Insufficient bundle balance: have ${formatTokenMeta(bundleBalBefore, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
+  if (bundleBalBefore < WITHDRAW_AMOUNT * 2n) {
+    console.error(`Insufficient bundle balance: have ${formatTokenMeta(bundleBalBefore, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT * 2n, erc20Meta)}`);
     process.exit(1);
   }
 
@@ -108,12 +105,23 @@ async function main() {
     console.log(`  Deposited ${formatCoen(ENTRYPOINT_TOPUP)} COEN into EntryPoint`);
   }
 
-  // callData = executeUserOp.selector || execute(execMode, encodeSingle(token, 0, transfer(cca, amount)))
-  const erc20Iface = new ethers.Interface(["function transfer(address to, uint256 amount) returns (bool)"]);
-  const transferCalldata = erc20Iface.encodeFunctionData("transfer", [ccaAddress, WITHDRAW_AMOUNT]);
+  const payment = {
+    account: smartAccountAddr, token: erc20Address, recipient: ccaAddress,
+    amount: WITHDRAW_AMOUNT, nonce: await bundlePlugin.paymentNonce(smartAccountAddr),
+    deadline: BigInt((await provider.getBlock("latest"))!.timestamp) + 3600n,
+  };
+  const { chainId } = await provider.getNetwork();
+  const authorization = await ccaWallet.signTypedData(
+    { name: "OutbeBundle", version: "1", chainId, verifyingContract: bundleModulePluginAddress },
+    { Payment: [
+      { name: "account", type: "address" }, { name: "token", type: "address" },
+      { name: "recipient", type: "address" }, { name: "amount", type: "uint256" },
+      { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" },
+    ] }, payment,
+  );
+  const paymentCalldata = bundlePlugin.interface.encodeFunctionData("spend", [payment, authorization]);
   const executionCalldata = ethers.solidityPacked(
-    ["address", "uint256", "bytes"],
-    [erc20Address, 0n, transferCalldata],
+    ["address", "uint256", "bytes"], [bundleModulePluginAddress, 0n, paymentCalldata],
   );
   const execModeBytes32 = "0x" + "00".repeat(32);
   const kernelIface = new ethers.Interface([
@@ -149,6 +157,10 @@ async function main() {
 
   const tx = await entryPoint.handleOps([op], ccaWallet.address);
   const receipt = await tx.wait();
+  const outcome = receipt?.logs.filter(log => log.address.toLowerCase() === entryPointAddress.toLowerCase())
+    .map(log => { try { return entryPoint.interface.parseLog(log); } catch { return null; } })
+    .find(log => log?.name === "UserOperationEvent" && log.args[0] === userOpHash);
+  if (!outcome?.args[4]) throw new Error(`Purchase execution failed: ${receipt?.hash}`);
   console.log(`  TX hash:    ${receipt!.hash}`);
   console.log(`  Block:      ${receipt!.blockNumber}`);
   console.log(`  Gas used:   ${receipt!.gasUsed}`);
@@ -180,7 +192,7 @@ function printBalances(
   ccaBal: bigint,
   erc20Meta: TokenMeta,
 ) {
-  const personalBal = accountBal - bundleBal;
+  const personalBal = accountBal;
   const bundleBalance2 = bundleBal / 2n;
   console.log(`  smart account (${smartAccountAddr}):`);
   console.log(`    ERC20 total:   ${formatTokenMeta(accountBal, erc20Meta)}`);

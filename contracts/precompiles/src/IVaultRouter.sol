@@ -3,6 +3,17 @@ pragma solidity ^0.8.0;
 
 /// @notice Local stablecoin vault routing and authorization surface.
 interface IVaultRouter {
+    error BundleCustodyNotConfigured();
+    error BundleCustodyAlreadyConfigured();
+    error BundleNotOpen();
+    error BundleCcaMismatch();
+    error TokenNotInBundle();
+    event BundleCustodyConfigured(address indexed custody);
+    function setBundleCustody(address custody) external;
+    function bundleCustody() external view returns (address);
+    /// @notice Linked CCA of an open bundle; reverts for unopened or closed accounts.
+    function bundleCca(address account) external view returns (address);
+
     enum StablesSource {
         Unknown,
         IntexCostAmount, // todo remove once implement PayNoteDeposit
