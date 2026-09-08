@@ -35,7 +35,10 @@ use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
 use super::{parse_amount, require_signer};
-use crate::{rpc::Rpc, tx::TxSigner};
+use crate::{
+    rpc::{wait_receipt, Rpc},
+    tx::TxSigner,
+};
 
 sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 
@@ -325,30 +328,6 @@ async fn call<C: SolCall>(client: &impl Rpc, to: Address, request: C) -> Result<
     Ok(C::abi_decode_returns_validate(
         &client.eth_call(to, &request.abi_encode()).await?,
     )?)
-}
-
-async fn wait_receipt(client: &impl Rpc, hash: &str, timeout: Duration) -> Result<Value> {
-    tokio::time::timeout(timeout, async {
-        loop {
-            if let Some(receipt) = client.eth_get_transaction_receipt(hash).await? {
-                ensure!(
-                    receipt.get("transactionHash").and_then(Value::as_str) == Some(hash),
-                    "receipt transaction hash mismatch"
-                );
-                ensure!(
-                    receipt.get("status").and_then(Value::as_str) == Some("0x1"),
-                    "transaction reverted or receipt has invalid status"
-                );
-                return Ok(receipt);
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    })
-    .await
-    .map_err(|_| {
-        eyre::eyre!("transaction {hash} is still pending; saved note remains recoverable")
-    })?
-    .wrap_err_with(|| format!("transaction {hash}"))
 }
 
 async fn send(
