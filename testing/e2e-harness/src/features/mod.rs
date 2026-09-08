@@ -50,6 +50,7 @@ pub mod restart;
 pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
+mod p2p_admission;
 pub mod target_chain;
 pub mod tee_lease;
 pub mod tee_observability;
