@@ -2,7 +2,8 @@
 ///
 /// Current placeholder follows the existing update implementation. This is a
 /// consensus constant and should only change through a hardfork.
-pub const VOTING_WINDOW_BLOCKS: u64 = 86_400;
+pub const VOTING_WINDOW_BLOCKS: u64 =
+    outbe_chain_constants::DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS;
 
 /// Quorum numerator for `yes_votes / active_validator_count`.
 pub const QUORUM_NUMERATOR: u64 = 2;

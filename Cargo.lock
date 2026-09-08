@@ -9876,6 +9876,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-macros",
  "outbe-primitives",
  "outbe-update",

@@ -11,12 +11,16 @@
 
 #[cfg(feature = "ocomp-integration")]
 pub mod agent_reward;
+#[cfg(feature = "ocomp-integration")]
+mod auction_expectations;
 pub mod common;
 #[cfg(feature = "ocomp-integration")]
 pub mod gem_lifecycle;
 pub mod governance;
 #[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;
+#[cfg(feature = "ocomp-integration")]
+mod tribute_expectations;
 pub mod update;
 
 #[cfg(feature = "ocomp-integration")]
@@ -28,8 +32,13 @@ pub mod follower;
 mod follower_handoff;
 pub mod l2_zk_gate;
 pub mod lifecycle;
+mod negative_assertions;
+#[cfg(feature = "ocomp-integration")]
+mod nod_expectations;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
+#[cfg(feature = "ocomp-integration")]
+mod oracle_expectations;
 pub mod origin_venue;
 #[cfg(feature = "ocomp-integration")]
 pub mod paynote;
@@ -44,6 +53,7 @@ pub mod stale_join;
 pub mod target_chain;
 pub mod tee_lease;
 pub mod tee_observability;
+mod tribute_negatives;
 pub mod tribute_projection;
 pub mod txpool_eviction;
 mod txpool_pending;

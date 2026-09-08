@@ -3812,8 +3812,8 @@ impl Rpc {
         .map(Into::into)
     }
 
-    /// Invoke the privileged raw reshared-set facade.
-    pub fn activate_reshared_set(
+    /// Submit the absent activation selector to verify public ABI reachability.
+    pub fn submit_unsupported_activation(
         &self,
         caller_key: &str,
         new_active_set: &[Address],
@@ -3830,6 +3830,29 @@ impl Rpc {
             None,
         )
         .map(Into::into)
+    }
+
+    /// Replay the unsupported activation calldata at its finalized receipt height.
+    /// The actual transaction is checked separately; this call identifies its
+    /// state-independent ABI rejection reason without claiming boundary validation.
+    pub fn unsupported_activation_revert_reason_at(
+        &self,
+        port: u16,
+        caller: Address,
+        requested: &[Address],
+        group_hash: B256,
+        height: u64,
+    ) -> Result<String> {
+        eth::read_call_revert_reason_at(
+            &self.url(port),
+            addresses::VS_ADDR,
+            caller,
+            &IValidatorSetRaw::activateResharedSetCall {
+                newActiveSet: requested.to_vec(),
+                groupPublicKey: group_hash,
+            },
+            height,
+        )
     }
 
     /// Submit two conflicting notarize blocks to SlashIndicator.

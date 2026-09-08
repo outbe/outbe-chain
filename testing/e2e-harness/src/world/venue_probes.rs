@@ -32,14 +32,17 @@ sol! {
         function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
     }
 
-    #[sol(alloy_sol_types = alloy_sol_types)]
+    #[sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     interface IVenueSchedule {
         struct IntexCallTrigger { uint32 callWindow; uint32 callThreshold; uint32 callNoticePeriod; }
         struct AuctionSchedule { uint32 commitEnd; uint32 revealEnd; uint32 issuanceEnd; }
+        struct ReferenceCurrencyPrice {
+            uint16 isoCode; uint64 entryPriceMinor; uint64 floorPriceMinor; uint64 callPriceMinor;
+        }
         struct AuctionParams {
-            uint16 issuanceCurrency; uint16 referenceCurrency; uint128 promisLoadMinor;
+            uint128 promisLoadMinor;
             IntexCallTrigger callTrigger; uint32 minIntexBidRate; uint16 minIntexBidQuantity;
-            uint64 entryPriceMinor; uint64 floorPriceMinor; uint64 callPriceMinor; uint128 commitBondMinor;
+            ReferenceCurrencyPrice[] prices; uint128 commitBondMinor;
         }
         struct AuctionResult {
             uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;

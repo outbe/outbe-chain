@@ -29,8 +29,8 @@ Feature: Tribute admission, projection, and proofs
     Then the tribute transaction succeeds and supply becomes one
 
   @pfs-001-11
-  Scenario: A registered L2 network admits a correctly signed FullProof
+  Scenario: A registered L2 network rejects a signed tampered proof and admits the valid FullProof
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When an L2 network is registered for the operator with zk enabled
-    And the operator submits an encrypted tribute offer with a valid ZK proof and L2 signature
+    And the operator proves a signed tampered proof is rejected then submits the valid FullProof
     Then the tribute transaction succeeds and supply becomes one
