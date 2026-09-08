@@ -944,6 +944,10 @@ pub struct CommonwareDkgGossip<S, R, C> {
     /// Ceremony messages received during the identity-exchange phase, replayed
     /// before reading new ones so the phase race loses nothing.
     buffered: VecDeque<(Vec<u8>, DkgWireMessage)>,
+    /// Signed announcements can arrive during preliminary BLS discovery. Once
+    /// ACKed they must survive the phase transition; the sender may stop retrying.
+    /// Bounded by the expected participant count of this startup exchange.
+    early_signed_identities: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)>,
     /// Typed, bounded delivery state. Transport acknowledgements suppress
     /// retries per message and peer; the enclosing startup timeout remains the
     /// ceremony deadline.
@@ -969,6 +973,7 @@ where
             clock,
             routing: BTreeMap::new(),
             buffered: VecDeque::new(),
+            early_signed_identities: BTreeMap::new(),
             delivery: DeliveryTracker::new(scope, allowed_peers),
         }
     }
@@ -1003,7 +1008,11 @@ where
         n: usize,
     ) -> eyre::Result<Vec<outbe_tee::protocol::ParticipantAnnounce>> {
         let require_scoped_announcement = !my_sig.is_empty();
-        let mut ids: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)> = BTreeMap::new();
+        let mut ids = if require_scoped_announcement {
+            std::mem::take(&mut self.early_signed_identities)
+        } else {
+            BTreeMap::new()
+        };
         ids.insert(my_bls.clone(), (my_enc, my_sig.clone()));
 
         let mut env = vec![DKG_ENV_IDENTITY];
@@ -1060,6 +1069,17 @@ where
                                     if let Some((bls, enc, sig)) = parse_identity(&bytes[1..]) {
                                         if require_scoped_announcement && sig.is_empty() {
                                             continue;
+                                        }
+                                        if !require_scoped_announcement && !sig.is_empty() {
+                                            if !self.early_signed_identities.contains_key(&bls)
+                                                && self.early_signed_identities.len() >= n
+                                            {
+                                                return Err(eyre::eyre!(
+                                                    "TEE DKG early signed identity budget exceeded: {n}"
+                                                ));
+                                            }
+                                            self.early_signed_identities
+                                                .insert(bls.clone(), (enc, sig.clone()));
                                         }
                                         self.routing.insert(bls.clone(), from);
                                         ids.insert(bls, (enc, sig));
@@ -1371,6 +1391,172 @@ mod tests {
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_p2p::Recipients;
     use outbe_primitives::tee_attestation_v1::AttestationMode;
+
+    /// Only transport ordering and time are controlled. Both exchanges and
+    /// delivery acknowledgements use the production implementation.
+    mod identity_phase_regression {
+        use super::*;
+        use crate::tee_bootstrap::{CommonwareDkgGossip, DELIVERY_ACK, DKG_ENV_IDENTITY};
+        use commonware_actor::{Feedback, Unreliable};
+        use commonware_codec::Encode as _;
+        use commonware_p2p::{CheckedSender, LimitedSender, Message, Receiver};
+        use commonware_runtime::{deterministic, IoBufs, Runner as _};
+        use std::{
+            collections::VecDeque,
+            convert::Infallible,
+            sync::{Arc, Mutex},
+            time::{Duration, SystemTime},
+        };
+
+        type Sent = Arc<Mutex<Vec<(Vec<bls12381::PublicKey>, Vec<u8>)>>>;
+
+        #[derive(Clone)]
+        struct RecordingSender {
+            peers: Vec<bls12381::PublicKey>,
+            sent: Sent,
+        }
+
+        struct RecordingCheckedSender {
+            peers: Vec<bls12381::PublicKey>,
+            sent: Sent,
+        }
+
+        impl CheckedSender for RecordingCheckedSender {
+            type PublicKey = bls12381::PublicKey;
+
+            fn recipients(&self) -> Vec<Self::PublicKey> {
+                self.peers.clone()
+            }
+
+            fn send(self, message: impl Into<IoBufs> + Send, _: bool) -> Unreliable<Feedback> {
+                self.sent
+                    .lock()
+                    .unwrap()
+                    .push((self.peers, message.into().coalesce().as_ref().to_vec()));
+                Unreliable::Outcome(Feedback::Ok)
+            }
+        }
+
+        impl LimitedSender for RecordingSender {
+            type PublicKey = bls12381::PublicKey;
+            type Checked<'a> = RecordingCheckedSender;
+
+            fn check(
+                &mut self,
+                recipients: Recipients<Self::PublicKey>,
+            ) -> Result<Self::Checked<'_>, SystemTime> {
+                let peers = match recipients {
+                    Recipients::All => self.peers.clone(),
+                    Recipients::Some(peers) => peers,
+                    Recipients::One(peer) => vec![peer],
+                };
+                Ok(RecordingCheckedSender {
+                    peers,
+                    sent: self.sent.clone(),
+                })
+            }
+        }
+
+        #[derive(Debug)]
+        struct OrderedReceiver(Arc<Mutex<VecDeque<Message<bls12381::PublicKey>>>>);
+
+        impl Receiver for OrderedReceiver {
+            type Error = Infallible;
+            type PublicKey = bls12381::PublicKey;
+
+            async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
+                let message = self.0.lock().unwrap().pop_front();
+                match message {
+                    Some(message) => Ok(message),
+                    // Keep the channel open: the production identity timeout,
+                    // not a closed test channel, must expose missing delivery.
+                    None => std::future::pending().await,
+                }
+            }
+        }
+
+        fn announcement(tracker: &mut DeliveryTracker, bls: &[u8], signed: bool) -> Vec<u8> {
+            // Signature contents are opaque at this transport seam. Enclave
+            // signature verification is deliberately not claimed by this test.
+            let sig = if signed { vec![0x55; 96] } else { Vec::new() };
+            let mut payload = vec![DKG_ENV_IDENTITY];
+            payload.extend_from_slice(&(bls.len() as u32).to_be_bytes());
+            payload.extend_from_slice(bls);
+            payload.extend_from_slice(&[if signed { 0x22 } else { 0 }; 32]);
+            payload.extend_from_slice(&(sig.len() as u32).to_be_bytes());
+            payload.extend_from_slice(&sig);
+            tracker.envelope(Recipients::All, payload).unwrap()
+        }
+
+        fn exchange_with_order(early_signed: bool) {
+            deterministic::Runner::timed(Duration::from_secs(100)).start(|context| async move {
+                let peers: Vec<_> = (201..205).map(|seed| bls12381::PrivateKey::from_seed(seed).public_key()).collect();
+                let bls: Vec<_> = (301..305).map(|seed| bls12381::PrivateKey::from_seed(seed).public_key().encode().to_vec()).collect();
+                let scope = B256::repeat_byte(0x31);
+                let mut trackers: Vec<_> = (1..4).map(|sender| {
+                    DeliveryTracker::new(scope, peers.iter().enumerate().filter(|(i, _)| *i != sender).map(|(_, peer)| peer.clone()).collect())
+                }).collect();
+                let preliminary: Vec<_> = (1..4).map(|i| announcement(&mut trackers[i - 1], &bls[i], false)).collect();
+                let signed: Vec<_> = (1..4).map(|i| announcement(&mut trackers[i - 1], &bls[i], true)).collect();
+                let inbox = Arc::new(Mutex::new(VecDeque::new()));
+                // A receives B's signed announcement while still waiting for
+                // C and D's preliminary identities. No packet is dropped.
+                for i in 1..4 {
+                    inbox.lock().unwrap().push_back((peers[i].clone(), preliminary[i - 1].clone().into()));
+                    if i == 1 && early_signed {
+                        inbox.lock().unwrap().push_back((peers[i].clone(), signed[0].clone().into()));
+                    }
+                }
+                let sent = Sent::default();
+                let mut gossip = CommonwareDkgGossip::new(
+                    RecordingSender { peers: peers[1..].to_vec(), sent: sent.clone() },
+                    OrderedReceiver(inbox.clone()), context, scope, peers[1..].iter().cloned().collect(),
+                );
+                let first = gossip.exchange_identities(bls[0].clone(), [0; 32], Vec::new(), B256::ZERO, 0, B256::ZERO, 4).await.unwrap();
+                assert_eq!(first.len(), 4, "preliminary exchange must complete");
+
+                if early_signed {
+                    let (_, signed_id, _) = trackers[0].decode(&signed[0]).unwrap();
+                    let ack = sent.lock().unwrap().iter().find_map(|(to, bytes)| {
+                        let (tag, id, _) = trackers[0].decode(bytes)?;
+                        (to == &vec![peers[1].clone()] && tag == DELIVERY_ACK && id == signed_id).then_some(id)
+                    }).expect("A must have ACKed B's signed announcement during preliminary exchange");
+                    // The other recipients have also acknowledged B. Feeding
+                    // A's actual ACK makes production delivery stop retrying B.
+                    for peer in [&peers[2], &peers[3], &peers[0]] {
+                        assert!(trackers[0].observe_peer(peer.clone()));
+                        trackers[0].acknowledge(peer, ack);
+                    }
+                    for _ in 0..=120 {
+                        assert!(trackers[0].retry_batch().iter().all(|(_, bytes)| bytes != &signed[0]), "an ACKed announcement must not be retransmitted");
+                    }
+                }
+                for i in 1..4 {
+                    if i != 1 || !early_signed {
+                        inbox.lock().unwrap().push_back((peers[i].clone(), signed[i - 1].clone().into()));
+                    }
+                }
+                let result = gossip.exchange_identities(bls[0].clone(), [0x22; 32], vec![0x55; 96], B256::repeat_byte(0x41), 0, B256::repeat_byte(0x42), 4).await;
+                let identities = result.expect("all four signed identities were delivered; an ACKed early announcement must survive the phase transition");
+                assert_eq!(identities.len(), 4);
+                for (identity, expected_bls) in identities.iter().zip(bls.iter().collect::<std::collections::BTreeSet<_>>()) {
+                    assert_eq!(&identity.bls_pub, expected_bls);
+                    assert_eq!(identity.enc_pub, [0x22; 32]);
+                    assert_eq!(identity.enc_sig, vec![0x55; 96]);
+                }
+            });
+        }
+
+        #[test]
+        fn signed_identities_arriving_in_their_phase_complete() {
+            exchange_with_order(false);
+        }
+
+        #[test]
+        fn early_acked_signed_identity_survives_phase_transition() {
+            exchange_with_order(true);
+        }
+    }
 
     #[test]
     fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
