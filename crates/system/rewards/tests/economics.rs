@@ -1,11 +1,9 @@
 //! Rewards economics + late-vote invariant tests.
 //!
-//! Per, economic distribution is unchanged
-//! from V1 - only the source of money fields changes (parent
-//! `ExecutionSummaryArtifact` instead of metadata). These tests pin the
-//! existing constants and assert that V3 fingerprint semantics enforce
-//! ("late local votes never add credit beyond block-carried
-//! quorum") at the dedup-guard level.
+//! These tests pin allocation constants and the V3 certificate fingerprint:
+//! locally observed votes cannot change a replayed CPA signer bitmap. Canonical
+//! authenticated late credits use a separate phase; their daily GEM accounting
+//! is exercised in `late_gem_participation`.
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
 use outbe_emissionlimit::allocation::{

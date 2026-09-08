@@ -59,6 +59,8 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 40: reward_gem_issuance_currency - mapping(uint32 => uint16)
 /// 41: reward_gem_reference_currency - mapping(uint32 => uint16)
 /// 42: reward_gem_pending_batch_count - uint64
+/// 43: pending_reward_day - mapping(B256 => uint32)
+/// 44: daily_last_window_close - mapping(uint32 => uint64)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -275,4 +277,11 @@ pub struct Rewards {
 
     /// Live FIFO batch count; must equal `queue_tail - queue_head`.
     pub reward_gem_pending_batch_count: Slot<u64>,
+
+    /// Canonical UTC day of an open finalized-block window. Cleared with escrow.
+    pub pending_reward_day: Mapping<B256, u32>,
+
+    /// Last inclusion-window close height for each day's finalized blocks.
+    /// Cycle runs before late credits, so preparation requires a later height.
+    pub daily_last_window_close: Mapping<u32, u64>,
 }
