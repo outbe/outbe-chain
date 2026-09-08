@@ -3,10 +3,7 @@ use crate::rpc::mock::{
     abi_u256, abi_u64, call_map, ExpectedRpcCall, MockRpc, RecordedRpcCall as Request,
     RecordedRpcResponse as Response, RecordingRpc,
 };
-use outbe_paynote::{
-    schema::PayNoteContract,
-    test_support::{seed_pool, ReferenceTree},
-};
+use outbe_paynote::{schema::PayNoteContract, test_support::seed_pool};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use std::collections::HashMap;
 
@@ -250,7 +247,7 @@ async fn deposit_approves_only_when_needed_and_preserves_note_on_failure() {
         calls.extend(tx_calls(
             PAYNOTE_ADDRESS,
             deposit_data(&n),
-            receipt(vec![event(&n, 0, tree.root, n.amount)]),
+            receipt(vec![event(&n, 0, tree.root(), n.amount)]),
         ));
         let rpc = RecordingRpc::new(calls);
         let temp = tempfile::tempdir().unwrap();
@@ -330,11 +327,11 @@ fn tree_rpc(tree: &Tree, logs: Vec<Value>) -> MockRpc {
         eth_call_map: Some(call_map(HashMap::from([
             (
                 (PAYNOTE_ADDRESS, IPayNote::leafCountCall::SELECTOR),
-                abi_u64(tree.leaves.len().try_into().unwrap()),
+                abi_u64(tree.leaves().len().try_into().unwrap()),
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-                word(tree.root).to_vec(),
+                word(tree.root()).to_vec(),
             ),
             (
                 (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -354,18 +351,18 @@ async fn tree_history_requires_dense_indexes_and_matching_roots() {
     let n = note();
     let mut tree = Tree::new(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
-    let valid = event(&n, 0, tree.root, n.amount);
+    let valid = event(&n, 0, tree.root(), n.amount);
     assert_eq!(
         read_tree(&tree_rpc(&tree, vec![valid.clone()]), CHAIN)
             .await
             .unwrap()
-            .root,
-        tree.root
+            .root(),
+        tree.root()
     );
     for logs in [
         vec![],
         vec![valid.clone(), valid.clone()],
-        vec![event(&n, 1, tree.root, n.amount)],
+        vec![event(&n, 1, tree.root(), n.amount)],
         vec![event(&n, 0, Field::from(1), n.amount)],
         vec![json!({})],
     ] {
@@ -377,21 +374,6 @@ async fn tree_history_requires_dense_indexes_and_matching_roots() {
     let mut noncanonical = valid;
     noncanonical["topics"][1] = json!(B256::repeat_byte(0xff));
     assert!(decode_note(&noncanonical).is_err());
-    // Independent tree implementation cross-checks odd widths and both branch directions.
-    let mut reference = ReferenceTree::new(CHAIN);
-    let mut tree = Tree::new(CHAIN).unwrap();
-    for i in 1..=9 {
-        let leaf = Field::from(i);
-        tree.append(leaf).unwrap();
-        reference.append(leaf);
-        assert_eq!(tree.root, reference.root());
-        for (index, leaf) in tree.leaves.iter().enumerate() {
-            assert_eq!(
-                tree.witness(*leaf).unwrap().1,
-                reference.path_at(index.try_into().unwrap())
-            );
-        }
-    }
 }
 
 #[tokio::test]
@@ -441,7 +423,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
     let before = fs::read(&path).unwrap();
     let mut tree = Tree::new(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
-    let mut rpc = tree_rpc(&tree, vec![event(&n, 0, tree.root, n.amount)]);
+    let mut rpc = tree_rpc(&tree, vec![event(&n, 0, tree.root(), n.amount)]);
     rpc.eth_call_map = Some(call_map(HashMap::from([
         (
             (PAYNOTE_ADDRESS, IPayNote::leafCountCall::SELECTOR),
@@ -449,7 +431,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::currentRootCall::SELECTOR),
-            word(tree.root).to_vec(),
+            word(tree.root()).to_vec(),
         ),
         (
             (PAYNOTE_ADDRESS, IPayNote::isSpentCall::SELECTOR),
@@ -475,7 +457,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let temp = tempfile::tempdir().unwrap();
     let mut tree = Tree::new(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
-    let origin_log = event(&n, 0, tree.root, n.amount);
+    let origin_log = event(&n, 0, tree.root(), n.amount);
     let mut calls = vec![allowance_call(n.amount)];
     calls.extend(tx_calls(
         PAYNOTE_ADDRESS,
@@ -510,7 +492,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     // The command's deposit receipt is mocked; consumption runs the production
     // cross-module API and real frozen verifier against the corresponding pool.
     let mut provider = HashMapStorageProvider::new(CHAIN);
-    seed_pool(&mut provider, CHAIN, &tree.leaves);
+    seed_pool(&mut provider, CHAIN, tree.leaves());
     provider.enter(|storage| {
         let claim = outbe_paynote::api::consume(&storage, &combined).unwrap();
         assert_eq!(claim.spend_amount, amount);
@@ -524,7 +506,10 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         .find(|log| log.data.topics().first() == Some(&IPayNote::NewNote::SIGNATURE_HASH))
         .unwrap();
     let change_log = json!({ "address": change_log.address, "topics": change_log.data.topics(), "data": change_log.data.data });
-    assert_eq!(decode_note(&change_log).unwrap().rootAfter, word(tree.root));
+    assert_eq!(
+        decode_note(&change_log).unwrap().rootAfter,
+        word(tree.root())
+    );
     let output = spend_proof(
         &tree_rpc(&tree, vec![origin_log, change_log]),
         temp.path(),

@@ -22,9 +22,10 @@
 //! Layout: [`hash`] (formula mirror), [`schema`] (frozen V1 storage table),
 //! [`runtime`] (transition core), [`api`] (cross-module surface),
 //! [`precompile`] (ABI dispatch, value policy, selector-sensitive gas),
-//! [`errors`].
+//! [`errors`], [`client`] (off-chain membership witnesses).
 
 pub mod api;
+pub mod client;
 pub mod errors;
 pub mod hash;
 pub mod precompile;

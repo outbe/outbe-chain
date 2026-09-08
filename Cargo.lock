@@ -9655,7 +9655,6 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "metrics",
- "outbe-common",
  "outbe-primitives",
  "pem",
  "postcard",

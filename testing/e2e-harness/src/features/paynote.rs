@@ -12,11 +12,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_paynote::client::Tree;
 use outbe_paynote::hash::{
     address_field, field_from_be_bytes, field_to_be_bytes, note_commitment, note_nullifier,
     note_sn, Field,
 };
-use outbe_paynote::test_support::{combined_from, ReferenceTree};
+use outbe_paynote::test_support::combined_from;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -122,19 +123,18 @@ pub(crate) fn deposit_and_prove(
 /// against the same root the chain will check it under — including any notes
 /// other scenarios deposited.
 pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Address) -> Vec<u8> {
-    let mut tree = ReferenceTree::new(note.chain_id);
-    let mut leaf_index = None;
+    let mut tree = Tree::new(note.chain_id).expect("paynote tree");
     for (index, commitment) in deposited_leaves(world, port) {
-        let appended = tree.append(commitment);
         assert_eq!(
-            appended, index,
+            tree.leaves().len(),
+            usize::try_from(index).expect("leaf index fits usize"),
             "NewNote leaf indexes must be dense and ordered"
         );
-        if commitment == note.commitment {
-            leaf_index = Some(appended);
-        }
+        tree.append(commitment).expect("append NewNote commitment");
     }
-    let leaf_index = leaf_index.expect("the scenario's own deposit must be in the pool");
+    let (leaf_index, auth_path) = tree
+        .witness(note.commitment)
+        .expect("the scenario's own deposit must be in the pool");
 
     let public = PublicInputs {
         chain_id: note.chain_id,
@@ -151,7 +151,7 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         note_amount: u256::to_limbs(note.amount),
         note_spend_key: note.spend_key,
         leaf_index,
-        auth_path: tree.path_at(leaf_index),
+        auth_path,
     };
     let proof =
         ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)

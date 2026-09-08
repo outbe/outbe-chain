@@ -1,9 +1,9 @@
 //! Proving and pool-seeding fixtures for PayNote, shared by this crate's own
 //! tests and by downstream modules that consume notes (`nodfactory`, …).
 //!
-//! Enabled by the `test-utils` feature. Witness construction and proving stay
-//! out of production builds entirely: nothing here is reachable from
-//! [`crate::runtime`].
+//! Enabled by the `test-utils` feature. These reference fixtures are unreachable
+//! from [`crate::runtime`]. Client applications use [`crate::client`] for
+//! production membership witnesses.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;

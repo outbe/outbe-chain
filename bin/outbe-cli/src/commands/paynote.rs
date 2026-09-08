@@ -12,12 +12,12 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
 use outbe_paynote::{
+    client::Tree,
     hash::{
-        address_field, change_key, empty_subtrees, field_from_be_bytes, field_to_be_bytes,
-        merkle_node, note_commitment, note_nullifier, note_sn, Field,
+        address_field, change_key, field_from_be_bytes, field_to_be_bytes, note_commitment,
+        note_nullifier, note_sn, Field,
     },
     precompile::IPayNote,
-    schema::PAYNOTE_TREE_DEPTH,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
 use outbe_protocol::{
@@ -498,77 +498,6 @@ fn decode_note(log: &Value) -> Result<IPayNote::NewNote> {
     Ok(event)
 }
 
-struct Tree {
-    leaves: Vec<Field>,
-    zeros: Vec<Field>,
-    frontier: [Field; PAYNOTE_TREE_DEPTH],
-    root: Field,
-}
-
-impl Tree {
-    fn new(chain_id: u64) -> Result<Self> {
-        let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH)?;
-        Ok(Self {
-            leaves: Vec::new(),
-            root: zeros[PAYNOTE_TREE_DEPTH],
-            zeros,
-            frontier: [Field::from(0); PAYNOTE_TREE_DEPTH],
-        })
-    }
-
-    fn append(&mut self, commitment: Field) -> Result<()> {
-        // Circuit positions are u32; reject beyond the depth-32 tree capacity.
-        let mut index = u32::try_from(self.leaves.len()).wrap_err("paynote tree is full")?;
-        let mut node = commitment;
-        for level in 0..PAYNOTE_TREE_DEPTH {
-            node = if index & 1 == 0 {
-                self.frontier[level] = node;
-                merkle_node(node, self.zeros[level])?
-            } else {
-                merkle_node(self.frontier[level], node)?
-            };
-            index >>= 1;
-        }
-        self.leaves.push(commitment);
-        self.root = node;
-        Ok(())
-    }
-
-    fn witness(&self, commitment: Field) -> Result<(u32, [Field; PAYNOTE_TREE_DEPTH])> {
-        let position = self
-            .leaves
-            .iter()
-            .position(|leaf| *leaf == commitment)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "note commitment is not on-chain; deposit or change is not yet confirmed"
-                )
-            })?;
-        let leaf_index = u32::try_from(position).wrap_err("leaf index exceeds depth-32 tree")?;
-        let mut index = position;
-        let mut nodes = self.leaves.clone();
-        let mut path = [Field::from(0); PAYNOTE_TREE_DEPTH];
-        for (level, sibling) in path.iter_mut().enumerate() {
-            if nodes.len() % 2 == 1 {
-                nodes.push(self.zeros[level]);
-            }
-            *sibling = *nodes
-                .get(index ^ 1)
-                .ok_or_else(|| eyre::eyre!("missing Merkle sibling"))?;
-            nodes = nodes
-                .chunks_exact(2)
-                .map(|pair| merkle_node(pair[0], pair[1]))
-                .collect::<Result<Vec<_>, _>>()?;
-            index >>= 1;
-        }
-        ensure!(
-            nodes.first() == Some(&self.root),
-            "Merkle path root mismatch"
-        );
-        Ok((leaf_index, path))
-    }
-}
-
 async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
     let head = client.eth_block_number().await?;
     let tag = format!("0x{head:x}");
@@ -589,12 +518,12 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
         events.sort_by_key(|event| event.leafIndex);
         for event in events {
             ensure!(
-                usize::try_from(event.leafIndex)? == tree.leaves.len(),
+                usize::try_from(event.leafIndex)? == tree.leaves().len(),
                 "NewNote history has duplicate or missing leaf indexes"
             );
             tree.append(field(event.commitment)?)?;
             ensure!(
-                word(tree.root) == event.rootAfter,
+                word(tree.root()) == event.rootAfter,
                 "NewNote history root mismatch"
             );
         }
@@ -626,7 +555,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Tree> {
             .await?,
     )?;
     ensure!(
-        count == u64::try_from(tree.leaves.len())? && root == word(tree.root),
+        count == u64::try_from(tree.leaves().len())? && root == word(tree.root()),
         "NewNote history does not match chain snapshot"
     );
     Ok(tree)
@@ -659,7 +588,7 @@ fn prove(
     let (leaf_index, auth_path) = tree.witness(field(note.commitment)?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
-        root: tree.root,
+        root: tree.root(),
         nullifier: field(note.nullifier()?)?,
         asset: address_field(note.asset.into()),
         spender: address_field(spender.into()),

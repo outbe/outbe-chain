@@ -420,3 +420,29 @@ fn a_note_cannot_be_spent_as_a_different_asset() {
         );
     });
 }
+
+#[test]
+fn client_witnesses_match_the_reference_tree() {
+    use crate::client::Tree;
+
+    let empty = Tree::new(CHAIN_ID).unwrap();
+    assert!(empty.leaves().is_empty());
+    assert!(empty.witness(Field::from(1)).is_err());
+    // Independent tree implementation cross-checks odd widths and both branch directions.
+    let mut reference = ReferenceTree::new(CHAIN_ID);
+    let mut tree = Tree::new(CHAIN_ID).unwrap();
+    for i in 1..=9 {
+        let leaf = Field::from(i);
+        tree.append(leaf).unwrap();
+        reference.append(leaf);
+        assert_eq!(tree.root(), reference.root());
+        for (index, leaf) in tree.leaves().iter().enumerate() {
+            let index = u32::try_from(index).unwrap();
+            assert_eq!(
+                tree.witness(*leaf).unwrap(),
+                (index, reference.path_at(index))
+            );
+        }
+    }
+    assert!(tree.witness(Field::from(10)).is_err());
+}
