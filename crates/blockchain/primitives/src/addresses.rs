@@ -344,13 +344,13 @@ pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// IntexNFT1155: the Intex ERC-1155 series balance ledger. CREATE3 proxy under
 /// salt "outbe-intex:IntexNFT1155:<version>", not a precompile.
 #[cfg(not(feature = "e2e-test"))]
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x956d5Dc2D4FFD706ea9f2d1da350EEC73557ff8a");
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x87D46BF895939d8C1287C5c525eF891606F77656");
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
 /// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
 /// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:<version>".
 #[cfg(not(feature = "e2e-test"))]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xc863eA177036b01a73B56B16a7F51c2529382547");
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x29163D789C2F891cA852579c583Ce6a6278ef030");
 #[cfg(feature = "e2e-test")]
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");
