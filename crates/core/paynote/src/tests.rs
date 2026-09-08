@@ -28,6 +28,8 @@ use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
 
+use crate::PayNoteTree;
+
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
 
@@ -53,7 +55,6 @@ fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expecte
 
 use crate::client::{new_tree, witness};
 use crate::test_support::{note, note_and_spend_proof, seed_pool};
-use outbe_protocol::{protocol::imt::Imt, OutbeV1};
 
 /// Prove a spend of `spend_amount` out of a single-leaf tree holding `amount`
 /// of `asset`, returning the combined proof and the statement it carries.
@@ -62,7 +63,7 @@ fn prove_spend(
     asset: Address,
     amount: u128,
     spend_amount: u128,
-) -> (Vec<u8>, PublicInputs, Imt<OutbeV1>) {
+) -> (Vec<u8>, PublicInputs, PayNoteTree) {
     let fixture = note_and_spend_proof(
         chain_id,
         asset,
@@ -439,7 +440,7 @@ fn client_witnesses_match_runtime_roots() {
         for (index, leaf) in tree.leaves().iter().enumerate() {
             let (actual_index, siblings) = witness(&tree, *leaf).unwrap();
             assert_eq!(actual_index, u32::try_from(index).unwrap());
-            let root = Imt::<OutbeV1>::root_from_inclusion_path(
+            let root = PayNoteTree::root_from_inclusion_path(
                 crate::hash::paynote_domain(),
                 *leaf,
                 u64::from(actual_index),
@@ -454,7 +455,7 @@ fn client_witnesses_match_runtime_roots() {
         (crate::hash::paynote_domain(), PAYNOTE_TREE_DEPTH - 1),
         (Field::from(42), PAYNOTE_TREE_DEPTH),
     ] {
-        let mut wrong_tree = Imt::<OutbeV1>::new(domain, Field::from(0), depth).unwrap();
+        let mut wrong_tree = PayNoteTree::new(domain, Field::from(0), depth).unwrap();
         wrong_tree.append(Field::from(1)).unwrap();
         assert!(witness(&wrong_tree, Field::from(1)).is_err());
     }

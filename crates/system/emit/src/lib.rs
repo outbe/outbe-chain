@@ -22,5 +22,8 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 
+/// In-memory commitment tree for Emit clients.
+pub type EmitTree = outbe_protocol::protocol::imt::Imt<outbe_protocol::OutbeV1>;
+
 #[cfg(test)]
 mod tests;

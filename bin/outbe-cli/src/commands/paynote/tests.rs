@@ -319,7 +319,7 @@ async fn deposit_revert_or_lost_response_keeps_the_secret() {
         .contains("pending"));
 }
 
-fn tree_rpc(tree: &Imt<OutbeV1>, logs: Vec<Value>) -> MockRpc {
+fn tree_rpc(tree: &PayNoteTree, logs: Vec<Value>) -> MockRpc {
     MockRpc {
         chain_id: Ok(CHAIN),
         block_number: Ok(10),

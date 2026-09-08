@@ -7,7 +7,6 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -22,6 +21,7 @@ use crate::hash::{
 };
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
+use crate::PayNoteTree;
 
 /// Everything the pool and the prover need about one note.
 pub struct Note {
@@ -76,7 +76,7 @@ pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Not
 /// spend appended.
 pub fn spend_proof(
     chain_id: u64,
-    tree: &Imt<OutbeV1>,
+    tree: &PayNoteTree,
     leaf_index: u32,
     note: &Note,
     spender: Address,
@@ -88,7 +88,7 @@ pub fn spend_proof(
 
 fn prove_spend(
     chain_id: u64,
-    tree: &Imt<OutbeV1>,
+    tree: &PayNoteTree,
     leaf_index: u32,
     n: &Note,
     spender: Address,
@@ -167,7 +167,7 @@ pub struct SpendFixture {
     /// The statement the proof carries.
     pub public: PublicInputs,
     /// The tree the membership path was taken from.
-    pub tree: Imt<OutbeV1>,
+    pub tree: PayNoteTree,
 }
 
 /// Builds a note of `note_amount` in `asset` and proves a `spend_amount` spend

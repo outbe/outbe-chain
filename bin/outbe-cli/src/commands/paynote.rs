@@ -18,9 +18,9 @@ use outbe_paynote::{
         note_nullifier, note_sn, Field,
     },
     precompile::IPayNote,
+    PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::{
     protocol::zk::{Circuit, ProofGenerator},
     OutbeV1,
@@ -478,7 +478,7 @@ fn decode_note(log: &Value) -> Result<IPayNote::NewNote> {
     Ok(event)
 }
 
-async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<Imt<OutbeV1>> {
+async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
     let head = client.eth_block_number().await?;
     let tag = format!("0x{head:x}");
     let mut tree = new_tree(chain_id)?;
@@ -560,7 +560,7 @@ fn prove(
     note: &Note,
     amount: U256,
     spender: Address,
-    tree: &Imt<OutbeV1>,
+    tree: &PayNoteTree,
 ) -> Result<(Vec<u8>, Option<Note>, PublicInputs)> {
     note.validate()?;
     ensure!(!spender.is_zero(), "spender must be non-zero");

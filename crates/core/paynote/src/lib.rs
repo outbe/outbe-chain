@@ -39,5 +39,8 @@ pub mod test_support;
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
+/// In-memory commitment tree for PayNote clients.
+pub type PayNoteTree = outbe_protocol::protocol::imt::Imt<outbe_protocol::OutbeV1>;
+
 #[cfg(test)]
 mod tests;

@@ -12,9 +12,9 @@ use outbe_emit::hash::{
 };
 use outbe_emit::precompile::IEmit;
 use outbe_emit::schema::{EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
+use outbe_emit::EmitTree;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::EMIT_ADDRESS;
-use outbe_protocol::protocol::imt::Imt;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
@@ -184,7 +184,7 @@ fn b256(field: Field) -> B256 {
 // ---- reference tree and proof fixture --------------------------------------
 
 fn prove_mint(
-    tree: &Imt<OutbeV1>,
+    tree: &EmitTree,
     owner: Address,
     key: Field,
     note_amount: u128,
@@ -331,8 +331,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = EmitTree::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
 
     // Alice burns all 100 units into a Bob-owned note.
     let note_leaf = u32::try_from(
@@ -618,8 +617,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
-    let mut tree =
-        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = EmitTree::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
 
     let note_leaf = u32::try_from(
         tree.append(note_commitment(pool, serial, U256::from(100)))
@@ -680,8 +678,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
-    let mut tree =
-        Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
+    let mut tree = EmitTree::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
     tree.append(note_commitment(pool, serial, U256::from(100)))
         .unwrap();
 
@@ -774,7 +771,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         let key = Field::from(17u64);
         let owner_serial = derive_note_sn(BORROWER.into(), key);
         let mut owner_tree =
-            Imt::<OutbeV1>::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
+            EmitTree::new(emit_domain(), empty_leaf(CHAIN_ID), EMIT_TREE_DEPTH).unwrap();
         let leaf = u32::try_from(
             owner_tree
                 .append(note_commitment(pool, owner_serial, U256::from(100)))

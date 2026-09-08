@@ -1,26 +1,24 @@
 //! Off-chain membership witnesses for the PayNote commitment tree.
 //!
-//! Feed ordered `NewNote` commitments into the shared [`Imt`]. Callers validate
+//! Feed ordered `NewNote` commitments into the shared [`PayNoteTree`]. Callers validate
 //! event indexes and compare its root with the pool before using a witness.
-
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::OutbeV1;
 
 use crate::{
     errors::PayNoteError,
     hash::{empty_leaf, paynote_domain, Field},
     schema::PAYNOTE_TREE_DEPTH,
+    PayNoteTree,
 };
 
 /// Start a PayNote tree with the chain-specific empty leaf.
-pub fn new_tree(chain_id: u64) -> Result<Imt<OutbeV1>, PayNoteError> {
-    Imt::new(paynote_domain(), empty_leaf(chain_id)?, PAYNOTE_TREE_DEPTH)
+pub fn new_tree(chain_id: u64) -> Result<PayNoteTree, PayNoteError> {
+    PayNoteTree::new(paynote_domain(), empty_leaf(chain_id)?, PAYNOTE_TREE_DEPTH)
         .map_err(|error| PayNoteError::InvalidInput(error.to_string()))
 }
 
 /// Find a deposited commitment and return its circuit index and siblings.
 pub fn witness(
-    tree: &Imt<OutbeV1>,
+    tree: &PayNoteTree,
     commitment: Field,
 ) -> Result<(u32, [Field; PAYNOTE_TREE_DEPTH]), PayNoteError> {
     if tree.depth() != PAYNOTE_TREE_DEPTH {
