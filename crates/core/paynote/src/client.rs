@@ -22,6 +22,7 @@ pub struct Tree {
     root: Field,
 }
 
+// TODO remove this implementation in a favour of generic one
 impl Tree {
     /// Start with the chain-specific empty tree.
     pub fn new(chain_id: u64) -> Result<Self, PayNoteError> {
