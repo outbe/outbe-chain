@@ -20,6 +20,10 @@ outbe-consensus.workspace = true
 outbe-primitives.workspace = true
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true
+outbe-paynote.workspace = true
+outbe-protocol.workspace = true
+outbe-zk-backend.workspace = true
+outbe-zk-canonical.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
 outbe-tee.workspace = true
 
@@ -45,10 +49,11 @@ tokio.workspace = true
 hex.workspace = true
 eyre.workspace = true
 zeroize.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 outbe-rpc = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
+outbe-paynote = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

@@ -592,6 +592,9 @@ pub mod mock {
     }
 
     impl Rpc for MockRpc {
+        async fn eth_call_at(&self, to: Address, data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
+            self.eth_call(to, data).await
+        }
         async fn eth_call(&self, to: Address, data: &[u8]) -> Result<Vec<u8>> {
             match &self.eth_call_map {
                 Some(map) => map.dispatch(to, data),

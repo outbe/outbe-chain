@@ -2,6 +2,7 @@ pub mod chain;
 pub mod epoch;
 pub mod monitor;
 pub mod oracle;
+pub mod paynote;
 pub mod rad;
 pub mod radicle;
 pub mod rewards;
