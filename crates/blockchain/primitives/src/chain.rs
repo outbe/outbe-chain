@@ -43,15 +43,15 @@ impl OutbeNetwork {
 
 /// Chain ID for outbe-devnet-1.
 pub const DEVNET_CHAIN_ID: u64 = 424_242;
-/// Chain ID for rehearsal-network-1.
+/// Chain ID for rudis-rehearsal.
 pub const TESTNET_CHAIN_ID: u64 = 70_860_602;
 /// Chain ID for outbe-mainnet-1.
 pub const MAINNET_CHAIN_ID: u64 = 676;
 
 /// Chain name for outbe-devnet-1.
 pub const DEVNET_CHAIN_NAME: &str = "outbe-devnet-1";
-/// Chain name for rehearsal-network-1.
-pub const TESTNET_CHAIN_NAME: &str = "rehearsal-network-1";
+/// Chain name for rudis-rehearsal.
+pub const TESTNET_CHAIN_NAME: &str = "rudis-rehearsal";
 /// Chain name for outbe-mainnet-1.
 pub const MAINNET_CHAIN_NAME: &str = "outbe-mainnet-1";
 
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn rudis_identity_selects_the_testnet_profile() {
         assert_eq!(network_for_chain_id(70_860_602), Some(OutbeNetwork::Testnet));
-        assert_eq!(OutbeNetwork::Testnet.chain_name(), "rehearsal-network-1");
+        assert_eq!(OutbeNetwork::Testnet.chain_name(), "rudis-rehearsal");
         assert_eq!(network_for_chain_id(54_322_345), None);
     }
 }

@@ -33,7 +33,7 @@ test("exported Intex ABI encodes wrudis and decodes the renamed JSON field", () 
 
 test("Rudis resolves native aliases without assuming old token deployments", () => {
   configured({ OUTBE_INTENT_TOKENS: undefined }, () => {
-    const network = { name: "rehearsal-network-1", chainId: 70860602 };
+    const network = { name: "rudis-rehearsal", chainId: 70860602 };
     for (const symbol of ["rudis", "RUDIS", "wrudis"]) {
       assert.deepEqual(resolveToken(symbol, network), { address: zeroAddress, symbol: "rudis" });
     }
@@ -46,9 +46,9 @@ test("Rudis resolves native aliases without assuming old token deployments", () 
 test("cross-chain tools require confirmed deployments and retain fixed precompiles", () => {
   configured({ OUTBE_INTENT_ROUTER: undefined, OUTBE_INTEX_ADDRESSES: undefined }, () => {
     assert.throws(() => intentRouter(), /OUTBE_INTENT_ROUTER/);
-    assert.throws(() => intexAddress("rehearsal-network-1", "originRouter"), /OUTBE_INTEX_ADDRESSES/);
+    assert.throws(() => intexAddress("rudis-rehearsal", "originRouter"), /OUTBE_INTEX_ADDRESSES/);
     assert.throws(() => intexAddress("bsc-testnet", "paymentToken"), /OUTBE_INTEX_ADDRESSES/);
-    assert.equal(intexAddress("rehearsal-network-1", "factory"), "0x0000000000000000000000000000000000001015");
+    assert.equal(intexAddress("rudis-rehearsal", "factory"), "0x0000000000000000000000000000000000001015");
     assert.equal(bridgeDstChainId("bsc-testnet"), 70860602);
   });
   const address = "0x1111111111111111111111111111111111111111";

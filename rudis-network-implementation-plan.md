@@ -9,7 +9,7 @@
 | Поверхность | Целевое значение |
 | --- | --- |
 | Отображаемое название сети | `Rehearsal Network` |
-| Машинное имя сети | `rehearsal-network-1` |
+| Машинное имя сети | `rudis-rehearsal` |
 | EVM chain ID | `70860602`, JSON-RPC quantity `0x4393f3a` |
 | Нативный токен / публичное обозначение | `rudis` |
 | Wrapped token symbol | `wrudis` |
@@ -19,7 +19,7 @@
 | Фактическое исполнение enclave | настоящий `gramine-sgx`, remote attestation `none` |
 | Node–enclave session | `production-node-host` |
 
-Уточнения пользователя: отображаемое имя сети — `Rehearsal Network`, машинное имя — `rehearsal-network-1`. ID `70860602`, токены `rudis` / `wrudis`, RPC namespace `rudis_*` и прочие параметры сохраняются. Имя этого файла также сохраняется. Машинное имя синхронизировано в Rust/Python, release schema/spec, MCP network keys и именах поддерживаемых сетей в vectors; ID и адресные/EIP-712 preimages не менялись. Изменение отображаемого имени проверено: MCP typecheck, 3 identity-теста, создание chain context через stub fetch transport и 13 Intex metadata-тестов прошли. Это не заменяет остающийся HTTP/hardware smoke.
+Уточнения пользователя: отображаемое имя сети — `Rehearsal Network`, машинное имя — `rudis-rehearsal`. ID `70860602`, токены `rudis` / `wrudis`, RPC namespace `rudis_*` и прочие параметры сохраняются. Имя этого файла также сохраняется. Машинное имя синхронизировано в Rust/Python, release schema/spec, MCP network keys и именах поддерживаемых сетей в vectors; ID и адресные/EIP-712 preimages не менялись. Изменение отображаемого имени проверено: MCP typecheck, 3 identity-теста, создание chain context через stub fetch transport и 13 Intex metadata-тестов прошли. Это не заменяет остающийся HTTP/hardware smoke.
 
 Для строковых symbol в плане принят буквальный нижний регистр из требования: `rudis` / `wrudis`. Не вводить одновременно разные варианты регистра в Rust, Solidity и клиентах.
 
@@ -49,7 +49,7 @@
 
 ### 1. Установить новую testnet identity
 
-- Заменить `TESTNET_CHAIN_ID` на `70_860_602`, `TESTNET_CHAIN_NAME` на `rehearsal-network-1`. Внутреннее перечисление `OutbeNetwork::Testnet` сохранить.
+- Заменить `TESTNET_CHAIN_ID` на `70_860_602`, `TESTNET_CHAIN_NAME` на `rudis-rehearsal`. Внутреннее перечисление `OutbeNetwork::Testnet` сохранить.
 - Синхронно обновить таблицы `NETWORK_IDENTITIES` в Python и testnet metadata в release tooling. В xtask использовать общую Rust-константу имени вместо отдельного литерала.
 - Убедиться, что новый ID проходит node startup, TEE policy, consensus identity и генераторы как testnet. Старый ID не должен продолжать обозначать новую сеть.
 - Не менять ID devnet/mainnet. Не менять общий devnet default только потому, что файл называется `testnet.yaml`: новый запуск задаёт `network: testnet` и `chain_id: 70860602` явно.
@@ -140,7 +140,7 @@ ABI getter `wcoen()` становится `wrudis()`. Связанные пуб�
 
 ### Реализовано
 
-- Testnet identity `70860602` / `rehearsal-network-1` синхронизирована в primitives, Python, xtask, release schema/spec, тестах, скрытом testnet CI workflow и примерах конфигурации. Devnet/mainnet ID сохранены. `scripts/network.example.yaml` явно выбирает testnet + SGX; общий `testnet.yaml` сохраняет devnet baseline.
+- Testnet identity `70860602` / `rudis-rehearsal` синхронизирована в primitives, Python, xtask, release schema/spec, тестах, скрытом testnet CI workflow и примерах конфигурации. Devnet/mainnet ID сохранены. `scripts/network.example.yaml` явно выбирает testnet + SGX; общий `testnet.yaml` сохраняет devnet baseline.
 - Native symbol `rudis`, canonical и synthetic wrapper metadata `Wrapped Rudis` / `wrudis`. Имена `WCOEN`, env, salt label, precompile addresses, storage и числа не переименованы. CLI отображает `rudis`, сохраняя прежние команды и бинарники.
 - Gem/Nod/Tribute/Intex descriptions используют Rudis. В Gem/Nod удалён внешний `image` из фактического JSON: реального адреса Rudis нет, поэтому после вопроса оператору принят обратимый вариант без image URL. Это рабочее допущение, не полученное подтверждение пользователя.
 - Основной SGX launcher при `enclave_sgx: true` требует device и подписанный manifest, проверяет `sgx.remote_attestation = none` и запускает `gramine-sgx`. Отсутствие hardware не приводит к Docker/direct fallback. Node использует `production-node-host`. Для mock требуется явный `enclave_sgx: false`. Проверка manifest использует Python 3.11+ (`tomllib`); аппаратный запуск ещё необходим.
@@ -157,7 +157,7 @@ ABI getter `wcoen()` становится `wrudis()`. Связанные пуб�
 - Foundry и новые Intex chain definitions: `OUTBE_RPC_URL`.
 - Intent examples: прежний `OUTBE_TESTNET_RPC`.
 - `OUTBE_INTENT_TOKENS`: JSON `symbol -> chain ID -> deployed token address`. Native `rudis` на `70860602` остаётся zero address; `wrudis` на внешней сети задаётся после её deployment.
-- `OUTBE_INTEX_ADDRESSES`: JSON `network key -> contract key -> deployed address`; network keys `rehearsal-network-1` и `bsc-testnet`.
+- `OUTBE_INTEX_ADDRESSES`: JSON `network key -> contract key -> deployed address`; network keys `rudis-rehearsal` и `bsc-testnet`.
 - Пока адреса не заданы, cross-chain операции сообщают об отсутствии конфигурации. Это не подтверждение наличия контрактов по какому-либо прежнему адресу.
 
 ### Пройденные локальные проверки

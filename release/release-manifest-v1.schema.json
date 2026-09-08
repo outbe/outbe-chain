@@ -207,7 +207,7 @@
         {
           "properties": {
             "chain_id": { "const": 70860602 },
-            "chain_name": { "const": "rehearsal-network-1" },
+            "chain_name": { "const": "rudis-rehearsal" },
             "genesis_file": {
               "properties": {
                 "path": { "const": "testnet-genesis.json" }
@@ -223,7 +223,7 @@
           "enum": [676, 70860602]
         },
         "chain_name": {
-          "enum": ["outbe-mainnet-1", "rehearsal-network-1"]
+          "enum": ["outbe-mainnet-1", "rudis-rehearsal"]
         },
         "genesis_hash": {
           "pattern": "^0x[0-9a-f]{64}$",

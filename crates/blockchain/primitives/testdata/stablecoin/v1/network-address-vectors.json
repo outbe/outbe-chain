@@ -15,7 +15,7 @@
       "token": "0x53c0438d2aa31f9642f6718ce7b1ab3253c7f350"
     },
     {
-      "name": "rehearsal-network-1",
+      "name": "rudis-rehearsal",
       "chainId": 70860602,
       "issuer": "0x1111111111111111111111111111111111111111",
       "ticker": "EXUSD",

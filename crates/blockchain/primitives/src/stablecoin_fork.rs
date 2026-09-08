@@ -14,7 +14,7 @@ pub const STABLECOIN_V1_ACTIVATION: &str = "genesis";
 pub const STABLECOIN_V1_NAMESPACE_RESERVATION: &str = "reserved-in-genesis";
 pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 3] = [
     "outbe-devnet-1-fresh-genesis",
-    "rehearsal-network-1-fresh-genesis",
+    "rudis-rehearsal-fresh-genesis",
     "outbe-mainnet-1-fresh-genesis",
 ];
 

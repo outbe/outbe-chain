@@ -293,7 +293,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "and how the issued units split into settled, parked and still-outstanding.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const d = (await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
@@ -337,7 +337,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Enumerate series ids that exist in the Rudis Intex (dense enumeration).",
     { network: networkArg.optional() },
     handler(async ({ network }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const total = Number(
         (await n.client.readContract({
           address: addr(n, "intex"),
@@ -578,7 +578,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "and its bidders reclaim locally (see auction_bids_by_owner on that chain).",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
     handler(async ({ worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const desis = addr(n, "desis");
       const chains = (await n.client.readContract({
         address: addr(n, "originRouter"),
@@ -1079,7 +1079,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ series, amount, holder, pay_note_proof, network, wait }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const account = requireAccount();
       const intexHolder = holder ? getAddress(holder) : account.address;
       if (!/^0x[0-9a-fA-F]*$/.test(pay_note_proof) || pay_note_proof.length < 4) {
@@ -1110,7 +1110,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "PayNote you deposit before calling auction_bid_settle.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const tokens = await settlementTokens(n, series);
       const priced = await Promise.all(
         tokens.map(async (token) => {
@@ -1142,7 +1142,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "that wallet can settle on your behalf. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, settler: z.string().describe("0x address to authorize"), network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, settler, network, wait }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       requireAccount();
       const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "setAuthorizedSettler", args: [series, getAddress(settler)] });
       const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
@@ -1156,7 +1156,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "first). The proof-of-work nonce is computed locally; you give only series and amount. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, network, wait }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const account = requireAccount();
       const holder = account.address;
       const amt = BigInt(amount);
@@ -1194,7 +1194,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Promis balance for an address on Rehearsal Network.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? "rehearsal-network-1");
+      const n = await resolveNetwork(network ?? "rudis-rehearsal");
       const who = whoever(account);
       const bal = (await n.client.readContract({
         address: addr(n, "promis"),

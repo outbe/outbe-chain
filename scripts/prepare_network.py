@@ -60,7 +60,7 @@ TESTNET_CHAIN_ID = 70860602
 MAINNET_CHAIN_ID = 676
 NETWORK_IDENTITIES = {
     "devnet": (DEVNET_CHAIN_ID, "outbe-devnet-1"),
-    "testnet": (TESTNET_CHAIN_ID, "rehearsal-network-1"),
+    "testnet": (TESTNET_CHAIN_ID, "rudis-rehearsal"),
     "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
 }
 # OCOMP jobs can live for 1,868 blocks. The canonical localnet and retained

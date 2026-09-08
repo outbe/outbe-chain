@@ -25,7 +25,7 @@
   ],
   "install_root": "/opt/outbe/sgx",
   "network": "testnet",
-  "network_name": "rehearsal-network-1",
+  "network_name": "rudis-rehearsal",
   "platform": "linux/amd64",
   "project_toolchain": "release/project-toolchain-v1.json",
   "sealed_state_schema": 3,

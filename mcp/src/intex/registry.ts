@@ -36,10 +36,10 @@ export interface NetworkDef {
   rpc?: string;
 }
 
-/** Supported networks. `rehearsal-network-1` reuses the connected ctx when ids match. */
+/** Supported networks. `rudis-rehearsal` reuses the connected ctx when ids match. */
 export const NETWORKS: NetworkDef[] = [
   { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "rehearsal-network-1", chainId: 70860602, rpc: process.env.OUTBE_RPC },
+  { name: "rudis-rehearsal", chainId: 70860602, rpc: process.env.OUTBE_RPC },
 ];
 
 /** Per-network Intex contract addresses. Empty until deployed on that network. */
@@ -59,7 +59,7 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
-const OUTBE = "rehearsal-network-1";
+const OUTBE = "rudis-rehearsal";
 
 /** Fixed runtime precompiles. Deployed application contracts are operator configuration. */
 const OUTBE_ONLY: IntexAddresses = {
@@ -87,8 +87,8 @@ export function intexAddress(network: string, key: keyof IntexAddresses): Addres
 
 /** Destination EVM chain id of each network's bridge counterpart (NFT destination). */
 export const BRIDGE_DST_CHAIN_ID: Record<string, number> = {
-  "bsc-testnet": 70860602, // -> rehearsal-network-1
-  "rehearsal-network-1": 97, // -> bsc-testnet
+  "bsc-testnet": 70860602, // -> rudis-rehearsal
+  "rudis-rehearsal": 97, // -> bsc-testnet
 };
 
 /** Destination chain id for bridging an NFT out of a network, or throw. */

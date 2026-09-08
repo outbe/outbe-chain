@@ -174,7 +174,7 @@ tee:
 #   profile: dev
 
 # vault_router:
-#   owner: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
+#   owner: "0xD01f5A8761F388797429C8c4957d9559Ffde8B96"
 
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
