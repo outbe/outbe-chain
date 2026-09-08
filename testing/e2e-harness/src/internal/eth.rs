@@ -26,7 +26,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, Revert, SolCall, SolError};
 use eyre::{ensure, eyre, Result};
 use tokio::runtime::Runtime;
 
@@ -126,6 +126,7 @@ sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IGovernance.sol");
 sol!("../../contracts/precompiles/src/IL2Registry.sol");
 sol!("../../contracts/precompiles/src/ITribute.sol");
+sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 sol!("../../contracts/precompiles/src/INod.sol");
 sol!("../../contracts/precompiles/src/INodFactory.sol");
 sol!("../../contracts/precompiles/src/IGratis.sol");
@@ -379,6 +380,99 @@ pub(crate) fn simulate_call<C: SolCall>(
         provider.call(tx).block(BlockId::latest()).await?;
         Ok(())
     })
+}
+
+/// Obtain a Solidity Error(string) from an EVM revert at one exact block.
+/// Transport failures, arbitrary RPC errors and malformed payloads are errors,
+/// even when their text happens to mention a revert.
+pub(crate) fn read_call_revert_reason_at<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+    height: u64,
+) -> Result<String> {
+    let data = read_call_revert_data_at(url, to, from, call, U256::ZERO, height)?;
+    decode_evm_revert_reason(3, &data)
+}
+
+/// Read exact EVM revert bytes, including custom errors, without accepting
+/// transport or arbitrary RPC failures as contract rejection evidence.
+pub(crate) fn read_call_revert_data_at<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+    value: U256,
+    height: u64,
+) -> Result<Bytes> {
+    read_call_revert_data_at_block(
+        url,
+        to,
+        from,
+        call,
+        value,
+        BlockId::number(height),
+        REVERT_FRIENDLY_GAS_LIMIT,
+    )
+}
+
+/// Bounded call replay with an explicit block selection and the submitted gas
+/// limit. Latest-state callers must independently capture and verify its header.
+pub(crate) fn read_call_revert_data_at_block<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+    value: U256,
+    block: BlockId,
+    gas_limit: u64,
+) -> Result<Bytes> {
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(to)
+            .value(value)
+            .input(Bytes::from(data).into())
+            .gas_limit(gas_limit);
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            provider.call(tx).block(block),
+        )
+        .await
+        .map_err(|_| eyre!("revert observation exceeded 20 seconds"))?
+        .err()
+        .ok_or_else(|| eyre!("call intended to revert succeeded"))?;
+        let payload = error
+            .as_error_resp()
+            .ok_or_else(|| eyre!("expected EVM revert, received transport failure: {error}"))?;
+        let data = payload
+            .try_data_as::<Bytes>()
+            .ok_or_else(|| eyre!("RPC error omitted revert data: {payload}"))??;
+        ensure!(
+            payload.code == 3,
+            "expected EVM execution-reverted code 3, received {}",
+            payload.code
+        );
+        ensure!(!data.is_empty(), "EVM revert omitted its reason payload");
+        Ok(data)
+    })
+}
+
+fn decode_evm_revert_reason(code: i64, data: &[u8]) -> Result<String> {
+    ensure!(
+        code == 3,
+        "expected EVM execution-reverted code 3, received {code}"
+    );
+    let revert = Revert::abi_decode_validate(data)?;
+    ensure!(
+        revert.abi_encode() == data,
+        "noncanonical Error(string) revert payload"
+    );
+    Ok(revert.reason)
 }
 
 /// Head block number (`eth_blockNumber`).
@@ -1416,6 +1510,21 @@ pub(crate) fn coen(amount: u64) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exact_evm_revert_payload_rejects_rpc_errors_and_malformed_data() {
+        use alloy_sol_types::SolError;
+        let data = alloy_sol_types::Revert::from("decode error: fixture".to_owned()).abi_encode();
+        assert_eq!(
+            super::decode_evm_revert_reason(3, &data).unwrap(),
+            "decode error: fixture"
+        );
+        assert!(super::decode_evm_revert_reason(-32000, &data).is_err());
+        assert!(super::decode_evm_revert_reason(3, b"execution reverted: decode error").is_err());
+        assert!(super::decode_evm_revert_reason(3, &data[..data.len() - 1]).is_err());
+        let mut trailing = data.clone();
+        trailing.push(0);
+        assert!(super::decode_evm_revert_reason(3, &trailing).is_err());
+    }
     use super::*;
 
     #[test]

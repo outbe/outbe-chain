@@ -211,15 +211,15 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
 /// there and its messages ride the relay home; without one the committee is its
 /// own target and everything stays on one chain.
 #[cfg(feature = "ocomp-integration")]
-struct VenueSide {
-    url: String,
-    chain_id: u64,
-    auction: Address,
-    escrow: Address,
-    payment_token: Address,
-    intex_nft: Address,
-    target_router: Address,
-    is_target_chain: bool,
+pub(super) struct VenueSide {
+    pub(super) url: String,
+    pub(super) chain_id: u64,
+    pub(super) auction: Address,
+    pub(super) escrow: Address,
+    pub(super) payment_token: Address,
+    pub(super) intex_nft: Address,
+    pub(super) target_router: Address,
+    pub(super) is_target_chain: bool,
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -490,6 +490,19 @@ fn bidders_commit(world: &mut World) {
     // funded on each, so clearing has to fan their bids in from both.
     let bidders = bidders::derive(&BIDS).expect("derive the bidders");
     for side in venue_sides(world) {
+        for bidder in &bidders {
+            assert_eq!(
+                eth::read_call(
+                    &side.url,
+                    side.payment_token,
+                    &IPaymentToken::balanceOfCall {
+                        account: bidder.address
+                    }
+                ),
+                Some(U256::ZERO),
+                "fresh auction bidder starts with no payment tokens"
+            );
+        }
         bidders::fund(
             &side.url,
             side.payment_token,
@@ -667,6 +680,12 @@ fn escrow_refunds_the_rest(world: &mut World) {
     for side in venue_sides(world) {
         refunds_landed_on(world, &side);
     }
+    super::auction_expectations::assert_clearing(
+        world,
+        &venue_sides(world),
+        &world.state.auction_bidders,
+        U256::from(BIDDER_ALLOWANCE),
+    );
 }
 
 #[cfg(feature = "ocomp-integration")]

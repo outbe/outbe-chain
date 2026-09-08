@@ -1,4 +1,4 @@
-//! Registration-, reshared-set-, and P2P-consistency steps for
+//! Registration, public ABI, and P2P-consistency steps for
 //! `features/validator_lifecycle_consistency.feature`.
 //!
 //! Every negative path is submitted as a real transaction to a public
@@ -14,6 +14,10 @@ use alloy_primitives::{Address, Bytes, B256};
 use cucumber::{given, then, when};
 
 use crate::features::common::start_bootstrapped_localnet;
+use crate::features::negative_assertions::{
+    assert_mined_revert_reason, assert_registration_revert,
+};
+use crate::internal::{addresses::VS_ADDR, eth::IValidatorSet};
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::{TxOutcome, ValidatorP2pAddress, ValidatorRecord};
 use crate::world::validators::RegistrationIdentity;
@@ -68,8 +72,8 @@ struct RegistryIdentityBundle {
     records: Vec<StableValidatorRecord>,
 }
 
-/// Identity plus current membership/readiness signals. Direct boundary-facade
-/// calls must leave this complete bundle untouched when rejected.
+/// Identity plus current membership/readiness signals. Rejected unsupported
+/// public ABI calls must leave this complete bundle untouched.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ValidatorStateBundle {
     identity: RegistryIdentityBundle,
@@ -92,7 +96,6 @@ struct RegistrationConsistencyState {
     registry_before: Option<RegistryIdentityBundle>,
     state_before: Option<ValidatorStateBundle>,
     outcome: Option<TxOutcome>,
-    mutation: Option<String>,
     attempts: Vec<AtomicAttempt>,
     p2p_key: Option<String>,
     p2p_address: Option<Address>,
@@ -320,7 +323,13 @@ fn submit_same_registration_material(world: &mut World) {
         .clone()
         .expect("replay registration identity");
     let before = registry_identity_bundle(world, world.validators.primary_port());
-    let outcome = register_self(world, &identity);
+    let outcome = assert_registration_revert(
+        world,
+        identity.evm_key(),
+        &identity,
+        identity.registration_signature(),
+        "invalid BLS registration signature",
+    );
     let mut state = scenario_state();
     state.registry_before = Some(before);
     state.outcome = Some(outcome);
@@ -362,7 +371,7 @@ fn cross_chain_replay_is_rejected(world: &mut World) {
     );
 }
 
-// ---- D-01B / S-02 / S-03: configured owner paths ---------------------------
+// ---- D-01B / S-02: configured owner paths ----------------------------------
 
 #[given(expr = "a fresh localnet whose configured ValidatorSet owner is {string}")]
 fn localnet_with_configured_owner(world: &mut World, owner_name: String) {
@@ -400,16 +409,13 @@ fn owner_submits_empty_proof_registration(world: &mut World) {
         .get(0)
         .evm_key()
         .expect("configured owner key");
-    let outcome = world
-        .rpc
-        .register_validator(
-            &owner_key,
-            identity.address(),
-            identity.bls_public_key(),
-            identity.radicle_node_id(),
-            &[],
-        )
-        .expect("submit owner registration without PoP");
+    let outcome = assert_registration_revert(
+        world,
+        &owner_key,
+        &identity,
+        &[],
+        "BLS proof of possession must be exactly 96 bytes",
+    );
     scenario_state().outcome = Some(outcome);
 }
 
@@ -454,9 +460,8 @@ fn owner_registration_without_pop_is_rejected(world: &mut World) {
 
 #[given("the public validator state bundle is snapshotted")]
 fn snapshot_public_validator_state_bundle(world: &mut World) {
-    // S-02 needs a real REGISTERED, unconfirmed member. Preparing it here also
-    // gives S-03 an untouched candidate whose status must survive malformed
-    // facade calls.
+    // S-02 uses a real REGISTERED, unconfirmed member whose state must
+    // survive rejection of the unsupported public activation selector.
     let identity = world
         .localnet
         .prepare_registration_identity(world.validators.joiner_index())
@@ -498,12 +503,72 @@ fn owner_directly_activates_unconfirmed_member(world: &mut World) {
     let owner_key = world.validators.get(0).evm_key().expect("owner key");
     let outcome = world
         .rpc
-        .activate_reshared_set(&owner_key, &requested, B256::from([0xa5; 32]))
-        .expect("submit direct activation");
+        .submit_unsupported_activation(&owner_key, &requested, B256::from([0xa5; 32]))
+        .expect("submit unsupported public activation selector");
+    assert!(
+        !outcome.success,
+        "unsupported activation transaction succeeded"
+    );
+    let height = outcome
+        .block_number()
+        .expect("mined unsupported activation");
+    let ports = world.validators.committee_ports();
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 40)
+        .expect("all validators finalize unsupported activation");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(ports[0], height)
+        .expect("activation receipt checkpoint");
+    assert_eq!(
+        checkpoint.block_hash,
+        outcome.block_hash().expect("receipt block hash")
+    );
+    let caller = world
+        .rpc
+        .address_of(&owner_key)
+        .expect("owner address")
+        .parse()
+        .expect("parsed owner address");
+    for port in ports {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("pre-call checkpoint"),
+            checkpoint
+        );
+        let reason = world
+            .rpc
+            .unsupported_activation_revert_reason_at(
+                port,
+                caller,
+                &requested,
+                B256::from([0xa5; 32]),
+                height,
+            )
+            .expect("decode the pinned EVM revert payload");
+        assert_eq!(
+            reason, "decode error: unknown selector `0x42d025fc` for IValidatorSetCalls",
+            "unexpected rejection layer on RPC {port}"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("post-call checkpoint"),
+            checkpoint
+        );
+        println!(
+            "VALIDATOR_ABI_REJECTION port={port} height={height} tx={} reason={reason}",
+            outcome.transaction_hash
+        );
+    }
     scenario_state().outcome = Some(outcome);
 }
 
-#[then("direct activation is rejected with the validator state bundle unchanged")]
+#[then("direct activation fails with a decode error and the validator state bundle unchanged")]
 fn direct_activation_is_rejected(world: &mut World) {
     let (before, outcome) = {
         let state = scenario_state();
@@ -529,70 +594,6 @@ fn direct_activation_is_rejected(world: &mut World) {
     assert!(
         violations.is_empty(),
         "S-02 target invariant failed: {}",
-        violations.join("; ")
-    );
-}
-
-#[when(expr = "the owner submits a reshared set with {string}")]
-fn owner_submits_malformed_reshared_set(world: &mut World, mutation: String) {
-    let port = world.validators.primary_port();
-    let mut requested = world
-        .rpc
-        .active_validators(port)
-        .expect("current active validators");
-    assert!(
-        requested.len() >= 2,
-        "malformed-set fixture needs at least two active validators"
-    );
-    let hash = match mutation.as_str() {
-        "a duplicate active member" => {
-            requested.push(requested[0]);
-            B256::from([0xd1; 32])
-        }
-        "non-canonical member order" => {
-            requested.swap(0, 1);
-            B256::from([0xd2; 32])
-        }
-        "a mismatched active hash" => B256::from([0xd3; 32]),
-        other => panic!("unknown reshared-set mutation: {other}"),
-    };
-    let owner_key = world.validators.get(0).evm_key().expect("owner key");
-    let outcome = world
-        .rpc
-        .activate_reshared_set(&owner_key, &requested, hash)
-        .expect("submit malformed reshared set");
-    let mut state = scenario_state();
-    state.mutation = Some(mutation);
-    state.outcome = Some(outcome);
-}
-
-#[then("malformed reshared-set activation is rejected with the validator state bundle unchanged")]
-fn malformed_reshared_set_is_rejected(world: &mut World) {
-    let (mutation, before, outcome) = {
-        let state = scenario_state();
-        (
-            state.mutation.clone().expect("mutation label"),
-            state
-                .state_before
-                .clone()
-                .expect("pre-activation state bundle"),
-            state.outcome.clone().expect("malformed activation outcome"),
-        )
-    };
-    let after = validator_state_bundle(world, world.validators.primary_port());
-    let mut violations = Vec::new();
-    if outcome.success {
-        violations.push(format!(
-            "malformed activation transaction {} was accepted",
-            outcome.transaction_hash
-        ));
-    }
-    if after != before {
-        violations.push("public status/share/membership/index bundle changed".to_owned());
-    }
-    assert!(
-        violations.is_empty(),
-        "S-03 target invariant failed for {mutation}: {}",
         violations.join("; ")
     );
 }
@@ -654,10 +655,17 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
     let mut attempts = Vec::new();
 
     let before = registry_identity_bundle(world, port);
-    let invalid_version = world
-        .rpc
-        .set_validator_p2p_address(&key, address, 2, &original.encoded)
-        .expect("submit unsupported P2P version");
+    let invalid_version = assert_mined_revert_reason(
+        world,
+        VS_ADDR,
+        &key,
+        &IValidatorSet::setP2pAddressCall {
+            validatorAddress: address,
+            version: 2,
+            encoded: Bytes::copy_from_slice(&original.encoded),
+        },
+        "unsupported p2p address version 2",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "unsupported P2P version".to_owned(),
@@ -667,10 +675,17 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
     });
 
     let before = registry_identity_bundle(world, port);
-    let malformed = world
-        .rpc
-        .set_validator_p2p_address(&key, address, P2P_V1, &[0xff])
-        .expect("submit malformed P2P payload");
+    let malformed = assert_mined_revert_reason(
+        world,
+        VS_ADDR,
+        &key,
+        &IValidatorSet::setP2pAddressCall {
+            validatorAddress: address,
+            version: P2P_V1,
+            encoded: Bytes::copy_from_slice(&[0xff]),
+        },
+        "invalid p2p address: invalid p2p address kind 255",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "malformed P2P payload".to_owned(),
@@ -681,15 +696,17 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
 
     let unrelated_key = world.validators.get(1).evm_key().expect("unrelated key");
     let before = registry_identity_bundle(world, port);
-    let unauthorized = world
-        .rpc
-        .set_validator_p2p_address(
-            &unrelated_key,
-            address,
-            P2P_V1,
-            &valid_symmetric_p2p(30_405),
-        )
-        .expect("submit unauthorized P2P update");
+    let unauthorized = assert_mined_revert_reason(
+        world,
+        VS_ADDR,
+        &unrelated_key,
+        &IValidatorSet::setP2pAddressCall {
+            validatorAddress: address,
+            version: P2P_V1,
+            encoded: Bytes::copy_from_slice(&valid_symmetric_p2p(30_405)),
+        },
+        "unauthorized: caller must be owner or validator itself",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "unauthorized P2P update".to_owned(),
@@ -994,16 +1011,13 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
 
     let mut attempts = Vec::new();
     let before = registry_identity_bundle(world, port);
-    let invalid_pop = world
-        .rpc
-        .register_validator(
-            first.evm_key(),
-            first.address(),
-            first.bls_public_key(),
-            first.radicle_node_id(),
-            &[0; 96],
-        )
-        .expect("submit invalid-PoP registration");
+    let invalid_pop = assert_registration_revert(
+        world,
+        first.evm_key(),
+        &first,
+        &[0; 96],
+        "invalid BLS signature",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "invalid PoP".to_owned(),
@@ -1012,20 +1026,21 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
         after,
     });
 
-    // Fill the one valid slot. If invalid PoP was unexpectedly accepted, it
-    // already filled that slot; retaining that state lets the final Then report
-    // the target failure instead of aborting during setup.
-    if !invalid_pop.success {
-        let accepted = register_self(world, &first);
-        assert!(
-            accepted.success,
-            "valid capacity-filling registration failed: {}",
-            accepted.transaction_hash
-        );
-    }
+    let accepted = register_self(world, &first);
+    assert!(
+        accepted.success,
+        "valid capacity-filling registration failed: {}",
+        accepted.transaction_hash
+    );
 
     let before = registry_identity_bundle(world, port);
-    let duplicate_key = register_self(world, &duplicate);
+    let duplicate_key = assert_registration_revert(
+        world,
+        duplicate.evm_key(),
+        &duplicate,
+        duplicate.registration_signature(),
+        "BLS consensus pubkey already registered by another validator",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "duplicate BLS key".to_owned(),
@@ -1035,7 +1050,13 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
     });
 
     let before = registry_identity_bundle(world, port);
-    let at_capacity = register_self(world, &over_capacity);
+    let at_capacity = assert_registration_revert(
+        world,
+        over_capacity.evm_key(),
+        &over_capacity,
+        over_capacity.registration_signature(),
+        "max validators reached",
+    );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "over-capacity registration".to_owned(),

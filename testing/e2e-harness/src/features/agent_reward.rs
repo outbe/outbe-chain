@@ -9,8 +9,12 @@ use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::features::ocomp::restart_committee_at_logical_time;
 use crate::internal::addresses;
-use crate::internal::eth::{SRA_POOL, WAA_POOL};
-use crate::world::state::OcompAgentRewardObservationV1;
+use crate::internal::economic_reference;
+use crate::internal::eth::{self, IAgentReward, SRA_POOL, WAA_POOL};
+use crate::world::rpc::FinalizedCheckpoint;
+use crate::world::state::{
+    AgentRewardCheckpointV1, AgentRewardEconomicCheckV1, OcompAgentRewardObservationV1,
+};
 use crate::world::World;
 
 const WAA_BENEFICIARY_KEY: &str =
@@ -24,6 +28,10 @@ const SECONDS_PER_DAY: u64 = 86_400;
 
 #[when("an operator submits one encrypted tribute offer with WAA and SRA beneficiaries")]
 fn submit_reward_bearing_tribute(world: &mut World) {
+    assert!(
+        world.state.ocomp_agent_reward.is_none(),
+        "single reward-bearing offer fixture"
+    );
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
     wait_for_offering(world, &wwd);
 
@@ -64,6 +72,8 @@ fn submit_reward_bearing_tribute(world: &mut World) {
         waa_claimable_coen_units: None,
         sra_claimable_coen_units: None,
         claim_finalized_height: None,
+        before_settlement_checkpoint: None,
+        economic_check: None,
     });
 }
 
@@ -91,29 +101,16 @@ fn reward_is_not_available_before_utc_settlement(world: &mut World) {
         .map(|observation| (observation.waa_beneficiary, observation.sra_beneficiary))
         .expect("AgentReward beneficiary fixture");
 
-    for port in world.validators.committee_ports() {
-        assert!(
-            world.rpc.wait_finalized_at_least(port, block_number, 120),
-            "validator port {port} did not finalize reward-bearing Tribute block {block_number}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .get_agent_reward_claimable_balance_on(port, waa_beneficiary),
-            Some(U256::ZERO),
-            "WAA reward became claimable before UTC settlement on validator port {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .get_agent_reward_claimable_balance_on(port, sra_beneficiary),
-            Some(U256::ZERO),
-            "SRA reward became claimable before UTC settlement on validator port {port}"
-        );
-    }
-
-    let escrow_before = native_balance(world, primary, addresses::AGENT_REWARD_ADDR);
-    let cca_before = native_balance(world, primary, outbe_primitives::addresses::CCA_ADDRESS);
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), block_number, 120)
+        .expect("finalized reward-bearing Tribute on every validator");
+    let balances = reward_balances_at(world, checkpoint, waa_beneficiary, sra_beneficiary);
+    assert_eq!(balances.waa, U256::ZERO, "WAA reward before UTC settlement");
+    assert_eq!(balances.sra, U256::ZERO, "SRA reward before UTC settlement");
+    let escrow_before = balances.escrow;
+    let cca_before = balances.cca;
+    let checkpoint = reward_checkpoint(world, checkpoint);
     let observation = world
         .state
         .ocomp_agent_reward
@@ -124,6 +121,7 @@ fn reward_is_not_available_before_utc_settlement(world: &mut World) {
     observation.reward_utc_day = Some(reward_utc_day);
     observation.escrow_before_settlement_coen_units = Some(escrow_before);
     observation.cca_before_settlement_coen_units = Some(cca_before);
+    observation.before_settlement_checkpoint = Some(checkpoint);
     eprintln!(
         "agent_reward_evidence stage=offered tx={transaction_hash} execution_block={block_number} execution_timestamp={block_timestamp} reward_utc_day={reward_utc_day} waa={:#x} sra={:#x} escrow_before={escrow_before} cca_before={cca_before}",
         waa_beneficiary,
@@ -181,59 +179,86 @@ fn observe_agent_rewards(world: &mut World) {
     let cca_before = observation
         .cca_before_settlement_coen_units
         .expect("CCA balance before settlement");
-    let primary = world.validators.primary_port();
+    // The seeder anchors Rewards to config.genesisTime. Logical-clock fixtures
+    // can shift the header timestamp afterwards, so block 0 is not this input.
+    let genesis: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+            .expect("executed genesis for reward calendar"),
+    )
+    .expect("executed genesis JSON");
+    let genesis_rewards_timestamp = time::OffsetDateTime::parse(
+        genesis["config"]["genesisTime"]
+            .as_str()
+            .expect("seeded Rewards genesisTime"),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .expect("Rewards genesisTime is RFC3339")
+    .unix_timestamp();
+    let genesis_rewards_timestamp =
+        u64::try_from(genesis_rewards_timestamp).expect("nonnegative Rewards genesis timestamp");
+    let emission_day = economic_reference::emission_day(
+        genesis_rewards_timestamp,
+        observation
+            .offer_execution_timestamp
+            .expect("offer execution time"),
+    );
+    let expected_reward = economic_reference::single_beneficiary_reward(emission_day);
+    let expected_escrow = escrow_before
+        .checked_add(expected_reward)
+        .and_then(|amount| amount.checked_add(expected_reward))
+        .expect("expected AgentReward escrow fits U256");
+    let before = observation
+        .before_settlement_checkpoint
+        .expect("pre-settlement checkpoint");
+    let ports = world.validators.committee_ports();
     let deadline = Instant::now() + AGENT_REWARD_WAIT;
-    let (waa_claimable, sra_claimable, escrow_after, cca_after) = loop {
-        let waa = world
+    let (checkpoint, balances) = loop {
+        let checkpoint = world
             .rpc
-            .get_agent_reward_claimable_balance_on(primary, observation.waa_beneficiary);
-        let sra = world
-            .rpc
-            .get_agent_reward_claimable_balance_on(primary, observation.sra_beneficiary);
-        let escrow = native_balance(world, primary, addresses::AGENT_REWARD_ADDR);
-        let cca = native_balance(world, primary, outbe_primitives::addresses::CCA_ADDRESS);
-        if let (Some(waa), Some(sra)) = (waa, sra) {
-            if !waa.is_zero() && !sra.is_zero() {
-                break (waa, sra, escrow, cca);
-            }
+            .wait_finalized_checkpoint(&ports, before.height, 1)
+            .expect("common finalized AgentReward checkpoint");
+        let balances = reward_balances_at(
+            world,
+            checkpoint,
+            observation.waa_beneficiary,
+            observation.sra_beneficiary,
+        );
+        if !balances.waa.is_zero() || !balances.sra.is_zero() {
+            break (reward_checkpoint(world, checkpoint), balances);
         }
         assert!(
             Instant::now() < deadline,
-            "UTC settlement did not produce nonzero WAA/SRA rewards: waa={waa:?} sra={sra:?} escrow={escrow} cca={cca}"
+            "UTC settlement produced no WAA/SRA rewards"
         );
         sleep(Duration::from_millis(500));
     };
-    let expected_escrow = escrow_before
-        .checked_add(waa_claimable)
-        .and_then(|value| value.checked_add(sra_claimable))
-        .expect("AgentReward escrow sum");
-    assert_eq!(escrow_after, expected_escrow);
-    assert!(
-        cca_after > cca_before,
-        "CCA pool did not accrue independently"
+    assert_eq!(
+        balances.waa, expected_reward,
+        "WAA differs from independent capped daily pool"
     );
-
-    for port in world.validators.committee_ports() {
-        assert_eq!(
-            world
-                .rpc
-                .get_agent_reward_claimable_balance_on(port, observation.waa_beneficiary),
-            Some(waa_claimable),
-            "WAA claimable differs on validator port {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .get_agent_reward_claimable_balance_on(port, observation.sra_beneficiary),
-            Some(sra_claimable),
-            "SRA claimable differs on validator port {port}"
-        );
-        assert_eq!(
-            native_balance(world, port, addresses::AGENT_REWARD_ADDR),
-            escrow_after,
-            "AgentReward escrow differs on validator port {port}"
-        );
-    }
+    assert_eq!(
+        balances.sra, expected_reward,
+        "SRA differs from independent capped daily pool"
+    );
+    assert_eq!(
+        balances.escrow, expected_escrow,
+        "AgentReward escrow differs from expected rewards"
+    );
+    let expected_cca_delta = economic_reference::cca_accrual(
+        economic_reference::emission_day(genesis_rewards_timestamp, before.timestamp),
+        economic_reference::emission_day(genesis_rewards_timestamp, checkpoint.timestamp),
+    );
+    assert_eq!(
+        balances.cca,
+        cca_before
+            .checked_add(expected_cca_delta)
+            .expect("expected CCA balance fits U256"),
+        "CCA differs from independent daily pools"
+    );
+    let waa_claimable = balances.waa;
+    let sra_claimable = balances.sra;
+    let escrow_after = balances.escrow;
+    let cca_after = balances.cca;
 
     let observation = world
         .state
@@ -242,6 +267,15 @@ fn observe_agent_rewards(world: &mut World) {
         .expect("AgentReward beneficiary fixture");
     observation.waa_claimable_coen_units = Some(waa_claimable);
     observation.sra_claimable_coen_units = Some(sra_claimable);
+    observation.economic_check = Some(AgentRewardEconomicCheckV1 {
+        genesis_rewards_timestamp,
+        emission_day,
+        expected_waa_coen_units: expected_reward,
+        expected_sra_coen_units: expected_reward,
+        expected_cca_delta_coen_units: expected_cca_delta,
+        checkpoint,
+        validator_ports: ports,
+    });
     eprintln!(
         "agent_reward_evidence stage=settled reward_utc_day={} waa_claimable={waa_claimable} sra_claimable={sra_claimable} escrow={escrow_after} cca={cca_after}",
         observation.reward_utc_day.expect("reward UTC day"),
@@ -402,6 +436,95 @@ fn beneficiary_address(world: &World, key: &str) -> Address {
         .address_of(key)
         .and_then(|address| address.parse().ok())
         .expect("derive deterministic AgentReward beneficiary")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RewardBalances {
+    waa: U256,
+    sra: U256,
+    escrow: U256,
+    cca: U256,
+}
+
+fn reward_checkpoint(world: &World, checkpoint: FinalizedCheckpoint) -> AgentRewardCheckpointV1 {
+    AgentRewardCheckpointV1 {
+        height: checkpoint.height,
+        block_hash: checkpoint.block_hash,
+        state_root: checkpoint.state_root,
+        timestamp: world
+            .rpc
+            .block_timestamp(world.validators.primary_port(), checkpoint.height)
+            .expect("AgentReward checkpoint timestamp"),
+    }
+}
+
+fn reward_balances_at(
+    world: &World,
+    checkpoint: FinalizedCheckpoint,
+    waa: Address,
+    sra: Address,
+) -> RewardBalances {
+    let mut expected = None;
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, checkpoint.height)
+                .expect("AgentReward checkpoint before reads"),
+            checkpoint
+        );
+        let url = world.rpc.url(port);
+        let claimable = |account| {
+            eth::read_call_at_result(
+                &url,
+                addresses::AGENT_REWARD_ADDR,
+                &IAgentReward::getClaimableBalanceCall { account },
+                checkpoint.height,
+            )
+            .unwrap_or_else(|error| panic!("claimable on port {port}: {error}"))
+        };
+        let native = |account: Address| {
+            let value = eth::raw_json_with_params(
+                &url,
+                "eth_getBalance",
+                serde_json::json!([
+                    format!("{account:#x}"),
+                    format!("0x{:x}", checkpoint.height)
+                ]),
+            )
+            .expect("native balance at finalized AgentReward checkpoint");
+            U256::from_str_radix(
+                value
+                    .as_str()
+                    .expect("native balance hex")
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .expect("native balance fits U256")
+        };
+        let balances = RewardBalances {
+            waa: claimable(waa),
+            sra: claimable(sra),
+            escrow: native(addresses::AGENT_REWARD_ADDR),
+            cca: native(outbe_primitives::addresses::CCA_ADDRESS),
+        };
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, checkpoint.height)
+                .expect("AgentReward checkpoint after reads"),
+            checkpoint
+        );
+        if let Some(expected) = expected {
+            assert_eq!(
+                balances, expected,
+                "AgentReward balances disagree on port {port}"
+            );
+        } else {
+            expected = Some(balances);
+        }
+    }
+    expected.expect("nonempty AgentReward validator cohort")
 }
 
 fn native_balance(world: &World, port: u16, address: Address) -> U256 {

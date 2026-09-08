@@ -13,9 +13,16 @@ use cucumber::{then, when};
 use crate::env::environment;
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::relay::{Relay, RelayEnd};
+use crate::world::rpc::FinalizedCheckpoint;
 use crate::world::settlement_currency::{self, SettlementCurrency};
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
+
+sol! {
+    interface ILifecyclePaymentToken {
+        function decimals() external view returns (uint8);
+    }
+}
 
 /// Both series carry the same entry price so their floors share a price bin and one
 /// sweep pass decides them together.
@@ -78,6 +85,21 @@ fn register_settlement_currency(world: &mut World) {
     .expect("register the settlement currency");
 
     world.state.settlement_currency = Some(currency);
+    let checkpoint = lifecycle_checkpoint(world);
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            eth::read_call_at(
+                &world.rpc.url(port),
+                currency.asset,
+                &ILifecyclePaymentToken::decimalsCall {},
+                checkpoint.height
+            ),
+            Some(6),
+            "lifecycle fixture payment token must have six decimals"
+        );
+    }
+    verify_checkpoint(world, checkpoint);
+    assert_vault_payment(world, 0);
 }
 
 #[then("holders may settle in that currency")]
@@ -344,13 +366,20 @@ fn settle_part(world: &mut World) {
         // where the revert reads as a balance problem instead of a currency one.
         let cost = test_issuance::quote_cost(&url, series, currency.asset)
             .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
-        assert!(
-            !cost.is_zero(),
-            "series {series} quoted a zero settlement cost"
+        assert_eq!(
+            cost,
+            expected_settlement_cost(),
+            "series {series} settlement quote differs from fixture entry price and load"
         );
 
         let units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
-        let proof = settlement_note(world, holder, currency.asset, cost, units);
+        let proof = settlement_note(
+            world,
+            holder,
+            currency.asset,
+            expected_settlement_cost(),
+            units,
+        );
         test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
             .expect("settle the units at home");
     }
@@ -394,18 +423,103 @@ fn units_moved_to_settled(world: &mut World) {
 
 #[then("the settlement payment lands in the reserve vault")]
 fn payment_in_vault(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
+    assert_vault_payment(world, COMMITTEE_UNITS + TRADABLE_HOP_UNITS);
+}
+
+fn expected_settlement_cost() -> U256 {
+    // Entry price and load each use six decimals; the fixture pays in its
+    // six-decimal reference USD asset, so no cross-currency conversion applies.
+    let product = U256::from(ENTRY_PRICE_MINOR) * U256::from(PROMIS_LOAD_MINOR);
+    let scale = U256::from(1_000_000);
+    (product + scale - U256::from(1)) / scale
+}
+
+fn lifecycle_checkpoint(world: &World) -> FinalizedCheckpoint {
+    // Transaction helpers have already required a successful mined receipt.
+    // Finalize at least that primary head on every port before reading state.
+    let head = world
+        .rpc
+        .head(world.validators.primary_port())
+        .expect("lifecycle primary head");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), head, 120)
+        .expect("finalized lifecycle checkpoint on every validator")
+}
+
+fn verify_checkpoint(world: &World, checkpoint: FinalizedCheckpoint) {
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, checkpoint.height)
+                .expect("lifecycle checkpoint"),
+            checkpoint
+        );
+    }
+}
+
+fn assert_vault_payment(world: &World, settled_per_series: u32) {
     let currency = world
         .state
         .settlement_currency
-        .expect("settlement currency was registered");
+        .expect("registered settlement currency");
+    let expected = expected_settlement_cost()
+        * U256::from(settled_per_series)
+        * U256::from(world.state.lifecycle_series.len());
+    let checkpoint = lifecycle_checkpoint(world);
+    for port in world.validators.committee_ports() {
+        let balance = settlement_currency::vault_balance_at(
+            &world.rpc.url(port),
+            currency.asset,
+            currency.vault,
+            checkpoint.height,
+        )
+        .expect("finalized settlement vault token balance");
+        assert_eq!(
+            balance, expected,
+            "vault payment differs from fixture cost times units on port {port}"
+        );
+    }
+    verify_checkpoint(world, checkpoint);
+    eprintln!("INTEX_VAULT_EXPECTATION height={} hash={} state_root={} cost={} units_per_series={} series={} expected={expected}",
+        checkpoint.height, checkpoint.block_hash, checkpoint.state_root, expected_settlement_cost(), settled_per_series, world.state.lifecycle_series.len());
+}
 
-    let held = settlement_currency::vault_balance(&url, currency.asset, currency.vault)
-        .expect("read the reserve vault balance");
-    assert!(
-        !held.is_zero(),
-        "the reserve vault holds nothing after settlement"
+fn promis_on_all_validators(world: &World, view_key: &[u8; 32]) -> U256 {
+    let holder = crate::world::origin_venue::deployer_address();
+    let checkpoint = lifecycle_checkpoint(world);
+    let mut common = None;
+    for port in world.validators.committee_ports() {
+        let blob = eth::read_call_at(
+            &world.rpc.url(port),
+            addresses::PROMIS_ADDR,
+            &eth::IPromis::balanceOfCall { account: holder },
+            checkpoint.height,
+        )
+        .expect("finalized lifecycle Promis ciphertext");
+        let amount = if blob.is_empty() {
+            U256::ZERO
+        } else {
+            outbe_tee_enclave::promis::decrypt_balance(view_key, holder, blob.as_ref())
+                .expect("decrypt finalized lifecycle Promis balance")
+        };
+        if let Some(common) = common {
+            assert_eq!(
+                amount, common,
+                "Promis balance differs on validator port {port}"
+            );
+        } else {
+            common = Some(amount);
+        }
+    }
+    verify_checkpoint(world, checkpoint);
+    let balance = common.expect("nonempty lifecycle validator cohort");
+    eprintln!(
+        "INTEX_PROMIS_OBSERVATION height={} hash={} state_root={} balance={balance}",
+        checkpoint.height, checkpoint.block_hash, checkpoint.state_root
     );
+    balance
 }
 
 #[when("the holder mines Promis against their settled units")]
@@ -418,18 +532,27 @@ fn mine_promis(world: &mut World) {
 
     let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
         .expect("derive the holder's Promis modify key");
+    world.state.promis_before_mining = Some(promis_on_all_validators(world, &keys.view));
 
     for series in world.state.lifecycle_series.clone() {
         let settled = venue_probes::series_balances(&url, nft, series, holder)
             .expect("series balances")
             .1;
-        assert!(settled > 0, "series {series} has nothing settled to mine");
+        assert_eq!(
+            settled,
+            u64::from(UNITS),
+            "series {series} must have every fixture unit settled"
+        );
 
         // Promis is minted per unit at the series' load, and the engine derives the
         // same figure - a mismatch here would fail the proof rather than the mint.
         let promis_load =
             venue_probes::series_promis_load(&url, nft, series).expect("series promis load");
-        let amount = U256::from(promis_load) * U256::from(settled);
+        assert_eq!(
+            promis_load, PROMIS_LOAD_MINOR,
+            "series {series} load differs from issuance fixture"
+        );
+        let amount = U256::from(PROMIS_LOAD_MINOR) * U256::from(UNITS);
         let op_nonce = eth::read_call(
             &url,
             addresses::PROMIS_ADDR,
@@ -473,6 +596,22 @@ fn settled_burned_into_promis(world: &mut World) {
             "series {series} still holds settled units after mining"
         );
     }
+    let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
+        .expect("derive holder Promis view key");
+    let expected_mint = U256::from(PROMIS_LOAD_MINOR)
+        * U256::from(UNITS)
+        * U256::from(world.state.lifecycle_series.len());
+    let before = world
+        .state
+        .promis_before_mining
+        .expect("Promis balance before mining");
+    assert_eq!(
+        promis_on_all_validators(world, &keys.view),
+        before
+            .checked_add(expected_mint)
+            .expect("expected Promis balance fits U256"),
+        "burned units did not mint the exact fixture Promis load"
+    );
 }
 
 /// The chain id as the enclave binds it into a MAC.
@@ -546,11 +685,26 @@ fn settle_remainder(world: &mut World) {
         let issued = venue_probes::series_balances(&url, nft, series, holder)
             .expect("series balances")
             .0;
-        assert!(issued > 0, "series {series} has nothing left to settle");
+        assert_eq!(
+            issued,
+            u64::from(TARGET_UNITS - TRADABLE_HOP_UNITS),
+            "series {series} remaining issued units differ from fixture"
+        );
         let units = u32::try_from(issued).expect("issued units fit a uint32");
         let cost = test_issuance::quote_cost(&url, series, currency.asset)
             .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
-        let proof = settlement_note(world, holder, currency.asset, cost, units);
+        assert_eq!(
+            cost,
+            expected_settlement_cost(),
+            "Called series {series} settlement quote differs from fixture"
+        );
+        let proof = settlement_note(
+            world,
+            holder,
+            currency.asset,
+            expected_settlement_cost(),
+            units,
+        );
         test_issuance::settle(&url, DEPLOYER_KEY, series, holder, units, &proof)
             .expect("settle the remainder under Called");
     }
@@ -569,6 +723,7 @@ fn everything_settled(world: &mut World) {
             "series {series} did not end with every unit settled"
         );
     }
+    assert_vault_payment(world, UNITS);
 }
 
 #[when("a relay carries messages between the two chains")]

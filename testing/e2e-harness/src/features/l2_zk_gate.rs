@@ -3,7 +3,7 @@
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
 //! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real external `outbe.full_proof@1.0.0` whose root is signed with the registered key
+//! a real FullProof under the pinned circuit whose root is signed with the registered key
 //! must pass the full gate and issue the canonical Tribute through the normal
 //! enclave path.
 
@@ -13,7 +13,7 @@ use ark_ff::UniformRand;
 use bytes::Bytes as CodecBytes;
 use commonware_codec::{DecodeExt, Encode};
 use commonware_cryptography::bls12381::primitives::{
-    group::Private,
+    group::{Private, G2},
     ops::{self, sign_message},
     variant::MinSig,
 };
@@ -144,6 +144,39 @@ fn generate_zk_offer_fixture(
     })
     .join()
     .expect("e2e proof generation thread")
+}
+
+fn proof_from_other_statement(original: &ZkOfferFixture, donor: &ZkOfferFixture) -> String {
+    let original =
+        hex::decode(original.proof_hex.trim_start_matches("0x")).expect("original proof");
+    let donor = hex::decode(donor.proof_hex.trim_start_matches("0x")).expect("donor proof");
+    std::thread::spawn(move || {
+        use outbe_zk_backend::barretenberg::verify_circuit;
+        use outbe_zk_canonical::full_proof::{decode_public_inputs, PUBLIC_INPUT_COUNT};
+        let public = decode_public_inputs(&original).expect("original public inputs");
+        let other = decode_public_inputs(&donor).expect("donor public inputs");
+        assert_ne!(
+            public, other,
+            "proof donor must represent a different statement"
+        );
+        assert!(verify_circuit::<FullProof>(&original).expect("original proof verification"));
+        assert!(verify_circuit::<FullProof>(&donor).expect("donor proof verification"));
+        let prefix = 4 + PUBLIC_INPUT_COUNT * 32;
+        let mut tampered = original.clone();
+        tampered[prefix..].copy_from_slice(&donor[prefix..]);
+        assert_ne!(tampered, original);
+        assert_eq!(
+            decode_public_inputs(&tampered).expect("tampered public inputs"),
+            public
+        );
+        assert!(
+            !verify_circuit::<FullProof>(&tampered).expect("well-formed mixed proof verification"),
+            "mixed proof must fail cryptographic verification"
+        );
+        format!("0x{}", hex::encode(tampered))
+    })
+    .join()
+    .expect("proof control verifier thread")
 }
 
 fn operator_key(world: &World) -> String {
@@ -288,15 +321,26 @@ fn governed_l2_is_registered(world: &mut World) {
 #[when("the operator submits an encrypted tribute offer without an L2 signature")]
 fn offer_without_signature(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    super::tribute_projection::wait_for_offering(world, &wwd);
     let key = operator_key(world);
     let tx_hash = world
         .rpc
-        .tribute_offer(&key, &wwd)
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            TributeZkOffer {
+                tribute_draft_id_hex: &format!("{:#x}", low_b256(0x11)),
+                su_hash_hex: &format!("{:#x}", low_b256(0x22)),
+                merkle_root_hex: &format!("{:#x}", low_b256(0x33)),
+                proof_hex: "0x",
+                signature_hex: "0x",
+            },
+        )
         .expect("outbe-cli returned offerTribute transaction hash");
     world.state.l2_rejected_offer_tx_hash = Some(tx_hash);
 }
 
-#[when("the operator submits an encrypted tribute offer with a valid ZK proof and L2 signature")]
+#[when("the operator proves a signed tampered proof is rejected then submits the valid FullProof")]
 fn offer_with_valid_zk_proof(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let key = operator_key(world);
@@ -310,6 +354,12 @@ fn offer_with_valid_zk_proof(world: &mut World) {
         chain_id,
         wwd.parse().expect("worldwide-day number"),
     );
+    let donor = generate_zk_offer_fixture(
+        l1_owner,
+        chain_id.checked_add(1).expect("donor chain id"),
+        wwd.parse().unwrap(),
+    );
+    let tampered = proof_from_other_statement(&fixture, &donor);
     let private_hex = world
         .state
         .l2_bls_private_hex
@@ -320,9 +370,47 @@ fn offer_with_valid_zk_proof(world: &mut World) {
     ))
     .expect("decode stored BLS key");
     let signature =
-        sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &fixture.merkle_root)
-            .encode()
-            .to_vec();
+        sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &fixture.merkle_root);
+    let (registered_owner, public, enabled) = world
+        .rpc
+        .l2_network(L2_CHAIN_ID)
+        .expect("registered signing key");
+    assert_eq!(registered_owner, l1_owner);
+    assert!(enabled);
+    let public =
+        <G2 as DecodeExt<()>>::decode(CodecBytes::from(public)).expect("registered BLS key");
+    ops::verify_message::<MinSig>(
+        &public,
+        ZK_MERKLE_ROOT_NAMESPACE,
+        &fixture.merkle_root,
+        &signature,
+    )
+    .expect("positive control: signature verifies against the registered key");
+    let signature = signature.encode().to_vec();
+
+    super::tribute_projection::wait_for_offering(world, &wwd);
+    let rejected = world
+        .rpc
+        .tribute_offer_with_zk(
+            &key,
+            &wwd,
+            TributeZkOffer {
+                tribute_draft_id_hex: &fixture.tribute_draft_id_hex,
+                su_hash_hex: &fixture.su_hash_hex,
+                merkle_root_hex: &format!("0x{}", hex::encode(fixture.merkle_root)),
+                proof_hex: &tampered,
+                signature_hex: &format!("0x{}", hex::encode(&signature)),
+            },
+        )
+        .expect("submit well-formed tampered proof with a valid signature");
+    super::tribute_negatives::assert_rejection(
+        world,
+        &rejected,
+        &key,
+        super::tribute_negatives::Rejection::InvalidProof,
+    );
+    super::tribute_negatives::assert_supply(world, 0);
+    super::tribute_projection::wait_for_offering(world, &wwd);
 
     let tx_hash = world
         .rpc
@@ -348,16 +436,13 @@ fn offer_rejected_supply_zero(world: &mut World) {
         .l2_rejected_offer_tx_hash
         .as_deref()
         .expect("rejected offer tx");
-    assert!(
-        world.rpc.wait_receipt_status(tx_hash, false, 240),
-        "unsigned offer under an enabled zk gate did not revert: {tx_hash}"
+    super::tribute_negatives::assert_rejection(
+        world,
+        tx_hash,
+        &operator_key(world),
+        super::tribute_negatives::Rejection::MissingSignature,
     );
-    let primary = world.validators.primary_port();
-    assert_eq!(
-        world.rpc.supply(primary).as_deref(),
-        Some("0"),
-        "rejected offer changed Tribute total supply"
-    );
+    super::tribute_negatives::assert_supply(world, 0);
 }
 
 #[cfg(test)]
@@ -381,5 +466,8 @@ mod tests {
         let public = decode_full_proof_public_inputs(&proof).expect("public inputs decode");
         assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, fixture.merkle_root);
+        let donor = generate_zk_offer_fixture(Address::repeat_byte(0x44), 19_280_502, 20_260_729);
+        let tampered = proof_from_other_statement(&fixture, &donor);
+        assert_ne!(tampered, fixture.proof_hex);
     }
 }

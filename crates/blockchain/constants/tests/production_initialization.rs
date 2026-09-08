@@ -10,6 +10,10 @@ use serde_json::json;
 #[test]
 fn production_getters_are_zero_state_defaults_and_reject_the_test_key() {
     assert_eq!(
+        outbe_chain_constants::get_governance_voting_window_blocks(),
+        86_400
+    );
+    assert_eq!(
         get_metadosis_forming_period_seconds(),
         DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
     );

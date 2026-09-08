@@ -857,6 +857,51 @@ fn config_max_validators_cannot_exceed_consensus_bound() {
 }
 
 #[test]
+fn production_validator_set_selector_allow_list_is_exact() {
+    // Explicit public signatures pin the security boundary independently of
+    // the generated ABI enum; adding any entry requires reviewing this list.
+    let signatures = [
+        "getValidators()",
+        "getActiveValidators()",
+        "getActiveConsensusSet()",
+        "validatorByAddress(address)",
+        "validatorByIndex(uint64)",
+        "validatorCount()",
+        "activeValidatorCount()",
+        "activeConsensusCount()",
+        "isValidator(address)",
+        "isConsensusParticipant(address)",
+        "hasPendingSetChange()",
+        "getEpochNumber()",
+        "getEpochStartTimestamp()",
+        "getEpochStartBlock()",
+        "setDelegate(uint8,address)",
+        "revokeDelegate(uint8)",
+        "getDelegate(address,uint8)",
+        "resolveValidator(uint8,address)",
+        "registerValidator(address,bytes,bytes32,bytes)",
+        "getRadicleNodeId(address)",
+        "validatorByRadicleNodeId(bytes32)",
+        "setP2pAddress(address,uint8,bytes)",
+        "getP2pAddress(address)",
+        "deactivateValidator(address)",
+        "confirmValidatorReady(bytes)",
+    ];
+    let mut expected = signatures.map(|signature| {
+        let digest = keccak256(signature);
+        <[u8; 4]>::try_from(&digest[..4]).unwrap()
+    });
+    expected.sort_unstable();
+    assert!(
+        expected.windows(2).all(|pair| pair[0] != pair[1]),
+        "selector collision in allow-list"
+    );
+    let mut actual = crate::precompile::IValidatorSet::IValidatorSetCalls::SELECTORS.to_vec();
+    actual.sort_unstable();
+    assert_eq!(actual, expected, "public ValidatorSet selectors changed");
+}
+
+#[test]
 fn owner_manual_reshare_selector_is_not_exposed() {
     let digest = keccak256("activateResharedSet(address[],bytes32)");
     let selector: [u8; 4] = digest[..4].try_into().unwrap();

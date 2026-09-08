@@ -101,7 +101,12 @@ pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str
     // fresh block of ports, so there is nothing of its own to reclaim.
     world
         .localnet
-        .bootstrap(committee_size, tuning)
+        .bootstrap_with_profile(
+            committee_size,
+            &crate::world::localnet::BootstrapProfile::from_tuning(tuning)
+                .and_then(|profile| profile.with_governance_voting_window(window))
+                .expect("valid genesis governance voting window"),
+        )
         .expect("bootstrap localnet");
 }
 
