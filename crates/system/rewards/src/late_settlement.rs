@@ -47,6 +47,20 @@ pub fn record_late_credit(
         // Window already closed; nothing more can be credited.
         return Ok(());
     }
+    if k > outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K as u8 {
+        return Err(PrecompileError::Fatal(
+            "reward credit outside inclusion window".into(),
+        ));
+    }
+    if k > 0 {
+        let day = rewards.pending_reward_day.read(&fb_hash)?;
+        if day == 0 {
+            return Err(PrecompileError::Fatal(
+                "late reward credit has no canonical UTC day".into(),
+            ));
+        }
+        crate::finalized_metadata_hook::record_reward_participation(ctx, fb_hash, day, voter)?;
+    }
     let kmap = rewards.late_voter_k_plus1.get_nested(&fb_hash);
     let stored = kmap.read(&voter)?; // 0 = absent, else k+1
     if stored == 0 {
@@ -259,6 +273,7 @@ pub fn settle_window(
     }
     rewards.late_voter_count.write(&fb_hash, 0)?;
     rewards.pending_fees.write(&fb_hash, U256::ZERO)?;
+    rewards.pending_reward_day.write(&fb_hash, 0)?;
 
     Ok((distributed, residue))
 }
@@ -371,6 +386,12 @@ mod tests {
                 BlockContext::new(156, 100, CHAIN_ID, Address::ZERO, Vec::new()),
                 handle,
             );
+            // Fee-only fixtures bypass CPA; supply the canonical day CPA binds.
+            ctx.storage
+                .contract::<Rewards>()
+                .pending_reward_day
+                .write(&FB, 19700101)
+                .unwrap();
             f(&ctx);
         });
     }

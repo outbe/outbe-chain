@@ -108,6 +108,18 @@ fn reward_gem_retryable_error(message: impl Into<String>) -> PrecompileError {
     PrecompileError::Revert(message)
 }
 
+/// Whether every known block's participation window for a UTC day has closed.
+/// Cycle executes before LateFinalizeCredits, so equality is still too early:
+/// the final admissible votes at the close height have not executed yet.
+pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<bool> {
+    let last_close = ctx
+        .storage
+        .contract::<Rewards>()
+        .daily_last_window_close
+        .read(&utc_day)?;
+    Ok(last_close == 0 || ctx.block.block_number > last_close)
+}
+
 /// Calculates and stores one exact validator reward Gem obligation without
 /// consulting a live Oracle price or minting a Gem. The first preparation owns
 /// the immutable FIFO append; an exact replay returns the stored summary.
@@ -128,6 +140,11 @@ fn prepare_daily_validator_gem_batch_inner(
     validator_topup_amount: U256,
     voters: &[(Address, u64)],
 ) -> Result<RewardGemPreparationOutcome> {
+    if !day_participation_complete(ctx, utc_day)? {
+        return Err(PrecompileError::Fatal(
+            "GEM preparation before reward participation windows close".into(),
+        ));
+    }
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let gem_type = if day_number_since_genesis(ctx, utc_day)? < 21 {
         GemTypes::Genesis
@@ -441,7 +458,7 @@ fn deliver_oldest_reward_gem_batch_inner(
         _ => {
             return Err(reward_gem_retryable_error(format!(
                 "validator reward Gem UTC day {reward_utc_day} has unsupported type {gem_type_raw}"
-            )))
+            )));
         }
     };
     let issuance_currency = rewards.reward_gem_issuance_currency.read(&reward_utc_day)?;
