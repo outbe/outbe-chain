@@ -16,7 +16,18 @@ pub mod vote;
 pub mod zerofee;
 
 use crate::tx::TxSigner;
+use alloy_primitives::U256;
 use eyre::Result;
+
+/// Parse a non-zero amount in decimal base units.
+pub fn parse_amount(amount: &str) -> Result<U256> {
+    let amount =
+        U256::from_str_radix(amount, 10).map_err(|e| eyre::eyre!("invalid amount: {e}"))?;
+    if amount.is_zero() {
+        eyre::bail!("amount must be non-zero");
+    }
+    Ok(amount)
+}
 
 pub fn require_signer(private_key: Option<&str>) -> Result<TxSigner> {
     let key =

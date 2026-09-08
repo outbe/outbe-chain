@@ -5,6 +5,7 @@ use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 
+use super::parse_amount;
 use crate::abi::{self, IStaking, IValidatorSet};
 use crate::rpc::Rpc;
 
@@ -122,15 +123,6 @@ async fn unjail(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result
         .await?;
     println!("Transaction sent: {tx_hash}");
     Ok(())
-}
-
-fn parse_amount(amount: &str) -> Result<U256> {
-    let amount =
-        U256::from_str_radix(amount, 10).map_err(|e| eyre::eyre!("invalid amount: {e}"))?;
-    if amount.is_zero() {
-        eyre::bail!("amount must be non-zero");
-    }
-    Ok(amount)
 }
 
 struct StakingInfo {

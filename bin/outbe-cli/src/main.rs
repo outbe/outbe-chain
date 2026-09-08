@@ -28,7 +28,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Deposit shielded paynotes and generate spend proofs.
     Paynote {
         #[command(subcommand)]
         cmd: commands::paynote::PaynoteCmd,

@@ -34,12 +34,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
-use super::require_signer;
+use super::{parse_amount, require_signer};
 use crate::{rpc::Rpc, tx::TxSigner};
 
 sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 
+/// Deposit shielded paynotes and generate spend proofs.
+///
+/// Assets are ERC20 addresses; amounts are positive integers in token base units.
+/// Notes and proofs are saved under ./paynotes. Note files contain bearer secrets.
+/// Deposits approve tokens when needed. Partial spends create a change note,
+/// which becomes spendable after the proof is consumed on-chain.
+/// Generating a proof does not submit a spend transaction.
+///
+/// Examples:
+///   outbe-cli --rpc-url http://localhost:8545 --private-key "$PRIVATE_KEY" \
+///     paynote deposit "$ASSET_ADDRESS" 1000000
+///
+///   outbe-cli --rpc-url http://localhost:8545 --private-key "$PRIVATE_KEY" \
+///     paynote spend-proof ./paynotes/0xCOMMITMENT.json 600000
+///
+///   Generate a proof for an explicit recipient without a signing key:
+///   outbe-cli --rpc-url http://localhost:8545 \
+///     paynote spend-proof 0xCOMMITMENT 600000 --spender "$RECIPIENT_ADDRESS"
 #[derive(Subcommand)]
+#[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
     /// Deposit ERC20 base units; save the bearer secret in ./paynotes.
     Deposit {
@@ -81,17 +100,6 @@ impl PaynoteCmd {
         println!("{}", serde_json::to_string_pretty(&output)?);
         Ok(())
     }
-}
-
-fn parse_amount(text: &str) -> Result<U256, String> {
-    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
-        return Err("amount must be a positive decimal integer in token base units".into());
-    }
-    let amount = U256::from_str_radix(text, 10).map_err(|_| "amount exceeds U256".to_string())?;
-    if amount.is_zero() {
-        return Err("amount must be non-zero".into());
-    }
-    Ok(amount)
 }
 
 fn resolve_spender(spender: Option<Address>, private_key: Option<&str>) -> Result<Address> {
