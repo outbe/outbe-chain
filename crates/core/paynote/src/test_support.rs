@@ -99,7 +99,7 @@ fn prove_spend(
         root: tree.root(),
         nullifier: n.nullifier,
         asset: address_field(n.asset.into()),
-        spender: address_field(spender.into()),
+        owner: address_field(spender.into()),
         spend_amount: u256::to_limbs(spend_amount),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),

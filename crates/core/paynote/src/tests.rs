@@ -1,7 +1,7 @@
 //! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
-//! `outbe.paynote@1.1.0` statement from **Rust-computed** public inputs and
+//! `outbe.paynote@1.2.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
 //! the in-circuit ones and proving would fail — that is what pins the mirror.
@@ -377,7 +377,7 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
 
 #[test]
 fn full_width_u256_spend_round_trip() {
-    assert_eq!(Paynote::VERSION, "1.1.0");
+    assert_eq!(Paynote::VERSION, "1.2.0");
     assert_eq!(
         Paynote::CIRCUIT_HASH,
         alloy_primitives::hex!("3154da6976ca8ee5f00b228fe821ce0868b189ff73cefb1a9a562d2768a9f9cc")

@@ -45,7 +45,7 @@ pub struct PayNoteClaim {
 /// Reads the live chain ID and derives its full in-memory empty ladder.
 fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     let chain_id = storage.chain_id()?;
-    let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH)?;
+    let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).map_err(|_| PayNoteError::Hash)?;
     Ok((chain_id, zeros))
 }
 
@@ -71,11 +71,11 @@ pub(crate) fn append(
             paynote
                 .filled_subtrees
                 .write(&level_byte, B256::new(field_to_be_bytes(current)))?;
-            current = merkle_node(current, *zero)?;
+            current = merkle_node(current, *zero).map_err(|_| PayNoteError::Hash)?;
         } else {
             let left = paynote.filled_subtrees.read(&level_byte)?;
             let left = field_from_be_bytes(&left.0).ok_or(PayNoteError::CorruptFrontier)?;
-            current = merkle_node(left, current)?;
+            current = merkle_node(left, current).map_err(|_| PayNoteError::Hash)?;
         }
     }
     let root_after = B256::new(field_to_be_bytes(current));
@@ -121,7 +121,8 @@ pub(crate) fn deposit(
     // actually moves — never caller-supplied — so Merkle membership attests
     // both. A caller-chosen leaf would let a depositor fund a note in a cheap
     // token and spend it as an expensive one.
-    let commitment = note_commitment(chain_id, serial, asset.into(), amount)?;
+    let commitment =
+        note_commitment(chain_id, serial, asset.into(), amount).map_err(|_| PayNoteError::Hash)?;
     if commitment.is_zero() {
         return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
     }
@@ -189,7 +190,7 @@ fn root_after_word(root: Field) -> B256 {
     B256::new(field_to_be_bytes(root))
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.1.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.2.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
@@ -222,7 +223,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    if claim.spender.is_zero() {
+    if claim.owner.is_zero() {
         return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
     }
     if claim.spend_amount.is_zero() {
@@ -290,7 +291,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
                 asset: claim.asset,
-                spender: claim.spender,
+                spender: claim.owner,
                 nullifier: nullifier_word,
                 spendAmount: claim.spend_amount,
             }),
@@ -313,7 +314,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     Ok(PayNoteClaim {
         asset: claim.asset,
-        spender: claim.spender,
+        spender: claim.owner,
         spend_amount: claim.spend_amount,
         nullifier: nullifier_word,
     })

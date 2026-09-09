@@ -8510,7 +8510,6 @@ dependencies = [
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
  "outbe-macros",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-zk-backend",
@@ -9254,7 +9253,6 @@ dependencies = [
  "ark-ff 0.6.0",
  "outbe-macros",
  "outbe-paynote",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-vaultrouter",
@@ -9355,7 +9353,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1#1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
@@ -9425,7 +9423,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1#1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9906,7 +9904,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1#1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
 dependencies = [
  "acir",
  "acvm",
@@ -9924,7 +9922,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1#1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1"
+source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",

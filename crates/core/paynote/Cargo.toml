@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-primitives.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-macros.workspace = true
-outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true

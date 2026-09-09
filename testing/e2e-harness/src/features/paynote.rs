@@ -140,7 +140,7 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
         asset: address_field(note.asset.into()),
-        spender: address_field(spender.into()),
+        owner: address_field(spender.into()),
         spend_amount: u256::to_limbs(note.amount),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.

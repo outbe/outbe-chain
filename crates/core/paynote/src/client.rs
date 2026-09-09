@@ -12,8 +12,12 @@ use crate::{
 
 /// Start a PayNote tree with the chain-specific empty leaf.
 pub fn new_tree(chain_id: u64) -> Result<PayNoteTree, PayNoteError> {
-    PayNoteTree::new(paynote_domain(), empty_leaf(chain_id)?, PAYNOTE_TREE_DEPTH)
-        .map_err(|error| PayNoteError::InvalidInput(error.to_string()))
+    PayNoteTree::new(
+        paynote_domain(),
+        empty_leaf(chain_id).map_err(|_| PayNoteError::Hash)?,
+        PAYNOTE_TREE_DEPTH,
+    )
+    .map_err(|error| PayNoteError::InvalidInput(error.to_string()))
 }
 
 /// Find a deposited commitment and return its circuit index and siblings.

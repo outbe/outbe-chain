@@ -17,7 +17,7 @@
 //! (ABI dispatch, payable policy, selector-sensitive gas), [`errors`].
 
 pub mod errors;
-pub mod hash;
+pub use outbe_zk_canonical::emit_mint::hash;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

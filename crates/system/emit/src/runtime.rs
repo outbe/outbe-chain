@@ -36,7 +36,7 @@ pub(crate) struct MintStatement {
 /// Reads the live chain ID and derives its full in-memory empty ladder.
 fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     let chain_id = storage.chain_id()?;
-    let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH);
+    let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH).map_err(|_| EmitError::Hash)?;
     Ok((chain_id, zeros))
 }
 /// Appends `leaf` in O(depth) stored state using the Tornado Cash pattern:
@@ -54,13 +54,13 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
         if (index >> level) & 1 == 0 {
             emit.filled_subtrees
                 .write(&level_byte, B256::new(field_to_be_bytes(current)))?;
-            current = merkle_node(current, *zero);
+            current = merkle_node(current, *zero).map_err(|_| EmitError::Hash)?;
         } else {
             let left = emit.filled_subtrees.read(&level_byte)?;
             let left = field_from_be_bytes(&left.0).ok_or(PrecompileError::Fatal(
                 "Emit filled-subtree slot is not a canonical field".into(),
             ))?;
-            current = merkle_node(left, current);
+            current = merkle_node(left, current).map_err(|_| EmitError::Hash)?;
         }
     }
     emit.current_root
@@ -98,7 +98,7 @@ pub(crate) fn burn(
 
     // The commitment is always derived — never caller-supplied — so the
     // hidden note value is bound to the burned supply and runtime chain ID.
-    let commitment = note_commitment(chain_id, serial, value);
+    let commitment = note_commitment(chain_id, serial, value).map_err(|_| EmitError::Hash)?;
     if commitment.is_zero() {
         return Err(EmitError::MustBeNonZero("commitment").into());
     }

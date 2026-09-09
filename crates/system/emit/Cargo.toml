@@ -10,7 +10,6 @@ outbe-primitives.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 outbe-macros.workspace = true
-outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

@@ -22,7 +22,7 @@ use outbe_paynote::{
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
 use outbe_protocol::{
-    protocol::zk::{Circuit, ProofGenerator},
+    protocol::zk::{Circuit, CircuitId, ProofGenerator},
     OutbeV1,
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
@@ -571,7 +571,7 @@ fn prove(
         root: tree.root(),
         nullifier: field(note.nullifier()?)?,
         asset: address_field(note.asset.into()),
-        spender: address_field(spender.into()),
+        owner: address_field(spender.into()),
         spend_amount: u256::to_limbs(amount),
         change_commitment: change
             .as_ref()
@@ -640,7 +640,7 @@ async fn spend_proof(
         .as_ref()
         .map(|note| save_note(dir, note))
         .transpose()?;
-    let output = json!({ "version": 1, "circuit": "outbe.paynote@1.1.0", "proof": format!("0x{}", hex::encode(&combined)),
+    let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
         "asset": note.asset, "spender": spender, "spend_amount": amount.to_string(),
         "root": word(public.root), "nullifier": word(public.nullifier), "change_commitment": word(public.change_commitment) });
