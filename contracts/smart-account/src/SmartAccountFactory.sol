@@ -42,7 +42,7 @@ contract SmartAccountFactory is ISmartAccountFactory {
     uint256 public constant DAILY_LIMIT = 1000e6;
     uint48 public constant LIMIT_INTERVAL = 1 days;
 
-    /// @notice Credis Card Agent precompile.
+    /// @notice Checkout Credis Agent precompile.
     /// @dev A protocol address, not a deployment parameter: an injectable registry could be
     ///      pointed at a look-alike that reports every agent active, which would silently defeat
     ///      the standing check below. This also confines the factory to Outbe chains - elsewhere
