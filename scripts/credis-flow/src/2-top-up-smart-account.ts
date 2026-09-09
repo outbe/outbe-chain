@@ -27,10 +27,8 @@ const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
 
 const rpcUrl = requireEnv("RPC_URL", envPath);
 const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
-const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 async function main(): Promise<void> {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -46,14 +44,13 @@ async function main(): Promise<void> {
   console.log("=== Top-Up smart account ===");
   console.log(`Env:     ${envName}`);
   console.log(`User     : ${userAddr}`);
-  console.log(`CCA      : ${ccaAddress}`);
   console.log(`Token    : ${erc20Address} (${tokenSymbol}, ${tokenDecimals} decimals)`);
   console.log(`Factory  : ${smartAccountFactoryAddress}`);
 
   // -- Step 1: Predict smart account address ---------------------------------
 
   console.log("\n[1] Predicting smart account address...");
-  const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
+  const accountAddr = await factory.getAccountAddress(userAddr, SALT);
   console.log(`    -> ${accountAddr}`);
 
   // -- Step 2: Deploy if not exists ------------------------------------------
@@ -62,7 +59,7 @@ async function main(): Promise<void> {
   const code = await provider.getCode(accountAddr);
   if (code === "0x") {
     console.log("    Account not deployed - creating...");
-    const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
+    const tx = await factory.createAccount(userAddr, SALT);
     const receipt = await tx.wait();
     console.log(`    Deployed at block ${receipt!.blockNumber}, tx: ${tx.hash}`);
   } else {

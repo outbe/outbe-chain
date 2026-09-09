@@ -7,13 +7,8 @@ import {SIG_VALIDATION_SUCCESS_UINT} from "@zerodev/kernel/types/Constants.sol";
 
 /// @title SudoPolicy
 /// @notice Always-pass ERC-7579 policy (module type 5) that imposes no restriction.
-/// @dev Used to give the account owner a permission-based root validation. Kernel v4 cannot attach
-///      an execution hook to a plain root validator at initialization (the hook must be installed
-///      before the root package, but the root is always `packages[0]`, installed first). Modelling
-///      the owner as a permission `[SudoPolicy + ECDSASigner + BundleSpendProtectorHook]` lets the
-///      hook install before the signer initializes the validation. This policy grants full,
-///      root-equivalent authority to the owner, matching the Kernel v3.3 root-validator behavior;
-///      no spending/admin restriction is added here.
+/// @dev Combined with ECDSASigner for owner and CCA permissions. This policy adds no
+///      restrictions; CCA execution is constrained by BundleWithdrawHook and custody.
 contract SudoPolicy is PolicyBase {
     /// @notice Number of active policy installs per wallet (permission installs referencing this policy).
     mapping(address wallet => uint256) public usedIds;

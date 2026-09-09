@@ -11,6 +11,27 @@ use outbe_primitives::storage::StorageHandle;
 sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
 sol!("../../../contracts/precompiles/src/IVaultRouterCrosschainExtention.sol");
 
+/// Rejects unopened/closed bundles before the caller consumes a pledge or moves stake.
+pub fn ensure_open_bundle(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    cca: Address,
+) -> Result<()> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::bundleCcaCall { account }.abi_encode().into(),
+    )?;
+    let linked = IVaultRouter::bundleCcaCall::abi_decode_returns(&ret)
+        .map_err(|_| crate::errors::VaultRouterError::UndecodableReturn("bundle CCA"))?;
+    if linked.is_zero() {
+        return Err(crate::errors::VaultRouterError::BundleNotOpen.into());
+    }
+    if linked != cca {
+        return Err(crate::errors::VaultRouterError::BundleCcaMismatch.into());
+    }
+    Ok(())
+}
+
 /// `deposit`: deposit `amount` of `asset` into its reserve vault via an
 /// EVM sub-call to the vault router, returning the minted shares.
 pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<U256> {

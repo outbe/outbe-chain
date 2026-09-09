@@ -125,6 +125,38 @@
   },
   {
     "type": "function",
+    "name": "bundleCca",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bundleCustody",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "deposit",
     "inputs": [
       {
@@ -410,6 +442,19 @@
   },
   {
     "type": "function",
+    "name": "setBundleCustody",
+    "inputs": [
+      {
+        "name": "custody",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sharesBalance",
     "inputs": [
       {
@@ -474,6 +519,19 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "BundleCustodyConfigured",
+    "inputs": [
+      {
+        "name": "custody",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -732,6 +790,26 @@
   },
   {
     "type": "error",
+    "name": "BundleCcaMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BundleCustodyAlreadyConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BundleCustodyNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BundleNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CcaNotActive",
     "inputs": [
       {
@@ -848,6 +926,11 @@
   {
     "type": "error",
     "name": "SameVaultRebalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TokenNotInBundle",
     "inputs": []
   },
   {

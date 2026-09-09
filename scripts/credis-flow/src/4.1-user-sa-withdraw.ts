@@ -39,12 +39,10 @@ const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
 const rpcUrl = requireEnv("RPC_URL", envPath);
 const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
-const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -58,13 +56,7 @@ async function main() {
   const WITHDRAW_AMOUNT = ethers.parseUnits(withdrawAmountArg, erc20Meta.decimals);
 
   // Predict smart account address
-  const smartAccountAddr = await saFactory.getAccountAddress(
-    userAddress,
-    ccaAddress,
-    [erc20Address],
-    [vaultRouterAddress],
-    SALT,
-  );
+  const smartAccountAddr = await saFactory.getAccountAddress(userAddress, SALT);
 
   console.log("=== User smart account Withdraw ===");
   console.log(`Env:              ${envName}`);
@@ -79,7 +71,7 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run top-up-sa` first.");
     process.exit(1);
   }
 
@@ -93,15 +85,14 @@ async function main() {
   console.log("\n=== State BEFORE ===");
   printBalances(accountBalBefore, bundleBalBefore, userBalBefore, smartAccountAddr, erc20Meta);
 
-  const personalBal = accountBalBefore - bundleBalBefore;
+  const personalBal = accountBalBefore;
   if (personalBal < WITHDRAW_AMOUNT) {
     console.error(`Insufficient personal balance: have ${formatTokenMeta(personalBal, erc20Meta)}, need ${formatTokenMeta(WITHDRAW_AMOUNT, erc20Meta)}`);
     process.exit(1);
   }
 
   // -- Build UserOp with the owner permission validation ---------------------
-  // Kernel v4 models the owner as a permission (SudoPolicy + ECDSASigner) carrying
-  // BundleSpendProtectorHook, so the UserOp uses the permission nonce type (0x02).
+  // The owner permission (SudoPolicy + ECDSASigner) uses nonce type 0x02.
   const nonceKey = permissionNonceKey(ownerPermissionId());
 
   const entryPoint = IEntryPoint__factory.connect(entryPointAddress, userWallet);
@@ -189,7 +180,7 @@ function printBalances(
   smartAccountAddr: string,
   erc20Meta: TokenMeta,
 ) {
-  const personalBal = accountBal - bundleBal;
+  const personalBal = accountBal;
   const bundleBalance2 = bundleBal / 2n;
   console.log(`  smart account (${smartAccountAddr}):`);
   console.log(`    ERC20 total:   ${formatTokenMeta(accountBal, erc20Meta)}`);

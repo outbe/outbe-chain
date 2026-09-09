@@ -213,6 +213,7 @@ fn is_scalar_like_type(ty: &Type) -> bool {
     matches!(
         last_type_ident(ty).as_deref(),
         Some("u8")
+            | Some("u16")
             | Some("u32")
             | Some("u64")
             | Some("bool")
@@ -1034,4 +1035,13 @@ fn generate_storage_record(
         #helper_impl
         #record_impl
     })
+}
+
+#[cfg(test)]
+mod scalar_layout_tests {
+    #[test]
+    fn u16_mapping_occupies_one_slot() {
+        let ty: syn::Type = syn::parse_quote!(Map<Address, u16>);
+        assert_eq!(super::contract_slot_count_expr(&ty).to_string(), "1u64");
+    }
 }

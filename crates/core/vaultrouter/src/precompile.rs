@@ -52,6 +52,15 @@ fn dispatch_local(
         use IVaultRouter::IVaultRouterCalls::*;
         outbe_primitives::dispatch::reject_value(&value)?;
         match call {
+            setBundleCustody(c) => mutate_void(c, caller, |sender, c| {
+                runtime::set_bundle_custody(storage.clone(), sender, c.custody)
+            }),
+            bundleCustody(c) => view(c, |_| {
+                VaultRouterContract::new(storage.clone())
+                    .bundle_custody
+                    .read()
+            }),
+            bundleCca(c) => view(c, |c| runtime::bundle_cca(&storage, c.account)),
             // --- admin / metadata views ---
             owner(c) => view(c, |_c| {
                 let contract = VaultRouterContract::new(storage.clone());

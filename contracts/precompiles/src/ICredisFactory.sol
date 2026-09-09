@@ -26,6 +26,8 @@ interface ICredisFactory {
     /// balance and never returns to the CCA - settlement and void leave it alone.
     /// The required amount is not in calldata - it was sealed into the ticket at
     /// pledge time - so read it from the pledge quote before calling.
+    /// Requires an open bundle linked to the calling CCA in VaultRouter's trusted
+    /// custody. This check happens before consuming the confidential pledge ticket.
     /// @param referenceCurrency ISO 4217 numeric code of the threshold-evaluation
     ///        anchor, elected here and fixed for the position's life. Must be a
     ///        registered reference currency; the call price is struck from the

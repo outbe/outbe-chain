@@ -72,6 +72,8 @@ pub fn request_credis(
         return Err(CredisFactoryError::SmartAccountNotDeployed.into());
     }
 
+    outbe_vaultrouter::api::ensure_open_bundle(&storage, smart_account, caller)?;
+
     // Block timestamp is read from the execution frame rather than threaded in
     // by the caller.
     let current_time = storage.timestamp()?.to::<u64>();

@@ -725,10 +725,7 @@ fn add_vault_rejects_an_asset_without_a_reference_currency() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
         let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid reference currency"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("Invalid currency code 0"), "{err}");
 
         let contract = VaultRouterContract::new(storage.clone());
         assert_eq!(contract.assets.len().unwrap(), 0);
@@ -836,8 +833,14 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
     // required == available, burned == x.
     storage.stub_sub_call_at(vault(), word(x));
     storage.enable_sub_call_stub();
+    let custody = Address::repeat_byte(0xc7);
+    storage.stub_sub_call_at(custody, word(U256::from(1)));
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
+        storage
+            .set_code(custody, Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+        runtime::set_bundle_custody(storage.clone(), owner(), custody).unwrap();
 
         // Zero receiver rejected first.
         let err = runtime::withdraw(
@@ -964,8 +967,15 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at(vault(), word(x));
     storage.enable_sub_call_stub();
+    let custody = Address::repeat_byte(0xc7);
+    storage.stub_sub_call_at(custody, word(U256::from(1)));
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
+        storage
+            .set_code(custody, Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+        runtime::set_bundle_custody(storage.clone(), owner(), custody).unwrap();
+
         VaultRouterContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -2108,10 +2118,44 @@ fn rebalance_rejects_an_asset_reporting_no_reference_currency() {
             U256::MAX,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid reference currency"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("Invalid currency code 0"), "{err}");
     });
     assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
+#[test]
+fn bundle_custody_binding_and_lifecycle_fail_closed() {
+    use crate::sol_ext::ITokenBundle;
+    let custody = Address::repeat_byte(0xc7);
+    for lifecycle in [0u8, 1, 2] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.enable_sub_call_stub();
+        provider.stub_sub_call_at_selector(
+            custody,
+            ITokenBundle::statusCall::SELECTOR,
+            word(U256::from(lifecycle)),
+        );
+        provider.stub_sub_call_at_selector(
+            custody,
+            ITokenBundle::linkedCcaCall::SELECTOR,
+            word(U256::from(1)),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            set_owner(&storage, owner());
+            storage
+                .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+                .unwrap();
+            assert!(runtime::bundle_cca(&storage, receiver()).is_err());
+            storage
+                .set_code(custody, Bytecode::new_raw(vec![0x00u8].into()))
+                .unwrap();
+            assert!(runtime::set_bundle_custody(storage.clone(), receiver(), custody).is_err());
+            runtime::set_bundle_custody(storage.clone(), owner(), custody).unwrap();
+            assert!(runtime::set_bundle_custody(storage.clone(), owner(), custody).is_err());
+            assert_eq!(
+                runtime::bundle_cca(&storage, receiver()).is_ok(),
+                lifecycle == 1
+            );
+        });
+    }
 }

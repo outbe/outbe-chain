@@ -5,6 +5,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_credis::constants::CALL_WINDOW_SECS;
 
 use crate::precompile::ICredisFactory;
 use outbe_credis::{CredisContract, CredisState};
@@ -367,7 +368,7 @@ fn the_void_burns_only_the_unpaid_share() {
         assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
         // One second inside the window the sweep must find nothing.
-        let deadline = called_at + 14 * DAY;
+        let deadline = called_at + CALL_WINDOW_SECS;
         advance_to(&storage, deadline - 1);
         finalize_through(&storage, deadline - 1);
         assert_eq!(scan(&storage, deadline - 1), 0, "window still open");
@@ -443,10 +444,10 @@ fn a_position_settled_inside_the_window_is_never_voided() {
         }
 
         // Settle in full inside the window.
-        advance_to(&storage, called_at + 7 * DAY);
+        advance_to(&storage, called_at + CALL_WINDOW_SECS - DAY);
         settle_principal(&storage, alice(), position_id, pledge_stables());
 
-        let deadline = called_at + 14 * DAY;
+        let deadline = called_at + CALL_WINDOW_SECS;
         advance_to(&storage, deadline + DAY);
         finalize_through(&storage, deadline + DAY);
         assert_eq!(scan(&storage, deadline + DAY), 0);
@@ -596,7 +597,7 @@ fn the_void_leaves_the_stake_with_the_smart_account() {
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 
-        let deadline = called_at + 14 * DAY;
+        let deadline = called_at + CALL_WINDOW_SECS;
         advance_to(&storage, deadline);
         finalize_through(&storage, deadline);
         assert_eq!(scan(&storage, deadline), 1);
@@ -755,6 +756,58 @@ fn an_issuance_anchor_reuses_the_sealed_pledge_rate() {
         assert_eq!(position.entry_price, oracle_rate());
         // 2.0 + 64% = 3.28.
         assert_eq!(position.call_price, U256::from(3_280_000u64));
+    });
+    teardown();
+}
+
+#[test]
+fn unopened_bundle_is_rejected_before_pledge_consumption() {
+    let mut provider = env();
+    provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::bundleCcaCall::SELECTOR,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    let (handle, spend) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        fund_stake(&storage, pledge_stake());
+        let err = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("bundle is not open"), "{err}");
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            CredisContract::new(storage.clone()).active_len().unwrap(),
+            0
+        );
+        (handle, spend)
+    });
+    provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::bundleCcaCall::SELECTOR,
+        alloy_primitives::Bytes::copy_from_slice(cca().into_word().as_slice()),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        // The same ticket still works after the bundle is opened.
+        runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            REFERENCE_ISO,
+            pledge_stake(),
+        )
+        .unwrap();
     });
     teardown();
 }

@@ -4,8 +4,8 @@ import {
   ICredisFactory__factory,
   ICredis__factory,
   SmartAccountFactory__factory,
-  IERC20__factory,
   IVaultRouter__factory,
+  IERC20__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
@@ -76,13 +76,7 @@ async function main() {
   // Predict the smart account address - the credis receiver, and the account
   // the pledge spend is bound to.
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
-  const smartAccount = await saFactory.getAccountAddress(
-    userAddress,
-    ccaAddress,
-    [erc20Address],
-    [vaultRouterAddress],
-    SALT,
-  );
+  const smartAccount = await saFactory.getAccountAddress(userAddress, SALT);
 
   const credisFactory = ICredisFactory__factory.connect(credisFactoryAddress, ccaWallet);
   const credis = ICredis__factory.connect(credisAddress, provider);
@@ -108,6 +102,11 @@ async function main() {
   console.log(`Spend auth:     ${spend}`);
   console.log(`Chain ID:       ${network.chainId}`);
 
+  const linkedCca = await IVaultRouter__factory.connect(vaultRouterAddress, provider).bundleCca(smartAccount);
+  if (linkedCca.toLowerCase() !== ccaWallet.address.toLowerCase()) {
+    throw new Error("Open the bundle with this CCA before requestCredis");
+  }
+
   const bundleErc20Before = await token.balanceOf(smartAccount);
   console.log(`\nBundle ERC20 before: ${formatTokenMeta(bundleErc20Before, erc20Meta)}`);
 
@@ -129,7 +128,7 @@ async function main() {
   // paying gas for a mined revert carrying an opaque precompile string.
   const saCode = await provider.getCode(smartAccount);
   if (saCode === "0x") {
-    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    console.error("smart account not deployed. Run `npm run top-up-sa` first.");
     process.exit(1);
   }
 

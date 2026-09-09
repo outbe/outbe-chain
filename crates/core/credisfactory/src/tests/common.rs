@@ -8,6 +8,7 @@
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
 use outbe_credis::CredisContract;
@@ -370,6 +371,11 @@ pub fn env() -> HashMapStorageProvider {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
+    storage.stub_sub_call_at_selector(
+        VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::bundleCcaCall::SELECTOR,
+        Bytes::copy_from_slice(cca().into_word().as_slice()),
+    );
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     storage
 }

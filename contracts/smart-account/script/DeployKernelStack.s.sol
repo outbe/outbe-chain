@@ -5,12 +5,9 @@ import {BaseScript} from "./BaseScript.s.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {console} from "forge-std/Script.sol";
 
-import {KernelUUPS} from "@zerodev/kernel/KernelUUPS.sol";
 import {KernelImmutableECDSA} from "@zerodev/kernel/KernelImmutableECDSA.sol";
-import {KernelFactory} from "@zerodev/kernel/KernelFactory.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {EntryPointLib, ENTRYPOINT_0_9} from "../test/utils/EntryPointLib.sol";
-import {CallerHook} from "src/kernel/CallerHook.sol";
 import {ECDSASigner} from "src/kernel/ECDSASigner.sol";
 
 /// @title DeployKernelStack
@@ -22,10 +19,7 @@ import {ECDSASigner} from "src/kernel/ECDSASigner.sol";
 contract DeployKernelStack is BaseScript {
     // Deployed contracts
     IEntryPoint public entrypoint;
-    KernelUUPS public kernelUUPS;
     KernelImmutableECDSA public kernelImmutableECDSA;
-    KernelFactory public kernelFactory;
-    CallerHook public callerHook;
     ECDSASigner public ecdsaSigner;
 
     function run() public {
@@ -43,13 +37,7 @@ contract DeployKernelStack is BaseScript {
         _deployEntryPoint();
         console.log("");
 
-        _deployKernelImpls();
-        console.log("");
-
-        _deployKernelFactory();
-        console.log("");
-
-        _deployCallerHook();
+        _deployImmutableKernel();
         console.log("");
 
         _deployECDSASigner();
@@ -88,22 +76,8 @@ contract DeployKernelStack is BaseScript {
         printAndWrite(exportLine("ENTRYPOINT_ADDRESS", vm.toString(address(entrypoint))));
     }
 
-    function _deployKernelImpls() internal {
-        console.log("=== Deploying Kernel Implementations (UUPS + ImmutableECDSA) ===");
-
-        // KernelUUPS
-        bytes32 uupsSalt = generateSalt("KernelUUPS");
-        bytes memory uupsCode = abi.encodePacked(type(KernelUUPS).creationCode, abi.encode(address(entrypoint)));
-        address uupsPredicted = Create2.computeAddress(uupsSalt, keccak256(uupsCode), CREATE2_FACTORY);
-        if (uupsPredicted.code.length > 0) {
-            console.log("WARNING: KernelUUPS already deployed at:", uupsPredicted);
-        } else {
-            address deployed = Create2.deploy(0, uupsSalt, uupsCode);
-            require(deployed == uupsPredicted, "KernelUUPS address mismatch");
-            console.log("KernelUUPS deployed:", deployed);
-        }
-        kernelUUPS = KernelUUPS(payable(uupsPredicted));
-        printAndWrite(exportLine("KERNEL_UUPS_ADDRESS", vm.toString(uupsPredicted)));
+    function _deployImmutableKernel() internal {
+        console.log("=== Deploying KernelImmutableECDSA ===");
 
         // KernelImmutableECDSA
         bytes32 immSalt = generateSalt("KernelImmutableECDSA");
@@ -119,46 +93,6 @@ contract DeployKernelStack is BaseScript {
         }
         kernelImmutableECDSA = KernelImmutableECDSA(payable(immPredicted));
         printAndWrite(exportLine("KERNEL_IMMUTABLE_ECDSA_ADDRESS", vm.toString(immPredicted)));
-    }
-
-    function _deployKernelFactory() internal {
-        console.log("=== Deploying KernelFactory ===");
-
-        bytes32 salt = generateSalt("KernelFactory");
-        bytes memory creationCode = abi.encodePacked(
-            type(KernelFactory).creationCode, abi.encode(address(kernelUUPS), address(kernelImmutableECDSA))
-        );
-        address predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
-
-        if (predicted.code.length > 0) {
-            console.log("WARNING: KernelFactory already deployed at:", predicted);
-        } else {
-            address deployed = Create2.deploy(0, salt, creationCode);
-            require(deployed == predicted, "KernelFactory address mismatch");
-            console.log("KernelFactory deployed:", deployed);
-        }
-
-        kernelFactory = KernelFactory(predicted);
-        printAndWrite(exportLine("KERNEL_FACTORY_ADDRESS", vm.toString(predicted)));
-    }
-
-    function _deployCallerHook() internal {
-        console.log("=== Deploying CallerHook ===");
-
-        bytes32 salt = generateSalt("CallerHook");
-        bytes memory creationCode = type(CallerHook).creationCode;
-        address predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
-
-        if (predicted.code.length > 0) {
-            console.log("WARNING: CallerHook already deployed at:", predicted);
-        } else {
-            address deployed = Create2.deploy(0, salt, creationCode);
-            require(deployed == predicted, "CallerHook address mismatch");
-            console.log("CallerHook deployed:", deployed);
-        }
-
-        callerHook = CallerHook(predicted);
-        printAndWrite(exportLine("CALLER_HOOK_ADDRESS", vm.toString(predicted)));
     }
 
     function _deployECDSASigner() internal {
