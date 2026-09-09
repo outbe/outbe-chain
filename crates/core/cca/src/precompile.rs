@@ -1,6 +1,6 @@
 //! ABI decode, dispatch and encode for the CCA registry precompile.
 //!
-//! A Credis Card Agent originates Credis positions on behalf of card owners.
+//! A Checkout Credis Agent originates Credis positions on behalf of card owners.
 //! `CredisFactory` needs to gate origination on the agent's standing, so the
 //! query side of that contract - [`ICca`] - is published and routed now; the
 //! registry that would answer it truthfully is not built yet.
