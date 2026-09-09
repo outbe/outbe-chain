@@ -177,13 +177,13 @@ impl World {
     fn fund_note(
         &mut self,
         asset: Address,
-        spender: Address,
+        owner: Address,
         note_amount: u128,
         spend_amount: u128,
     ) -> (Vec<u8>, B256) {
         self.fund_note_u256(
             asset,
-            spender,
+            owner,
             U256::from(note_amount),
             U256::from(spend_amount),
         )
@@ -192,14 +192,14 @@ impl World {
     fn fund_note_u256(
         &mut self,
         asset: Address,
-        spender: Address,
+        owner: Address,
         note_amount: U256,
         spend_amount: U256,
     ) -> (Vec<u8>, B256) {
         let fixture = paynote_support::note_and_spend_proof(
             CHAIN_ID,
             asset,
-            spender,
+            owner,
             note_amount,
             spend_amount,
         );
@@ -501,7 +501,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 //
 // A Nod's cost is paid by spending a note, not by a transfer. The value itself
 // reached the reserve vault when the note was deposited, so what these tests
-// pin is the proof obligation: the right spender, the right asset, enough
+// pin is the proof obligation: the right owner, the right asset, enough
 // covered, and exactly one spend per note.
 
 const NOTE_ASSET: Address = Address::new([0x71; 20]);
@@ -658,7 +658,7 @@ fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
 }
 
 #[test]
-fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
+fn a_paynote_naming_another_owner_cannot_pay_this_nod() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x64));
     let nod_id = world.issue(&input);
@@ -680,7 +680,7 @@ fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PayNoteSpenderMismatch {
+            if reason == &NodFactoryError::PayNoteOwnerMismatch {
                 expected: input.owner,
                 actual: stranger,
             }

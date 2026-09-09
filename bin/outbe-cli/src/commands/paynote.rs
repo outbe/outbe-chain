@@ -60,7 +60,7 @@ sol!("../../contracts/tokens/src/interfaces/IERC20.sol");
 ///
 ///   Generate a proof for an explicit recipient without a signing key:
 ///   outbe-cli --rpc-url http://localhost:8545 \
-///     paynote spend-proof 0xCOMMITMENT 600000 --spender "$RECIPIENT_ADDRESS"
+///     paynote spend-proof 0xCOMMITMENT 600000 --owner "$RECIPIENT_ADDRESS"
 #[derive(Subcommand)]
 #[command(verbatim_doc_comment)]
 pub enum PaynoteCmd {
@@ -76,9 +76,9 @@ pub enum PaynoteCmd {
         paynote: String,
         #[arg(value_parser = parse_amount)]
         amount: U256,
-        /// Proof recipient; defaults to the global --private-key address.
+        /// Proof owner (recipient); defaults to the global --private-key address.
         #[arg(long)]
-        spender: Option<Address>,
+        owner: Option<Address>,
     },
 }
 
@@ -94,11 +94,11 @@ impl PaynoteCmd {
             Self::SpendProof {
                 paynote,
                 amount,
-                spender,
+                owner,
             } => {
-                let spender = resolve_spender(spender, private_key)?;
+                let owner = resolve_owner(owner, private_key)?;
                 let note = load_note(&resolve_note(dir, &paynote))?;
-                spend_proof(client, dir, &note, amount, spender).await?
+                spend_proof(client, dir, &note, amount, owner).await?
             }
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -106,12 +106,12 @@ impl PaynoteCmd {
     }
 }
 
-fn resolve_spender(spender: Option<Address>, private_key: Option<&str>) -> Result<Address> {
-    let address = match spender {
+fn resolve_owner(owner: Option<Address>, private_key: Option<&str>) -> Result<Address> {
+    let address = match owner {
         Some(address) => address,
         None => require_signer(private_key)?.address(),
     };
-    ensure!(!address.is_zero(), "spender must be non-zero");
+    ensure!(!address.is_zero(), "owner must be non-zero");
     Ok(address)
 }
 
@@ -560,11 +560,11 @@ async fn check_unspent(client: &impl Rpc, note: &Note) -> Result<()> {
 fn prove(
     note: &Note,
     amount: U256,
-    spender: Address,
+    owner: Address,
     tree: &PayNoteTree,
 ) -> Result<(Vec<u8>, Option<Note>, PublicInputs)> {
     note.validate()?;
-    ensure!(!spender.is_zero(), "spender must be non-zero");
+    ensure!(!owner.is_zero(), "owner must be non-zero");
     let change = note.change(amount)?;
     let (leaf_index, auth_path) = witness(tree, field(note.commitment)?)?;
     let public = PublicInputs {
@@ -572,7 +572,7 @@ fn prove(
         root: tree.root(),
         nullifier: field(note.nullifier()?)?,
         asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(spender.as_slice()),
+        owner: field_from_be_bytes::<Field>(owner.as_slice()),
         spend_amount: u256::to_limbs(amount),
         change_commitment: change
             .as_ref()
@@ -612,18 +612,18 @@ async fn spend_proof(
     dir: &Path,
     note: &Note,
     amount: U256,
-    spender: Address,
+    owner: Address,
 ) -> Result<Value> {
     note.validate()?;
     ensure!(
         client.eth_chain_id().await? == note.chain_id,
         "note chain ID does not match RPC chain"
     );
-    ensure!(!spender.is_zero(), "spender must be non-zero");
+    ensure!(!owner.is_zero(), "owner must be non-zero");
     note.change(amount)?;
     check_unspent(client, note).await?;
     let tree = read_tree(client, note.chain_id).await?;
-    let (combined, change, public) = prove(note, amount, spender, &tree)?;
+    let (combined, change, public) = prove(note, amount, owner, &tree)?;
     ensure!(
         call(
             client,
@@ -643,7 +643,7 @@ async fn spend_proof(
         .transpose()?;
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
-        "asset": note.asset, "spender": spender, "spend_amount": amount.to_string(),
+        "asset": note.asset, "owner": owner, "spend_amount": amount.to_string(),
         "root": word(public.root), "nullifier": word(public.nullifier), "change_commitment": word(public.change_commitment) });
     let proof_path = save_json(
         &dir.join("proofs"),

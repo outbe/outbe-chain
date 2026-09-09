@@ -21,8 +21,8 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
-    #[error("PayNote proof names spender {actual}, expected {expected}")]
-    PayNoteSpenderMismatch { expected: Address, actual: Address },
+    #[error("PayNote proof names owner {actual}, expected {expected}")]
+    PayNoteOwnerMismatch { expected: Address, actual: Address },
 
     #[error("PayNote proof carries asset {asset}, which is not registered for reference currency {reference_currency}")]
     PayNoteAssetMismatch {

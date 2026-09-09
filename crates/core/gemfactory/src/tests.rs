@@ -152,12 +152,12 @@ const NOTE_AMOUNT: u128 = 1_000_000_000_000_000_000_000_000_000_000;
 fn note_proof(
     provider: &mut HashMapStorageProvider,
     asset: Address,
-    spender: Address,
+    owner: Address,
     amount: u128,
 ) -> Vec<u8> {
     let amount = U256::from(amount);
     let fixture =
-        outbe_paynote::test_support::note_and_spend_proof(1, asset, spender, amount, amount);
+        outbe_paynote::test_support::note_and_spend_proof(1, asset, owner, amount, amount);
     outbe_paynote::test_support::seed_pool(provider, 1, &[fixture.commitment]);
     fixture.proof
 }
@@ -166,11 +166,11 @@ fn note_proof(
 fn with_storage_paying<R>(
     rate: Option<U256>,
     asset: Address,
-    spender: Address,
+    owner: Address,
     f: impl FnOnce(&StorageHandle, &[u8]) -> R,
 ) -> R {
     let mut storage = test_storage(rate);
-    let proof = note_proof(&mut storage, asset, spender, NOTE_AMOUNT);
+    let proof = note_proof(&mut storage, asset, owner, NOTE_AMOUNT);
     StorageHandle::enter(&mut storage, |handle| f(&handle, &proof))
 }
 

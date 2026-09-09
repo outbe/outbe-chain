@@ -302,11 +302,11 @@ pub fn settle_gem(
     // Last, so a doomed settle never pays for proof verification.
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // Notes are bearer: anyone can relay a proof, so bind its spender to the caller.
-    if claim.spender != caller {
-        return Err(GemFactoryError::PayNoteSpenderMismatch {
+    // Notes are bearer: anyone can relay a proof, so bind its owner to the caller.
+    if claim.owner != caller {
+        return Err(GemFactoryError::PayNoteOwnerMismatch {
             expected: caller,
-            actual: claim.spender,
+            actual: claim.owner,
         }
         .into());
     }

@@ -36,7 +36,7 @@ use crate::sol_ext::IERC20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNoteClaim {
     pub asset: Address,
-    pub spender: Address,
+    pub owner: Address,
     pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
@@ -204,9 +204,9 @@ fn root_after_word(root: Field) -> B256 {
 ///
 /// Notes are bearer instruments — spend authority is knowledge of the spend
 /// key, not an address — so there is deliberately no caller check. The circuit
-/// binds `spender` as the payout target, so a third party who replays someone
+/// binds `owner` as the payout target, so a third party who replays someone
 /// else's proof only spends their own gas; the claim still names the intended
-/// spender.
+/// owner.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
@@ -228,7 +228,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
     if claim.owner.is_zero() {
-        return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
+        return Err(PayNoteError::InvalidInput("owner must be non-zero".into()).into());
     }
     if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
@@ -297,7 +297,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
                 asset: claim.asset,
-                spender: claim.owner,
+                owner: claim.owner,
                 nullifier: nullifier_word,
                 spendAmount: claim.spend_amount,
             }),
@@ -320,7 +320,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     Ok(PayNoteClaim {
         asset: claim.asset,
-        spender: claim.owner,
+        owner: claim.owner,
         spend_amount: claim.spend_amount,
         nullifier: nullifier_word,
     })

@@ -116,12 +116,12 @@ pub(crate) fn deposit_and_prove(
     prove_spend(world, port, &note, payer)
 }
 
-/// Proves a full spend of `note` by `spender` against the pool's live tree.
+/// Proves a full spend of `note` by `owner` against the pool's live tree.
 ///
 /// Every leaf ever appended is read back from `NewNote`, so the proof is built
 /// against the same root the chain will check it under — including any notes
 /// other scenarios deposited.
-pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Address) -> Vec<u8> {
+pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address) -> Vec<u8> {
     let mut tree = new_tree(note.chain_id).expect("paynote tree");
     for (index, commitment) in deposited_leaves(world, port) {
         assert_eq!(
@@ -139,7 +139,7 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
         asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(spender.as_slice()),
+        owner: field_from_be_bytes::<Field>(owner.as_slice()),
         spend_amount: u256::to_limbs(note.amount),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.

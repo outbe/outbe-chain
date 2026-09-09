@@ -71,8 +71,8 @@ pub enum GemFactoryError {
     #[error("promis load must be positive")]
     ZeroPromisLoad,
 
-    #[error("PayNote proof names spender {actual}, expected {expected}")]
-    PayNoteSpenderMismatch {
+    #[error("PayNote proof names owner {actual}, expected {expected}")]
+    PayNoteOwnerMismatch {
         expected: alloy_primitives::Address,
         actual: alloy_primitives::Address,
     },

@@ -36,7 +36,7 @@ const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
 
 const ALICE: Address = Address::new([0x11; 20]);
-const SPENDER: Address = Address::new([0x22; 20]);
+const OWNER: Address = Address::new([0x22; 20]);
 const USDC: Address = Address::new([0x33; 20]);
 const WBTC: Address = Address::new([0x44; 20]);
 
@@ -69,7 +69,7 @@ fn prove_spend(
     let fixture = note_and_spend_proof(
         chain_id,
         asset,
-        SPENDER,
+        OWNER,
         U256::from(amount),
         U256::from(spend_amount),
     );
@@ -308,7 +308,7 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
     provider.enter(|storage| {
         let claim = runtime::consume(&storage, &proof).expect("valid full spend");
         assert_eq!(claim.asset, USDC);
-        assert_eq!(claim.spender, SPENDER);
+        assert_eq!(claim.owner, OWNER);
         assert_eq!(claim.spend_amount, 100);
 
         let paynote: PayNoteContract<'_> = storage.contract();
@@ -391,7 +391,7 @@ fn full_width_u256_spend_round_trip() {
 
     let note_amount = (U256::from(1) << 200) + U256::from(100);
     let spend_amount = (U256::from(1) << 199) + U256::from(40);
-    let fixture = note_and_spend_proof(CHAIN_ID, USDC, SPENDER, note_amount, spend_amount);
+    let fixture = note_and_spend_proof(CHAIN_ID, USDC, OWNER, note_amount, spend_amount);
     assert_eq!(fixture.proof.len(), PAYNOTE_COMBINED_LEN);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);

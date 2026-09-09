@@ -1067,7 +1067,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       series: seriesArg,
       amount: amountArg,
       holder: accountArg,
-      pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its spender"),
+      pay_note_proof: z.string().describe("0x-hex `outbe.paynote` spend proof naming the signing wallet as its owner"),
       network: networkArg.optional(),
       wait: waitArg,
     },

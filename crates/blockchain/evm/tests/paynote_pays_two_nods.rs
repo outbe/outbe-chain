@@ -79,8 +79,8 @@ const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
-/// have to share an owner: the note names its spender, and `mineGratis` demands
-/// the spender be the Nod's owner. That spender is `ALICE1`, not the depositor.
+/// share `ALICE1` as their owner: each proof names that address as its owner,
+/// matching the Nod owner as `mineGratis` requires. The depositor can be different.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -391,7 +391,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         "paying a Nod must burn the note it was paid with"
     );
 
-    // The unspent half came back as a change leaf, derivable by the spender
+    // The unspent half came back as a change leaf, derivable by the owner
     // alone from the key and nullifier they already hold.
     let change =
         change_note(CHAIN_ID, &funding, U256::from(COST)).expect("a half-spent note leaves change");
@@ -409,7 +409,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
                 commitment: word(change.commitment)
             }
         ),
-        "the appended leaf must be the change commitment the spender can derive"
+        "the appended leaf must be the change commitment the owner can derive"
     );
     let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
 

@@ -131,7 +131,7 @@ fn command_inputs_and_note_validation() {
         "spend-proof",
         "note.json",
         "1",
-        "--spender",
+        "--owner",
         &asset
     ])
     .is_ok());
@@ -148,12 +148,12 @@ fn command_inputs_and_note_validation() {
         assert!(parse_amount(invalid).is_err(), "{invalid}");
     }
     assert_eq!(
-        resolve_spender(None, Some(KEY)).unwrap(),
+        resolve_owner(None, Some(KEY)).unwrap(),
         TxSigner::new(KEY).unwrap().address()
     );
-    assert_eq!(resolve_spender(Some(ASSET), None).unwrap(), ASSET);
-    assert!(resolve_spender(None, None).is_err());
-    assert!(resolve_spender(Some(Address::ZERO), Some(KEY)).is_err());
+    assert_eq!(resolve_owner(Some(ASSET), None).unwrap(), ASSET);
+    assert!(resolve_owner(None, None).is_err());
+    assert!(resolve_owner(Some(Address::ZERO), Some(KEY)).is_err());
     let mut n = note();
     assert!(n.change(U256::ZERO).is_err());
     assert!(n.change(n.amount + U256::ONE).is_err());
@@ -453,7 +453,7 @@ async fn expired_proof_does_not_publish_artifacts_or_change_state() {
 #[tokio::test]
 async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     let n = note();
-    let spender = TxSigner::new(KEY).unwrap().address();
+    let owner = TxSigner::new(KEY).unwrap().address();
     let temp = tempfile::tempdir().unwrap();
     let mut tree = new_tree(CHAIN).unwrap();
     tree.append(field(n.commitment).unwrap()).unwrap();
@@ -476,12 +476,13 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         temp.path(),
         &saved,
         amount,
-        spender,
+        owner,
     )
     .await
     .unwrap();
     let combined = hex::decode(output["proof"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     let change = load_note(Path::new(output["change_note"].as_str().unwrap())).unwrap();
+    assert_eq!(output["owner"], json!(owner));
     assert_eq!(change.amount, n.amount - amount);
     assert!(witness(&tree, field(change.commitment).unwrap()).is_err());
     assert!(load_note(Path::new(deposited["note"].as_str().unwrap())).unwrap() == n);
@@ -496,7 +497,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
     provider.enter(|storage| {
         let claim = outbe_paynote::api::consume(&storage, &combined).unwrap();
         assert_eq!(claim.spend_amount, amount);
-        assert_eq!(claim.spender, spender);
+        assert_eq!(claim.owner, owner);
         assert!(outbe_paynote::api::is_spent(&storage, n.nullifier().unwrap()).unwrap());
     });
     tree.append(field(change.commitment).unwrap()).unwrap();
@@ -515,7 +516,7 @@ async fn deposited_note_partial_spend_and_saved_change_consume_real_proofs() {
         temp.path(),
         &change,
         change.amount,
-        spender,
+        owner,
     )
     .await
     .unwrap();

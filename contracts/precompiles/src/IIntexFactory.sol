@@ -16,7 +16,7 @@ interface IIntexFactory {
     ///      tokens: the underlying assets reached the reserve vault when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        spender, carry a token registered with the vault router under either of
+    ///        owner, carry a token registered with the vault router under either of
     ///        the series' currencies, and cover the settlement cost. The issuance
     ///        currency converts through COEN and needs fresh rates.
     function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;

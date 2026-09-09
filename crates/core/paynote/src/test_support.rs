@@ -56,7 +56,7 @@ fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: U256) -> No
 /// a note for nothing.
 ///
 /// The change key is derived from the spent note's key and nullifier, so the
-/// spender can rebuild the change note from what they already hold — nothing
+/// owner can rebuild the change note from what they already hold — nothing
 /// about it is published beyond the commitment.
 pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Note> {
     let remaining = note.amount.checked_sub(spend_amount)?;
@@ -67,7 +67,7 @@ pub fn change_note(chain_id: u64, note: &Note, spend_amount: U256) -> Option<Not
     Some(note_under_key(chain_id, key, note.asset, remaining))
 }
 
-/// Proves `spender` spending `spend_amount` of the note sitting at `leaf_index`
+/// Proves `owner` spending `spend_amount` of the note sitting at `leaf_index`
 /// in `tree`, returning combined public-inputs-plus-proof bytes.
 ///
 /// The tree is a parameter because a note's auth path only exists relative to
@@ -78,10 +78,10 @@ pub fn spend_proof(
     tree: &PayNoteTree,
     leaf_index: u32,
     note: &Note,
-    spender: Address,
+    owner: Address,
     spend_amount: U256,
 ) -> Vec<u8> {
-    let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, spender, spend_amount);
+    let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, owner, spend_amount);
     combined_from(&public, &proof)
 }
 
@@ -90,7 +90,7 @@ fn prove_spend(
     tree: &PayNoteTree,
     leaf_index: u32,
     n: &Note,
-    spender: Address,
+    owner: Address,
     spend_amount: U256,
 ) -> (PublicInputs, Vec<Vec<u8>>) {
     let public = PublicInputs {
@@ -98,7 +98,7 @@ fn prove_spend(
         root: tree.root(),
         nullifier: n.nullifier,
         asset: field_from_be_bytes::<Field>(n.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(spender.as_slice()),
+        owner: field_from_be_bytes::<Field>(owner.as_slice()),
         spend_amount: u256::to_limbs(spend_amount),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
@@ -170,21 +170,21 @@ pub struct SpendFixture {
 }
 
 /// Builds a note of `note_amount` in `asset` and proves a `spend_amount` spend
-/// of it by `spender`, over a tree holding that note alone.
+/// of it by `owner`, over a tree holding that note alone.
 ///
 /// Proving is real Barretenberg work — roughly half a second per call — so
 /// callers should build one fixture per assertion, not one per iteration.
 pub fn note_and_spend_proof(
     chain_id: u64,
     asset: Address,
-    spender: Address,
+    owner: Address,
     note_amount: U256,
     spend_amount: U256,
 ) -> SpendFixture {
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = crate::client::new_tree(chain_id).unwrap();
     let leaf_index = u32::try_from(tree.append(n.commitment).unwrap().0).unwrap();
-    let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, spender, spend_amount);
+    let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, owner, spend_amount);
 
     SpendFixture {
         commitment: n.commitment,
