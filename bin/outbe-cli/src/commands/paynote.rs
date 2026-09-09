@@ -15,15 +15,13 @@ use outbe_paynote::{
     client::{new_tree, witness},
     hash::{change_key, note_commitment, note_nullifier, note_sn, Field},
     precompile::IPayNote,
-    PayNoteTree,
+    PayNoteSuit, PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::codec::field_from_be_bytes;
-use outbe_protocol::codec::field_from_be_bytes_canonical;
-use outbe_protocol::Codec as _;
 use outbe_protocol::{
+    codec::FieldElement,
     protocol::zk::{Circuit, CircuitId, ProofGenerator},
-    OutbeV1,
+    Codec,
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
 use outbe_zk_canonical::{
@@ -171,7 +169,7 @@ impl Note {
             rng.fill(bytes.as_mut())
                 .map_err(|_| eyre::eyre!("spend-key randomness unavailable"))?;
             // Rejection sampling avoids reducing random words modulo the field.
-            if let Ok(key) = field_from_be_bytes_canonical::<Field>(&bytes[..], "BN254 field") {
+            if let Ok(key) = B256::from(*bytes).to_field() {
                 if key != Field::from(0) {
                     return Self::new(chain_id, asset, amount, key);
                 }
@@ -193,10 +191,14 @@ impl Note {
     }
 
     fn key(&self) -> Result<Field> {
-        field(self.spend_key)
+        Ok(self.spend_key.to_field()?)
     }
+
     fn nullifier(&self) -> Result<B256> {
-        Ok(word(note_nullifier(field(self.commitment)?, self.key()?)?))
+        Ok(word(note_nullifier(
+            self.commitment.to_field()?,
+            self.key()?,
+        )?))
     }
 
     fn change(&self, amount: U256) -> Result<Option<Self>> {
@@ -212,17 +214,13 @@ impl Note {
             self.chain_id,
             self.asset,
             remaining,
-            change_key(self.key()?, field(self.nullifier()?)?)?,
+            change_key(self.key()?, self.nullifier()?.to_field()?)?,
         )?))
     }
 }
 
 fn word(value: Field) -> B256 {
-    B256::from_slice(&OutbeV1::field_to_be_bytes(&value))
-}
-fn field(value: B256) -> Result<Field> {
-    field_from_be_bytes_canonical::<Field>(&value.0, "BN254 field")
-        .map_err(|_| eyre::eyre!("noncanonical BN254 field"))
+    B256::from_slice(&PayNoteSuit::field_to_be_bytes(&value))
 }
 
 fn resolve_note(dir: &Path, argument: &str) -> PathBuf {
@@ -474,8 +472,8 @@ fn decode_note(log: &Value) -> Result<IPayNote::NewNote> {
         event.commitment != B256::ZERO && !event.asset.is_zero(),
         "invalid NewNote commitment or asset"
     );
-    field(event.commitment)?;
-    field(event.rootAfter)?;
+    let _: Field = event.commitment.to_field()?;
+    let _: Field = event.rootAfter.to_field()?;
     Ok(event)
 }
 
@@ -502,7 +500,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
                 usize::try_from(event.leafIndex)? == tree.leaves().len(),
                 "NewNote history has duplicate or missing leaf indexes"
             );
-            tree.append(field(event.commitment)?)?;
+            tree.append(event.commitment.to_field()?)?;
             ensure!(
                 word(tree.root()) == event.rootAfter,
                 "NewNote history root mismatch"
@@ -566,17 +564,17 @@ fn prove(
     note.validate()?;
     ensure!(!owner.is_zero(), "owner must be non-zero");
     let change = note.change(amount)?;
-    let (leaf_index, auth_path) = witness(tree, field(note.commitment)?)?;
+    let (leaf_index, auth_path) = witness(tree, note.commitment.to_field()?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
         root: tree.root(),
-        nullifier: field(note.nullifier()?)?,
-        asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(owner.as_slice()),
+        nullifier: note.nullifier()?.to_field()?,
+        asset: note.asset.to_field()?,
+        owner: owner.to_field()?,
         spend_amount: u256::to_limbs(amount),
         change_commitment: change
             .as_ref()
-            .map(|n| field(n.commitment))
+            .map(|n| n.commitment.to_field())
             .transpose()?
             .unwrap_or(Field::from(0)),
     };
@@ -586,16 +584,17 @@ fn prove(
         leaf_index,
         auth_path,
     };
-    let proof =
-        ProofGenerator::<OutbeV1, Paynote>::generate(&Barretenberg::default(), &witness, &public)
-            .map_err(|_| {
-            eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup")
-        })?;
-    let fields = <Paynote as Circuit<OutbeV1>>::public_inputs(&public);
+    let proof = ProofGenerator::<PayNoteSuit, Paynote>::generate(
+        &Barretenberg::default(),
+        &witness,
+        &public,
+    )
+    .map_err(|_| eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup"))?;
+    let fields = <Paynote as Circuit<PayNoteSuit>>::public_inputs(&public);
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
-        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&value));
+        combined.extend_from_slice(&PayNoteSuit::field_to_be_bytes(&value));
     }
     for value in proof.proof {
         combined.extend_from_slice(&value);

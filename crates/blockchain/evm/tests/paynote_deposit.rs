@@ -17,8 +17,8 @@
 //!   * the appended leaf is the runtime-derived commitment, readable through
 //!     the public view ABI.
 
+use outbe_paynote::PayNoteSuit;
 use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -93,7 +93,7 @@ fn expected_commitment_u256(asset: Address, amount: U256) -> Field {
 }
 
 fn note_serial_word() -> alloy_primitives::B256 {
-    alloy_primitives::B256::from_slice(&OutbeV1::field_to_be_bytes(
+    alloy_primitives::B256::from_slice(&PayNoteSuit::field_to_be_bytes(
         &note_sn(Field::from(SPEND_KEY)).unwrap(),
     ))
 }
@@ -230,7 +230,7 @@ fn deposit_routes_full_width_amount_through_vault_router_and_appends_commitment(
 
     // And the appended leaf is the commitment the runtime derived from the
     // asset and amount it actually moved — not anything the caller supplied.
-    let commitment = alloy_primitives::B256::from_slice(&OutbeV1::field_to_be_bytes(
+    let commitment = alloy_primitives::B256::from_slice(&PayNoteSuit::field_to_be_bytes(
         &expected_commitment_u256(ASSET, amount),
     ));
     let present = run_call!(
@@ -371,7 +371,7 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
     );
 
     for amount in [DEPOSIT_AMOUNT, DEPOSIT_AMOUNT + 1] {
-        let commitment = alloy_primitives::B256::from_slice(&OutbeV1::field_to_be_bytes(
+        let commitment = alloy_primitives::B256::from_slice(&PayNoteSuit::field_to_be_bytes(
             &expected_commitment(ASSET, amount),
         ));
         let present = run_call!(

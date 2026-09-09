@@ -15,10 +15,10 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_paynote::client::{new_tree, witness};
 use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn, Field};
 use outbe_paynote::test_support::combined_from;
+use outbe_paynote::PayNoteSuit;
 use outbe_protocol::codec::{field_from_be_bytes, field_from_be_bytes_canonical};
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
 use outbe_zk_canonical::u256;
@@ -61,7 +61,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        B256::from_slice(&OutbeV1::field_to_be_bytes(&self.serial))
+        B256::from_slice(&PayNoteSuit::field_to_be_bytes(&self.serial))
     }
 }
 
@@ -151,9 +151,12 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address)
         leaf_index,
         auth_path,
     };
-    let proof =
-        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
-            .expect("paynote spend proof");
+    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
+        &Barretenberg::default(),
+        &witness,
+        &public,
+    )
+    .expect("paynote spend proof");
     combined_from(&public, &proof.proof)
 }
 

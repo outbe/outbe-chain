@@ -16,7 +16,6 @@ use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
 use outbe_zk_canonical::paynote::{
     COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
@@ -30,7 +29,7 @@ use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
 
-use crate::PayNoteTree;
+use crate::{PayNoteSuit, PayNoteTree};
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
@@ -41,7 +40,7 @@ const USDC: Address = Address::new([0x33; 20]);
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
+    B256::from_slice(&PayNoteSuit::field_to_be_bytes(&field))
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {

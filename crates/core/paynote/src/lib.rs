@@ -39,8 +39,11 @@ pub mod test_support;
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
+/// Cryptographic suite used by PayNote.
+pub type PayNoteSuit = outbe_protocol::OutbeV1;
+
 /// In-memory commitment tree for PayNote clients.
-pub type PayNoteTree = outbe_protocol::protocol::imt::Imt<outbe_protocol::OutbeV1>;
+pub type PayNoteTree = outbe_protocol::protocol::imt::Imt<PayNoteSuit>;
 
 #[cfg(test)]
 mod tests;
