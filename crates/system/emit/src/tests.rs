@@ -199,16 +199,14 @@ fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     combined
 }
 
-/// Proves `(note_amount, key, leaf_index)` against the tree's root when only
-/// `root_leaf_count` leaves existed, for `mint_units`, with the deterministic
-/// change commitment (zero for a full mint).
+/// Proves `(note_amount, key, leaf_index)` against the current tree root for
+/// `mint_units`, with the deterministic change commitment (zero for a full mint).
 fn prove_mint(
     tree: &EmitTree,
     owner: Address,
     key: Field,
     note_amount: u128,
     leaf_index: u32,
-    root_leaf_count: usize,
     mint_units: u128,
 ) -> Vec<u8> {
     prove_mint_u256(
@@ -217,7 +215,6 @@ fn prove_mint(
         key,
         U256::from(note_amount),
         leaf_index,
-        root_leaf_count,
         U256::from(mint_units),
     )
 }
@@ -228,7 +225,6 @@ fn prove_mint_u256(
     key: Field,
     note_amount: U256,
     leaf_index: u32,
-    root_leaf_count: usize,
     mint_units: U256,
 ) -> Vec<u8> {
     let serial = derive_note_sn(owner.into(), key);
@@ -243,7 +239,7 @@ fn prove_mint_u256(
     };
     let public = PublicInputs {
         chain_id: CHAIN_ID,
-        root: tree.root_at(root_leaf_count).unwrap(),
+        root: tree.root(),
         nullifier,
         note_owner: address_field(owner.into()),
         mint_units: u256::to_limbs(mint_units),
@@ -254,7 +250,7 @@ fn prove_mint_u256(
         note_spend_key: key,
         leaf_index,
         auth_path: tree
-            .inclusion_path_at(u64::from(leaf_index), root_leaf_count)
+            .inclusion_path(u64::from(leaf_index))
             .unwrap()
             .siblings
             .try_into()
@@ -610,14 +606,14 @@ fn malformed_proof_tail_reverts_never_fatal() {
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
         U256::from(60),
     );
-    let mut proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let mut proof = prove_mint(&tree, BOB, key, 100, leaf, 40);
     let tail = &mut proof[4 + 8 * 32..];
     tail[..32].copy_from_slice(&alloy_primitives::hex!(
         "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
     ));
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(tree.root()),
         b256(nullifier),
         BOB,
         40,
@@ -866,15 +862,15 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
-    let root_after_burn = tree.root_at(1).unwrap();
+    let root_after_burn = tree.root();
 
     // Partial mint of 40 to Carol.
-    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
+    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
     let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let next_key = change_key(key, nullifier);
     let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), U256::from(60));
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
-    let root_after_change = tree.root_at(2).unwrap();
+    let root_after_change = tree.root();
 
     let partial_data = mint_calldata(
         CAROL,
@@ -890,7 +886,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
 
     // Full mint of the remaining 60 from the change note to Dave.
-    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 2, 60);
+    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 60);
     let next_nullifier = derive_nullifier(change, next_key);
     let full_data = mint_calldata(
         DAVE,
@@ -984,13 +980,13 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     )
     .unwrap();
     run_burn_u256(&mut provider, ALICE, note, b256(serial)).unwrap();
-    let root_after_burn = tree.root_at(1).unwrap();
+    let root_after_burn = tree.root();
 
     let commitment = note_commitment(CHAIN_ID, serial, note);
     let nullifier = derive_nullifier(commitment, key);
     let next_key = change_key(key, nullifier);
     let change = note_commitment(CHAIN_ID, derive_note_sn(BOB.into(), next_key), remainder);
-    let partial = prove_mint_u256(&tree, BOB, key, note, note_leaf, 1, minted);
+    let partial = prove_mint_u256(&tree, BOB, key, note, note_leaf, minted);
     let data = mint_calldata_u256(
         CAROL,
         b256(root_after_burn),
@@ -1005,10 +1001,10 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
 
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
     let next_nullifier = derive_nullifier(change, next_key);
-    let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, 2, remainder);
+    let full = prove_mint_u256(&tree, BOB, next_key, remainder, change_leaf, remainder);
     let data = mint_calldata_u256(
         DAVE,
-        b256(tree.root_at(2).unwrap()),
+        b256(tree.root()),
         b256(next_nullifier),
         BOB,
         remainder,
@@ -1040,8 +1036,8 @@ fn stale_root_past_the_32_window_is_rejected() {
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
-    let old_root = tree.root_at(1).unwrap();
-    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
+    let old_root = tree.root();
+    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 40);
     let nullifier = derive_nullifier(
         note_commitment(pool, serial, U256::from(100)),
         Field::from(17u64),
@@ -1093,7 +1089,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     )
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
-    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 40);
     let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
@@ -1104,7 +1100,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     provider.set_balance(CAROL, U256::MAX);
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(tree.root()),
         b256(nullifier),
         BOB,
         40,
@@ -1148,7 +1144,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
             .0,
     )
     .unwrap();
-    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
+    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 40);
     let nullifier = derive_nullifier(
         note_commitment(pool, serial, U256::from(100)),
         Field::from(17u64),
@@ -1160,7 +1156,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(tree.root()),
         b256(nullifier),
         BOB,
         40,
@@ -1199,13 +1195,14 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 
     // Anyone pre-creates the deterministic change commitment by burning the
     // successor serial with the matching amount.
-    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let root_before_change = tree.root();
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 40);
     tree.append(change).unwrap();
     run_burn(&mut provider, ALICE, 60, b256(next_serial)).unwrap();
 
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(root_before_change),
         b256(nullifier),
         BOB,
         40,
@@ -1300,7 +1297,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     .unwrap();
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
 
-    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 40);
     let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
@@ -1309,7 +1306,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(tree.root()),
         b256(nullifier),
         BOB,
         40,
@@ -1461,10 +1458,10 @@ fn mint_rolls_back_fully_under_fault_injection() {
         U256::from(60),
     );
 
-    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 40);
     let data = mint_calldata(
         CAROL,
-        b256(tree.root_at(1).unwrap()),
+        b256(tree.root()),
         b256(nullifier),
         BOB,
         40,

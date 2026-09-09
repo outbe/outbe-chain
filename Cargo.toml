@@ -276,10 +276,10 @@ num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1d02a3264e30a615074df46f944a60fb8540606a" }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1d02a3264e30a615074df46f944a60fb8540606a" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1d02a3264e30a615074df46f944a60fb8540606a", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1d02a3264e30a615074df46f944a60fb8540606a" }
+outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1" }
+outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1" }
+outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1", features = ["alloy"] }
+outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", rev = "1a6dc6f1cd33b3027460fdd1f47151b260aaf0a1" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 

@@ -189,7 +189,6 @@ fn prove_mint(
     key: Field,
     note_amount: u128,
     leaf_index: u32,
-    root_leaf_count: usize,
     mint_units: u128,
 ) -> Vec<u8> {
     let serial = derive_note_sn(owner.into(), key);
@@ -210,7 +209,7 @@ fn prove_mint(
     };
     let public = PublicInputs {
         chain_id: CHAIN_ID,
-        root: tree.root_at(root_leaf_count).unwrap(),
+        root: tree.root(),
         nullifier,
         note_owner: address_field(owner.into()),
         mint_units: u256::to_limbs(U256::from(mint_units)),
@@ -221,7 +220,7 @@ fn prove_mint(
         note_spend_key: key,
         leaf_index,
         auth_path: tree
-            .inclusion_path_at(u64::from(leaf_index), root_leaf_count)
+            .inclusion_path(u64::from(leaf_index))
             .unwrap()
             .siblings
             .try_into()
@@ -368,7 +367,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     );
     assert_eq!(new_note.leafIndex, note_leaf);
     assert_eq!(new_note.noteAmount, 100);
-    assert_eq!(new_note.rootAfter, b256(tree.root_at(1).unwrap()));
+    assert_eq!(new_note.rootAfter, b256(tree.root()));
     // Routed base gas is selector-sensitive: the burn charge sits between
     // the two pinned constants (a regression to a flat default would leave
     // this window).
@@ -381,13 +380,13 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     // The EVM persists state between transactions only through the shared db:
     // re-run each step against the post-state of the previous one.
     let db = chained_db(base_db(), outcome);
-    let root_after_burn = tree.root_at(1).unwrap();
+    let root_after_burn = tree.root();
 
     // Bob's partial proof mints 40 to Carol; the change note is appended.
     let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let next_key = change_key(key, nullifier);
     let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), U256::from(60));
-    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
+    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
     let outcome = run(
         db.clone(),
@@ -424,14 +423,14 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     assert_eq!(change_note.commitment, b256(change));
     assert_eq!(change_note.leafIndex, change_leaf);
     assert_eq!(change_note.noteAmount, 0);
-    assert_eq!(change_note.rootAfter, b256(tree.root_at(2).unwrap()));
+    assert_eq!(change_note.rootAfter, b256(tree.root()));
     // The mint selector's fixed base gas dominates the routed charge.
     assert!(gas_used(&outcome.result) >= 3_517_500);
     let db = chained_db(db, outcome);
 
     // Bob's successor proof mints the remaining 60 to Dave — NoteUsed only.
     let next_nullifier = derive_nullifier(change, next_key);
-    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 2, 60);
+    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 60);
     let outcome = run(
         db.clone(),
         BOB,
@@ -440,7 +439,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
         20_000_000,
         mint_tx(
             DAVE,
-            tree.root_at(2).unwrap(),
+            tree.root(),
             next_nullifier,
             BOB,
             60,
@@ -482,14 +481,14 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     );
     assert_eq!(
         B256::from(committed_storage(&db, 0)),
-        b256(tree.root_at(2).unwrap()),
+        b256(tree.root()),
         "a full mint does not advance the root"
     );
 
     let output = view(db.clone(), IEmit::currentRootCall {}.abi_encode().into());
     assert_eq!(
         IEmit::currentRootCall::abi_decode_returns(&output).unwrap(),
-        b256(tree.root_at(2).unwrap())
+        b256(tree.root())
     );
     let output = view(db.clone(), IEmit::leafCountCall {}.abi_encode().into());
     assert_eq!(
@@ -593,7 +592,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     );
     assert_eq!(
         B256::from(committed_storage(&db, 0)),
-        b256(tree.root_at(2).unwrap()),
+        b256(tree.root()),
         "the replay does not advance the root"
     );
 }
@@ -636,8 +635,8 @@ fn root_evicted_by_32_later_appends_is_stale() {
     );
     assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
     db = chained_db(db, outcome);
-    let old_root = tree.root_at(1).unwrap();
-    let proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
+    let old_root = tree.root();
+    let proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
     let nullifier = derive_nullifier(note_commitment(pool, serial, U256::from(100)), key);
     let change = note_commitment(
         pool,
@@ -683,7 +682,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         .unwrap();
 
     // Value on the mint selector: refused before dispatch touches state.
-    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, 0, 1, 40);
+    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, 0, 40);
     let nullifier = derive_nullifier(
         note_commitment(pool, serial, U256::from(100)),
         Field::from(17u64),
@@ -693,15 +692,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         derive_note_sn(BOB.into(), change_key(Field::from(17u64), nullifier)),
         U256::from(60),
     );
-    let calldata = mint_tx(
-        CAROL,
-        tree.root_at(1).unwrap(),
-        nullifier,
-        BOB,
-        40,
-        change,
-        &proof,
-    );
+    let calldata = mint_tx(CAROL, tree.root(), nullifier, BOB, 40, change, &proof);
     let outcome = run(base_db(), BOB, EMIT_ADDRESS, 7, 20_000_000, calldata);
     assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
     assert_eq!(
@@ -797,10 +788,10 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
             derive_note_sn(BORROWER.into(), change_key(key, owner_nullifier)),
             U256::from(60),
         );
-        let proof = prove_mint(&owner_tree, BORROWER, key, 100, leaf, 1, 40);
+        let proof = prove_mint(&owner_tree, BORROWER, key, 100, leaf, 40);
         let calldata = mint_tx(
             CAROL,
-            owner_tree.root_at(1).unwrap(),
+            owner_tree.root(),
             owner_nullifier,
             BORROWER,
             40,
