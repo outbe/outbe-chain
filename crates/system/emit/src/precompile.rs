@@ -8,8 +8,9 @@ use outbe_primitives::dispatch::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::codec::field_from_be_bytes_canonical;
 
-use crate::hash::field_from_be_bytes;
+use crate::hash::Field;
 use crate::runtime::{self, MintStatement};
 use crate::schema::EmitContract;
 
@@ -92,9 +93,9 @@ pub fn dispatch(
 /// Membership keys are stored as canonical field words. A non-canonical query
 /// can never name a stored key, so it reads the zero slot and returns `false`.
 fn normalize(word: B256) -> B256 {
-    match field_from_be_bytes(&word.0) {
-        Some(_) => word,
-        None => B256::ZERO,
+    match field_from_be_bytes_canonical::<Field>(&word.0, "BN254 field") {
+        Ok(_) => word,
+        Err(_) => B256::ZERO,
     }
 }
 

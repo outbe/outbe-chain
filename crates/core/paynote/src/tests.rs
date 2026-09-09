@@ -15,13 +15,15 @@ use alloy_sol_types::SolCall;
 use ark_ff::Zero;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::Codec as _;
+use outbe_protocol::OutbeV1;
 use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs};
 use outbe_zk_canonical::paynote::{
     COMBINED_LEN as PAYNOTE_COMBINED_LEN, PROOF_WORDS as PAYNOTE_PROOF_WORDS,
 };
 use outbe_zk_canonical::CircuitId as _;
 
-use crate::hash::{empty_subtrees, field_to_be_bytes, Field};
+use crate::hash::{empty_subtrees, Field};
 use crate::precompile::{base_gas, dispatch, IPayNote, PAYABLE_SELECTORS};
 use crate::runtime;
 use crate::schema::{
@@ -39,7 +41,7 @@ const USDC: Address = Address::new([0x33; 20]);
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {

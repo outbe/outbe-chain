@@ -5,6 +5,8 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::Codec as _;
 use outbe_zk_canonical::{
     emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
     full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
@@ -333,7 +335,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         chain_id,
         root,
         nullifier,
-        note_owner: address_field(owner),
+        note_owner: field_from_be_bytes::<Field>(&owner),
         mint_units,
         change_commitment: change,
     };
@@ -352,7 +354,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     combined.extend_from_slice(&8u32.to_be_bytes());
     for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
     {
-        combined.extend_from_slice(&field_to_be_bytes(word));
+        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&word));
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

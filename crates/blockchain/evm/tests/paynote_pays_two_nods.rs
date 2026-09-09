@@ -20,6 +20,8 @@
 //! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
 //! NodFactory, Nod, GratisFactory and Gratis all run for real.
 
+use outbe_protocol::Codec as _;
+use outbe_protocol::OutbeV1;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -33,7 +35,7 @@ use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_paynote::client::new_tree;
-use outbe_paynote::hash::field_to_be_bytes;
+
 use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
@@ -276,7 +278,7 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
 }
 
 fn word(field: outbe_paynote::hash::Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
 }
 
 /// Calls `mineGratis` for `nod_id`, authorizing the gratis mint against the

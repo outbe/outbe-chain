@@ -10,8 +10,9 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::codec::field_from_be_bytes_canonical;
 
-use crate::hash::field_from_be_bytes;
+use crate::hash::Field;
 use crate::runtime;
 use crate::schema::PayNoteContract;
 
@@ -77,9 +78,9 @@ pub fn dispatch(
 /// reverting — and normalizing keeps a reducible encoding of a stored word
 /// from reading as absent.
 fn normalize(word: B256) -> B256 {
-    match field_from_be_bytes(&word.0) {
-        Some(_) => word,
-        None => B256::ZERO,
+    match field_from_be_bytes_canonical::<Field>(&word.0, "BN254 field") {
+        Ok(_) => word,
+        Err(_) => B256::ZERO,
     }
 }
 

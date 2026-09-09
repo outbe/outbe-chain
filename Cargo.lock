@@ -9075,6 +9075,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-paynote",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-validatorset",
@@ -9353,7 +9354,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.15.0#f2d47bffa717c866e5a0a63da57bfaf10d0d610b"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
@@ -9423,7 +9424,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.15.0#f2d47bffa717c866e5a0a63da57bfaf10d0d610b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9904,7 +9905,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.15.0#f2d47bffa717c866e5a0a63da57bfaf10d0d610b"
 dependencies = [
  "acir",
  "acvm",
@@ -9922,7 +9923,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?rev=bb774c8193bbe5cd5386b5c13079ef25d32f86d1#bb774c8193bbe5cd5386b5c13079ef25d32f86d1"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.15.0#f2d47bffa717c866e5a0a63da57bfaf10d0d610b"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",

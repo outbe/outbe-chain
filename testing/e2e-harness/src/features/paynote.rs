@@ -13,12 +13,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_paynote::client::{new_tree, witness};
-use outbe_paynote::hash::{
-    address_field, field_from_be_bytes, field_to_be_bytes, note_commitment, note_nullifier,
-    note_sn, Field,
-};
+use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn, Field};
 use outbe_paynote::test_support::combined_from;
+use outbe_protocol::codec::{field_from_be_bytes, field_from_be_bytes_canonical};
 use outbe_protocol::protocol::zk::ProofGenerator;
+use outbe_protocol::Codec as _;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -62,7 +61,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        B256::new(field_to_be_bytes(self.serial))
+        B256::from_slice(&OutbeV1::field_to_be_bytes(&self.serial))
     }
 }
 
@@ -139,8 +138,8 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         chain_id: note.chain_id,
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
-        asset: address_field(note.asset.into()),
-        owner: address_field(spender.into()),
+        asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
+        owner: field_from_be_bytes::<Field>(spender.as_slice()),
         spend_amount: u256::to_limbs(note.amount),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
@@ -197,7 +196,8 @@ fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
         .ok()?
         .try_into()
         .ok()?;
-    let commitment = field_from_be_bytes(&commitment_bytes)?;
+    let commitment =
+        field_from_be_bytes_canonical::<Field>(&commitment_bytes, "BN254 field").ok()?;
 
     let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if data.len() != 3 * 32 {

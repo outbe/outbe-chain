@@ -13,14 +13,14 @@ use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
 use outbe_paynote::{
     client::{new_tree, witness},
-    hash::{
-        address_field, change_key, field_from_be_bytes, field_to_be_bytes, note_commitment,
-        note_nullifier, note_sn, Field,
-    },
+    hash::{change_key, note_commitment, note_nullifier, note_sn, Field},
     precompile::IPayNote,
     PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
+use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::codec::field_from_be_bytes_canonical;
+use outbe_protocol::Codec as _;
 use outbe_protocol::{
     protocol::zk::{Circuit, CircuitId, ProofGenerator},
     OutbeV1,
@@ -171,7 +171,7 @@ impl Note {
             rng.fill(bytes.as_mut())
                 .map_err(|_| eyre::eyre!("spend-key randomness unavailable"))?;
             // Rejection sampling avoids reducing random words modulo the field.
-            if let Some(key) = field_from_be_bytes(&bytes) {
+            if let Ok(key) = field_from_be_bytes_canonical::<Field>(&bytes[..], "BN254 field") {
                 if key != Field::from(0) {
                     return Self::new(chain_id, asset, amount, key);
                 }
@@ -218,10 +218,11 @@ impl Note {
 }
 
 fn word(value: Field) -> B256 {
-    B256::new(field_to_be_bytes(value))
+    B256::from_slice(&OutbeV1::field_to_be_bytes(&value))
 }
 fn field(value: B256) -> Result<Field> {
-    field_from_be_bytes(&value.0).ok_or_else(|| eyre::eyre!("noncanonical BN254 field"))
+    field_from_be_bytes_canonical::<Field>(&value.0, "BN254 field")
+        .map_err(|_| eyre::eyre!("noncanonical BN254 field"))
 }
 
 fn resolve_note(dir: &Path, argument: &str) -> PathBuf {
@@ -570,8 +571,8 @@ fn prove(
         chain_id: note.chain_id,
         root: tree.root(),
         nullifier: field(note.nullifier()?)?,
-        asset: address_field(note.asset.into()),
-        owner: address_field(spender.into()),
+        asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
+        owner: field_from_be_bytes::<Field>(spender.as_slice()),
         spend_amount: u256::to_limbs(amount),
         change_commitment: change
             .as_ref()
@@ -594,7 +595,7 @@ fn prove(
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
-        combined.extend_from_slice(&field_to_be_bytes(value));
+        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&value));
     }
     for value in proof.proof {
         combined.extend_from_slice(&value);

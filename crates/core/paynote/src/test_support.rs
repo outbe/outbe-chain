@@ -7,7 +7,9 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::codec::field_from_be_bytes;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
+use outbe_protocol::Codec as _;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -15,10 +17,7 @@ use outbe_zk_canonical::u256;
 
 use ark_ff::{BigInteger as _, PrimeField};
 
-use crate::hash::{
-    address_field, change_key, empty_subtrees, field_to_be_bytes, note_commitment, note_nullifier,
-    note_sn, Field,
-};
+use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, note_sn, Field};
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 use crate::PayNoteTree;
@@ -98,8 +97,8 @@ fn prove_spend(
         chain_id,
         root: tree.root(),
         nullifier: n.nullifier,
-        asset: address_field(n.asset.into()),
-        owner: address_field(spender.into()),
+        asset: field_from_be_bytes::<Field>(n.asset.as_slice()),
+        owner: field_from_be_bytes::<Field>(spender.as_slice()),
         spend_amount: u256::to_limbs(spend_amount),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
@@ -143,7 +142,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
     provider.enter(|storage| {
         let paynote: PayNoteContract<'_> = storage.contract();
         let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
-        let empty_root = B256::new(field_to_be_bytes(zeros[PAYNOTE_TREE_DEPTH]));
+        let empty_root = B256::from_slice(&OutbeV1::field_to_be_bytes(&zeros[PAYNOTE_TREE_DEPTH]));
         paynote.current_root.write(empty_root).unwrap();
         paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
         paynote.recent_roots.push(empty_root).unwrap();
@@ -151,7 +150,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
             runtime::append(&paynote, &zeros, *leaf).unwrap();
             paynote
                 .commitments
-                .write(&B256::new(field_to_be_bytes(*leaf)), true)
+                .write(&B256::from_slice(&OutbeV1::field_to_be_bytes(leaf)), true)
                 .unwrap();
         }
     });

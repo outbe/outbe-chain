@@ -7,15 +7,17 @@ use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_emit::hash::{
-    address_field, change_key, emit_domain, empty_leaf, field_to_be_bytes, note_commitment,
-    note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
+    change_key, emit_domain, empty_leaf, note_commitment, note_sn as derive_note_sn,
+    nullifier as derive_nullifier, Field,
 };
 use outbe_emit::precompile::IEmit;
 use outbe_emit::schema::{EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 use outbe_emit::EmitTree;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::EMIT_ADDRESS;
+use outbe_protocol::codec::field_from_be_bytes;
 use outbe_protocol::protocol::zk::ProofGenerator;
+use outbe_protocol::Codec as _;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
@@ -178,7 +180,7 @@ fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
 }
 
 fn b256(field: Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
 }
 
 // ---- reference tree and proof fixture --------------------------------------
@@ -213,7 +215,7 @@ fn prove_mint(
         chain_id: CHAIN_ID,
         root: tree.root(),
         nullifier,
-        note_owner: address_field(owner.into()),
+        note_owner: field_from_be_bytes::<Field>(owner.as_slice()),
         mint_units: u256::to_limbs(U256::from(mint_units)),
         change_commitment: change,
     };
@@ -236,7 +238,7 @@ fn prove_mint(
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof.proof.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(&field_to_be_bytes(f));
+        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&f));
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

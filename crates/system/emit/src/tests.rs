@@ -12,7 +12,9 @@ use ark_ff::PrimeField;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::codec::field_from_be_bytes;
 use outbe_protocol::protocol::zk::ProofGenerator;
+use outbe_protocol::Codec as _;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
@@ -20,8 +22,8 @@ use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
 use outbe_zk_canonical::u256;
 
 use crate::hash::{
-    address_field, change_key, emit_domain, empty_leaf, empty_subtrees, field_to_be_bytes,
-    note_commitment, note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
+    change_key, emit_domain, empty_leaf, empty_subtrees, note_commitment,
+    note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
 use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_SELECTORS};
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
@@ -44,7 +46,7 @@ fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
 }
 
 fn b256(field: Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
 }
 
 fn small_word(low_byte: u8) -> B256 {
@@ -187,7 +189,7 @@ fn prove_mint_u256(
         chain_id: CHAIN_ID,
         root: tree.root(),
         nullifier,
-        note_owner: address_field(owner.into()),
+        note_owner: field_from_be_bytes::<Field>(owner.as_slice()),
         mint_units: u256::to_limbs(mint_units),
         change_commitment: change,
     };
