@@ -61,6 +61,29 @@ pub struct NodItemState {
     pub issued_at: u64,
 }
 
+/// Call terms a bucket is armed with when it qualifies, and the only terms every
+/// later check reads. Grouped rather than passed positionally so five same-typed
+/// numbers cannot silently swap places on the way to storage.
+///
+/// Second-encoded like `GemData`'s window, threshold and notice; the daily scan
+/// divides them back into day counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallTerms {
+    /// `entry_price_minor x (100 + call_rate) / 100`.
+    pub call_price: U256,
+    /// Selects the `COEN/<iso>` VWAP series the breach is measured on.
+    pub reference_currency: u16,
+    /// Markup percent the call price was derived at; provenance for a
+    /// `call_price` that outlives the constant.
+    pub call_rate: u16,
+    /// Trailing span the daily scan reads for breaches, in seconds.
+    pub call_window: u32,
+    /// Breach seconds within that span which arm the call.
+    pub call_threshold: u32,
+    /// Seconds after `called_at` in which the owner must settle and mine.
+    pub call_notice_period: u32,
+}
+
 /// Bucket record exists while `total_nods > 0`; the body is dropped when the
 /// last NOD in the bucket is mined.
 #[derive(Serialize, Deserialize)]
@@ -157,7 +180,7 @@ impl NodCertifiedGenerationProjection {
 /// own independent trie. See `state::CurrencyBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=32 in declaration order. New fields append, which keeps the
+/// 0..=38 in declaration order. New fields append, which keeps the
 /// genesis-seeded materialization FIFO counters at slots 19 and 20.
 /// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
@@ -329,6 +352,31 @@ pub struct NodContract {
     #[attribute(order = 44)]
     pub ocomp_materialization_protocol_bundle_hash:
         outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    // --- Call terms sealed at qualification. The daily scan and the mine-time
+    // deadline check read a bucket's own copy, so retuning a constant leaves
+    // every already-armed bucket on the terms it was armed with.
+    /// Markup percent [`Self::callable_bucket_call_price`] was derived at.
+    #[attribute(order = 45)]
+    pub callable_bucket_call_rate: Mapping<B256, u16>,
+
+    /// Trailing span the daily scan reads for breaches, in seconds.
+    #[attribute(order = 46)]
+    pub callable_bucket_call_window: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// Breach seconds within that span which arm the call.
+    #[attribute(order = 47)]
+    pub callable_bucket_call_threshold: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// Seconds after `bucket_called_at` in which the owner must settle and mine.
+    #[attribute(order = 48)]
+    pub callable_bucket_call_notice_period: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// Widest `call_window` ever armed in a reference currency, in seconds. It
+    /// only grows, so the trailing span the daily scan collects always covers a
+    /// bucket whose sealed window outruns the current constant.
+    #[attribute(order = 49)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl<'storage> NodContract<'storage> {

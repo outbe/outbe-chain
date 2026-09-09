@@ -1,6 +1,6 @@
 //! Cross-module API for the Nod entity store.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -15,6 +15,36 @@ use crate::schema::{NodBucketState, NodContract, NodItemState};
 /// formula.
 pub fn cost_amount_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
     checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)
+}
+
+/// Timestamp by which a called bucket must be mined, or `0` while it is not
+/// called at all.
+///
+/// Reads the notice period the bucket sealed when it qualified, so retuning the
+/// constant cannot move the deadline of a bucket that is already called. A
+/// bucket armed before the terms existed carries a zero notice, which is treated
+/// as "no deadline" rather than "already lapsed".
+pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<u64> {
+    let nod = NodContract::new(storage.clone());
+    let called_at = nod.bucket_called_at.read(&bucket_key)?;
+    if called_at == 0 {
+        return Ok(0);
+    }
+    let notice = nod.callable_bucket_call_notice_period.read(&bucket_key)?;
+    Ok(settlement_deadline_of(called_at, notice))
+}
+
+/// The deadline rule itself, for callers that already hold both values.
+///
+/// A zero notice period - what a bucket armed before the terms existed reads
+/// back - would otherwise forfeit the bucket on the very next run, so it means
+/// "no deadline" rather than "lapsed at the moment of the call".
+#[must_use]
+pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
+    if notice_period == 0 {
+        return u64::MAX;
+    }
+    called_at.saturating_add(u64::from(notice_period))
 }
 
 /// A decoded Nod item paired with the exact generic capability that verified it.

@@ -141,6 +141,22 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(30));
         assert_eq!(nod.bucket_called_at.base_slot(), U256::from(31));
         assert_eq!(nod.call_scan_cursor.slot(), U256::from(32));
+        assert_eq!(
+            nod.ocomp_materialization_protocol_bundle_hash.base_slot(),
+            U256::from(33)
+        );
+        // Call terms sealed at qualification, appended after everything above.
+        assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(34));
+        assert_eq!(nod.callable_bucket_call_window.base_slot(), U256::from(35));
+        assert_eq!(
+            nod.callable_bucket_call_threshold.base_slot(),
+            U256::from(36)
+        );
+        assert_eq!(
+            nod.callable_bucket_call_notice_period.base_slot(),
+            U256::from(37)
+        );
+        assert_eq!(nod.max_call_window.base_slot(), U256::from(38));
     });
 }
 

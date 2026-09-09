@@ -4,9 +4,11 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
     api::LoadedNodBucket,
-    constants::{CALL_RATE_PCT, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{
+        CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, TOKEN_NAME, TOKEN_SYMBOL,
+    },
     precompile::INod,
-    schema::NodContract,
+    schema::{CallTerms, NodContract},
 };
 
 impl NodContract<'_> {
@@ -57,7 +59,19 @@ impl NodContract<'_> {
                     ))
                 })?
                 / U256::from(100u64);
-            self.insert_callable_bucket(bucket.bucket_key, call_price, bucket.reference_currency)?;
+            // The constants are read exactly here, once. Every later check reads
+            // the bucket's sealed copy, so a retune cannot re-term it.
+            self.insert_callable_bucket(
+                bucket.bucket_key,
+                CallTerms {
+                    call_price,
+                    reference_currency: bucket.reference_currency,
+                    call_rate: CALL_RATE_PCT,
+                    call_window: CALL_WINDOW,
+                    call_threshold: CALL_THRESHOLD,
+                    call_notice_period: CALL_NOTICE_PERIOD,
+                },
+            )?;
         }
         self.emit(INod::NodBucketQualified {
             bucketKey: bucket.bucket_key,
