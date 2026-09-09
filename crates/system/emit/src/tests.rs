@@ -15,7 +15,6 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::codec::field_from_be_bytes;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
@@ -28,7 +27,7 @@ use crate::hash::{
 use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_SELECTORS};
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 
-use crate::EmitTree;
+use crate::{EmitSuite, EmitTree};
 
 const CHAIN_ID: u64 = 31_337;
 const OTHER_CHAIN_ID: u64 = 19_280_501;
@@ -46,7 +45,7 @@ fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
 }
 
 fn b256(field: Field) -> B256 {
-    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
+    B256::from_slice(&EmitSuite::field_to_be_bytes(&field))
 }
 
 fn small_word(low_byte: u8) -> B256 {
@@ -128,7 +127,7 @@ fn selectors_and_gas_are_pinned() {
 
 fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     let fields =
-        <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(public);
+        <EmitMint as outbe_protocol::protocol::zk::Circuit<EmitSuite>>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
@@ -204,9 +203,12 @@ fn prove_mint_u256(
             .try_into()
             .unwrap(),
     };
-    let proof =
-        ProofGenerator::<OutbeV1, EmitMint>::generate(&Barretenberg::default(), &witness, &public)
-            .expect("emit mint proof generation");
+    let proof = ProofGenerator::<EmitSuite, EmitMint>::generate(
+        &Barretenberg::default(),
+        &witness,
+        &public,
+    )
+    .expect("emit mint proof generation");
     combined_from(&public, &proof.proof)
 }
 

@@ -6,7 +6,7 @@
 //! precede mutation, in the frozen transition-matrix order. Guard failures
 //! convert from [`EmitError`] (which fixes the stable revert texts and the
 //! fatal/revert split) via `From`.
-//! `OutbeV1` encodes BN254 fields as exactly 32 big-endian bytes.
+//! `EmitSuite` encodes BN254 fields as exactly 32 big-endian bytes.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -17,7 +17,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_protocol::codec::field_from_be_bytes_canonical;
 use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::Codec as _;
-use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::emit_mint::decode_public_inputs as decode_emit_mint_public_inputs;
 use outbe_zk_canonical::noir::emit_mint::EmitMint;
@@ -26,6 +25,8 @@ use crate::errors::EmitError;
 use crate::hash::{empty_subtrees, merkle_node, note_commitment, Field};
 use crate::precompile::IEmit;
 use crate::schema::{EmitContract, EMIT_ROOT_WINDOW, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
+use crate::EmitSuite;
+
 /// The explicit mint statement, exactly as it arrives on the ABI.
 pub(crate) struct MintStatement {
     pub root: B256,
@@ -56,7 +57,7 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
         if (index >> level) & 1 == 0 {
             emit.filled_subtrees.write(
                 &level_byte,
-                B256::from_slice(&OutbeV1::field_to_be_bytes(&current)),
+                B256::from_slice(&EmitSuite::field_to_be_bytes(&current)),
             )?;
             current = merkle_node(current, *zero).map_err(|_| EmitError::Hash)?;
         } else {
@@ -71,10 +72,10 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
         }
     }
     emit.current_root
-        .write(B256::from_slice(&OutbeV1::field_to_be_bytes(&current)))?;
+        .write(B256::from_slice(&EmitSuite::field_to_be_bytes(&current)))?;
     emit.leaf_count.write(index + 1)?;
     emit.recent_roots
-        .push(B256::from_slice(&OutbeV1::field_to_be_bytes(&current)))?;
+        .push(B256::from_slice(&EmitSuite::field_to_be_bytes(&current)))?;
     Ok((index, current))
 }
 
@@ -109,7 +110,7 @@ pub(crate) fn burn(
     if commitment.is_zero() {
         return Err(EmitError::MustBeNonZero("commitment").into());
     }
-    let commitment_word = B256::from_slice(&OutbeV1::field_to_be_bytes(&commitment));
+    let commitment_word = B256::from_slice(&EmitSuite::field_to_be_bytes(&commitment));
     if emit.commitments.read(&commitment_word)? {
         return Err(EmitError::CommitmentExists.into());
     }
@@ -120,7 +121,8 @@ pub(crate) fn burn(
     // tree never observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
         if leaf_count == 0 {
-            let empty_root = B256::from_slice(&OutbeV1::field_to_be_bytes(&zeros[EMIT_TREE_DEPTH]));
+            let empty_root =
+                B256::from_slice(&EmitSuite::field_to_be_bytes(&zeros[EMIT_TREE_DEPTH]));
             emit.current_root.write(empty_root)?;
             emit.recent_roots.setup(EMIT_ROOT_WINDOW)?;
             emit.recent_roots.push(empty_root)?;
@@ -145,7 +147,7 @@ pub(crate) fn burn(
             IEmit::NewNote::encode_log_data(&IEmit::NewNote {
                 commitment: commitment_word,
                 leafIndex: index,
-                rootAfter: B256::from_slice(&OutbeV1::field_to_be_bytes(&root_after)),
+                rootAfter: B256::from_slice(&EmitSuite::field_to_be_bytes(&root_after)),
                 noteAmount: value,
             }),
         )?;
@@ -217,12 +219,12 @@ pub(crate) fn mint(
         return Err(EmitError::NotNoteOwner.into());
     }
 
-    let root_word = B256::from_slice(&OutbeV1::field_to_be_bytes(&root));
+    let root_word = B256::from_slice(&EmitSuite::field_to_be_bytes(&root));
     if !emit.recent_roots.read_all()?.contains(&root_word) {
         return Err(EmitError::RootNotRecent.into());
     }
 
-    let nullifier_word = B256::from_slice(&OutbeV1::field_to_be_bytes(&nullifier));
+    let nullifier_word = B256::from_slice(&EmitSuite::field_to_be_bytes(&nullifier));
     if emit.spent_nullifiers.read(&nullifier_word)? {
         return Err(EmitError::NullifierSpent.into());
     }
@@ -250,7 +252,7 @@ pub(crate) fn mint(
     // Full mint requires the zero change sentinel; partial mint appends the
     // circuit-derived nonzero deterministic change.
     let partial = !change.is_zero();
-    let change_word = B256::from_slice(&OutbeV1::field_to_be_bytes(&change));
+    let change_word = B256::from_slice(&EmitSuite::field_to_be_bytes(&change));
     if partial {
         let leaf_count = emit.leaf_count.read()?;
         if leaf_count as u64 >= EMIT_TREE_CAPACITY {
@@ -290,7 +292,7 @@ pub(crate) fn mint(
                 IEmit::NewNote::encode_log_data(&IEmit::NewNote {
                     commitment: change_word,
                     leafIndex: index,
-                    rootAfter: B256::from_slice(&OutbeV1::field_to_be_bytes(&root_after)),
+                    rootAfter: B256::from_slice(&EmitSuite::field_to_be_bytes(&root_after)),
                     noteAmount: U256::ZERO,
                 }),
             )?;
