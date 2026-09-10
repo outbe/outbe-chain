@@ -11,6 +11,8 @@ loader.log_level = "{{ log_level }}"
 # `gramine-direct outbe-tee-enclave ...` command line.
 loader.insecure__use_cmdline_argv = true
 loader.env.LD_LIBRARY_PATH = "{% if remote_attestation == 'dcap' %}/qvl:{% endif %}/lib:{{ arch_libdir }}:/usr/{{ arch_libdir }}"
+# Avoid repeated 64 MiB glibc thread-arena attempts in the bounded SGX heap.
+loader.env.MALLOC_ARENA_MAX = "1"
 
 # The enclave serves one thread per connection and exits cleanly on SIGTERM.
 sys.enable_sigterm_injection = true

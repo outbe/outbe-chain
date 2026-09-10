@@ -53,16 +53,13 @@ const OCOMP_CAPACITY_NOD_MATERIALIZATION_TIMEOUT_SECS: u64 = 600;
 // loaded four-validator host. Keep its per-receipt bound at ten minutes while
 // leaving ordinary scenario receipt waits unchanged (500 ms per attempt).
 const OCOMP_CAPACITY_RECEIPT_ATTEMPTS: u32 = 1_200;
-// The capacity scenario proves the protocol path and the 256+1 shard boundary,
-// not Tribute burst throughput. Keep at most two offers in flight until
-// outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
+// Preserve the explicit two-per-block steps used by the smaller scenarios.
 const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
-// The capacity lane proves the second 256-Tribute work shard using 129
-// gas-bounded submission rounds. Keep the logical genesis window short, while
-// leaving enough room for debug-build block production before controlled time
-// advances the same chain to the next phase.
-// Sequential real-SGX offers remain inside the genesis-bound phase window;
-// the controlled-time step advances immediately after all receipts arrive.
+// The 256+1 capacity scenario measures bursts with one glibc arena in SGX.
+// Finalize each batch before sending the next so blocks contain at most 20 offers.
+const OCOMP_CAPACITY_BURST_SIZE: usize = 20;
+// Keep real-SGX offers inside the genesis-bound phase window; the controlled
+// logical clock advances after the entire population has finalized.
 const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
 // Exact WorldwideDay VWAP formation always spans the canonical 50-hour window.
 // The scenario advances that interval with the controlled logical-time ratchet;
@@ -3125,17 +3122,25 @@ fn submit_dynamic_membership_tributes(world: &mut World) {
 
 #[when("all 257 capacity owners submit one encrypted Tribute each")]
 fn capacity_owners_submit_257_public_tributes(world: &mut World) {
-    capacity_owners_submit_public_tributes(world, OCOMP_CAPACITY_TRIBUTE_COUNT);
+    capacity_owners_submit_public_tributes(
+        world,
+        OCOMP_CAPACITY_TRIBUTE_COUNT,
+        OCOMP_CAPACITY_BURST_SIZE,
+    );
 }
 
 #[when(
     expr = "{int} capacity owners submit one encrypted Tribute each at no more than two per block"
 )]
 fn bounded_capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
-    capacity_owners_submit_public_tributes(world, count);
+    capacity_owners_submit_public_tributes(world, count, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY);
 }
 
-fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
+fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch_size: usize) {
+    let started = Instant::now();
+    let port = world.validators.primary_port();
+    let ports = world.validators.committee_ports();
+    let mut block_counts = std::collections::BTreeMap::<u64, usize>::new();
     let private_keys = world.state.ocomp_capacity_tribute_private_keys.clone();
     assert!(
         private_keys.len() >= count,
@@ -3150,7 +3155,8 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
         .expect("capacity WorldwideDay is set");
     let mut transaction_hashes = Vec::with_capacity(private_keys.len());
 
-    for keys in private_keys.chunks(OCOMP_CAPACITY_SUBMISSION_CONCURRENCY) {
+    for keys in private_keys.chunks(batch_size) {
+        let batch_started = Instant::now();
         let batch = thread::scope(|scope| {
             keys.iter()
                 .map(|private_key| {
@@ -3192,7 +3198,63 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
                 "capacity Tribute transaction did not succeed: {transaction_hash}"
             );
         }
+        let last_height = batch
+            .iter()
+            .map(|tx| {
+                world
+                    .rpc
+                    .receipt_block_number(tx, port)
+                    .expect("mined receipt height")
+            })
+            .max()
+            .expect("nonempty capacity batch");
+        world
+            .rpc
+            .wait_finalized_checkpoint(&ports, last_height, 100)
+            .expect("capacity batch finalizes on every validator with identical hash/root");
+        for tx in &batch {
+            let receipt = world
+                .rpc
+                .transaction_receipt(tx, port)
+                .expect("finalized receipt");
+            let height = u64::from_str_radix(
+                receipt["blockNumber"]
+                    .as_str()
+                    .expect("receipt block number")
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .expect("hex receipt block number");
+            assert!(
+                height <= last_height,
+                "capacity receipt moved after finalization: {tx}"
+            );
+            assert_eq!(
+                receipt["status"].as_str(),
+                Some("0x1"),
+                "capacity offer reverted: {tx}"
+            );
+            let canonical_hash = world
+                .rpc
+                .block_hash(port, height)
+                .expect("canonical block hash");
+            assert_eq!(
+                receipt["blockHash"].as_str(),
+                Some(canonical_hash.as_str()),
+                "capacity receipt belongs to an orphaned block: {tx}"
+            );
+            let occupancy = block_counts.entry(height).or_default();
+            *occupancy += 1;
+            assert!(
+                *occupancy <= batch_size,
+                "capacity block {height} exceeds {batch_size} offers"
+            );
+        }
         transaction_hashes.extend(batch);
+        eprintln!(
+            "E2E_CAPACITY_POPULATION finalized={}/{} batch_size={} batch_ms={} elapsed_ms={} blocks={block_counts:?}",
+            transaction_hashes.len(), count, keys.len(), batch_started.elapsed().as_millis(), started.elapsed().as_millis(),
+        );
     }
 
     assert_eq!(
