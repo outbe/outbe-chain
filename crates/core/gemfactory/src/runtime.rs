@@ -282,9 +282,7 @@ pub fn settle_gem(
     paynote_proof: &[u8],
 ) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    if item.owner != caller {
-        return Err(GemFactoryError::NotGemOwner.into());
-    }
+    // Anyone may pay for a gem; the note is bound to the caller, the gem is not.
     // Settlement is allowed from Qualified (voluntary) or Called (forced). A
     // Called gem must settle before its notice period lapses.
     match item.state {
@@ -331,7 +329,7 @@ pub fn settle_gem(
         storage,
         GemSettled {
             gemId: gem_id,
-            owner: caller,
+            owner: item.owner,
             amountPaid: amount_paid,
             settlementCurrency: expected,
         },

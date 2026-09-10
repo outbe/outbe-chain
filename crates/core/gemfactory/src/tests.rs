@@ -856,11 +856,13 @@ fn settle_rejects_wrong_settlement_currency() {
 }
 
 #[test]
-fn settle_rejects_non_owner() {
+fn anyone_may_pay_for_a_gem_and_it_stays_with_its_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    let mut provider = test_storage(Some(rate));
+    let proof = note_proof(&mut provider, STABLE, BOB, NOTE_AMOUNT);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = issue_at_live_rate(
-            storage,
+            &storage,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -868,10 +870,25 @@ fn settle_rejects_non_owner() {
             840,
         )
         .unwrap();
-        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
-        let res = runtime::settle_gem(storage, BOB, gem_id, &[]);
-        assert!(err_msg(res).contains("not gem owner"));
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        runtime::settle_gem(&storage, BOB, gem_id, &proof).unwrap();
+        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.state, GemState::Settled as u8);
+        assert_eq!(item.owner, ALICE, "paying never moves the gem");
+        gem_id
     });
+
+    let event = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSettled::decode_log(log).ok())
+        .next()
+        .expect("settlement emits GemSettled");
+    assert_eq!(event.gemId, gem_id);
+    assert_eq!(
+        event.owner, ALICE,
+        "the event names the owner, not the payer"
+    );
 }
 
 #[test]

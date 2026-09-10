@@ -10,7 +10,8 @@ interface IGemFactory {
     ///         capacity. Only the position's merchant (the caller) may call.
     function issueGem(uint256 positionId, address owner, uint256 promisLoad) external returns (uint256 gemId);
 
-    /// @notice Settle a gem by spending a PayNote for its cost.
+    /// @notice Settle a gem by spending a PayNote for its cost. Any caller may
+    ///         pay; the gem stays with its owner.
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
