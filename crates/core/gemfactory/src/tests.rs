@@ -182,12 +182,12 @@ fn err_msg<T>(r: outbe_primitives::error::Result<T>) -> String {
     format!("{:?}", r.err().unwrap())
 }
 
-/// Brute-force the lowest nonce that satisfies `validate_pow(gem_id, _)` for
-/// the current `POW_DIFFICULTY`. With difficulty=1 the expected loop length
-/// is ~256 iterations.
-fn find_valid_nonce(gem_id: U256) -> u64 {
+/// Brute-force the lowest nonce that satisfies `validate_pow(gem_id, owner, _)`
+/// for the current `POW_DIFFICULTY`. With difficulty=1 the expected loop
+/// length is ~256 iterations.
+fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
     for nonce in 0u64..u64::MAX {
-        if runtime::validate_pow(gem_id, nonce).is_ok() {
+        if runtime::validate_pow(gem_id, owner, nonce).is_ok() {
             return nonce;
         }
     }
@@ -924,7 +924,7 @@ fn mine_promis_full_genesis_flow() {
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
-        let nonce = find_valid_nonce(gem_id);
+        let nonce = find_valid_nonce(gem_id, ALICE);
         let minted =
             runtime::mine_promis(storage, gem_id, nonce, promis_auth(ALICE, load, 0)).unwrap();
         assert_eq!(minted, load);
@@ -978,7 +978,7 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
 
         // The auth is Alice's: it binds her account and load, so a relayer can
         // only deliver her mint, never redirect it.
-        let nonce = find_valid_nonce(gem_id);
+        let nonce = find_valid_nonce(gem_id, ALICE);
         let minted =
             runtime::mine_promis(storage, gem_id, nonce, promis_auth(ALICE, load, 0)).unwrap();
         assert_eq!(minted, load);

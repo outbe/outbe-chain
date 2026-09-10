@@ -182,7 +182,7 @@ fn mine_gratis_inner(
     } = input;
     // Anyone may submit: the note is bound to the caller, the Gratis to the
     // owner through their modify key.
-    validate_pow(nod_id, nonce)?;
+    validate_pow(nod_id, item.body().owner, nonce)?;
 
     if !bucket.body().is_qualified {
         return Err(NodFactoryError::NodNotQualified.into());
@@ -312,14 +312,16 @@ fn check_settlement_asset(
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
-/// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: WwdEntityId, nonce: u64) -> Result<()> {
-    pow::validate_pow(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
+/// scheme and mapping failures onto [`NodFactoryError`]. A Nod is exercised
+/// once, so its mining sequence is fixed at zero.
+pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
+    pow::validate_pow(nod_id.to_u256(), owner, 0, nonce)
+        .map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// Shared PoW hash over `nod_id.to_be_bytes::<32>() || nonce.to_be_bytes()`.
-pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: u64) -> [u8; 32] {
-    pow::compute_pow_hash(nod_id.to_u256(), nonce)
+/// Shared PoW hash over `nod_id_be32 || owner || 0_be4 || nonce_be8`.
+pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8; 32] {
+    pow::compute_pow_hash(nod_id.to_u256(), owner, 0, nonce)
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

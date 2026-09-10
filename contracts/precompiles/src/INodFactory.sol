@@ -53,9 +53,6 @@ interface INodFactory {
 
     /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
     ///
-    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
-    /// and so can always supply the mint authorization.
-    ///
     /// The Nod's cost is discharged here, by spending a PayNote.
     /// The underlying value already reached the reserve vault when the note
     /// was deposited, so this call moves no tokens: it books the note's nullifier,
@@ -63,8 +60,9 @@ interface INodFactory {
     ///
     /// @param nodId        Identifier of the Nod. Any caller may submit; the
     /// Gratis goes to the Nod's owner.
-    /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
-    /// MUST have the protocol's required leading zero bytes.
+    /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || owner || uint32(0) || nonce_be8)`
+    /// MUST have the protocol's required leading zero bytes; the sequence is
+    /// zero because a Nod is exercised once.
     /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
     /// under the owner's Gratis modify key.
     /// @param opNonce MUST equal the owner's current on-chain gratis op-nonce;
