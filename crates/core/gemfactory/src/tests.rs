@@ -526,15 +526,16 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
-fn the_issuance_rail_rounds_up_exactly_once() {
-    // COEN/USD 7.0 and a one-unit load put the cost at 7 minor units. Converting
-    // it at COEN/EUR 1.000001 lands on 1.000001 units, so a single round-up gives
-    // 2 and a second rounding anywhere in the chain could not.
-    let usd_rate = U256::from(7u64) * six_decimal_unit();
+fn the_issuance_rail_floors_once_at_full_precision() {
+    // COEN/USD 7.5 and a one-unit load: 7.5 reference minor units, which the
+    // six-decimal reference cost already floors to 7. Converting at COEN/EUR 1.0
+    // gives exactly 1 EUR unit at full precision; converting the floored 7 would
+    // have rounded to nothing and refused the settlement.
+    let usd_rate = U256::from(7_500_000u64);
     let mut provider = test_storage(Some(usd_rate));
     let proof = note_proof(&mut provider, STABLE_EUR, ALICE, NOTE_AMOUNT);
     StorageHandle::enter(&mut provider, |storage| {
-        register_currency(&storage, 978, U256::from(1_000_001u64));
+        register_currency(&storage, 978, six_decimal_unit());
         let gem_id =
             issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
@@ -545,7 +546,7 @@ fn the_issuance_rail_rounds_up_exactly_once() {
         runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
 }
 
 #[test]

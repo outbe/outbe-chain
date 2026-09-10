@@ -229,19 +229,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   /**
-   * What settling one Intex of `series` with `token` costs, in that token's minor
-   * units, and the ISO 4217 code the payment is denominated in.
+   * What settling `units` Intex of `series` with `token` costs, in that token's
+   * minor units, and the ISO 4217 code the payment is denominated in. The chain
+   * prices the whole operation and floors once, so a quote for many units can be
+   * a shade under the per-unit quote times that many.
    */
   async function quoteSettlement(
     n: Network,
     series: Hex,
     token: `0x${string}`,
+    units: bigint,
   ): Promise<{ settlementCurrency: number; payableUnits: bigint }> {
     const [settlementCurrency, payableUnits] = (await n.client.readContract({
       address: addr(n, "factory"),
       abi: FACTORY_ABI,
       functionName: "quoteSettlement",
-      args: [series, token],
+      args: [series, token, units],
     })) as [number, bigint];
     return { settlementCurrency: Number(settlementCurrency), payableUnits };
   }
@@ -1099,11 +1102,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_settlement_tokens",
-    "Tokens you can settle a series with and the per-Intex cost in each. Use the cost to size the " +
-      "PayNote you deposit before calling auction_bid_settle.",
-    { series: seriesArg, network: networkArg.optional() },
-    handler(async ({ series, network }) => {
+    "Tokens you can settle a series with and what settling `units` of it costs in each. Use the cost " +
+      "to size the PayNote you deposit before calling auction_bid_settle: the chain floors the whole " +
+      "operation once, so quote the units you will actually settle.",
+    { series: seriesArg, units: z.number().int().positive().optional(), network: networkArg.optional() },
+    handler(async ({ series, units, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
+      const quoted = BigInt(units ?? 1);
       const tokens = await settlementTokens(n, series);
       const priced = await Promise.all(
         tokens.map(async (token) => {
@@ -1114,18 +1119,18 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           const base = { token, symbol: symbol as string, decimals: Number(decimals) };
           // A refused issuance-currency quote is this token's answer, not the list's.
           try {
-            const { settlementCurrency, payableUnits } = await quoteSettlement(n, series, token);
+            const { settlementCurrency, payableUnits } = await quoteSettlement(n, series, token, quoted);
             return {
               ...base,
               settlementCurrency,
-              perUnit: { raw: payableUnits.toString(), value: formatUnits(payableUnits, Number(decimals)) },
+              cost: { raw: payableUnits.toString(), value: formatUnits(payableUnits, Number(decimals)) },
             };
           } catch (error) {
             return { ...base, unavailable: (error as Error).message };
           }
         }),
       );
-      return ok({ network: n.name, series, tokens: priced });
+      return ok({ network: n.name, series, units: quoted.toString(), tokens: priced });
     }),
   );
 

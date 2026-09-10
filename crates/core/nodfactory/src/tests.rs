@@ -21,7 +21,7 @@ use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
 use outbe_paynote::test_support as paynote_support;
 
-use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime};
+use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime, sol_ext::IERC20};
 
 /// The chain ID `World`'s storage provider reports; PayNote folds it into
 /// every commitment, so fixtures must be built under the same one.
@@ -167,6 +167,17 @@ impl World {
             outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
             Bytes::from(IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&assets)),
+        );
+        for asset in assets {
+            self.set_asset_decimals(asset, 6);
+        }
+    }
+
+    fn set_asset_decimals(&mut self, asset: Address, decimals: u8) {
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IERC20::decimalsCall::SELECTOR,
+            Bytes::from(IERC20::decimalsCall::abi_encode_returns(&decimals)),
         );
     }
 
@@ -505,6 +516,30 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 // covered, and exactly one spend per note.
 
 const NOTE_ASSET: Address = Address::new([0x71; 20]);
+
+#[test]
+fn a_note_in_a_wider_asset_pays_the_cost_scaled_to_its_decimals() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x61));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    world.set_asset_decimals(NOTE_ASSET, 18);
+    let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
+    let (proof, _nullifier) = world.fund_note_u256(NOTE_ASSET, input.owner, cost, cost);
+    let nonce = find_valid_nonce(nod_id);
+
+    let minted = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+}
 
 #[test]
 fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {

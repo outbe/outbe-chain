@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_common::pow::PowError;
+use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -36,6 +37,9 @@ pub enum NodFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
+    #[error("{0}")]
+    Rounding(RoundingError),
+
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
 
@@ -67,6 +71,12 @@ pub enum NodFactoryError {
 impl From<NodFactoryError> for PrecompileError {
     fn from(value: NodFactoryError) -> Self {
         PrecompileError::Revert(value.to_string())
+    }
+}
+
+impl From<RoundingError> for NodFactoryError {
+    fn from(value: RoundingError) -> Self {
+        Self::Rounding(value)
     }
 }
 
