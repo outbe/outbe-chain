@@ -109,14 +109,14 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
         // Bad item recorded in failedCrosschainMints, NOT minted.
-        (address to, uint256 tokenId, uint256 amount,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (address to, uint256 tokenId, uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
         assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail - no entry for idx=0.
-        (,,,, bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
+        (, , , bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
@@ -128,7 +128,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Initially the bad item is parked.
-        (,,,, bool existsBefore) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (, , , bool existsBefore) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
@@ -143,7 +143,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (, , , bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
@@ -171,13 +171,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         _deliverInbound(packet);
 
-        (,,,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (, , , bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertTrue(exists, "bad item parked at idx 1");
 
         // Reclaim routes the stranded item back to its origin peer and consumes the entry.
         nftBridgeBnb.reclaimToSource(receiveId, 1);
 
-        (,,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (, , , bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertFalse(existsAfter, "entry consumed on reclaim");
 
         // The reverse packet is a one-item SEND_MULTI recorded on the bridge.
@@ -211,7 +211,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (address to, , uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);

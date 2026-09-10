@@ -113,7 +113,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
 
         // Park entry holds the in-flight amount, so the global accounting still adds up.
-        (,, uint256 parkedAmount,, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (, , uint256 parkedAmount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(exists, "park entry present");
         assertEq(parkedAmount, bridged, "park amount == bridged");
 
@@ -127,7 +127,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterB.retryCrosschainMint(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
-        (,,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (, , , bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillExists, "park entry cleared on retry");
 
         uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);
@@ -147,7 +147,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
 
-        (,, uint256 parkedAmount,, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (, , uint256 parkedAmount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(exists, "parked on B");
         assertEq(parkedAmount, minted, "park holds the in-flight units");
         assertEq(tokenA.totalSupply(parkTokenId), 0, "A burned the bridged units");
@@ -155,7 +155,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // Retry can never clear it while B lacks the series; reclaim to the origin is the only exit.
         adapterB.reclaimToSource(receiveId, 0);
 
-        (,,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (, , , bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillExists, "entry consumed on reclaim");
 
         // Deliver the reverse SEND_MULTI on A -> holder re-minted, global supply conserved end-to-end.

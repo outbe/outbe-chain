@@ -208,11 +208,6 @@
           "internalType": "uint256"
         },
         {
-          "name": "reason",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
           "name": "exists",
           "type": "bool",
           "internalType": "bool"
