@@ -389,6 +389,7 @@ contract EscrowAdapter is
         }
 
         uint128 totalRefunded = 0;
+        uint128 totalReleased = 0;
         uint32 bidsProcessed = 0;
         uint32 bidsSettled = 0;
 
@@ -397,9 +398,10 @@ contract EscrowAdapter is
         // back its state writes) and can be recovered via retryFinalize or claimRefund.
         for (uint256 i = 0; i < instructions.length; ++i) {
             FinalizationInstruction calldata inst = instructions[i];
-            try this.processFinalizationOne(worldwideDay, receiveId, inst) {
+            try this.processFinalizationOne(worldwideDay, receiveId, inst) returns (uint128 released) {
                 totalRefunded += inst.refundedAmount;
                 totalPaid += inst.paidAmount;
+                totalReleased += released;
                 ++bidsSettled;
             } catch (bytes memory reason) {
                 // Record the intended refund split (in the outer frame, since the failing inner
@@ -418,6 +420,10 @@ contract EscrowAdapter is
             }
             ++bidsProcessed;
         }
+
+        // One write for the chunk: the loop only counts locks it actually closed, so a failed instruction
+        // leaves the day's total untouched exactly as a per-bidder decrement would have.
+        if (totalReleased > 0) $.auctionEscrowState[worldwideDay].totalLocked -= totalReleased;
 
         emit AuctionEscrowFinalized(receiveId, worldwideDay, totalRefunded, totalPaid, bidsProcessed);
         // Surface a degenerate finalize (every instruction failed) so it is not silently "done".
@@ -439,9 +445,11 @@ contract EscrowAdapter is
     /// @param inst Finalization instruction for the single bidder being processed.
     function processFinalizationOne(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst)
         external
+        returns (uint128 released)
     {
         if (msg.sender != address(this)) revert NotSelf();
-        _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        return
+            _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -454,7 +462,9 @@ contract EscrowAdapter is
         if (!_s().auctionEscrowState[worldwideDay].finalized) {
             revert NotFinalizedYet(worldwideDay);
         }
-        _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        uint128 released =
+            _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
+        _s().auctionEscrowState[worldwideDay].totalLocked -= released;
 
         // Stranded recovery: series already routed on Outbe, burn the residual.
         if (inst.paidAmount > 0) {
@@ -617,13 +627,16 @@ contract EscrowAdapter is
     /// @param bidder Bidder address.
     /// @param refundedAmount Amount to refund to the bidder.
     /// @param paidAmount Auction proceeds left in this contract for the caller to route.
+    /// @return released The lock the instruction closed. The caller decrements the day's total: the batch
+    ///         path accumulates and writes once after its loop, so a chunk pays one write rather than one
+    ///         per bidder.
     function _processFinalizationInstruction(
         bytes32 receiveId,
         uint32 worldwideDay,
         address bidder,
         uint128 refundedAmount,
         uint128 paidAmount
-    ) internal {
+    ) internal returns (uint128 released) {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
         EscrowAdapterStorage storage $ = _s();
@@ -640,7 +653,7 @@ contract EscrowAdapter is
 
         // CEI ok: state writes below precede every external call in this function.
         lock.status = LockStatus.Finalized;
-        $.auctionEscrowState[worldwideDay].totalLocked -= lockedAmount;
+        released = lockedAmount;
 
         // Interactions
         _withdrawFromCompact(lockedAmount);

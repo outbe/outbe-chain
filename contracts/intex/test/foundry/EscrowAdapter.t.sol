@@ -323,6 +323,23 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
     }
 
+    /// @dev The batch path accumulates released locks and writes the day's total once after its loop, so
+    ///      `retryFinalize` has to decrement for itself. Miss that and the day keeps a phantom lock that
+    ///      blocks nothing visibly while over-reporting what the escrow still holds.
+    function test_RetryFinalize_ReleasesTheDaysLockedTotal() public {
+        _finalizeOmittingBidder1();
+        (,, uint128 lockedBefore) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(lockedBefore, LOCK_AMOUNT, "the omitted bidder's lock is still counted");
+
+        IEscrowAdapter.FinalizationInstruction memory inst =
+            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
+        vm.prank(bridger);
+        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
+
+        (,, uint128 lockedAfter) = escrow.getAuctionStatus(worldwideDay1);
+        assertEq(lockedAfter, 0, "the retried lock leaves the day's total");
+    }
+
     function test_RetryFinalizePreemptsAbandon() public {
         _finalizeOmittingBidder1();
 
