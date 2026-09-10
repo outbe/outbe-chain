@@ -443,6 +443,7 @@ contract EscrowAdapter is
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id threaded into the emitted events.
     /// @param inst Finalization instruction for the single bidder being processed.
+    /// @return released The lock the instruction closed, for the caller to subtract from the day's total.
     function processFinalizationOne(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst)
         external
         returns (uint128 released)
