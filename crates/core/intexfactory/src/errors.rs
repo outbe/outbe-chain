@@ -21,8 +21,6 @@ pub enum IntexFactoryError {
     ZeroBalance,
     #[error("amount exceeds balance")]
     AmountExceedsBalance,
-    #[error("caller not authorized to settle for holder")]
-    NotAuthorized,
     #[error("insufficient settled balance")]
     InsufficientSettled,
     #[error("insufficient proof of work")]

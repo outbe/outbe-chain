@@ -197,24 +197,6 @@
   },
   {
     "type": "function",
-    "name": "setAuthorizedSettler",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      },
-      {
-        "name": "settler",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "settle",
     "inputs": [
       {
@@ -535,12 +517,6 @@
       },
       {
         "name": "intexHolder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "settler",
         "type": "address",
         "indexed": true,
         "internalType": "address"

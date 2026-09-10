@@ -1056,10 +1056,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "no tokens of its own and needs no approval. Get the price with intex_settlement_tokens, deposit a " +
       "note of at least that size into IPayNote (from whichever wallet holds the money - a different one " +
       "keeps the two unlinked), then build the spend proof off-chain; the MCP cannot produce it. " +
-      "Defaults to your own wallet; pass holder only if that holder authorized you via auction_settler_set. " +
+      "Defaults to your own wallet; pass holder to pay for someone else's position. " +
       "Allowed when the series is Qualified (voluntary) or Called (forced, within the call period). The " +
-      "Settled token (soulbound) and the later Promis go to the SIGNING wallet, not to holder; since the MCP " +
-      "signs with one key, to land them on a different wallet that wallet must settle/mine itself. " +
+      "Settled token (soulbound) stays with holder whoever pays, and only holder can mine its Promis. " +
       "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
       "intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
@@ -1126,20 +1125,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         }),
       );
       return ok({ network: n.name, series, tokens: priced });
-    }),
-  );
-
-  server.tool(
-    "auction_settler_set",
-    "Authorize another wallet to settle your position in a series. Call this from the holder wallet before " +
-      "that wallet can settle on your behalf. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, settler: z.string().describe("0x address to authorize"), network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, settler, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
-      requireAccount();
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: "setAuthorizedSettler", args: [series, getAddress(settler)] });
-      const receipt = await submit(n, addr(n, "factory"), data, 0n, wait);
-      return ok({ network: n.name, series, settler: getAddress(settler), ...receipt });
     }),
   );
 

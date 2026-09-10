@@ -203,19 +203,6 @@ fn settle_rejects_expired_deadline() {
 }
 
 #[test]
-fn set_authorized_settler_round_trip() {
-    with_factory(|s| {
-        let settler = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        runtime::set_authorized_settler(&s, holder(), sid(7), settler).unwrap();
-        let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(
-            f.read_authorized_settler(holder(), sid(7)).unwrap(),
-            settler
-        );
-    });
-}
-
-#[test]
 fn settled_token_id_derivation() {
     // uint256(keccak256("SETTLED" ++ seriesId_be64))
     let series_id = sid(7);

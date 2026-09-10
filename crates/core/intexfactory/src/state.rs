@@ -17,27 +17,6 @@ use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
 impl IntexFactoryContract<'_> {
-    // --- authorizedSettler ---
-
-    pub(crate) fn read_authorized_settler(
-        &self,
-        holder: Address,
-        series_id: SeriesId,
-    ) -> Result<Address> {
-        let key = Self::authorized_settler_key(holder, series_id);
-        self.authorized_settler.read(&key)
-    }
-
-    pub(crate) fn write_authorized_settler(
-        &mut self,
-        holder: Address,
-        series_id: SeriesId,
-        settler: Address,
-    ) -> Result<()> {
-        let key = Self::authorized_settler_key(holder, series_id);
-        self.authorized_settler.write(&key, settler)
-    }
-
     // --- mineSeq ---
 
     pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {

@@ -1,7 +1,7 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` /
-//! `setAuthorizedSettler` are user-facing with `caller = msg.sender`. None
+//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` are
+//! user-facing with `caller = msg.sender`. None
 //! accept value, except `distribute`, which credits auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -197,14 +197,6 @@ pub fn dispatch(
                         c.amount,
                         c.nonce,
                         auth,
-                    )
-                }),
-                setAuthorizedSettler(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::set_authorized_settler(
-                        &storage,
-                        sender,
-                        SeriesId::from(c.seriesId),
-                        c.settler,
                     )
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)

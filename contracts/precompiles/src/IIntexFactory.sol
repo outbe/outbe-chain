@@ -10,8 +10,8 @@ pragma solidity ^0.8.30;
 ///         settlement bookkeeping and the autonomous qualification index.
 interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
-    ///         `intexHolder`. Caller must be the holder or its authorized
-    ///         settler. Allowed in Qualified (voluntary) and Called (forced).
+    ///         `intexHolder`. Any caller may pay; the settled units stay with
+    ///         the holder. Allowed in Qualified (voluntary) and Called (forced).
     /// @dev The cost is paid by spending a PayNote, so this call moves no
     ///      tokens: the underlying assets reached the reserve vault when the
     ///      note was deposited.
@@ -41,9 +41,6 @@ interface IIntexFactory {
     function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
-
-    /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
-    function setAuthorizedSettler(bytes14 seriesId, address settler) external;
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -100,7 +97,7 @@ interface IIntexFactory {
     event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
+    event Settled(bytes14 indexed seriesId, address indexed intexHolder, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
     event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);

@@ -306,21 +306,6 @@ pub(crate) fn product_to_payment_units(product: U256, payment_decimals: u8) -> R
     }
 }
 
-/// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
-/// `holder` is the caller (the precompile passes its caller).
-pub fn set_authorized_settler(
-    storage: &StorageHandle<'_>,
-    holder: Address,
-    series_id: SeriesId,
-    settler: Address,
-) -> Result<()> {
-    if holder.is_zero() || settler.is_zero() {
-        return Err(IntexFactoryError::ZeroAddress.into());
-    }
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    factory.write_authorized_settler(holder, series_id, settler)
-}
-
 /// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
 /// one target chain into the day's pot. Gated to the OriginRouter. Creators are
 /// paid once every winning chain has routed its proceeds (or the fan-in deadline
@@ -790,25 +775,19 @@ pub fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
-    // Dual-wallet authorization: only the holder or its authorized settler.
-    let factory = IntexFactoryContract::new(storage.clone());
-    if intex_holder != settler
-        && factory.read_authorized_settler(intex_holder, series_id)? != settler
-    {
-        return Err(IntexFactoryError::NotAuthorized.into());
-    }
-
-    // Last, so a doomed settle never pays for proof verification.
+    // Last, so a doomed settle never pays for proof verification. The note is
+    // bound to the caller; the settled units are not.
     discharge_cost(storage, &series, amount, settler, paynote_proof)?;
 
-    // Burn Issued from holder, issue Settled to the settler.
+    // Burn Issued from the holder and issue Settled back to them: paying for a
+    // right never moves it.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::settleCall {
             seriesId: series_id.into(),
             from: intex_holder,
-            to: settler,
+            to: intex_holder,
             amount,
         }
         .abi_encode()
@@ -824,7 +803,6 @@ pub fn settle(
         crate::precompile::IIntexFactory::Settled {
             seriesId: series_id.into(),
             intexHolder: intex_holder,
-            settler,
             amount,
         },
     )

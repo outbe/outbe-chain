@@ -631,6 +631,36 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     });
 }
 
+/// A Called series with nothing realized, so expiry forfeits all of it. Bucket
+/// tests need real members: a phantom cannot expire, and the sweep now keeps a
+/// group until every member does.
+fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
+    let series_id = sid(worldwide_day);
+    outbe_intex::api::create_series(
+        s,
+        outbe_intex::schema::CreateSeriesParams {
+            series_id,
+            worldwide_day: WorldwideDay::new(worldwide_day),
+            issued_intex_count: 1,
+            promis_load_minor: PROMIS_LOAD_MINOR,
+            entry_price_minor: U256::from(ENTRY_PRICE),
+            floor_price_minor: U256::from(ENTRY_PRICE),
+            call_price_minor: U256::from(ENTRY_PRICE),
+            call_trigger: outbe_intex::schema::IntexCallTrigger {
+                call_window: (28 * DAY) as u32,
+                call_threshold: (21 * DAY) as u32,
+                call_notice_period: (7 * DAY) as u32,
+            },
+            issued_at: ISSUED_AT,
+            issuance_currency: 840,
+            reference_currency: REFERENCE_ISO,
+        },
+    )
+    .unwrap();
+    outbe_intex::api::mark_called(s, series_id, ISSUED_AT).unwrap();
+    series_id
+}
+
 #[test]
 fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     with_factory(|s| {
@@ -639,9 +669,11 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         let far = WorldwideDay::new(20260101);
         let near = WorldwideDay::new(20260102);
 
-        f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[sid(1)])
+        let far_member = called_series(&s, 20260101);
+        let near_member = called_series(&s, 20260102);
+        f.push_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[far_member])
             .unwrap();
-        f.push_called_group(REFERENCE_ISO, near, now + DAY, &[sid(2)])
+        f.push_called_group(REFERENCE_ISO, near, now + DAY, &[near_member])
             .unwrap();
 
         let ctx = BlockRuntimeContext::new(
@@ -715,7 +747,8 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
         let queued = crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK + 44;
         for index in 0..queued {
             let day = 20260101 + index;
-            f.push_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[sid(day)])
+            let member = called_series(&s, day);
+            f.push_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[member])
                 .unwrap();
         }
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), queued);
@@ -766,7 +799,8 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
         let deadline = now + 600;
         let day = WorldwideDay::new(20260101);
 
-        f.push_called_group(REFERENCE_ISO, day, deadline, &[sid(20260101)])
+        let member = called_series(&s, 20260101);
+        f.push_called_group(REFERENCE_ISO, day, deadline, &[member])
             .unwrap();
 
         let sweep = |at: u64| {
