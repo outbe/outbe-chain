@@ -311,6 +311,31 @@
   },
   {
     "type": "event",
+    "name": "ExpiryDeferred",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "retryAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LateProceedsBurned",
     "inputs": [
       {

@@ -19,7 +19,19 @@ use crate::schema::IntexFactoryContract;
 /// sweep re-reads that bucket next block; propagating would fail the block instead.
 fn defer_group(storage: &StorageHandle<'_>, iso_code: u16, worldwide_day: WorldwideDay, day: u32) {
     let deferred = storage.with_checkpoint(|| {
-        IntexFactoryContract::new(storage.clone()).defer_called_group(iso_code, worldwide_day, day)
+        IntexFactoryContract::new(storage.clone()).defer_called_group(
+            iso_code,
+            worldwide_day,
+            day,
+        )?;
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::ExpiryDeferred {
+                referenceCurrency: iso_code,
+                worldwideDay: worldwide_day.value(),
+                retryAt: IntexFactoryContract::bucket_end(day),
+            },
+        )
     });
     if let Err(error) = deferred {
         tracing::warn!(

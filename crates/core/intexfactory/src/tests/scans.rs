@@ -882,7 +882,11 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
 
 #[test]
 fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
-    with_factory(|s| {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = factory_provider();
+    let retry_day = StorageHandle::enter(&mut provider, |s| {
+        select_prod_profile(&s);
         let _f = qualify_series(&s, 7, sample(7));
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -954,5 +958,26 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
         );
         assert_eq!(f.first_expiry_day().unwrap(), None);
         assert_eq!(f.called_group_count.read(&key).unwrap(), 0);
+        retry_day
     });
+
+    // The deferral is visible on-chain, once, and names the pass that finishes it.
+    let sig = IIntexFactory::ExpiryDeferred::SIGNATURE_HASH;
+    let deferred: Vec<_> = provider
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter(|log| log.topics().first() == Some(&sig))
+        .map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).unwrap())
+        .collect();
+    assert_eq!(
+        deferred.len(),
+        1,
+        "one ExpiryDeferred for the unfinished pass"
+    );
+    assert_eq!(deferred[0].referenceCurrency, REFERENCE_ISO);
+    assert_eq!(deferred[0].worldwideDay, 7);
+    assert_eq!(
+        deferred[0].retryAt,
+        IntexFactoryContract::bucket_end(retry_day)
+    );
 }
