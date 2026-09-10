@@ -990,7 +990,10 @@ pub fn mine_promis(
     let mut factory = IntexFactoryContract::new(storage.clone());
     let seq = factory.read_mine_seq(series_id, holder)?;
     validate_pow(holder, promis_amount, series_id, seq, nonce)?;
-    factory.write_mine_seq(series_id, holder, seq + 1)?;
+    let next_seq = seq
+        .checked_add(1)
+        .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
+    factory.write_mine_seq(series_id, holder, next_seq)?;
 
     // Burn Settled from holder on the NFT.
     storage.call(
