@@ -518,6 +518,36 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 const NOTE_ASSET: Address = Address::new([0x71; 20]);
 
 #[test]
+fn a_cost_that_does_not_divide_evenly_is_floored_and_the_note_matches_it() {
+    // entry 0.500001 x load 0.001 = 500.001 six-decimal units: the chain charges
+    // 500, the same figure `costAmountMinor` advertises. Rounding the obligation
+    // up would demand 501 and refuse the owner's note.
+    let mut world = World::new();
+    let input = NodIssueParams {
+        entry_price_minor: U256::from(500_001u64),
+        ..params(Address::repeat_byte(0x61))
+    };
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = cost_of(&input);
+    assert_eq!(cost, 500);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
+    let nonce = find_valid_nonce(nod_id);
+
+    let minted = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+}
+
+#[test]
 fn a_note_in_a_wider_asset_pays_the_cost_scaled_to_its_decimals() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x61));

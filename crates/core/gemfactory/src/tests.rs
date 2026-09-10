@@ -526,27 +526,49 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
-fn the_issuance_rail_floors_once_at_full_precision() {
-    // COEN/USD 7.5 and a one-unit load: 7.5 reference minor units, which the
-    // six-decimal reference cost already floors to 7. Converting at COEN/EUR 1.0
-    // gives exactly 1 EUR unit at full precision; converting the floored 7 would
-    // have rounded to nothing and refused the settlement.
-    let usd_rate = U256::from(7_500_000u64);
-    let mut provider = test_storage(Some(usd_rate));
+fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
+    // Entry 3.0 and a one-unit load cost 3 reference minor units; at COEN/EUR 2.5
+    // against COEN/USD 3.0 the exact obligation is 2.5 EUR units. Flooring the
+    // whole thing charges 2; rounding the converted cost up charged 3.
+    let mut provider = test_storage(Some(U256::from(3_000_000u64)));
     let proof = note_proof(&mut provider, STABLE_EUR, ALICE, NOTE_AMOUNT);
     StorageHandle::enter(&mut provider, |storage| {
-        register_currency(&storage, 978, six_decimal_unit());
+        register_currency(&storage, 978, U256::from(2_500_000u64));
         let gem_id =
             issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         assert_eq!(
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
-            U256::from(7u64)
+            U256::from(3u64)
         );
         runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
-    assert_eq!(settled_event(&provider).amountPaid, U256::ONE);
+    assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+}
+
+#[test]
+fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
+    // Entry 1.500001 and a one-unit load: the reference cost floors to 1, but the
+    // obligation is 1.500001 six-decimal units. An eighteen-decimal asset carries
+    // all of it; scaling the floored 1 would have charged 1e12 instead.
+    let mut provider = test_storage(Some(U256::from(1_500_001u64)));
+    let proof = note_proof(&mut provider, STABLE_18, ALICE, NOTE_AMOUNT);
+    StorageHandle::enter(&mut provider, |storage| {
+        let gem_id =
+            issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        assert_eq!(
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
+            U256::ONE
+        );
+        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+    });
+
+    assert_eq!(
+        settled_event(&provider).amountPaid,
+        U256::from(1_500_001_000_000u64)
+    );
 }
 
 #[test]
