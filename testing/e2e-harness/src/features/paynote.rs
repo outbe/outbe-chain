@@ -13,15 +13,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_paynote::client::{new_tree, witness};
-use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn, Field};
+use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
+use outbe_paynote::Field;
 use outbe_paynote::PayNoteSuit;
-use outbe_protocol::codec::{field_from_be_bytes, field_from_be_bytes_canonical};
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
-use outbe_zk_canonical::u256;
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
@@ -47,8 +48,7 @@ impl Note {
         static NEXT_SPEND_KEY: AtomicU64 = AtomicU64::new(0x005e_771e);
         let spend_key = Field::from(NEXT_SPEND_KEY.fetch_add(1, Ordering::Relaxed));
         let serial = note_sn(spend_key).expect("note serial");
-        let commitment =
-            note_commitment(chain_id, serial, asset.into(), amount).expect("note commitment");
+        let commitment = note_commitment(chain_id, serial, asset, amount).expect("note commitment");
         Self {
             chain_id,
             asset,
@@ -61,7 +61,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        B256::from_slice(&PayNoteSuit::field_to_be_bytes(&self.serial))
+        PayNoteSuit::field_to_b256(&self.serial).unwrap()
     }
 }
 
@@ -138,15 +138,15 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address)
         chain_id: note.chain_id,
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
-        asset: field_from_be_bytes::<Field>(note.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(owner.as_slice()),
-        spend_amount: u256::to_limbs(note.amount),
+        asset: note.asset.to_field().unwrap(),
+        owner: owner.to_field().unwrap(),
+        spend_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
         change_commitment: Field::from(0_u64),
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(note.amount),
+        note_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         note_spend_key: note.spend_key,
         leaf_index,
         auth_path,
@@ -199,8 +199,7 @@ fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
         .ok()?
         .try_into()
         .ok()?;
-    let commitment =
-        field_from_be_bytes_canonical::<Field>(&commitment_bytes, "BN254 field").ok()?;
+    let commitment = PayNoteSuit::field_from_b256(&B256::from(commitment_bytes)).ok()?;
 
     let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if data.len() != 3 * 32 {

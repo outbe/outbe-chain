@@ -5,8 +5,9 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_canonical::{
     emit_mint::PROOF_WORDS as EMIT_MINT_PROOF_WORDS,
     full_proof::PROOF_WORDS as FULL_PROOF_PROOF_WORDS,
@@ -292,7 +293,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     use outbe_protocol::protocol::zk::ProofGenerator;
     use outbe_protocol::OutbeV1;
     use outbe_zk_backend::barretenberg::Barretenberg;
-    use outbe_zk_canonical::emit_mint::hash::*;
+    use outbe_zk_canonical::emit_mint::{hash::*, Field};
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
     use outbe_zk_canonical::CircuitId as _;
 
@@ -310,12 +311,12 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
 
     let owner = [0x22u8; 20];
     let chain_id = 31_337u64;
-    let note_value = (U256::from(1) << 200) + U256::from(100);
-    let mint_value = (U256::from(1) << 199) + U256::from(40);
-    let note_amount = outbe_zk_canonical::u256::to_limbs(note_value);
-    let mint_units = outbe_zk_canonical::u256::to_limbs(mint_value);
+    let note_value = (U256::from(1) << 200usize) + U256::from(100);
+    let mint_value = (U256::from(1) << 199usize) + U256::from(40);
+    let note_amount = u256_limbs_be(&note_value.to_be_bytes::<32>());
+    let mint_units = u256_limbs_be(&mint_value.to_be_bytes::<32>());
     let spend_key = Field::from(17u64);
-    let serial = note_sn(owner, spend_key).unwrap();
+    let serial = note_sn(owner.into(), spend_key).unwrap();
     let commitment = note_commitment(chain_id, serial, note_value).unwrap();
     let mut tree =
         outbe_emit::EmitTree::new(emit_domain(), empty_leaf(chain_id).unwrap(), 32).unwrap();
@@ -326,7 +327,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     let next_key = change_key(spend_key, nullifier).unwrap();
     let change = note_commitment(
         chain_id,
-        note_sn(owner, next_key).unwrap(),
+        note_sn(owner.into(), next_key).unwrap(),
         note_value - mint_value,
     )
     .unwrap();
@@ -335,7 +336,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         chain_id,
         root,
         nullifier,
-        note_owner: field_from_be_bytes::<Field>(&owner),
+        note_owner: alloy_primitives::Address::from(owner).to_field().unwrap(),
         mint_units,
         change_commitment: change,
     };
@@ -354,7 +355,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     combined.extend_from_slice(&8u32.to_be_bytes());
     for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
     {
-        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&word));
+        combined.extend_from_slice(OutbeV1::field_to_b256(&word).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);

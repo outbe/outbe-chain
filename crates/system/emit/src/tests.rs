@@ -7,25 +7,25 @@
 
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use ark_ff::BigInteger as _;
 use ark_ff::PrimeField;
 use outbe_primitives::addresses::EMIT_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::emit_mint::COMBINED_LEN as EMIT_MINT_COMBINED_LEN;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
-use outbe_zk_canonical::u256;
 
 use crate::hash::{
     change_key, emit_domain, empty_leaf, empty_subtrees, note_commitment,
-    note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
+    note_sn as derive_note_sn, nullifier as derive_nullifier,
 };
 use crate::precompile::{base_gas, dispatch, IEmit, EMIT_VIEW_BASE_GAS, PAYABLE_SELECTORS};
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
+use crate::Field;
 
 use crate::{EmitSuite, EmitTree};
 
@@ -45,7 +45,7 @@ fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
 }
 
 fn b256(field: Field) -> B256 {
-    B256::from_slice(&EmitSuite::field_to_be_bytes(&field))
+    EmitSuite::field_to_b256(&field).unwrap()
 }
 
 fn small_word(low_byte: u8) -> B256 {
@@ -131,9 +131,7 @@ fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        let bytes = f.into_bigint().to_bytes_be();
-        combined.resize(combined.len() + 32 - bytes.len(), 0);
-        combined.extend_from_slice(&bytes);
+        combined.extend_from_slice(EmitSuite::field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);
@@ -169,7 +167,7 @@ fn prove_mint_u256(
     leaf_index: u32,
     mint_units: U256,
 ) -> Vec<u8> {
-    let serial = derive_note_sn(owner.into(), key).unwrap();
+    let serial = derive_note_sn(owner, key).unwrap();
     let commitment = note_commitment(CHAIN_ID, serial, note_amount).unwrap();
     let nullifier = derive_nullifier(commitment, key).unwrap();
     let remaining = note_amount.checked_sub(mint_units).expect("mint fits note");
@@ -179,7 +177,7 @@ fn prove_mint_u256(
         let next_key = change_key(key, nullifier).unwrap();
         note_commitment(
             CHAIN_ID,
-            derive_note_sn(owner.into(), next_key).unwrap(),
+            derive_note_sn(owner, next_key).unwrap(),
             remaining,
         )
         .unwrap()
@@ -188,12 +186,12 @@ fn prove_mint_u256(
         chain_id: CHAIN_ID,
         root: tree.root(),
         nullifier,
-        note_owner: field_from_be_bytes::<Field>(owner.as_slice()),
-        mint_units: u256::to_limbs(mint_units),
+        note_owner: owner.to_field().unwrap(),
+        mint_units: u256_limbs_be(&mint_units.to_be_bytes::<32>()),
         change_commitment: change,
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(note_amount),
+        note_amount: u256_limbs_be(&note_amount.to_be_bytes::<32>()),
         note_spend_key: key,
         leaf_index,
         auth_path: tree
@@ -232,7 +230,7 @@ fn fabricated_statement(
     let mut owner_word = [0u8; 32];
     owner_word[12..].copy_from_slice(owner.0.as_slice());
     combined.extend_from_slice(&owner_word);
-    for limb in u256::to_limbs(U256::from(units)) {
+    for limb in u256_limbs_be(&U256::from(units).to_be_bytes::<32>()) {
         combined.extend_from_slice(&u128_word(limb));
     }
     combined.extend_from_slice(change.as_slice());
@@ -292,7 +290,7 @@ fn mint_calldata_u256(
 
 /// The runtime-level note the plan scenario burns: Bob's serial under key 17.
 fn scenario_serial() -> Field {
-    derive_note_sn(BOB.into(), Field::from(17u64)).unwrap()
+    derive_note_sn(BOB, Field::from(17u64)).unwrap()
 }
 
 /// Simulates the EVM value boundary's credit, then runs a burn through the
@@ -380,7 +378,7 @@ fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
 fn burn_accepts_full_width_u256_amount() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
-    let amount = (U256::from(1) << 200) + U256::from(7);
+    let amount = (U256::from(1) << 200usize) + U256::from(7);
     let commitment = note_commitment(CHAIN_ID, serial, amount).unwrap();
 
     run_burn_u256(&mut provider, ALICE, amount, b256(serial)).unwrap();
@@ -566,7 +564,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
     .unwrap();
     let change = note_commitment(
         CHAIN_ID,
-        derive_note_sn(BOB.into(), change_key(key, nullifier).unwrap()).unwrap(),
+        derive_note_sn(BOB, change_key(key, nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -834,12 +832,8 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     let nullifier =
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let next_key = change_key(key, nullifier).unwrap();
-    let change = note_commitment(
-        pool,
-        derive_note_sn(BOB.into(), next_key).unwrap(),
-        U256::from(60),
-    )
-    .unwrap();
+    let change =
+        note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
     let root_after_change = tree.root();
 
@@ -939,8 +933,8 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
     let key = Field::from(17u64);
-    let note = (U256::from(1) << 200) + U256::from(100);
-    let minted = (U256::from(1) << 199) + U256::from(40);
+    let note = (U256::from(1) << 200usize) + U256::from(100);
+    let minted = (U256::from(1) << 199usize) + U256::from(40);
     let remainder = note - minted;
 
     let mut tree = EmitTree::new(
@@ -961,12 +955,8 @@ fn amounts_above_the_u128_range_mint_end_to_end() {
     let commitment = note_commitment(CHAIN_ID, serial, note).unwrap();
     let nullifier = derive_nullifier(commitment, key).unwrap();
     let next_key = change_key(key, nullifier).unwrap();
-    let change = note_commitment(
-        CHAIN_ID,
-        derive_note_sn(BOB.into(), next_key).unwrap(),
-        remainder,
-    )
-    .unwrap();
+    let change =
+        note_commitment(CHAIN_ID, derive_note_sn(BOB, next_key).unwrap(), remainder).unwrap();
     let partial = prove_mint_u256(&tree, BOB, key, note, note_leaf, minted);
     let data = mint_calldata_u256(
         CAROL,
@@ -1026,12 +1016,8 @@ fn stale_root_past_the_32_window_is_rejected() {
     )
     .unwrap();
     let next_key = change_key(Field::from(17u64), nullifier).unwrap();
-    let change = note_commitment(
-        pool,
-        derive_note_sn(BOB.into(), next_key).unwrap(),
-        U256::from(60),
-    )
-    .unwrap();
+    let change =
+        note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
 
     // 32 further appends evict the burn root from the window.
     for index in 0..32u64 {
@@ -1083,7 +1069,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(BOB.into(), change_key(key, nullifier).unwrap()).unwrap(),
+        derive_note_sn(BOB, change_key(key, nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -1144,11 +1130,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     .unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(
-            BOB.into(),
-            change_key(Field::from(17u64), nullifier).unwrap(),
-        )
-        .unwrap(),
+        derive_note_sn(BOB, change_key(Field::from(17u64), nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -1190,7 +1172,7 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
     let nullifier =
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let next_key = change_key(key, nullifier).unwrap();
-    let next_serial = derive_note_sn(BOB.into(), next_key).unwrap();
+    let next_serial = derive_note_sn(BOB, next_key).unwrap();
     let change = note_commitment(pool, next_serial, U256::from(60)).unwrap();
 
     // Anyone pre-creates the deterministic change commitment by burning the
@@ -1311,7 +1293,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(BOB.into(), change_key(key, nullifier).unwrap()).unwrap(),
+        derive_note_sn(BOB, change_key(key, nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -1467,7 +1449,7 @@ fn mint_rolls_back_fully_under_fault_injection() {
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(BOB.into(), change_key(key, nullifier).unwrap()).unwrap(),
+        derive_note_sn(BOB, change_key(key, nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();

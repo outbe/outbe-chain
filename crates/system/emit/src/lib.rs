@@ -17,16 +17,16 @@
 //! (ABI dispatch, payable policy, selector-sensitive gas), [`errors`].
 
 pub mod errors;
-pub use outbe_zk_canonical::emit_mint::hash;
+pub use outbe_zk_canonical::emit_mint::{hash, Field};
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
 
 /// Cryptographic suite used by Emit.
-pub type EmitSuite = outbe_protocol::OutbeV1;
+pub use outbe_zk_canonical::emit_mint::EmitSuite;
 
 /// In-memory commitment tree for Emit clients.
-pub type EmitTree = outbe_protocol::protocol::imt::Imt<EmitSuite>;
+pub use outbe_zk_canonical::emit_mint::Tree as EmitTree;
 
 #[cfg(test)]
 mod tests;

@@ -22,12 +22,13 @@ use outbe_zk_canonical::paynote::{
 };
 use outbe_zk_canonical::CircuitId as _;
 
-use crate::hash::{empty_subtrees, Field};
+use crate::hash::empty_subtrees;
 use crate::precompile::{base_gas, dispatch, IPayNote, PAYABLE_SELECTORS};
 use crate::runtime;
 use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
+use crate::Field;
 
 use crate::{PayNoteSuit, PayNoteTree};
 
@@ -40,7 +41,7 @@ const USDC: Address = Address::new([0x33; 20]);
 const WBTC: Address = Address::new([0x44; 20]);
 
 fn b256(field: Field) -> B256 {
-    B256::from_slice(&PayNoteSuit::field_to_be_bytes(&field))
+    PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
 fn assert_revert<T: std::fmt::Debug>(result: Result<T, PrecompileError>, expected: &str) {

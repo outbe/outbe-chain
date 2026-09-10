@@ -5,20 +5,19 @@
 //! from [`crate::runtime`]. Client applications use [`crate::client`] for
 //! production membership witnesses.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
-use outbe_zk_canonical::u256;
 
-use ark_ff::{BigInteger as _, PrimeField};
-
-use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, note_sn, Field};
+use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, note_sn};
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
+use crate::Field;
 use crate::{PayNoteSuit, PayNoteTree};
 
 /// Everything the pool and the prover need about one note.
@@ -37,7 +36,7 @@ pub fn note(chain_id: u64, key: u64, asset: Address, amount: U256) -> Note {
 
 fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: U256) -> Note {
     let serial = note_sn(key).unwrap();
-    let commitment = note_commitment(chain_id, serial, asset.into(), amount).unwrap();
+    let commitment = note_commitment(chain_id, serial, asset, amount).unwrap();
     let nullifier = note_nullifier(commitment, key).unwrap();
     Note {
         key,
@@ -96,14 +95,14 @@ fn prove_spend(
         chain_id,
         root: tree.root(),
         nullifier: n.nullifier,
-        asset: field_from_be_bytes::<Field>(n.asset.as_slice()),
-        owner: field_from_be_bytes::<Field>(owner.as_slice()),
-        spend_amount: u256::to_limbs(spend_amount),
+        asset: n.asset.to_field().unwrap(),
+        owner: owner.to_field().unwrap(),
+        spend_amount: u256_limbs_be(&spend_amount.to_be_bytes::<32>()),
         change_commitment: change_note(chain_id, n, spend_amount)
             .map_or(Field::from(0u64), |change| change.commitment),
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(n.amount),
+        note_amount: u256_limbs_be(&n.amount.to_be_bytes::<32>()),
         note_spend_key: n.key,
         leaf_index,
         auth_path: tree
@@ -127,9 +126,7 @@ pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> 
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        let bytes = f.into_bigint().to_bytes_be();
-        combined.resize(combined.len() + 32 - bytes.len(), 0);
-        combined.extend_from_slice(&bytes);
+        combined.extend_from_slice(PayNoteSuit::field_to_b256(&f).unwrap().as_slice());
     }
     for word in proof_words {
         combined.extend_from_slice(word);
@@ -144,8 +141,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
     provider.enter(|storage| {
         let paynote: PayNoteContract<'_> = storage.contract();
         let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
-        let empty_root =
-            B256::from_slice(&PayNoteSuit::field_to_be_bytes(&zeros[PAYNOTE_TREE_DEPTH]));
+        let empty_root = PayNoteSuit::field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
         paynote.current_root.write(empty_root).unwrap();
         paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
         paynote.recent_roots.push(empty_root).unwrap();
@@ -153,10 +149,7 @@ pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &
             runtime::append(&paynote, &zeros, *leaf).unwrap();
             paynote
                 .commitments
-                .write(
-                    &B256::from_slice(&PayNoteSuit::field_to_be_bytes(leaf)),
-                    true,
-                )
+                .write(&PayNoteSuit::field_to_b256(leaf).unwrap(), true)
                 .unwrap();
         }
     });

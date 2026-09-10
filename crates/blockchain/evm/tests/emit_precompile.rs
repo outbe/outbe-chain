@@ -8,20 +8,21 @@ use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_emit::hash::{
     change_key, emit_domain, empty_leaf, note_commitment, note_sn as derive_note_sn,
-    nullifier as derive_nullifier, Field,
+    nullifier as derive_nullifier,
 };
 use outbe_emit::precompile::IEmit;
 use outbe_emit::schema::{EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 use outbe_emit::EmitTree;
+use outbe_emit::Field;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::EMIT_ADDRESS;
-use outbe_protocol::codec::field_from_be_bytes;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
-use outbe_zk_canonical::u256;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::{
@@ -180,7 +181,7 @@ fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
 }
 
 fn b256(field: Field) -> B256 {
-    B256::from_slice(&OutbeV1::field_to_be_bytes(&field))
+    OutbeV1::field_to_b256(&field).unwrap()
 }
 
 // ---- reference tree and proof fixture --------------------------------------
@@ -193,7 +194,7 @@ fn prove_mint(
     leaf_index: u32,
     mint_units: u128,
 ) -> Vec<u8> {
-    let serial = derive_note_sn(owner.into(), key).unwrap();
+    let serial = derive_note_sn(owner, key).unwrap();
     let nullifier = derive_nullifier(
         note_commitment(CHAIN_ID, serial, U256::from(note_amount)).unwrap(),
         key,
@@ -204,7 +205,7 @@ fn prove_mint(
         let next_key = change_key(key, nullifier).unwrap();
         note_commitment(
             CHAIN_ID,
-            derive_note_sn(owner.into(), next_key).unwrap(),
+            derive_note_sn(owner, next_key).unwrap(),
             U256::from(remaining),
         )
         .unwrap()
@@ -215,12 +216,12 @@ fn prove_mint(
         chain_id: CHAIN_ID,
         root: tree.root(),
         nullifier,
-        note_owner: field_from_be_bytes::<Field>(owner.as_slice()),
-        mint_units: u256::to_limbs(U256::from(mint_units)),
+        note_owner: owner.to_field().unwrap(),
+        mint_units: u256_limbs_be(&U256::from(mint_units).to_be_bytes::<32>()),
         change_commitment: change,
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(U256::from(note_amount)),
+        note_amount: u256_limbs_be(&U256::from(note_amount).to_be_bytes::<32>()),
         note_spend_key: key,
         leaf_index,
         auth_path: tree
@@ -238,7 +239,7 @@ fn prove_mint(
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof.proof.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
-        combined.extend_from_slice(&OutbeV1::field_to_be_bytes(&f));
+        combined.extend_from_slice(OutbeV1::field_to_b256(&f).unwrap().as_slice());
     }
     for word in &proof.proof {
         combined.extend_from_slice(word);
@@ -332,7 +333,7 @@ fn db_with_borrower_on(opcode: u8, mut db: CacheDB<EmptyDB>) -> CacheDB<EmptyDB>
 fn emit_burn_partial_mint_full_mint_and_replay() {
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
-    let serial = derive_note_sn(BOB.into(), Field::from(17u64)).unwrap();
+    let serial = derive_note_sn(BOB, Field::from(17u64)).unwrap();
     let key = Field::from(17u64);
     let mut tree = EmitTree::new(
         emit_domain(),
@@ -395,12 +396,8 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let nullifier =
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let next_key = change_key(key, nullifier).unwrap();
-    let change = note_commitment(
-        pool,
-        derive_note_sn(BOB.into(), next_key).unwrap(),
-        U256::from(60),
-    )
-    .unwrap();
+    let change =
+        note_commitment(pool, derive_note_sn(BOB, next_key).unwrap(), U256::from(60)).unwrap();
     let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 40);
     let change_leaf = u32::try_from(tree.append(change).unwrap().0).unwrap();
     let outcome = run(
@@ -629,7 +626,7 @@ fn chained_db(mut db: CacheDB<EmptyDB>, outcome: ResultAndState) -> CacheDB<Empt
 fn root_evicted_by_32_later_appends_is_stale() {
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
-    let serial = derive_note_sn(BOB.into(), Field::from(17u64)).unwrap();
+    let serial = derive_note_sn(BOB, Field::from(17u64)).unwrap();
     let key = Field::from(17u64);
     let mut tree = EmitTree::new(
         emit_domain(),
@@ -661,7 +658,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
         derive_nullifier(note_commitment(pool, serial, U256::from(100)).unwrap(), key).unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(BOB.into(), change_key(key, nullifier).unwrap()).unwrap(),
+        derive_note_sn(BOB, change_key(key, nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -698,7 +695,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
 fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     outbe_zk_backend::barretenberg::init_crs().expect("CRS init");
     let pool = CHAIN_ID;
-    let serial = derive_note_sn(BOB.into(), Field::from(17u64)).unwrap();
+    let serial = derive_note_sn(BOB, Field::from(17u64)).unwrap();
     let mut tree = EmitTree::new(
         emit_domain(),
         empty_leaf(CHAIN_ID).unwrap(),
@@ -717,11 +714,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     .unwrap();
     let change = note_commitment(
         pool,
-        derive_note_sn(
-            BOB.into(),
-            change_key(Field::from(17u64), nullifier).unwrap(),
-        )
-        .unwrap(),
+        derive_note_sn(BOB, change_key(Field::from(17u64), nullifier).unwrap()).unwrap(),
         U256::from(60),
     )
     .unwrap();
@@ -793,7 +786,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     // case above never reaches.
     {
         let key = Field::from(17u64);
-        let owner_serial = derive_note_sn(BORROWER.into(), key).unwrap();
+        let owner_serial = derive_note_sn(BORROWER, key).unwrap();
         let mut owner_tree = EmitTree::new(
             emit_domain(),
             empty_leaf(CHAIN_ID).unwrap(),
@@ -825,7 +818,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         .unwrap();
         let owner_change = note_commitment(
             pool,
-            derive_note_sn(BORROWER.into(), change_key(key, owner_nullifier).unwrap()).unwrap(),
+            derive_note_sn(BORROWER, change_key(key, owner_nullifier).unwrap()).unwrap(),
             U256::from(60),
         )
         .unwrap();

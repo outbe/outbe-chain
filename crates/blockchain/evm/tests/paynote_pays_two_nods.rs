@@ -277,8 +277,8 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
     )
 }
 
-fn word(field: outbe_paynote::hash::Field) -> B256 {
-    B256::from_slice(&PayNoteSuit::field_to_be_bytes(&field))
+fn word(field: outbe_paynote::Field) -> B256 {
+    PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
 /// Calls `mineGratis` for `nod_id`, authorizing the gratis mint against the

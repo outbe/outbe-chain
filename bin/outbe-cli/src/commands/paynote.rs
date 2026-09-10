@@ -11,20 +11,22 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
-use k256::pkcs8::der::Encode;
+use outbe_paynote::Field;
 use outbe_paynote::{
     client::{new_tree, witness},
-    hash::{change_key, note_commitment, note_nullifier, note_sn, Field},
+    hash::{change_key, note_commitment, note_nullifier, note_sn},
     precompile::IPayNote,
     PayNoteSuit, PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::{codec::FieldElement, protocol::zk::{Circuit, CircuitId, ProofGenerator}, Codec, FieldEncode};
-use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
-use outbe_zk_canonical::{
-    noir::paynote::{Paynote, PublicInputs, Witness},
-    u256,
+use outbe_protocol::codec::u256_limbs_be;
+use outbe_protocol::{
+    codec::FieldElement,
+    protocol::zk::{Circuit, CircuitId, ProofGenerator},
+    Codec,
 };
+use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
+use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs, Witness};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -146,7 +148,8 @@ impl Note {
         ensure!(key != Field::from(0), "spend key must be non-zero");
         let serial = note_sn(key)?;
         ensure!(serial != Field::from(0), "note serial must be non-zero");
-        let commitment = word(note_commitment(chain_id, serial, asset.into(), amount)?);
+        let commitment =
+            PayNoteSuit::field_to_b256(&note_commitment(chain_id, serial, asset, amount)?)?;
         ensure!(commitment != B256::ZERO, "commitment must be non-zero");
         Ok(Self {
             version: 1,
@@ -154,7 +157,7 @@ impl Note {
             pool: PAYNOTE_ADDRESS,
             asset,
             amount,
-            spend_key: word(key),
+            spend_key: PayNoteSuit::field_to_b256(&key)?,
             commitment,
         })
     }
@@ -192,10 +195,10 @@ impl Note {
     }
 
     fn nullifier(&self) -> Result<B256> {
-        Ok(word(note_nullifier(
+        Ok(PayNoteSuit::field_to_b256(&note_nullifier(
             self.commitment.to_field()?,
             self.key()?,
-        )?))
+        )?)?)
     }
 
     fn change(&self, amount: U256) -> Result<Option<Self>> {
@@ -214,10 +217,6 @@ impl Note {
             change_key(self.key()?, self.nullifier()?.to_field()?)?,
         )?))
     }
-}
-
-fn word(value: Field) -> B256 {
-    B256::from_slice(&PayNoteSuit::field_to_be_bytes(&value))
 }
 
 fn resolve_note(dir: &Path, argument: &str) -> PathBuf {
@@ -403,7 +402,7 @@ async fn deposit(
             IPayNote::depositCall {
                 asset: note.asset,
                 amount: note.amount,
-                noteSn: word(note_sn(note.key()?)?),
+                noteSn: PayNoteSuit::field_to_b256(&note_sn(note.key()?)?)?,
             }
             .abi_encode(),
         )
@@ -499,7 +498,7 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
             );
             tree.append(event.commitment.to_field()?)?;
             ensure!(
-                word(tree.root()) == event.rootAfter,
+                PayNoteSuit::field_to_b256(&tree.root())? == event.rootAfter,
                 "NewNote history root mismatch"
             );
         }
@@ -531,7 +530,8 @@ async fn read_tree(client: &impl Rpc, chain_id: u64) -> Result<PayNoteTree> {
             .await?,
     )?;
     ensure!(
-        count == u64::try_from(tree.leaves().len())? && root == word(tree.root()),
+        count == u64::try_from(tree.leaves().len())?
+            && root == PayNoteSuit::field_to_b256(&tree.root())?,
         "NewNote history does not match chain snapshot"
     );
     Ok(tree)
@@ -568,7 +568,7 @@ fn prove(
         nullifier: note.nullifier()?.to_field()?,
         asset: note.asset.to_field()?,
         owner: owner.to_field()?,
-        spend_amount: u256::to_limbs(amount),
+        spend_amount: u256_limbs_be(&amount.to_be_bytes::<32>()),
         change_commitment: change
             .as_ref()
             .map(|n| n.commitment.to_field())
@@ -576,7 +576,7 @@ fn prove(
             .unwrap_or(Field::from(0)),
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(note.amount),
+        note_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         note_spend_key: note.key()?,
         leaf_index,
         auth_path,
@@ -591,7 +591,7 @@ fn prove(
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
-        combined.extend_from_slice(&PayNoteSuit::field_to_be_bytes(&value));
+        combined.extend_from_slice(PayNoteSuit::field_to_b256(&value)?.as_slice());
     }
     for value in proof.proof {
         combined.extend_from_slice(&value);
@@ -625,7 +625,7 @@ async fn spend_proof(
             client,
             PAYNOTE_ADDRESS,
             IPayNote::isKnownRootCall {
-                root: word(public.root)
+                root: PayNoteSuit::field_to_b256(&public.root)?
             }
         )
         .await?,
@@ -640,7 +640,7 @@ async fn spend_proof(
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
         "asset": note.asset, "owner": owner, "spend_amount": amount.to_string(),
-        "root": word(public.root), "nullifier": word(public.nullifier), "change_commitment": word(public.change_commitment) });
+        "root": PayNoteSuit::field_to_b256(&public.root)?, "nullifier": PayNoteSuit::field_to_b256(&public.nullifier)?, "change_commitment": PayNoteSuit::field_to_b256(&public.change_commitment)? });
     let proof_path = save_json(
         &dir.join("proofs"),
         &format!("{:#x}.json", keccak256(&combined)),

@@ -3,9 +3,10 @@
 //! Feed ordered `NewNote` commitments into the shared [`PayNoteTree`]. Callers validate
 //! event indexes and compare its root with the pool before using a witness.
 
+use crate::Field;
 use crate::{
     errors::PayNoteError,
-    hash::{empty_leaf, paynote_domain, Field},
+    hash::{empty_leaf, paynote_domain},
     schema::PAYNOTE_TREE_DEPTH,
     PayNoteTree,
 };

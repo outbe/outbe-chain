@@ -27,7 +27,7 @@
 pub mod api;
 pub mod client;
 pub mod errors;
-pub use outbe_zk_canonical::paynote::hash;
+pub use outbe_zk_canonical::paynote::{hash, Field};
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
@@ -40,10 +40,10 @@ pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
 
 /// Cryptographic suite used by PayNote.
-pub type PayNoteSuit = outbe_protocol::OutbeV1;
+pub use outbe_zk_canonical::paynote::PayNoteSuite as PayNoteSuit;
 
 /// In-memory commitment tree for PayNote clients.
-pub type PayNoteTree = outbe_protocol::protocol::imt::Imt<PayNoteSuit>;
+pub use outbe_zk_canonical::paynote::Tree as PayNoteTree;
 
 #[cfg(test)]
 mod tests;
