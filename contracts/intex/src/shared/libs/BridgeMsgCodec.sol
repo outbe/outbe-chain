@@ -166,7 +166,8 @@ library BridgeMsgCodec {
     /// @notice The refund chunk header is inconsistent: no chunks claimed, more than
     ///         `MAX_CHUNKS`, or an index outside the claimed count.
     error InvalidRefundChunk(uint16 chunkIndex, uint16 totalChunks);
-    /// @notice The issuance chunk header is inconsistent: no chunks claimed or an index outside the claimed count.
+    /// @notice The issuance chunk header is inconsistent: no chunks claimed, more than
+    ///         `MAX_CHUNKS`, or an index outside the claimed count.
     error InvalidIssuanceChunk(uint16 chunkIndex, uint16 totalChunks);
     /// @notice A series in an ISSUANCE_INSTRUCTIONS message belongs to a different day than the message header.
     error IssuanceDayMismatch(bytes14 seriesId, uint32 seriesDay, uint32 messageDay);
@@ -496,7 +497,7 @@ library BridgeMsgCodec {
         uint16 _totalChunks,
         IssuanceInstructionsPayload[] memory _series
     ) private pure {
-        if (_totalChunks == 0 || _chunkIndex >= _totalChunks) {
+        if (_totalChunks == 0 || _totalChunks > MAX_CHUNKS || _chunkIndex >= _totalChunks) {
             revert InvalidIssuanceChunk(_chunkIndex, _totalChunks);
         }
         if (_series.length == 0) revert EmptyIssuanceBatch();
