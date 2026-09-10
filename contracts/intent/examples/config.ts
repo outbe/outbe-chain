@@ -73,6 +73,20 @@ export const chains: Record<string, ChainConfig> = {
     chainId: parseInt(process.env.OUTBE_TESTNET_CHAIN_ID || '70860602'),
     nativeDecimals: 18,
   },
+
+  rudis: {
+    name: 'RUDIS',
+    rpc: process.env.RUDIS_RPC || 'http://125.253.90.171',
+    chainId: parseInt(process.env.RUDIS_CHAIN_ID || '70860602'),
+    nativeDecimals: 18,
+  },
+
+  eth: {
+    name: 'Ethereum',
+    rpc: process.env.ETH_RPC || 'https://ethereum-rpc.publicnode.com',
+    chainId: parseInt(process.env.ETH_CHAIN_ID || '1'),
+    nativeDecimals: 18,
+  },
 };
 
 /** Native decimals keyed by chain id, for lookups that only have a provider. */

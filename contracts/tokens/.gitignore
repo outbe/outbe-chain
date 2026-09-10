@@ -6,6 +6,7 @@ types
 coverage
 node_modules
 out
+web
 
 # IDE
 .idea
@@ -32,3 +33,4 @@ yarn.lock
 !broadcast
 broadcast/*
 broadcast/*/31337/
+

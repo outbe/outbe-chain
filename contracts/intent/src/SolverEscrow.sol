@@ -241,13 +241,16 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
     /// @inheritdoc ISolverEscrow
     /// @dev Distributes REWARD_BPS (1.5%) of orderAmountIn from slashed pool as underlying tokens.
-    ///      Returns 0 if insufficient slashed balance (all-or-nothing).
+    ///      Returns 0 if the reward rounds to zero or the slashed balance is insufficient (all-or-nothing).
     function distributeReward(address token, uint256 orderAmountIn, address receiver)
         external
         onlyAuthorizedCaller
         returns (uint256 reward)
     {
         reward = (orderAmountIn * REWARD_BPS) / BPS_DENOMINATOR;
+        // A dust order rounds the reward to zero, and The Compact rejects a zero-amount
+        // allocatedTransfer -- that would revert the whole settle instead of skipping the reward.
+        if (reward == 0) return 0;
         uint256 id = _lockId(token);
 
         // Only slashed collateral is payable -- the escrow's balance also holds live locks.
