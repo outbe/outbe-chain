@@ -976,8 +976,6 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
 
-        // The auth is Alice's: it binds her account and load, so a relayer can
-        // only deliver her mint, never redirect it.
         let nonce = find_valid_nonce(gem_id, ALICE);
         let minted =
             runtime::mine_promis(storage, gem_id, nonce, promis_auth(ALICE, load, 0)).unwrap();

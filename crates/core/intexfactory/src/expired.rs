@@ -156,15 +156,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Expire one group in a single credit.
-///
-/// A member the pass could not retire leaves the group in place, so the next
-/// sweep picks it up again: the group index is the retry record, and dropping it
-/// would strand that member's Promis load with nothing minted against it.
-///
-/// Re-walking a group is therefore normal, and members retired by an earlier
-/// pass are already credited. They are skipped rather than re-expired, so a
-/// retry credits each load exactly once.
+/// Expire one group in a single credit. A member left unretired keeps the group,
+/// so re-walking is normal: members an earlier pass retired are skipped rather
+/// than re-expired, and each load is credited exactly once.
 fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
