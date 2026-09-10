@@ -10553,6 +10553,13 @@ mod tests {
                         U256::from(450_000_000u64),
                     )
                     .expect("seed compact Nod scheduling state");
+                    // Keep the rate fresh at the block that qualifies this bucket.
+                    let (.., pair_index) =
+                        outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+                    outbe_oracle::schema::OracleContract::new(storage.clone())
+                        .exchange_rate_timestamp
+                        .write(&pair_index, TEST_BLOCK_TIMESTAMP_BASE + 1)
+                        .unwrap();
                     staged = Some(
                         outbe_compressed_entities::end_block(storage, &scope)
                             .expect("close compressed-entity seed scope")

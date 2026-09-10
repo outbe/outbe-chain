@@ -2785,6 +2785,7 @@ dependencies = [
 [[package]]
 name = "commonware-consensus"
 version = "2026.5.0"
+source = "git+https://github.com/commonwarexyz/monorepo?tag=v2026.5.0#b8b0a8d8919a66b5649c9fdaceb881a55fbe5876"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2955,6 +2956,7 @@ dependencies = [
 [[package]]
 name = "commonware-runtime"
 version = "2026.5.0"
+source = "git+https://github.com/commonwarexyz/monorepo?tag=v2026.5.0#b8b0a8d8919a66b5649c9fdaceb881a55fbe5876"
 dependencies = [
  "axum",
  "bytes",

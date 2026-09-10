@@ -295,10 +295,12 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
 #[derive(Clone)]
 struct ShutdownNullSender<P> {
     participants: Vec<P>,
+    votes: Option<mpsc::Sender<()>>,
 }
 
 struct ShutdownNullCheckedSender<P> {
     recipients: Vec<P>,
+    votes: Option<mpsc::Sender<()>>,
 }
 
 impl<P> CheckedSender for ShutdownNullCheckedSender<P>
@@ -312,6 +314,9 @@ where
     }
 
     fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
+        if let Some(votes) = self.votes {
+            let _ = votes.send(());
+        }
         Unreliable::Outcome(Feedback::Ok)
     }
 }
@@ -335,7 +340,10 @@ where
             Recipients::Some(recipients) => recipients,
             Recipients::One(recipient) => vec![recipient],
         };
-        Ok(ShutdownNullCheckedSender { recipients })
+        Ok(ShutdownNullCheckedSender {
+            recipients,
+            votes: self.votes.clone(),
+        })
     }
 }
 
@@ -369,7 +377,7 @@ where
 }
 
 #[test]
-fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
+fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
     let storage = tempfile::tempdir().expect("stack shutdown test storage");
     let config = commonware_tokio::Config::default()
         .with_worker_threads(1)
@@ -393,11 +401,13 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
         )
         .expect("single-validator hybrid signer");
 
+        let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
+            votes: None,
         };
         let vote_network = (
-            sender.clone(),
+            ShutdownNullSender { votes: Some(votes_tx), ..sender.clone() },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
         let certificate_network = (
@@ -440,17 +450,17 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
         let engine = SimplexEngine::new(context.child("engine"), engine_config);
         let engine_handle = engine.start(vote_network, certificate_network, resolver_network);
 
-        context.sleep(Duration::from_millis(75)).await;
+        votes_rx.recv_timeout(Duration::from_secs(2)).expect("real voter emits a durable vote");
 
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        let _blocking_handle =
+        let blocking_handle =
             context
                 .child("blocking_gate")
                 .shared(true)
                 .spawn(move |_| async move {
                     started_tx.send(()).expect("report blocking worker start");
-                    let _ = release_rx.recv();
+                    release_rx.recv_timeout(Duration::from_secs(3)).expect("release blocking worker");
                 });
         started_rx
             .recv_timeout(Duration::from_secs(1))
@@ -472,10 +482,10 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
                         &crate::application_shutdown::ApplicationDrain::default(),
                     )
                     .await
-                    .expect("simplex engine must drain on global stop");
+                    .expect("simplex engine must stop successfully");
                     assert_eq!(action, EpochLoopAction::ExitStack);
                 },
-                _ = &mut network_handle => {}
+                _ = &mut network_handle => panic!("global stop must take precedence over its stopping sibling")
             }
         });
 
@@ -483,17 +493,12 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
             .child("shutdown")
             .spawn(|shutdown| async move { shutdown.stop(0, Some(Duration::from_secs(1))).await });
 
-        commonware_macros::select! {
-            result = &mut stack_owner => {
-                panic!("consensus stack owner resolved before voter journal flush: {result:?}");
-            },
-            _ = context.sleep(Duration::from_millis(50)) => {},
-        }
-
-        release_tx.send(()).expect("release blocking worker");
-        stack_owner
-            .await
-            .expect("stack owner must finish after journal flush");
+        let (result, ()) = futures::join!(&mut stack_owner, async {
+            context.sleep(Duration::from_millis(50)).await;
+            release_tx.send(()).expect("release blocking worker");
+        });
+        blocking_handle.await.expect("blocking worker completes");
+        result.expect("stack owner must finish on global stop");
         stop_handle
             .await
             .expect("shutdown driver must finish")
@@ -502,7 +507,7 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
 }
 
 #[test]
-fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
+fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
     let storage = tempfile::tempdir().expect("fatal stack exit test storage");
     let epoch = Epoch::new(1);
     let signing_key = PrivateKey::from_seed(13);
@@ -527,14 +532,18 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
     let runner = commonware_tokio::Runner::new(config);
 
     runner.start(|context| async move {
+        let (votes_tx, votes_rx) = mpsc::channel();
         let vote_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
+            votes: Some(votes_tx),
         };
         let certificate_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
+            votes: None,
         };
         let resolver_sender = ShutdownNullSender {
             participants: vec![first_public_key.clone()],
+            votes: None,
         };
         let vote_network = (
             vote_sender,
@@ -586,7 +595,6 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
                 let engine = SimplexEngine::new(owner.child("engine"), engine_config);
                 let mut engine_handle =
                     engine.start(vote_network, certificate_network, resolver_network);
-                owner.sleep(Duration::from_millis(75)).await;
                 engine_ready_tx
                     .send(())
                     .expect("report initialized voter journal");
@@ -601,41 +609,37 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             });
         engine_ready_rx
             .recv_timeout(Duration::from_secs(1))
-            .expect("real voter journal must initialize");
+            .expect("real voter engine must start");
+        votes_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("real voter emits a durable vote");
 
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        let _blocking_handle = context
+        let blocking_handle = context
             .child("fatal_stack_blocking_gate")
             .shared(true)
             .spawn(move |_| async move {
                 started_tx.send(()).expect("report blocking worker start");
-                let _ = release_rx.recv();
+                release_rx
+                    .recv_timeout(Duration::from_secs(3))
+                    .expect("release blocking worker");
             });
         started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("sole blocking worker must be occupied");
 
-        // Let the next first-attempt timeout queue the real voter's ordinary
-        // journal sync behind the occupied blocking worker. The sender count is
-        // deliberately not used as a barrier: it also includes unrelated and
-        // retry traffic. The direct owner-liveness assertion below proves that
-        // shutdown is waiting for the blocked journal operation.
+        // Stop with the I/O worker occupied; do not assume that the upstream
+        // Engine handle joins its final journal sync.
         context.sleep(Duration::from_millis(250)).await;
         fatal_tx.send(()).expect("trigger fatal stack exit");
-
-        commonware_macros::select! {
-            result = &mut stack_owner => {
-                release_tx.send(()).expect("release blocking worker after RED");
-                panic!("consensus stack owner resolved before voter journal drain: {result:?}");
-            },
-            _ = context.sleep(Duration::from_millis(50)) => {},
-        }
-
-        release_tx.send(()).expect("release blocking worker");
-        let result = stack_owner
-            .await
-            .expect("stack owner task must finish after journal drain")
+        let (result, ()) = futures::join!(&mut stack_owner, async {
+            context.sleep(Duration::from_millis(50)).await;
+            release_tx.send(()).expect("release blocking worker");
+        });
+        blocking_handle.await.expect("blocking worker completes");
+        let result = result
+            .expect("stack owner task finishes")
             .expect_err("the original fatal stack result must be preserved");
         assert!(
             result.to_string().contains("synthetic fatal stack cause"),
@@ -649,11 +653,16 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
         .with_catch_panics(true)
         .with_storage_directory(storage.path());
     commonware_tokio::Runner::new(reopen_config).start(|context| async move {
+        let (votes_tx, votes_rx) = mpsc::channel();
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
+            votes: None,
         };
         let vote_network = (
-            sender.clone(),
+            ShutdownNullSender {
+                votes: Some(votes_tx),
+                ..sender.clone()
+            },
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
         let certificate_network = (
@@ -693,21 +702,18 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             ),
         };
         let engine = SimplexEngine::new(context.child("reopened_engine"), engine_config);
-        let mut engine_handle = engine.start(vote_network, certificate_network, resolver_network);
+        let engine_handle = engine.start(vote_network, certificate_network, resolver_network);
 
-        commonware_macros::select! {
-            result = &mut engine_handle => {
-                panic!("reopened voter journal could not resume: {result:?}");
-            },
-            _ = context.sleep(Duration::from_millis(100)) => {},
-        }
+        votes_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reopened journal must resume outbound voting");
 
         let stop_handle = context
             .child("reopened_shutdown")
             .spawn(|shutdown| async move { shutdown.stop(0, Some(Duration::from_secs(1))).await });
         engine_handle
             .await
-            .expect("reopened engine must drain normally");
+            .expect("reopened engine must stop normally");
         stop_handle
             .await
             .expect("reopened shutdown driver must finish")
