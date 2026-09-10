@@ -149,6 +149,116 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
 }
 
 #[test]
+fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
+    for forfeit in [false, true] {
+        let mut storage = env();
+        StorageHandle::enter(&mut storage, |storage| {
+            let collateral = U256::from(6u64);
+            let principal = U256::from(13u64);
+            bootstrap(&storage, collateral);
+            deploy_smart_account(&storage, bob());
+            // The quote floors 13 / 2 to 6, and the note carries that exact amount.
+            let (handle, quoted) = outbe_gratisfactory::runtime::pledge_gratis(
+                storage.clone(),
+                alice(),
+                principal,
+                asset(),
+                collateral,
+                auth(outbe_tee::protocol::GratisOp::Pledge, alice(), principal, 1),
+            )
+            .unwrap();
+            assert_eq!(quoted, collateral);
+            let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
+            fund_stake(&storage, stake);
+            let (id, disbursed) = runtime::request_credis(
+                storage.clone(),
+                cca(),
+                bob(),
+                handle,
+                credis_spend_auth(alice(), handle, bob()),
+                REFERENCE_ISO,
+                stake,
+            )
+            .unwrap();
+            assert_eq!(disbursed, principal);
+            assert_eq!(view_pledged(&storage, alice()), collateral);
+
+            // Positive subunit interest floors to zero; returns ceiling and then cap.
+            advance_to(&storage, CREATED_AT + DAY);
+            for (payment, remaining) in [(1u64, 5u64), (1, 4), (1, 3), (1, 2), (5, 0), (1, 0)] {
+                assert_eq!(
+                    runtime::settle(storage.clone(), bob(), id, U256::from(payment)).unwrap(),
+                    (U256::from(payment), U256::ZERO)
+                );
+                assert_eq!(view_pledged(&storage, alice()), U256::from(remaining));
+                assert_eq!(
+                    view_balance(&storage, alice()),
+                    collateral - U256::from(remaining)
+                );
+                assert_eq!(
+                    outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                    U256::from(remaining)
+                );
+            }
+            let position = CredisContract::new(storage.clone())
+                .get_position(id)
+                .unwrap();
+            assert_eq!(position.outstanding, U256::from(3u64));
+            assert_eq!(position.collateral_locked, U256::ZERO);
+            assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
+            let fidelity_before = outbe_fidelity::FidelityContract::new(storage.clone())
+                .cohorts_ct_of(alice())
+                .unwrap();
+
+            let expected_state = if forfeit {
+                let called_at = now_of(&storage);
+                CredisContract::new(storage.clone())
+                    .mark_called(id, called_at)
+                    .unwrap();
+                let expired_at = called_at + NOTICE + 1;
+                advance_to(&storage, expired_at);
+                finalize_through(&storage, expired_at);
+                assert_eq!(scan(&storage, expired_at), 1);
+                assert_eq!(scan(&storage, expired_at), 0);
+                CredisState::Void
+            } else {
+                runtime::settle(storage.clone(), bob(), id, U256::from(3u64)).unwrap();
+                CredisState::Settled
+            };
+            let position = CredisContract::new(storage.clone())
+                .get_position(id)
+                .unwrap();
+            assert_eq!(position.lifecycle_state().unwrap(), expected_state);
+            assert_eq!(position.outstanding, U256::ZERO);
+            assert_eq!(view_balance(&storage, alice()), collateral);
+            assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+            assert_eq!(
+                outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+                collateral
+            );
+            assert_eq!(
+                outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                PromisLimitContract::new(storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                outbe_fidelity::FidelityContract::new(storage.clone())
+                    .cohorts_ct_of(alice())
+                    .unwrap(),
+                fidelity_before
+            );
+            assert_eq!(CredisContract::new(storage).active_len().unwrap(), 0);
+        });
+        teardown();
+    }
+}
+
+#[test]
 fn the_settle_abi_returns_the_principal_and_interest_split() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
