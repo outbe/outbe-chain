@@ -184,36 +184,6 @@ contract IntexNFT1155Test is Test {
         nft.issue(user, tooLarge, SERIES_ID_1);
     }
 
-    function test_AuctionWonCount_SingleIssue() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-
-        // Auction won count should be recorded.
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user), 10);
-        // Non-minted address should return 0.
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user2), 0);
-    }
-
-    function test_AuctionWonCount_UnchangedAfterTransfer() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-
-        // Transfer some tokens to user2.
-        vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
-
-        // Auction won count should remain unchanged for user.
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user), 10);
-        // user2 received via transfer, not mint - should be 0.
-        assertEq(nft.getAuctionWonCount(SERIES_ID_1, user2), 0);
-
-        // Current balances are different from initial.
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 3);
-    }
-
     function test_MarkCalled() public {
         uint32 customCallPeriod = uint32(14 days);
         uint32 calledAt = uint32(block.timestamp);
@@ -978,250 +948,13 @@ contract IntexNFT1155Test is Test {
         assertEq(allSeries[1], TOKEN_ID_2);
     }
 
-    function test_GetOwnedSeriesAndOwnedSeriesCount() public {
-        // Create two series.
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
-
-        // Initially user has no tokens.
-        assertEq(nft.ownedSeriesCount(user), 0);
-        uint256[] memory initialOwned = nft.getOwnedSeries(user);
-        assertEq(initialOwned.length, 0);
-
-        // Mint first series to user.
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        assertEq(nft.ownedSeriesCount(user), 1);
-
-        // Mint second series to user.
-        vm.prank(bridger);
-        nft.issue(user, 5, SERIES_ID_2);
-        assertEq(nft.ownedSeriesCount(user), 2);
-
-        // Get owned series.
-        uint256[] memory ownedSeries = nft.getOwnedSeries(user);
-        assertEq(ownedSeries.length, 2);
-    }
-
-    function test_TotalBalance() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
-
-        // Initially zero.
-        assertEq(nft.totalBalance(user), 0);
-
-        // Mint to user.
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        assertEq(nft.totalBalance(user), 10);
-
-        vm.prank(bridger);
-        nft.issue(user, 5, SERIES_ID_2);
-        assertEq(nft.totalBalance(user), 15);
-
-        // Additional mint to same series should add up.
-        vm.prank(bridger);
-        nft.issue(user, 3, SERIES_ID_1);
-        assertEq(nft.totalBalance(user), 18);
-    }
-
-    function test_EnumerableUpdateOnFullTransfer() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-
-        // User has 1 series, user2 has 0.
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.ownedSeriesCount(user2), 0);
-
-        // Transfer all to user2.
-        vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 10, "");
-
-        // User should have 0 series now, user2 should have 1.
-        assertEq(nft.ownedSeriesCount(user), 0);
-        assertEq(nft.ownedSeriesCount(user2), 1);
-        assertEq(nft.totalBalance(user), 0);
-        assertEq(nft.totalBalance(user2), 10);
-
-        // Verify getOwnedSeries reflects the change.
-        uint256[] memory userOwned = nft.getOwnedSeries(user);
-        uint256[] memory user2Owned = nft.getOwnedSeries(user2);
-        assertEq(userOwned.length, 0);
-        assertEq(user2Owned.length, 1);
-        assertEq(user2Owned[0], TOKEN_ID_1);
-    }
-
-    function test_EnumerablePartialTransfer() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-
-        // Partial transfer.
-        vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 5, "");
-
-        // Both users should still own the series.
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.ownedSeriesCount(user2), 1);
-        assertEq(nft.totalBalance(user), 5);
-        assertEq(nft.totalBalance(user2), 5);
-    }
-
-    function test_EnumerableBurnTracking() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.markQualified(SERIES_ID_1);
-        vm.stopPrank();
-
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.totalBalance(user), 10);
-
-        // Partial burn - should still own the series.
-        vm.prank(bridger);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.totalBalance(user), 5);
-
-        // Full burn - should no longer own the series.
-        vm.prank(bridger);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        assertEq(nft.ownedSeriesCount(user), 0);
-        assertEq(nft.totalBalance(user), 0);
-
-        uint256[] memory ownedAfterBurn = nft.getOwnedSeries(user);
-        assertEq(ownedAfterBurn.length, 0);
-    }
-
-    function test_GetOwnedSeriesWithBalances() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
-        vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.issue(user, 25, SERIES_ID_2);
-        vm.stopPrank();
-
-        (uint256[] memory ownedTokenIds, uint256[] memory balances) = nft.getOwnedSeriesWithBalances(user);
-
-        assertEq(ownedTokenIds.length, 2);
-        assertEq(balances.length, 2);
-
-        // Check that TOKEN_ID_1 has balance 10 and TOKEN_ID_2 has balance 25.
-        for (uint256 i = 0; i < ownedTokenIds.length; i++) {
-            if (ownedTokenIds[i] == TOKEN_ID_1) {
-                assertEq(balances[i], 10);
-            } else if (ownedTokenIds[i] == TOKEN_ID_2) {
-                assertEq(balances[i], 25);
-            }
-        }
-    }
-
-    function test_EnumerableMultiHolderIssue() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-
-        vm.startPrank(bridger);
-        nft.issue(user, 5, SERIES_ID_1);
-        nft.issue(user2, 10, SERIES_ID_1);
-        vm.stopPrank();
-
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.ownedSeriesCount(user2), 1);
-        assertEq(nft.totalBalance(user), 5);
-        assertEq(nft.totalBalance(user2), 10);
-    }
-
-    function test_EnumerableMultipleSeries() public {
-        // Create 3 series.
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
-        _createSeries(SERIES_ID_3_DAY, 0);
-
-        // Mint all 3 to user.
-        vm.startPrank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.issue(user, 20, SERIES_ID_2);
-        nft.issue(user, 30, SERIES_ID_3);
-        vm.stopPrank();
-
-        assertEq(nft.ownedSeriesCount(user), 3);
-        assertEq(nft.totalBalance(user), 60);
-
-        // Transfer middle one completely.
-        vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_2, 20, "");
-
-        assertEq(nft.ownedSeriesCount(user), 2);
-        assertEq(nft.totalBalance(user), 40);
-        assertEq(nft.ownedSeriesCount(user2), 1);
-        assertEq(nft.totalBalance(user2), 20);
-
-        // Verify correct series are owned.
-        uint256[] memory userOwned = nft.getOwnedSeries(user);
-        assertEq(userOwned.length, 2);
-
-        bool hasToken1 = false;
-        bool hasToken3 = false;
-        for (uint256 i = 0; i < userOwned.length; i++) {
-            if (userOwned[i] == TOKEN_ID_1) hasToken1 = true;
-            if (userOwned[i] == TOKEN_ID_3) hasToken3 = true;
-        }
-        assertTrue(hasToken1);
-        assertTrue(hasToken3);
-    }
-
-    function test_EnumerableCrosschainMintCrosschainBurn() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.markQualified(SERIES_ID_1);
-
-        // Bridge crosschainMint (like receiving from another chain).
-        vm.prank(bridger);
-        nft.crosschainMint(user, TOKEN_ID_1, 15);
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.totalBalance(user), 15);
-
-        // Bridge crosschainBurn partial.
-        vm.prank(bridger);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.totalBalance(user), 10);
-
-        // Bridge crosschainBurn full.
-        vm.prank(bridger);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 10);
-        assertEq(nft.ownedSeriesCount(user), 0);
-        assertEq(nft.totalBalance(user), 0);
-    }
-
-    function test_EnumerableNoDuplicates() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-
-        // Mint multiple times to same user.
-        vm.startPrank(bridger);
-        nft.issue(user, 5, SERIES_ID_1);
-        nft.issue(user, 10, SERIES_ID_1);
-        nft.issue(user, 15, SERIES_ID_1);
-        vm.stopPrank();
-
-        // Should still only have 1 series entry.
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.totalBalance(user), 30);
-
-        uint256[] memory ownedSeries = nft.getOwnedSeries(user);
-        assertEq(ownedSeries.length, 1);
-        assertEq(ownedSeries[0], TOKEN_ID_1);
-    }
-
+    /// @dev A batch that names one token id twice must move the whole amount: the hook walks the
+    ///      pair, so a mishandled duplicate would double-count or drop half the transfer.
     function test_BatchTransferWithDuplicateTokenIds() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issue(user, 10, SERIES_ID_1);
 
-        assertEq(nft.ownedSeriesCount(user), 1);
-        assertEq(nft.ownedSeriesCount(user2), 0);
-
-        // Batch transfer with same tokenId twice: [1, 1] with amounts [5, 5].
         uint256[] memory ids = new uint256[](2);
         ids[0] = TOKEN_ID_1;
         ids[1] = TOKEN_ID_1;
@@ -1233,39 +966,13 @@ contract IntexNFT1155Test is Test {
         vm.prank(user);
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
 
-        // user should have 0 balance and no owned series.
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
-        assertEq(nft.ownedSeriesCount(user), 0);
-        assertEq(nft.totalBalance(user), 0);
-
-        // user2 should have 10 balance and 1 owned series.
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 10);
-        assertEq(nft.ownedSeriesCount(user2), 1);
-        assertEq(nft.totalBalance(user2), 10);
-
-        uint256[] memory user1Owned = nft.getOwnedSeries(user);
-        uint256[] memory user2Owned = nft.getOwnedSeries(user2);
-        assertEq(user1Owned.length, 0);
-        assertEq(user2Owned.length, 1);
-        assertEq(user2Owned[0], TOKEN_ID_1);
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0, "sender keeps nothing");
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 10, "receiver gets both halves");
     }
 
     // ============================================================
     // Owner-side pagination windows
     // ============================================================
-
-    function test_PaginatedGetters_WindowClipAndTotal() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issue(user, 10, SERIES_ID_1);
-
-        (uint256[] memory ids, uint256[] memory obal, uint256 ototal) =
-            nft.getOwnedSeriesWithBalancesPaginated(user, 0, 10);
-        assertEq(ototal, 1);
-        assertEq(ids.length, 1);
-        assertEq(ids[0], TOKEN_ID_1);
-        assertEq(obal[0], 10);
-    }
 
     // ============================================================
     // totalSupply mid-callback consistency (read-only-reentrancy)

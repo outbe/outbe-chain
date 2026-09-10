@@ -45,18 +45,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         /// @dev Series-level data, stored per token id. One entry per class: both carry the
         ///      immutable series identity; mutable lifecycle fields live on the Issued entry only.
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
-        /// @dev Amount won at auction per address per token id (recorded at mint, never changes).
-        mapping(uint256 tokenId => mapping(address account => uint16 count)) auctionWonCount;
         /// @dev Array of all token IDs (series) that have been created.
         uint256[] allSeries;
-        /// @dev Per-owner array of owned token IDs (series with balance > 0).
-        mapping(address owner => uint256[]) ownedSeries;
-        /// @dev Index of token ID in ownedSeries[owner] array (for efficient removal).
-        mapping(address owner => mapping(uint256 tokenId => uint256 index)) ownedSeriesIndex;
-        /// @dev Whether owner has a specific token ID in their ownedSeries.
-        mapping(address owner => mapping(uint256 tokenId => bool owns)) ownsToken;
-        /// @dev Total balance across all series for each owner.
-        mapping(address owner => uint256 balance) totalBalance;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
     }
@@ -128,14 +118,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         totalSupply = d.totalSupply;
         status = d.status;
         state = _effectiveState(d);
-    }
-
-    /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
-    /// @param tokenId Issued token id.
-    /// @param account Auction winner address.
-    /// @return The recorded won amount.
-    function auctionWonCount(uint256 tokenId, address account) external view returns (uint16) {
-        return _s().auctionWonCount[tokenId][account];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -213,7 +195,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // A per-recipient mint quantity is one bidder's auction win, bounded by their bid's
-        // `intexQuantity` (uint16); keeps the ERC1155 balance, `totalSupply` and `auctionWonCount` consistent.
+        // `intexQuantity` (uint16); keeps the ERC1155 balance and `totalSupply` consistent.
         if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
 
         // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate
@@ -230,11 +212,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, quantity, "");
-
-        if ($.auctionWonCount[tokenId][to] == 0) {
-            // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-            $.auctionWonCount[tokenId][to] = uint16(quantity);
-        }
 
         emit IntexIssued(msg.sender, tokenId, to, quantity);
     }
@@ -527,11 +504,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getAuctionWonCount(bytes14 seriesId, address account) external view returns (uint16) {
-        return _s().auctionWonCount[_issuedTokenId(seriesId)][account];
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
         IIntexNFT1155.SeriesData memory data = _s().seriesData[tokenId];
         data.state = _effectiveState(data);
@@ -543,8 +515,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return IntexMetadata.contractURI();
     }
 
-    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called
-    ///         series, and maintains the owned-series enumeration index.
+    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens and freezes Called series.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
@@ -559,8 +530,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param ids Array of token IDs.
     /// @param values Array of amounts.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
-        IntexNFT1155Storage storage $ = _s();
         if (from != address(0) && to != address(0)) {
+            IntexNFT1155Storage storage $ = _s();
             for (uint256 i = 0; i < ids.length; i++) {
                 IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
                 if (data.status == IIntexNFT1155.IntexStatus.Settled) {
@@ -572,72 +543,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             }
         }
 
-        // Snapshot pre-transfer balances - checked BEFORE super._update, verified AFTER
-        // to handle duplicate tokenIds in batch correctly.
-        bool[] memory fromHadTokens = new bool[](ids.length);
-        bool[] memory toHadTokens = new bool[](ids.length);
-
-        for (uint256 i = 0; i < ids.length; i++) {
-            if (values[i] == 0) continue;
-            if (from != address(0)) {
-                fromHadTokens[i] = balanceOf(from, ids[i]) > 0;
-                $.totalBalance[from] -= values[i];
-            }
-            if (to != address(0)) {
-                toHadTokens[i] = balanceOf(to, ids[i]) > 0;
-                $.totalBalance[to] += values[i];
-            }
-        }
-
         super._update(from, to, ids, values);
-
-        // Post-transfer: add/remove are idempotent, safe for duplicate tokenIds in batch.
-        for (uint256 i = 0; i < ids.length; i++) {
-            if (values[i] == 0) continue;
-
-            if (from != address(0) && fromHadTokens[i] && balanceOf(from, ids[i]) == 0) {
-                _removeOwnedSeries(from, ids[i]);
-            }
-            if (to != address(0) && !toHadTokens[i] && balanceOf(to, ids[i]) > 0) {
-                _addOwnedSeries(to, ids[i]);
-            }
-        }
     }
 
-    /// @dev Add `tokenId` to `owner`'s owned-series enumeration (idempotent).
-    /// @param owner Owner address.
-    /// @param tokenId Token ID to add.
-    function _addOwnedSeries(address owner, uint256 tokenId) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if (!$.ownsToken[owner][tokenId]) {
-            $.ownedSeriesIndex[owner][tokenId] = $.ownedSeries[owner].length;
-            $.ownedSeries[owner].push(tokenId);
-            $.ownsToken[owner][tokenId] = true;
-        }
-    }
-
-    /// @dev Remove `tokenId` from `owner`'s owned-series enumeration (swap-and-pop, idempotent).
-    /// @param owner Owner address.
-    /// @param tokenId Token ID to remove.
-    function _removeOwnedSeries(address owner, uint256 tokenId) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if ($.ownsToken[owner][tokenId]) {
-            uint256 lastIndex = $.ownedSeries[owner].length - 1;
-            uint256 tokenIndex = $.ownedSeriesIndex[owner][tokenId];
-
-            if (tokenIndex != lastIndex) {
-                uint256 lastTokenId = $.ownedSeries[owner][lastIndex];
-                $.ownedSeries[owner][tokenIndex] = lastTokenId;
-                $.ownedSeriesIndex[owner][lastTokenId] = tokenIndex;
-            }
-
-            $.ownedSeries[owner].pop();
-            delete $.ownedSeriesIndex[owner][tokenId];
-            $.ownsToken[owner][tokenId] = false;
-        }
-    }
-
-    // --- Enumerable view functions ---
+    // --- Series view functions ---
 
     /// @inheritdoc IIntexNFT1155
     function getAllSeries() external view returns (uint256[] memory) {
@@ -666,79 +575,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IIntexNFT1155
     function totalSeries() external view returns (uint256) {
         return _s().allSeries.length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeries(address owner) external view returns (uint256[] memory) {
-        return _s().ownedSeries[owner];
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total)
-    {
-        uint256[] storage owned = _s().ownedSeries[owner];
-        total = owned.length;
-        if (offset >= total) return (new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        series = new uint256[](end - offset);
-        for (uint256 i = offset; i < end; i++) {
-            series[i - offset] = owned[i];
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function ownedSeriesCount(address owner) external view returns (uint256) {
-        return _s().ownedSeries[owner].length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function totalBalance(address owner) external view returns (uint256) {
-        return _s().totalBalance[owner];
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesWithBalances(address owner)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances)
-    {
-        ownedTokenIds = _s().ownedSeries[owner];
-        balances = new uint256[](ownedTokenIds.length);
-
-        for (uint256 i = 0; i < ownedTokenIds.length; i++) {
-            balances[i] = balanceOf(owner, ownedTokenIds[i]);
-        }
-
-        return (ownedTokenIds, balances);
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total)
-    {
-        uint256[] storage owned = _s().ownedSeries[owner];
-        total = owned.length;
-        if (offset >= total) return (new uint256[](0), new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        uint256 n = end - offset;
-        ownedTokenIds = new uint256[](n);
-        balances = new uint256[](n);
-        for (uint256 i = 0; i < n; i++) {
-            uint256 tokenId = owned[offset + i];
-            ownedTokenIds[i] = tokenId;
-            balances[i] = balanceOf(owner, tokenId);
-        }
     }
 
     /// @notice ERC-165 interface detection.

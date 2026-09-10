@@ -33,6 +33,7 @@ import {
   VAULT_ROUTER_ABI,
   bridgeDstChainId,
   intexAddress,
+  intexNftFromBlock,
 } from "../intex/registry.js";
 import { auctionStage, desisStage, epochIso, intexState, intexStatus, isActiveStage, lockStatus, fromSeriesId, toSeriesId } from "../intex/format.js";
 import { commitHash, revealBidTypedData } from "../intex/bid.js";
@@ -66,6 +67,8 @@ export function wcoenLockAmount(quantity: bigint, promisLoadProtocol: bigint, bi
 }
 
 const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
+const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
+const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
 
 // Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
 // after its day, so active ids sit up to ~26 days in the past. Discovery probes
@@ -130,6 +133,47 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   function addr(n: Network, key: keyof IntexAddresses): Address {
     return intexAddress(n.name, key);
+  }
+
+  /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read.
+   *  ERC-1155 carries no on-chain holder enumeration, so wallets and explorers derive holdings the same
+   *  way. The scan starts at the pair's deployment block - see `intexNftFromBlock`. */
+  async function ownedWithBalances(n: Network, owner: Address): Promise<[bigint[], bigint[]]> {
+    const address = addr(n, "nft");
+    const fromBlock = intexNftFromBlock(n.name);
+    const [single, batch] = await Promise.all([
+      n.client.getLogs({ address, event: TRANSFER_SINGLE_EVENT, args: { to: owner }, fromBlock, toBlock: "latest" }),
+      n.client.getLogs({ address, event: TRANSFER_BATCH_EVENT, args: { to: owner }, fromBlock, toBlock: "latest" }),
+    ]);
+
+    const seen = new Set<bigint>();
+    for (const log of single) {
+      const id = (log.args as { id?: bigint }).id;
+      if (id !== undefined) seen.add(id);
+    }
+    for (const log of batch) {
+      for (const id of (log.args as { ids?: readonly bigint[] }).ids ?? []) seen.add(id);
+    }
+
+    const candidates = [...seen];
+    if (candidates.length === 0) return [[], []];
+
+    const balances = (await n.client.readContract({
+      address,
+      abi: NFT_ABI,
+      functionName: "balanceOfBatch",
+      args: [candidates.map(() => owner), candidates],
+    })) as bigint[];
+
+    const heldIds: bigint[] = [];
+    const heldBalances: bigint[] = [];
+    candidates.forEach((id, i) => {
+      if (balances[i] > 0n) {
+        heldIds.push(id);
+        heldBalances.push(balances[i]);
+      }
+    });
+    return [heldIds, heldBalances];
   }
 
   function requireAccount(): Account {
@@ -363,12 +407,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const who = whoever(account);
-      const [tokenIds, balances] = (await n.client.readContract({
-        address: addr(n, "nft"),
-        abi: NFT_ABI,
-        functionName: "getOwnedSeriesWithBalances",
-        args: [who],
-      })) as [bigint[], bigint[]];
+      const [tokenIds, balances] = await ownedWithBalances(n, who);
       const holdings = await Promise.all(
         tokenIds.map(async (tokenId, i) => {
           const status = (await n.client.readContract({

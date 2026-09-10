@@ -310,13 +310,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The collection metadata URI.
     function contractURI() external view returns (string memory);
 
-    /// @notice Amount won at auction for a specific address in a series (recorded at mint, never changes).
-    /// @param seriesId Series identifier.
-    /// @param account Address to read.
-    /// @return The amount won at auction for `account` in the series.
-    function getAuctionWonCount(bytes14 seriesId, address account) external view returns (uint16);
-
-    // --- Enumerable reads ---
+    // --- Series reads ---
 
     /// @notice All series (token ids) that have been created.
     /// @return The Issued token ids of every created series.
@@ -335,51 +329,4 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Total number of series created.
     /// @return The count of created series.
     function totalSeries() external view returns (uint256);
-
-    /// @notice All series (token ids) owned by an address.
-    /// @param owner Owner address to read.
-    /// @return The token ids the owner holds a balance in.
-    function getOwnedSeries(address owner) external view returns (uint256[] memory);
-
-    /// @notice Owned series with pagination.
-    /// @param owner Owner address to read.
-    /// @param offset Index into the owner's owned-series array.
-    /// @param limit Maximum slice length to return.
-    /// @return series The requested slice of owned token ids.
-    /// @return total Total number of distinct series owned by `owner`.
-    function getOwnedSeriesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total);
-
-    /// @notice Number of distinct series owned by an address.
-    /// @param owner Owner address to read.
-    /// @return The count of distinct series owned by `owner`.
-    function ownedSeriesCount(address owner) external view returns (uint256);
-
-    /// @notice Total Intex balance for an address across all series.
-    /// @param owner Owner address to read.
-    /// @return The owner's total Intex balance across all series.
-    function totalBalance(address owner) external view returns (uint256);
-
-    /// @notice Owned series with their balances for an address.
-    /// @param owner Owner address to read.
-    /// @return ownedTokenIds The token ids the owner holds.
-    /// @return balances Balances parallel to `ownedTokenIds`.
-    function getOwnedSeriesWithBalances(address owner)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances);
-
-    /// @notice Paginated owned series with balances for an address.
-    /// @param owner Owner address to read.
-    /// @param offset Start index into the owned-series set.
-    /// @param limit Maximum number of entries to return.
-    /// @return ownedTokenIds The token ids in the `[offset, offset+limit)` window.
-    /// @return balances Balances parallel to `ownedTokenIds`.
-    /// @return total Total number of owned series (for computing further pages).
-    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total);
 }
