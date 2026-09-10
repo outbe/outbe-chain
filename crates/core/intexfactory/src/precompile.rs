@@ -185,7 +185,7 @@ pub fn dispatch(
                 // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has POW_DIFFICULTY leading zero bytes; `seq` is the on-chain
                 // per-(series, holder) counter.
-                minePromis(c) => mutate(c, caller, |sender, c| {
+                minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
@@ -193,7 +193,7 @@ pub fn dispatch(
                     runtime::mine_promis(
                         &storage,
                         SeriesId::from(c.seriesId),
-                        sender,
+                        c.holder,
                         c.amount,
                         c.nonce,
                         auth,

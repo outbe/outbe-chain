@@ -53,12 +53,12 @@ pub fn dispatch(
             settleGem(c) => mutate_void(c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, &c.payNoteProof)
             }),
-            minePromis(c) => mutate(c, caller, |sender, c| {
+            minePromis(c) => mutate(c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_promis(&storage, sender, c.gemId, c.nonce, auth)
+                runtime::mine_promis(&storage, c.gemId, c.nonce, auth)
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());

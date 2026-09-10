@@ -511,15 +511,13 @@ pub fn position_data(
 
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
-    caller: Address,
     gem_id: U256,
     nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    if item.owner != caller {
-        return Err(GemFactoryError::NotGemOwner.into());
-    }
+    // Anyone may submit: the mint is authorized by the owner's modify key and
+    // lands with the owner whoever relays it.
     if item.state != GemState::Settled as u8 {
         return Err(GemFactoryError::InvalidState.into());
     }
@@ -531,13 +529,13 @@ pub fn mine_promis(
     // The Promis is confidential: the mint runs inside the enclave, authorized by
     // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
     // minted amount (`item.promis_load_minor`), so the client precomputes it.
-    outbe_promisfactory::api::mint(storage.clone(), caller, item.promis_load_minor, auth)?;
+    outbe_promisfactory::api::mint(storage.clone(), item.owner, item.promis_load_minor, auth)?;
 
     emit_event(
         storage,
         GemMined {
             gemId: gem_id,
-            owner: caller,
+            owner: item.owner,
             promisLoad: item.promis_load_minor,
         },
     )?;

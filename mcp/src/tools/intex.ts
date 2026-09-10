@@ -1161,7 +1161,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           "or mac derivation is implemented here. " +
           `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
-          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
+          `for ${promisAmount} Promis on series ${series}. Submit minePromis(${series}, ${holder}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",
       );
     }),
