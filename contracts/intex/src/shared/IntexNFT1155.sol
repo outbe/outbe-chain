@@ -161,9 +161,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // one can mint into," which never matches an auction-cleared result.
         if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
-        // Zero is how this contract reads "no such series", so a series stamped with it
-        // would be written and then read back as absent. A future stamp would postpone
-        // the call window past what the origin agreed.
+        // Zero is how this contract reads "no such series"; a future stamp would
+        // postpone the call window past what the origin agreed.
         if (params.issuedAt == 0 || params.issuedAt > block.timestamp) {
             revert InvalidIssuedAt(params.issuedAt);
         }
