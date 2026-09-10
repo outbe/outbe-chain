@@ -14,6 +14,7 @@ use outbe_primitives::{
 use crate::constants::{
     MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
+use crate::precompile::IGem::CallScanSkipped;
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
 
@@ -192,7 +193,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
 /// of it decide against the same prices. Returns how many gems were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let gem = GemContract::new(ctx.storage.clone());
+    let mut gem = GemContract::new(ctx.storage.clone());
     let pinned_day = gem.call_sweep_day.read()?;
     if pinned_day == 0 {
         return Ok(0);
@@ -224,6 +225,11 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             break;
         }
         let iso_code = currencies[at];
+        // A currency whose price this day's pass could not index is settled for
+        // the day; re-reading its window every slice would buy nothing.
+        if gem.call_scan_failed_day.read(&iso_code)? == pinned_day {
+            continue;
+        }
         // Peek the trie before pricing the currency: a drained one costs three
         // reads here instead of a whole VWAP window.
         let cursor = gem.call_scan_cursor.read(&iso_code)?;
@@ -247,7 +253,12 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let ceiling = match GemContract::price_to_bin(high) {
             Ok(bin) => bin,
             Err(error) => {
-                tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "call scan: window price out of range, skipping currency");
+                tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "call scan: window price out of range, skipping currency for the day");
+                gem.call_scan_failed_day.write(&iso_code, pinned_day)?;
+                gem.emit(CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: pinned_day,
+                })?;
                 continue;
             }
         };
