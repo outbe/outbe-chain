@@ -9,7 +9,14 @@ import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
-import {TargetRouterStorage, PendingBidsRelay, PendingIssuance, PendingProceedsRoute} from "../TargetRouterStorage.sol";
+import {
+    ChunkProgress,
+    PendingBidsRelay,
+    PendingIssuance,
+    PendingProceedsRoute,
+    RefundProgress,
+    TargetRouterStorage
+} from "../TargetRouterStorage.sol";
 
 /// @dev Self-call shims the router exposes for per-item isolation; called on `address(this)` from the
 ///      delegated library context, so `msg.sender == address(this)` holds inside the shim.
@@ -208,11 +215,13 @@ library TargetInbound {
         ) = BridgeMsgCodec.decodeIssuanceInstructions(message);
 
         bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
-        if ($.issuanceChunkApplied[worldwideDay][chunkIndex]) {
+        uint256 bit = 1 << chunkIndex;
+        if ($.issuanceChunksApplied[worldwideDay] & bit != 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
             return;
         }
-        uint16 knownTotal = $.issuanceTotalChunks[worldwideDay];
+        ChunkProgress memory progress = $.issuanceProgress[worldwideDay];
+        uint16 knownTotal = progress.totalChunks;
         if (knownTotal != 0 && knownTotal != totalChunks) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
@@ -239,9 +248,9 @@ library TargetInbound {
             }
         }
 
-        if (knownTotal == 0) $.issuanceTotalChunks[worldwideDay] = totalChunks;
-        $.issuanceChunkApplied[worldwideDay][chunkIndex] = true;
-        uint16 seen = ++$.issuanceChunksSeen[worldwideDay];
+        uint16 seen = progress.chunksSeen + 1;
+        $.issuanceProgress[worldwideDay] = ChunkProgress({totalChunks: totalChunks, chunksSeen: seen});
+        $.issuanceChunksApplied[worldwideDay] |= bit;
 
         for (uint256 s = 0; s < series.length; s++) {
             _applyIssuance($, srcChainId, series[s], known[s]);
@@ -379,7 +388,8 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
             return;
         }
-        uint16 knownTotal = $.refundTotalChunks[worldwideDay];
+        RefundProgress memory progress = $.refundProgress[worldwideDay];
+        uint16 knownTotal = progress.totalChunks;
         if (knownTotal != 0 && knownTotal != totalChunks) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
@@ -400,24 +410,21 @@ library TargetInbound {
         }
 
         // Counted before settling: the escrow refuses instructions once the day is closed.
-        if (knownTotal == 0) $.refundTotalChunks[worldwideDay] = totalChunks;
         $.refundChunksApplied[worldwideDay] |= bit;
-        uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
-        $.refundChunksSeen[worldwideDay] = seen;
+        uint16 seen = progress.chunksSeen + 1;
         // `>=` rather than `==`: an overshoot would otherwise leave the day's proceeds
         // accrued in this contract with nothing left to release them.
         bool completesDay = seen >= totalChunks;
 
         uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, receiveId, instructions, completesDay);
-        $.refundProceedsAccrued[worldwideDay] += totalPaid;
+        uint128 accrued = progress.proceedsAccrued + totalPaid;
 
         // One transfer per day: the origin counts a chain paid on the first delivery.
-        if (completesDay) {
-            uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
-            if (proceeds > 0) {
-                $.refundProceedsAccrued[worldwideDay] = 0;
-                _routeOrParkProceeds($, worldwideDay, proceeds);
-            }
+        uint128 proceeds = completesDay ? accrued : 0;
+        $.refundProgress[worldwideDay] =
+            RefundProgress({totalChunks: totalChunks, chunksSeen: seen, proceedsAccrued: accrued - proceeds});
+        if (proceeds > 0) {
+            _routeOrParkProceeds($, worldwideDay, proceeds);
         }
 
         emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, bidders.length);
