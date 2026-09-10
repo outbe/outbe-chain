@@ -84,9 +84,7 @@ Feature: Off-chain computation and Metadosis
     When the day's auction proceeds arrive from one chain
     Then every certified contributor is paid their share
 
-  # Temporarily ignored at the owner's request; keep the complete 257-Tribute
-  # scenario for a later run. @todo is the runner's unconditional skip tag.
-  @ocomp-capacity @todo
+  @ocomp-capacity
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
     When all 257 capacity owners submit one encrypted Tribute each
