@@ -81,6 +81,22 @@ pub fn dispatch_triggers(
             continue;
         }
 
+        // At midnight, keep the protocol slot pending
+        // until the previous day's final late-vote window has executed. Other
+        // triggers retain their own cadence; no sleep or wall-clock timer.
+        if spec.id == crate::triggers::TriggerId::ProtocolCycle.as_u32() {
+            if let crate::handler::ProtocolDayAction::SettlePrevious { day } =
+                crate::handler::protocol_day_action(
+                    cycle.active_utc_day.read()?,
+                    outbe_primitives::time::timestamp_to_date_key(block_ts),
+                )?
+            {
+                if !outbe_rewards::api::day_participation_complete(ctx, day)? {
+                    continue;
+                }
+            }
+        }
+
         // A poll records the latest due slot, so a gap costs one firing rather
         // than one per missed slot.
         let recorded_at = if spec.coalesces_backlog {

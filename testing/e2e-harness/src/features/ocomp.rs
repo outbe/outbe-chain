@@ -1235,7 +1235,11 @@ fn launch_preserved_keyless_full_node(world: &mut World) {
         .expect("restart keyless FullNode with its preserved datadir and domain");
 }
 
-fn result_nod_actions_on(world: &World, node_index: usize, job_id: B256) -> Vec<NodActionV1> {
+pub(crate) fn result_nod_actions_on(
+    world: &World,
+    node_index: usize,
+    job_id: B256,
+) -> Vec<NodActionV1> {
     let objects = world
         .validators
         .data_dir(node_index)
@@ -4761,6 +4765,49 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
         world,
         PublicVoteSetExpectation::AnyQuorum,
     );
+}
+
+/// This step belongs to the 1/10-Tribute happy paths. Fault scenarios can
+/// deliberately prevent a validator from calculating its own result.
+#[then("every validator independently verifies the V1 Nod commitment encoding")]
+fn independent_nod_commitment_encoding(world: &mut World) {
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .expect("certified Nod generation before commitment check");
+    assert!(
+        matches!(generation.nod_count, 1 | 10),
+        "declared 1/10-Nod fixture"
+    );
+    let ports = world.validators.committee_ports();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    for (index, port) in ports.iter().enumerate() {
+        let path = local_result_path(world, index, generation.job_id);
+        while !path.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "validator {port} has no completed local result"
+            );
+            sleep(Duration::from_millis(250));
+        }
+        let actions = result_nod_actions_on(world, index, generation.job_id);
+        assert_eq!(
+            actions.len(),
+            generation.nod_count as usize,
+            "result action population on port {port}"
+        );
+        let expected_root = crate::internal::nod_reference::nod_root(&actions);
+        assert_eq!(
+            generation.nod_root, expected_root,
+            "independent V1 Nod commitment on port {port}"
+        );
+        eprintln!(
+            "NOD_COMMITMENT_EXPECTATION port={port} job={} count={} root={} height={} block_hash={}",
+            generation.job_id, actions.len(), expected_root,
+            generation.block_number, generation.block_hash,
+        );
+    }
 }
 
 #[then("Lysis and OCOMP use the WWD VWAP below the active S-curve")]

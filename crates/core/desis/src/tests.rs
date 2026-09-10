@@ -9,7 +9,6 @@ use outbe_primitives::time::WorldwideDay;
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
     IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_STRIKE_USD,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -27,8 +26,8 @@ const SRC_CHAIN: u32 = 1;
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
-/// The load the ladder picks for `ENTRY_PRICE`, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
-const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
+/// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
+const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
 const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 
 // --- PROMIS load ladder ---
@@ -36,12 +35,48 @@ const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
+/// The anchor a 0.001 launch captures; every deadband fixture below runs on it.
+const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
+
 fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
-    runtime::promis_load_exponent(current, U256::from(rate_minor))
+    runtime::promis_load_exponent(ANCHOR_DIGITS, current, U256::from(rate_minor))
 }
 
 fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
     runtime::promis_load_minor(ladder(current, rate_minor))
+}
+
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn the_first_priced_brief_captures_the_launch_anchor() {
+    with_storage(|s| {
+        brief(&s, true);
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.promis_load_anchor_digits.read().unwrap(),
+            LAUNCH_EXPONENT + 7,
+            "the anchor is the launch rung plus the digits of the day's rate"
+        );
+        assert_eq!(
+            contract.promis_load_exponent.read().unwrap(),
+            LAUNCH_EXPONENT
+        );
+        assert_eq!(
+            contract
+                .config_promis_load_minor
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR),
+        );
+    });
+}
+
+#[test]
+fn a_launch_anchor_below_the_stored_exponent_cannot_underflow_the_decade() {
+    // Independent cells: a corrupt pair must resolve to a rung, not index past the table.
+    runtime::promis_load_exponent(LAUNCH_EXPONENT, Some(14), U256::from(5u8));
+    runtime::promis_load_exponent(27, Some(0), U256::from(1u8));
 }
 
 /// The override is an e2e affordance; a production build must run the ladder.
@@ -52,13 +87,24 @@ fn a_production_build_has_no_load_override() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
-    assert_eq!(ladder_load(None, ENTRY_PRICE), LOAD_MINOR);
+    assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
+    with_storage(|s| {
+        brief(&s, true);
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .config_promis_load_minor
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR),
+        );
+    });
 }
 
 #[test]
-fn the_anchor_holds_the_strike_across_the_decades() {
-    let strike_minor = u128::from(PROMIS_LOAD_STRIKE_USD) * 1_000_000;
+fn the_anchor_holds_its_launch_product_across_the_decades() {
+    let launch_product = runtime::promis_load_minor(LAUNCH_EXPONENT) * 1_000 / 1_000_000;
     for (rate_minor, expected) in [
         (100u128, 1_000_000_000_000u128),
         (1_000, 100_000_000_000),
@@ -70,14 +116,14 @@ fn the_anchor_holds_the_strike_across_the_decades() {
         assert_eq!(load, expected, "load at rate {rate_minor}");
         assert_eq!(
             load * rate_minor / 1_000_000,
-            strike_minor,
-            "strike at rate {rate_minor}"
+            launch_product,
+            "product at rate {rate_minor}"
         );
     }
 }
 
 #[test]
-fn a_cold_chain_takes_the_anchors_answer() {
+fn an_anchored_chain_takes_the_anchors_answer() {
     assert_eq!(ladder(None, 1_000), LAUNCH_EXPONENT);
     assert_eq!(ladder(None, 10_000), LAUNCH_EXPONENT - 1);
 }
@@ -132,8 +178,8 @@ fn the_band_survives_integer_division_in_the_narrowest_decade() {
 }
 
 #[test]
-fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
-    assert_eq!(ladder_load(None, 0), 100_000_000_000_000);
+fn an_absurd_rate_saturates_instead_of_underflowing() {
+    assert_eq!(ladder_load(None, 0), 1_000_000_000_000_000);
     assert_eq!(ladder_load(None, u128::MAX), 1);
 }
 
@@ -1143,6 +1189,11 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
                 .unwrap(),
             40,
             "the floor follows the tirage instead of staying at yesterday's scale"
+        );
+        assert_eq!(
+            contract.promis_load_anchor_digits.read().unwrap(),
+            LAUNCH_EXPONENT + 7,
+            "the anchor is captured once and does not move when the rung does"
         );
     });
 }
@@ -2306,6 +2357,43 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
 }
 
 // --- Days the oracle could not price ---
+
+/// A day with no price at all is cancelled, so the ladder only meets this when the
+/// oracle priced some currency but not the strike one.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
+    with_storage(|s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(10 * LOAD_MINOR),
+                vec![crate::schema::ReferenceCurrencyPrice {
+                    iso_code: 978,
+                    entry_price_minor: U256::from(ENTRY_PRICE),
+                }],
+                true,
+                NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract
+                .config_promis_load_minor
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR),
+            "the day carries the launch rung, not the widest one"
+        );
+        assert_eq!(contract.promis_load_exponent.read().unwrap(), 0);
+        assert_eq!(contract.promis_load_anchor_digits.read().unwrap(), 0);
+    });
+}
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {

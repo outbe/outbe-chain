@@ -51,7 +51,7 @@ fn repo_root() -> std::path::PathBuf {
 #[test]
 fn release_network_profiles_are_canonical_and_closed() {
     assert_eq!(SgxReleaseNetwork::Testnet.chain_id(), 70_860_602);
-    assert_eq!(SgxReleaseNetwork::Testnet.chain_name(), "rehearsal-network-1");
+    assert_eq!(SgxReleaseNetwork::Testnet.chain_name(), "rudis-rehearsal");
     assert_eq!(SgxReleaseNetwork::Mainnet.chain_id(), 676);
     assert_eq!(SgxReleaseNetwork::Mainnet.chain_name(), "outbe-mainnet-1");
     assert_eq!(SgxReleaseNetwork::Mainnet.authorization_scope(), "mainnet");

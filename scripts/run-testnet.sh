@@ -29,7 +29,6 @@ RETH_BOOTNODES_FILE="${RETH_BOOTNODES_FILE:-$OUTPUT_DIR/reth-bootnodes.txt}"
 PORT_OFFSET="${PORT_OFFSET:-0}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR="${OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR:-}"
 OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT="${OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT:-}"
-OUTBE_TEST_VOTING_WINDOW_BLOCKS="${OUTBE_TEST_VOTING_WINDOW_BLOCKS:-}"
 # Every genesis produced by bootstrap-testnet.sh is GramineDirectDev from block
 # 1. The enclave is therefore mandatory; an unset flag cannot create a tee-less
 # fallback network.
@@ -460,10 +459,6 @@ do_start() {
         local -a env_args=(
             RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
         )
-        if [ -n "$OUTBE_TEST_VOTING_WINDOW_BLOCKS" ]; then
-            env_args+=(OUTBE_TEST_VOTING_WINDOW_BLOCKS="$OUTBE_TEST_VOTING_WINDOW_BLOCKS")
-            echo "  Validator $i test hook: voting window $OUTBE_TEST_VOTING_WINDOW_BLOCKS blocks"
-        fi
         if [ -n "$OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR" ] \
             && [ -n "$OUTBE_TEST_DROP_NEW_PAYLOAD_HEIGHT" ] \
             && [ "$OUTBE_TEST_DROP_NEW_PAYLOAD_VALIDATOR" = "$i" ]; then

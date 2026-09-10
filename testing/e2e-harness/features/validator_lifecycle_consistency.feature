@@ -29,13 +29,6 @@ Feature: Validator lifecycle state remains internally consistent
     And the flag remains set until a matching boundary activates the joiner
     And the joiner becomes active no later than that scheduled DKG window
 
-  @risk-d-04
-  Scenario: An owner cannot omit an active validator from the committee
-    Given a fresh localnet whose four active validators have BLS shares
-    When the configured owner attempts to activate a canonical reshared set omitting "validator-3"
-    Then the owner omission is rejected with all four validators still ACTIVE with shares
-    And committee membership and state roots converge on every validator
-
   @risk-d-05
   Scenario: One canonical felony evidence can punish a validator only once
     Given valid conflicting-notarize evidence for an active validator and its canonical reverse
@@ -74,24 +67,11 @@ Feature: Validator lifecycle state remains internally consistent
     Then it remains PENDING and excluded after the next scheduled reshare
 
   @risk-s-02
-  Scenario: A direct owner activation cannot bypass boundary orchestration
+  Scenario: Direct activation is unreachable through the public ABI
     Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
     And the public validator state bundle is snapshotted
     When the owner directly activates a registered unconfirmed member with an arbitrary group hash
-    Then direct activation is rejected with the validator state bundle unchanged
-
-  @risk-s-03
-  Scenario Outline: A malformed reshared set is rejected atomically
-    Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
-    And the public validator state bundle is snapshotted
-    When the owner submits a reshared set with "<mutation>"
-    Then malformed reshared-set activation is rejected with the validator state bundle unchanged
-
-    Examples:
-      | mutation                   |
-      | a duplicate active member |
-      | non-canonical member order |
-      | a mismatched active hash   |
+    Then direct activation fails with a decode error and the validator state bundle unchanged
 
   @risk-s-06
   Scenario: Stake mirrors and native value remain conserved through the lifecycle

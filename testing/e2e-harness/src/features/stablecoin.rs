@@ -6,10 +6,11 @@ use std::time::Duration;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use alloy_sol_types::{SolError, SolEvent, SolValue};
 use cucumber::{then, when};
 use outbe_primitives::{
-    addresses::STABLECOIN_ADDRESS_PREFIX, stablecoin::predict_stablecoin,
+    addresses::STABLECOIN_ADDRESS_PREFIX,
+    stablecoin::{encode_canonical_stablecoin_create, predict_stablecoin, StablecoinCreatePayload},
     stablecoin_fork::STABLECOIN_CREATE_BOND,
 };
 
@@ -529,19 +530,13 @@ fn exercise_ledger(world: &mut World) {
         to: fixture.recipient,
         value: U256::from(1),
     };
-    let paused_error = eth::raw_json_result(
-        &url,
-        "eth_call",
-        serde_json::json!([{
-            "from": format!("{:#x}", fixture.issuer),
-            "to": format!("{:#x}", fixture.token),
-            "data": format!("0x{}", hex::encode(paused_transfer.abi_encode())),
-        }, "latest"]),
-    )
-    .expect_err("paused transfer must revert");
-    assert!(
-        paused_error.to_string().contains("revert"),
-        "unexpected paused transfer error: {paused_error:#}"
+    super::negative_assertions::assert_mined_revert(
+        world,
+        fixture.token,
+        &fixture.issuer_key,
+        &paused_transfer,
+        U256::ZERO,
+        &IStablecoin::TokenPaused {}.abi_encode(),
     );
     eth::send_call(
         &url,
@@ -666,57 +661,171 @@ fn ledger_state(world: &mut World) {
 #[when("a second issuer proposes the same global ticker")]
 fn duplicate_global_ticker(world: &mut World) {
     let fixture = world.state.stablecoin.as_ref().expect("stablecoin fixture");
-    let before = eth::balance(&primary_url(world), fixture.second_issuer)
-        .expect("second issuer native balance before rejection");
-    let error = world
-        .rpc
-        .stablecoin_propose_rejection(
-            &fixture.second_issuer_key,
-            "Duplicate E2E Dollar",
-            TICKER,
-            ISO_4217_USD,
-            U256::from(SUPPLY_CAP),
-            fixture.policy_id,
+    let payload = StablecoinCreatePayload {
+        issuer: fixture.second_issuer,
+        name: "Duplicate E2E Dollar".to_owned(),
+        ticker: TICKER.to_owned(),
+        iso4217: ISO_4217_USD,
+        decimals: 6,
+        supply_cap: U256::from(SUPPLY_CAP),
+        policy_id: fixture.policy_id,
+    };
+    let call = IVote::createProposalCall {
+        targetModule: addresses::STABLECOIN_FACTORY_ADDR,
+        payload: String::from_utf8(
+            encode_canonical_stablecoin_create(&payload)
+                .expect("valid canonical duplicate proposal"),
         )
-        .expect("duplicate ticker must fail during RPC preflight");
-    assert!(
-        !error.trim().is_empty(),
-        "duplicate ticker returned no error"
+        .expect("UTF-8 proposal"),
+    };
+    let outcome = super::negative_assertions::assert_mined_revert(
+        world,
+        addresses::VOTE_ADDR,
+        &fixture.second_issuer_key,
+        &call,
+        STABLECOIN_CREATE_BOND,
+        &IStablecoinFactory::TickerAlreadyRegistered {
+            ticker: TICKER.to_owned(),
+            token: fixture.token,
+        }
+        .abi_encode(),
     );
-    let after = eth::balance(&primary_url(world), fixture.second_issuer)
-        .expect("second issuer native balance after rejection");
-    assert_eq!(after, before, "rejected proposal debited second issuer");
+    let height = u64::from_str_radix(
+        outcome.receipt["blockNumber"]
+            .as_str()
+            .expect("duplicate receipt height")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("receipt height");
+    let parent = height
+        .checked_sub(1)
+        .expect("duplicate mined after genesis");
+    let expected_parent = world
+        .rpc
+        .checkpoint_at(world.validators.primary_port(), parent)
+        .expect("duplicate parent checkpoint");
+    let expected_block = world
+        .rpc
+        .checkpoint_at(world.validators.primary_port(), height)
+        .expect("duplicate receipt checkpoint");
+    for port in ports(world) {
+        let balance_at = |block: u64| {
+            let value = eth::raw_json_result(
+                &world.rpc.url(port),
+                "eth_getBalance",
+                serde_json::json!([
+                    format!("{:#x}", fixture.second_issuer),
+                    format!("0x{block:x}")
+                ]),
+            )
+            .expect("pinned second issuer balance");
+            U256::from_str_radix(
+                value
+                    .as_str()
+                    .expect("balance quantity")
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .expect("valid balance quantity")
+        };
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, parent)
+                .expect("parent before balance"),
+            expected_parent
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("block before balance"),
+            expected_block
+        );
+        assert_eq!(
+            balance_at(height) + transaction_fee(&outcome.receipt),
+            balance_at(parent),
+            "rejected duplicate charged more than gas on RPC {port}"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, parent)
+                .expect("parent after balance"),
+            expected_parent
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("block after balance"),
+            expected_block
+        );
+    }
 }
 
 #[then("the duplicate ticker is rejected without a proposal or bond debit")]
 fn duplicate_ticker_preserves_state(world: &mut World) {
-    finalize_observation(world);
+    let primary = world.validators.primary_port();
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(
+            &ports(world),
+            world.rpc.head(primary).expect("post-duplicate head"),
+            40,
+        )
+        .expect("post-duplicate common finalized checkpoint");
     let fixture = world.state.stablecoin.as_ref().expect("stablecoin fixture");
-    assert!(
-        !world
-            .rpc
-            .vote_status(fixture.proposal_id + 1)
-            .expect("observe duplicate stablecoin proposal absence")
-            .visible,
-        "duplicate ticker allocated a Vote proposal"
-    );
     for port in ports(world) {
         let url = world.rpc.url(port);
         assert_eq!(
-            eth::read_call(
+            world
+                .rpc
+                .checkpoint_at(port, checkpoint.height)
+                .expect("before duplicate state"),
+            checkpoint
+        );
+        assert_eq!(
+            eth::read_call_at_result(
+                &url,
+                addresses::VOTE_ADDR,
+                &IVote::listProposalsCall {
+                    index: U256::ZERO,
+                    count: U256::from(10)
+                },
+                checkpoint.height
+            )
+            .expect("proposal inventory after duplicate"),
+            vec![U256::from(fixture.proposal_id)],
+            "duplicate ticker allocated a proposal on RPC {port}"
+        );
+        assert_eq!(
+            eth::read_call_at_result(
                 &url,
                 addresses::STABLECOIN_FACTORY_ADDR,
                 &IStablecoinFactory::tokenCountCall {},
-            ),
-            Some(U256::from(1))
+                checkpoint.height
+            )
+            .expect("token count after duplicate"),
+            U256::from(1)
         );
         assert_eq!(
-            eth::read_call(
+            eth::read_call_at_result(
                 &url,
                 addresses::VOTE_ADDR,
                 &IVote::unsettledBondLiabilitiesCall {},
-            ),
-            Some(U256::ZERO)
+                checkpoint.height
+            )
+            .expect("bond liabilities after duplicate"),
+            U256::ZERO
+        );
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, checkpoint.height)
+                .expect("after duplicate state"),
+            checkpoint
         );
     }
 }

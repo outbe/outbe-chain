@@ -34,11 +34,11 @@ pub enum MetadataFingerprintOutcome {
 }
 
 // V3 fingerprint binds the V2-Certified-Parent participation
-// proof identity end-to-end. Under V2 the "supplemental late finalize
-// vote" variance that motivated dropping `signer_bitmap` from V2 no
-// longer applies: only signers in the quorum
-// certificate count for economics; locally-observed late votes do not
-// add credit. The canonical signer set is therefore part of the
+// proof identity end-to-end. Locally-observed late votes cannot alter
+// the base certificate or its participation bitmap. Authenticated late
+// participation is accounted separately by `LateFinalizeCredits`, including
+// daily GEM participation; it does not relax this fingerprint. The canonical
+// signer set is therefore part of the
 // fingerprint via [`outbe_consensus::proof::canonical_signer_set_hash`].
 //
 // Fields bound by V3 (in addition to the V2 set):
@@ -441,17 +441,9 @@ mod tests {
         });
     }
 
-    /// V2 fingerprint excludes `signer_bitmap`. Two proposals for the
-    /// same `fb_hash` may legitimately carry different supplemental
-    /// finalize-vote bits (canonical certificate bitmap +
-    /// proposer-locally-observed late votes). This must NOT trigger the
-    /// contradictory-metadata fatal - see the freeze-closure note in
-    /// and `OutbeReporter::build_finalized_certificate`.
-    /// under V3 the signer bitmap is part of the
-    /// fingerprint; two metadata-txes for the same `fb_hash` with
-    /// different bitmaps are contradictory (no late-vote credit). This
-    /// replaces the V2 `fingerprint_signer_bitmap_variation_is_identical_replay`
-    /// test whose premise no longer holds.
+    /// The V3 fingerprint binds the base certificate's signer bitmap.
+    /// Late credits must use their separate authenticated phase, never a
+    /// changed bitmap in a replay of the original CPA metadata.
     #[test]
     fn fingerprint_signer_bitmap_variation_is_contradictory_v3() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);

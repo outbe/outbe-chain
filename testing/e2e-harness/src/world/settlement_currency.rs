@@ -142,12 +142,18 @@ pub(crate) fn iso_code(url: &str, asset: Address) -> Option<u16> {
     eth::read_call(url, asset, &ISettlementAsset::isoCodeCall {})
 }
 
-/// What the reserve vault holds of the settlement asset.
-pub(crate) fn vault_balance(url: &str, asset: Address, vault: Address) -> Option<U256> {
-    eth::read_call(
+/// What the reserve vault holds of the settlement asset at one exact block.
+pub(crate) fn vault_balance_at(
+    url: &str,
+    asset: Address,
+    vault: Address,
+    height: u64,
+) -> Option<U256> {
+    eth::read_call_at(
         url,
         asset,
         &ISettlementAssetBalance::balanceOfCall { account: vault },
+        height,
     )
 }
 

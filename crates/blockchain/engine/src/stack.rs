@@ -3391,8 +3391,15 @@ where
     // Chain state is the only runtime source of validator membership. For a
     // fresh network this is the genesis ValidatorSet storage; for restart/join
     // this is the synced canonical state.
-    let mut validator_set = validators::read_consensus_validators_at_latest(&node.provider)
-        .wrap_err("failed to load consensus validator set at startup")?;
+    let initial_peer_height = node.provider
+        .last_block_number()
+        .wrap_err("failed to read startup P2P admission height")?;
+    let initial_peer_hash = node.provider
+        .block_hash(initial_peer_height)?
+        .ok_or_else(|| eyre::eyre!("startup P2P admission block is missing"))?;
+    let mut validator_set =
+        validators::read_consensus_validators_at_block(&node.provider, initial_peer_hash)
+            .wrap_err("failed to load consensus validator set at startup")?;
 
     info!(
         count = validator_set.public_keys.len(),
@@ -3499,9 +3506,18 @@ where
 
     // Build peer set from validator config + bootnodes.
     let peer_map = build_peer_map(&validator_set, &bootnode_map);
-    let initial_peer_map = peer_map.clone();
-    let resolved_count = peer_map.len();
-    let _ = oracle.track(p2p_oracle_chain_peer_set_id(0), peer_map);
+    let admitted_set =
+        validators::read_admitted_non_consensus_at_block(&node.provider, initial_peer_hash)
+            .wrap_err("failed to read startup non-consensus P2P admission")?;
+    let initial_peers = commonware_p2p::AddressableTrackedPeers::new(
+        peer_map,
+        build_peer_map(&admitted_set, &bootnode_map),
+    );
+    let resolved_count = initial_peers.primary.len();
+    eyre::ensure!(
+        oracle.track(0, initial_peers.clone()) == commonware_actor::Feedback::Ok,
+        "P2P oracle closed during startup admission"
+    );
     info!(
         total = validator_set.public_keys.len(),
         resolved = resolved_count,
@@ -4512,14 +4528,15 @@ where
     // publishes finalized tips to provider-readiness/watchdog consumers.
     // Executor acknowledges after successful EL processing, which gates
     // marshal's processed height - the recovery truth on restart.
-    let (peer_manager_actor, peer_manager_mailbox) = crate::peer_manager::Actor::new(
+    let (peer_manager_actor, mut peer_manager_mailbox) = crate::peer_manager::Actor::new(
         ctx.child("peer_manager"),
         crate::peer_manager::Config {
             oracle: oracle.clone(),
             node: node.clone(),
             executor: executor_mailbox.clone(),
             bootnode_map: bootnode_map.clone(),
-            initial_peers: initial_peer_map,
+            initial_peers,
+            initial_height: initial_peer_height,
         },
     );
     let mut peer_manager_handle_task = peer_manager_actor.start();
@@ -4866,7 +4883,6 @@ where
     let (dkg_progress_tx, mut dkg_progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<dkg_actor::DkgProgress>();
     let mut reshare_in_progress = false;
-    // Track the next oracle round (0 was used for the initial startup set).
     let mut frozen_dkg_target: Option<FrozenDkgTarget> = None;
     let mut pending_dkg_activation: Option<PendingDkgActivation> = None;
     let mut dealer_only_dkg_activation: Option<DealerOnlyDkgActivation> = None;
@@ -5005,7 +5021,10 @@ where
                     &committee_provider,
                 )?;
                 let recovered_peer_map = build_peer_map(&activated_validator_set, &bootnode_map);
-                let _ = oracle.overwrite(recovered_peer_map);
+                eyre::ensure!(
+                    peer_manager_mailbox.overwrite(recovered_peer_map) == commonware_actor::Feedback::Ok,
+                    "peer_manager closed during recovery admission"
+                );
                 validator_set = activated_validator_set;
                 participants = activated_participants;
                 dkg_cycle = target.dkg_cycle.saturating_add(1);
@@ -6520,12 +6539,8 @@ where
                                     // membership-changing rotations safely.
                                     if signing_share.is_none() {
                                         let peer_map = build_peer_map(&new_set, &bootnode_map);
-                                        let chain_peer_set_id =
-                                            p2p_oracle_chain_peer_set_id(freeze_height);
-                                        let dkg_peer_set_id =
-                                            p2p_oracle_dkg_peer_set_id(freeze_height);
-                                        let _ = oracle.track(chain_peer_set_id, peer_map.clone());
-                                        let _ = oracle.track(dkg_peer_set_id, peer_map);
+                                        peer_manager_mailbox.prepare_dkg(peer_map).await
+                                            .wrap_err("failed to publish verifier-follower DKG admission")?;
                                         restart_dkg_manager_from_finalized_history(
                                             &node.provider,
                                             &dkg_manager,
@@ -6582,16 +6597,13 @@ where
 
                                 // Update P2P oracle so new validators can participate in DKG.
                                 let peer_map = build_peer_map(&new_set, &bootnode_map);
-                                let chain_peer_set_id = p2p_oracle_chain_peer_set_id(freeze_height);
-                                let dkg_peer_set_id = p2p_oracle_dkg_peer_set_id(freeze_height);
-                                let _ = oracle.track(chain_peer_set_id, peer_map.clone());
-                                let _ = oracle.track(dkg_peer_set_id, peer_map);
+                                let dkg_peer_set_id = peer_manager_mailbox.prepare_dkg(peer_map).await
+                                    .wrap_err("failed to publish DKG admission")?;
 
                                 info!(
                                     old = old_count,
                                     new = new_participants.len(),
                                     ?local_role,
-                                    chain_peer_set_id,
                                     dkg_peer_set_id,
                                     tee_expired_target_exclusions = tee_expired_target_exclusions.len(),
                                     "refreshed validator set from EVM state for reshare"
@@ -8101,14 +8113,6 @@ fn validate_dkg_output_players_exact(
         );
     }
     Ok(())
-}
-
-pub(crate) const fn p2p_oracle_chain_peer_set_id(height: u64) -> u64 {
-    height.saturating_mul(2)
-}
-
-pub(crate) const fn p2p_oracle_dkg_peer_set_id(height: u64) -> u64 {
-    p2p_oracle_chain_peer_set_id(height).saturating_add(1)
 }
 
 /// Build a P2P peer map from a validator set and bootnode entries.

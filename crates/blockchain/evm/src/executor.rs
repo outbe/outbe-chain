@@ -3723,8 +3723,8 @@ where
                     Ok(value) => value,
                     Err(error) => {
                         let reason = format!(
-                        "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
-                    );
+                            "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
+                        );
                         tracing::error!(target: "outbe::executor", %reason);
                         return Err(BlockExecutionError::Internal(
                             InternalBlockExecutionError::Other(reason.into()),
@@ -3766,20 +3766,20 @@ where
                     // budget failure once earlier mandatory phases have run.
                     if expected_phase.revert_fails_block() {
                         let reason = format!(
-                        "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
+                            "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
                          body_index={body_index}, block_number={block_number}, \
                          failure_code={code}: {:?}",
-                        result.result
-                    );
+                            result.result
+                        );
                         tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
                         return Err(BlockExecutionError::Internal(
                             InternalBlockExecutionError::Other(reason.into()),
                         ));
                     }
                     let reason = format!(
-                    "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
-                    result.result
-                );
+                        "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
+                        result.result
+                    );
                     let tx_type = tx.tx_type();
                     let receipt_ce_gas = if matches!(
                         result.result,
@@ -9247,6 +9247,12 @@ mod tests {
                     &[],
                 )
                 .expect("seed matured escrow");
+                seed_ctx
+                    .storage
+                    .contract::<outbe_rewards::schema::Rewards>()
+                    .pending_reward_day
+                    .write(&settle_fb_hash, 19700101)
+                    .expect("seed canonical reward day");
                 outbe_rewards::late_settlement::record_late_credit(
                     &seed_ctx,
                     settle_fb_hash,
@@ -9330,6 +9336,16 @@ mod tests {
                     for i in 0..count {
                         voters.push(at.read(&i)?);
                     }
+                    // The real BLS late-credit phase also contributes to GEM,
+                    // attributed to the authenticated parent's timestamp (1).
+                    let reward_day = r.pending_reward_day.read(&fb_hash)?;
+                    assert_eq!(reward_day, 19700101);
+                    let participation = r.daily_participation.get_nested(&reward_day);
+                    for voter in &addrs[..3] {
+                        assert_eq!(participation.read(voter)?, 1);
+                    }
+                    assert_eq!(participation.read(&addrs[3])?, 0);
+                    assert_eq!(r.daily_total_participation.read(&reward_day)?, 4);
                     let voter_balance = storage.balance(settle_voter)?;
                     let rewards_balance = storage.balance(REWARDS_ADDRESS)?;
                     // `addrs[3]` is a committee member absent for the settled block

@@ -301,6 +301,58 @@ pub struct OcompAgentRewardObservationV1 {
     pub waa_claimable_coen_units: Option<alloy_primitives::U256>,
     pub sra_claimable_coen_units: Option<alloy_primitives::U256>,
     pub claim_finalized_height: Option<u64>,
+    pub before_settlement_checkpoint: Option<AgentRewardCheckpointV1>,
+    pub economic_check: Option<AgentRewardEconomicCheckV1>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct AgentRewardCheckpointV1 {
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub state_root: alloy_primitives::B256,
+    pub timestamp: u64,
+}
+
+/// Expected economics come from the seeded calendar and independent Decimal
+/// emission vectors, before comparison with finalized balances on every port.
+#[derive(Clone, Debug, Serialize)]
+pub struct AgentRewardEconomicCheckV1 {
+    pub genesis_rewards_timestamp: u64,
+    pub emission_day: u64,
+    pub expected_waa_coen_units: alloy_primitives::U256,
+    pub expected_sra_coen_units: alloy_primitives::U256,
+    pub expected_cca_delta_coen_units: alloy_primitives::U256,
+    pub checkpoint: AgentRewardCheckpointV1,
+    pub validator_ports: Vec<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ExpectedContributorV1 {
+    pub owner: alloy_primitives::Address,
+    pub nominal_minor: alloy_primitives::U256,
+    pub share_coen_units: alloy_primitives::U256,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContributorPayoutSnapshotV1 {
+    pub height: u64,
+    pub block_hash: alloy_primitives::B256,
+    pub state_root: alloy_primitives::B256,
+    pub factory_balance: alloy_primitives::U256,
+    /// Same order as the fixture-derived expected contributors.
+    pub owner_balances: Vec<alloy_primitives::U256>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContributorPayoutEvidenceV1 {
+    pub worldwide_day: u32,
+    pub amount: alloy_primitives::U256,
+    pub expected_paid: alloy_primitives::U256,
+    pub expected_burned: alloy_primitives::U256,
+    pub contributors: Vec<ExpectedContributorV1>,
+    pub before: ContributorPayoutSnapshotV1,
+    pub after: Option<ContributorPayoutSnapshotV1>,
+    pub validator_ports: Vec<u16>,
 }
 
 /// Public-path observations retained after behavioral assertions complete.
@@ -318,6 +370,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
     pub vote_accountability: Option<crate::world::rpc::OcompPublicVoteAccountabilityV1>,
     pub agent_reward: Option<OcompAgentRewardObservationV1>,
+    pub contributor_payout: Option<ContributorPayoutEvidenceV1>,
     pub validator_balances_before: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub validator_balances_after: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub atomic_quorum_apply_verified: bool,
@@ -429,6 +482,7 @@ pub struct FixtureState {
     pub tribute_tx_hash: Option<String>,
     /// WAA/SRA public-path observations for the full OCOMP Tribute.
     pub ocomp_agent_reward: Option<OcompAgentRewardObservationV1>,
+    pub ocomp_contributor_payout: Option<ContributorPayoutEvidenceV1>,
     /// Private keys of deterministic genesis-funded owners used only by the
     /// OCM-26 maximum-shaped public capacity fixture. They are never emitted
     /// into scenario evidence.
@@ -453,6 +507,9 @@ pub struct FixtureState {
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Independently authenticated OFFERING inputs, retained before processing
+    /// retires their current Tribute projection and point-read domain.
+    pub ocomp_nod_input_bodies: Option<Vec<outbe_compressed_entities::TributeBodyV1>>,
     /// Successor activation evidence captured while a V1 job remains live.
     pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
     pub ocomp_successor_activation_height: Option<u64>,
@@ -688,6 +745,7 @@ impl Default for FixtureState {
             slash_stake_after: None,
             tribute_tx_hash: None,
             ocomp_agent_reward: None,
+            ocomp_contributor_payout: None,
             ocomp_capacity_tribute_private_keys: Vec::new(),
             ocomp_capacity_tribute_tx_hashes: Vec::new(),
             ocomp_nod_materialization: None,
@@ -699,6 +757,7 @@ impl Default for FixtureState {
             ocomp_activation_height: None,
             ocomp_pending_v1_workers_held: false,
             ocomp_job_request: None,
+            ocomp_nod_input_bodies: None,
             ocomp_successor_bundle_hash: None,
             ocomp_successor_activation_height: None,
             ocomp_successor_node_pids_before_activation: Vec::new(),
@@ -800,6 +859,7 @@ impl FixtureState {
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
             vote_accountability: self.ocomp_vote_accountability.clone(),
             agent_reward: self.ocomp_agent_reward.clone(),
+            contributor_payout: self.ocomp_contributor_payout.clone(),
             validator_balances_before: self.ocomp_validator_balances_before.clone(),
             validator_balances_after: self.ocomp_validator_balances_after.clone(),
             atomic_quorum_apply_verified: self.ocomp_atomic_quorum_apply_verified,

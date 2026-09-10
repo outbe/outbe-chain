@@ -75,6 +75,7 @@ pub struct BootstrapProfile {
     metadosis_forming_seconds: Option<u64>,
     metadosis_offering_seconds: u64,
     ocomp_vote_window_blocks: u64,
+    governance_voting_window_blocks: u64,
     oracle_pairs: Option<Vec<(String, String, String)>>,
 }
 
@@ -98,12 +99,22 @@ impl Default for BootstrapProfile {
             metadosis_forming_seconds: None,
             metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
             ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+            governance_voting_window_blocks: 6,
             oracle_pairs: None,
         }
     }
 }
 
 impl BootstrapProfile {
+    /// Bind the scenario's governance deadline to genesis before identities are prepared.
+    pub fn with_governance_voting_window(mut self, blocks: u64) -> Result<Self> {
+        outbe_chain_constants::GenesisProtocolParametersV1::resolve(Some(&json!({
+            "governance": { "votingWindowBlocks": blocks }
+        })))?;
+        self.governance_voting_window_blocks = blocks;
+        Ok(self)
+    }
+
     /// Replace the seed's Oracle registry through the normal genesis seeder.
     /// Each tuple is `(base, quote, initial_rate)` in configured orientation.
     pub fn with_oracle_pairs(mut self, pairs: Vec<(String, String, String)>) -> Result<Self> {
@@ -219,7 +230,7 @@ impl BootstrapProfile {
     ///
     /// Parsing is strict: malformed or unsupported knobs fail before bootstrap
     /// instead of silently falling back to a different genesis.
-    fn from_tuning(tuning: &[(&str, String)]) -> Result<Self> {
+    pub(crate) fn from_tuning(tuning: &[(&str, String)]) -> Result<Self> {
         let mut profile = Self::default();
         for (key, value) in tuning {
             let parsed = || {
@@ -799,6 +810,9 @@ impl Localnet {
                 "genesisTime": genesis_time,
                 "outbeProtocol": {
                     "schemaVersion": 1,
+                    "governance": {
+                        "votingWindowBlocks": profile.governance_voting_window_blocks,
+                    },
                     "metadosis": {
                         "formingPeriodSeconds": localnet_forming_period,
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
@@ -1232,6 +1246,43 @@ fn localnet_forming_period_seconds(_now: u64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn governance_window_is_written_before_node_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment::default();
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.dir = directory.path().to_owned();
+        let localnet = Localnet::new(cfg);
+        fs::write(
+            localnet.cfg.dir.join("validators.json"),
+            r#"[{"address":"0x1111111111111111111111111111111111111111"}]"#,
+        )
+        .unwrap();
+        for blocks in [6, 8, 20, 86_400] {
+            let profile = BootstrapProfile::default()
+                .with_governance_voting_window(blocks)
+                .unwrap();
+            localnet.write_genesis(&profile).unwrap();
+            let genesis =
+                serde_json::from_slice(&fs::read(localnet.cfg.dir.join("genesis.json")).unwrap())
+                    .unwrap();
+            let parameters =
+                outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis).unwrap();
+            assert_eq!(parameters.governance_voting_window_blocks, blocks);
+            assert_eq!(
+                parameters.ocomp_compute_vote_window_blocks,
+                LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
+            );
+        }
+        assert!(BootstrapProfile::default()
+            .with_governance_voting_window(0)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_governance_voting_window(86_401)
+            .is_err());
+    }
 
     #[test]
     fn radicle_registry_genesis() {

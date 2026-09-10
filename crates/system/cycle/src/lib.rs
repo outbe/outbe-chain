@@ -14,6 +14,10 @@
 //! multi-day gap, then invokes the existing Metadosis WWD flow exactly once. A
 //! failed step rolls back the whole trigger checkpoint, so the same hourly slot
 //! retries on the next block.
+//! At a contiguous day transition the slot remains pending until the prior
+//! day's last late-vote inclusion window closes. Canonical late participants
+//! receive the same daily GEM participation weight as base-certificate voters,
+//! once per block and for that block's UTC day; fee decay remains independent.
 //!
 //! Each completed-day settlement preserves the existing 5-pool + Metadosis
 //! terminal split:
@@ -32,8 +36,7 @@
 //!    agent_excess, dispatched through
 //!    `outbe_emissionlimit::block::dispatch_terminal_remainder_at` at
 //!    the previous-day midnight timestamp.
-//! 6. Mark `Rewards.daily_settled[prev_day] = true` so late finalized
-//!    metadata for the day is rejected by `on_finalized_metadata`.
+//! 6. Mark `Rewards.daily_settled[prev_day] = true` to prevent redispatch.
 
 use alloy_sol_types::sol;
 

@@ -31,7 +31,7 @@ export interface NetworkDef {
 
 export const NETWORKS: NetworkDef[] = [
   { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "rehearsal-network-1", chainId: 70860602, rpc: process.env.OUTBE_RPC },
+  { name: "rudis-rehearsal", chainId: 70860602, rpc: process.env.OUTBE_RPC },
 ];
 
 export const ROUTER_ABI: Abi = RouterJson as Abi;

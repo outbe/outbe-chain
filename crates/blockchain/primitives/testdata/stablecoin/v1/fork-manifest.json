@@ -7,7 +7,7 @@
     "namespaceReservation": "reserved-in-genesis",
     "supportedNetworks": [
       "outbe-devnet-1-fresh-genesis",
-      "rehearsal-network-1-fresh-genesis",
+      "rudis-rehearsal-fresh-genesis",
       "outbe-mainnet-1-fresh-genesis"
     ]
   },

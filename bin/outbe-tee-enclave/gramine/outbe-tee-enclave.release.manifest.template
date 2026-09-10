@@ -6,6 +6,8 @@ libos.entrypoint = "{{ install_root }}/bin/outbe-tee-enclave"
 loader.log_level = "error"
 loader.insecure__use_cmdline_argv = true
 loader.env.LD_LIBRARY_PATH = "/qvl:/lib"
+# Avoid repeated 64 MiB glibc thread-arena attempts in the bounded SGX heap.
+loader.env.MALLOC_ARENA_MAX = "1"
 
 sys.enable_sigterm_injection = true
 

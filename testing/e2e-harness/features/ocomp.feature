@@ -24,6 +24,7 @@ Feature: Off-chain computation and Metadosis
     And the WAA and SRA beneficiaries have no reward before their execution UTC day settles
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute
+    And the submitted Nod input bodies are independently authenticated before processing
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
     When the committee reaches fresh capacity processing with V1 workers held for the test-only V2 activation
@@ -33,6 +34,8 @@ Feature: Off-chain computation and Metadosis
     Then activation keeps every validator process alive and the pending job pinned to V1
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
+    And every validator independently verifies the V1 Nod commitment encoding
+    And the one-league Nod fields and root match the public input arithmetic on every validator
     And Lysis and OCOMP use the WWD VWAP below the active S-curve
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
@@ -64,14 +67,22 @@ Feature: Off-chain computation and Metadosis
     Given a fresh four-validator OCOMP public capacity localnet
     When 10 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 10 public Tributes for the capacity day
+    And the submitted Nod input bodies are independently authenticated before processing
     When the committee logical clock reaches the public capacity processing time
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically certify the Lysis generation
+    And every validator independently verifies the V1 Nod commitment encoding
+    And the one-league Nod fields and root match the public input arithmetic on every validator
     And the certified generation is materialized through at least two bounded transactions
     And every capacity owner enumerates one ordinary NOD with matching nodData
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
+
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
 
   # Temporarily ignored at the owner's request; keep the complete 257-Tribute
   # scenario for a later run. @todo is the runner's unconditional skip tag.
