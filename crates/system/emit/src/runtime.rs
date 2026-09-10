@@ -16,7 +16,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_protocol::codec::field_from_be_bytes_canonical;
 use outbe_protocol::codec::u256_limbs_be;
-use outbe_protocol::Codec as _;
+use outbe_protocol::{Codec as _, FieldElement};
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::emit_mint::decode_public_inputs as decode_emit_mint_public_inputs;
 use outbe_zk_canonical::noir::emit_mint::EmitMint;
@@ -62,12 +62,9 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
             current = merkle_node(current, *zero).map_err(|_| EmitError::Hash)?;
         } else {
             let left = emit.filled_subtrees.read(&level_byte)?;
-            let left =
-                field_from_be_bytes_canonical::<Field>(&left.0, "BN254 field").map_err(|_| {
-                    PrecompileError::Fatal(
-                        "Emit filled-subtree slot is not a canonical field".into(),
-                    )
-                })?;
+            let left = left.to_field().map_err(|_| {
+                PrecompileError::Fatal("Emit filled-subtree slot is not a canonical field".into())
+            })?;
             current = merkle_node(left, current).map_err(|_| EmitError::Hash)?;
         }
     }

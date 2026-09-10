@@ -11,6 +11,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use clap::Subcommand;
 use eyre::{ensure, Result, WrapErr};
+use k256::pkcs8::der::Encode;
 use outbe_paynote::{
     client::{new_tree, witness},
     hash::{change_key, note_commitment, note_nullifier, note_sn, Field},
@@ -18,11 +19,7 @@ use outbe_paynote::{
     PayNoteSuit, PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::{
-    codec::FieldElement,
-    protocol::zk::{Circuit, CircuitId, ProofGenerator},
-    Codec,
-};
+use outbe_protocol::{codec::FieldElement, protocol::zk::{Circuit, CircuitId, ProofGenerator}, Codec, FieldEncode};
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
 use outbe_zk_canonical::{
     noir::paynote::{Paynote, PublicInputs, Witness},
