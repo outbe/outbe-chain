@@ -9,9 +9,20 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
+use outbe_intex::IntexState;
+
 use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
+
+/// Outcome of one pass over a called group.
+struct GroupExpiry {
+    /// Members walked, for the sweep's budget accounting.
+    members: u32,
+    /// Members a deterministic error left unretired. A non-zero count keeps the
+    /// group alive so the next sweep can finish it.
+    pending: u32,
+}
 
 /// Retire every group whose settlement window has closed, earliest bucket first.
 pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -53,7 +64,18 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
 
             match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day)) {
                 // The slot itself was already charged above.
-                Ok(members) => budget = budget.saturating_sub(members.saturating_sub(1)),
+                Ok(expiry) => {
+                    budget = budget.saturating_sub(expiry.members.saturating_sub(1));
+                    if expiry.pending != 0 {
+                        tracing::warn!(
+                            target: "outbe::intexfactory",
+                            iso_code,
+                            worldwide_day = worldwide_day.value(),
+                            pending = expiry.pending,
+                            "expiry sweep: group kept for the next pass"
+                        );
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(
                         target: "outbe::intexfactory",
@@ -102,19 +124,33 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Expire one group in a single credit. Returns the members expired.
+/// Expire one group in a single credit.
+///
+/// A member the pass could not retire leaves the group in place, so the next
+/// sweep picks it up again: the group index is the retry record, and dropping it
+/// would strand that member's Promis load with nothing minted against it.
+///
+/// Re-walking a group is therefore normal, and members retired by an earlier
+/// pass are already credited. They are skipped rather than re-expired, so a
+/// retry credits each load exactly once.
 fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
     worldwide_day: WorldwideDay,
-) -> Result<u32> {
+) -> Result<GroupExpiry> {
     let mut factory = IntexFactoryContract::new(storage.clone());
     let group = factory.called_group(iso_code, worldwide_day)?;
 
     let mut credit = U256::ZERO;
+    let mut pending = 0u32;
     for &series_id in &group.members {
         // Per member: a shared checkpoint would roll the whole group's credit back.
         let returned = storage.with_checkpoint(|| {
+            if outbe_intex::api::read_series(storage, series_id)?.lifecycle_state()?
+                == IntexState::Expired
+            {
+                return Ok(U256::ZERO);
+            }
             let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
             let returned = forfeited
                 .promis_load_minor
@@ -133,7 +169,8 @@ fn expire_group(
         let returned = match returned {
             Ok(value) => value,
             Err(error) => {
-                tracing::warn!(target: "outbe::intexfactory", series = %series_id, error = ?error, "expiry sweep: skipping series");
+                tracing::warn!(target: "outbe::intexfactory", series = %series_id, error = ?error, "expiry sweep: series left for the next pass");
+                pending += 1;
                 continue;
             }
         };
@@ -146,6 +183,11 @@ fn expire_group(
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .add_to_total_unallocated(credit)?;
     }
-    factory.remove_called_group(iso_code, worldwide_day)?;
-    Ok(group.members.len() as u32)
+    if pending == 0 {
+        factory.remove_called_group(iso_code, worldwide_day)?;
+    }
+    Ok(GroupExpiry {
+        members: group.members.len() as u32,
+        pending,
+    })
 }
