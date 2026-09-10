@@ -32,7 +32,8 @@ interface IIntexFactory {
         returns (uint16 settlementCurrency, uint256 payableUnits);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
-    ///         off-chain proof of work. Caller is the holder. Authorized by the
+    ///         off-chain proof of work. Any caller may submit; the units burn from
+    ///         `holder` and the Promis is minted to them. Authorized by the
     ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
     ///         where `opNonce` MUST equal the holder's current on-chain promis
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the

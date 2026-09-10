@@ -15,9 +15,15 @@ use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
-/// Park a group in a later bucket. A failure here leaves it where it is, and the
-/// sweep re-reads that bucket next block; propagating would fail the block instead.
-fn defer_group(storage: &StorageHandle<'_>, iso_code: u16, worldwide_day: WorldwideDay, day: u32) {
+/// Park a group in a later bucket. Returns false when it could not be moved:
+/// the group is still in this bucket, and the caller must stop the pass rather
+/// than walk on, or the bucket's tail sweep would retire it without credit.
+fn defer_group(
+    storage: &StorageHandle<'_>,
+    iso_code: u16,
+    worldwide_day: WorldwideDay,
+    day: u32,
+) -> bool {
     let deferred = storage.with_checkpoint(|| {
         IntexFactoryContract::new(storage.clone()).defer_called_group(
             iso_code,
@@ -39,9 +45,11 @@ fn defer_group(storage: &StorageHandle<'_>, iso_code: u16, worldwide_day: Worldw
             iso_code,
             worldwide_day = worldwide_day.value(),
             error = ?error,
-            "expiry sweep: could not defer group"
+            "expiry sweep: could not defer group, stopping the pass"
         );
+        return false;
     }
+    true
 }
 
 /// Outcome of one pass over a called group.
@@ -106,7 +114,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                             pending = expiry.pending,
                             "expiry sweep: group deferred with members left"
                         );
-                        defer_group(storage, iso_code, worldwide_day, retry_day);
+                        if !defer_group(storage, iso_code, worldwide_day, retry_day) {
+                            break;
+                        }
                     }
                 }
                 Err(error) => {
@@ -117,7 +127,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         error = ?error,
                         "expiry sweep: group deferred after an error"
                     );
-                    defer_group(storage, iso_code, worldwide_day, retry_day);
+                    if !defer_group(storage, iso_code, worldwide_day, retry_day) {
+                        break;
+                    }
                 }
             }
             slot += 1;
