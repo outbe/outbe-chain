@@ -19,6 +19,7 @@ import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
+    PendingMark,
     PendingBidsRelay,
     PendingIssuance,
     PendingProceedsRoute,
@@ -166,7 +167,7 @@ contract TargetRouter is
 
     /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
     function pendingMark(bytes14 seriesId) external view returns (uint8) {
-        return _ts().pendingMark[seriesId];
+        return _ts().pendingMarks[seriesId].msgType;
     }
 
     // --- Admin ---
@@ -373,11 +374,11 @@ contract TargetRouter is
     /// @param seriesId Series whose slotted mark to apply.
     function applyPendingMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        uint8 msgType = $.pendingMark[seriesId];
+        PendingMark memory waiting = $.pendingMarks[seriesId];
+        uint8 msgType = waiting.msgType;
         if (msgType == 0) revert NoPendingMark(seriesId);
-        uint32 calledAt = $.pendingMarkCalledAt[seriesId];
-        delete $.pendingMark[seriesId];
-        delete $.pendingMarkCalledAt[seriesId];
+        uint32 calledAt = waiting.calledAt;
+        delete $.pendingMarks[seriesId];
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             $.intex.markQualified(seriesId);
         } else {

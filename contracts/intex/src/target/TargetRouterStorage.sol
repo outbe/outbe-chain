@@ -24,6 +24,12 @@ struct PendingIssuance {
     bool done;
 }
 
+/// @notice A lifecycle mark waiting for its series, with the origin's call time for a Called one.
+struct PendingMark {
+    uint8 msgType;
+    uint32 calledAt;
+}
+
 /// @notice How far a day's chunk run has got: the declared span and how many chunks landed.
 struct ChunkProgress {
     uint16 totalChunks;
@@ -78,11 +84,10 @@ struct TargetRouterStorage {
     ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
-    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`.
-    mapping(bytes14 seriesId => uint8 msgType) pendingMark;
-    /// @dev The origin's call time for a waiting Called mark, so a slot applied later still derives the
-    ///      deadline settlement honours rather than one from its own arrival.
-    mapping(bytes14 seriesId => uint32 calledAt) pendingMarkCalledAt;
+    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`. Carries the
+    ///      origin's call time so a slot applied later still derives the deadline settlement honours rather
+    ///      than one from its own arrival. Five bytes, so the pair shares a slot and is cleared in one write.
+    mapping(bytes14 seriesId => PendingMark) pendingMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and

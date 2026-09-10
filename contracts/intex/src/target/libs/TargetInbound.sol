@@ -11,6 +11,7 @@ import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     ChunkProgress,
+    PendingMark,
     PendingBidsRelay,
     PendingIssuance,
     PendingProceedsRoute,
@@ -481,9 +482,11 @@ library TargetInbound {
         }
         // Applied, so its own slot is settled. A Qualified never clears a waiting Called: the two arrive
         // independently, and the Called is the later decision even when it lands second.
-        if (msgType == BridgeMsgCodec.MSG_MARK_CALLED || $.pendingMark[seriesId] != BridgeMsgCodec.MSG_MARK_CALLED) {
-            delete $.pendingMark[seriesId];
-            delete $.pendingMarkCalledAt[seriesId];
+        if (
+            msgType == BridgeMsgCodec.MSG_MARK_CALLED
+                || $.pendingMarks[seriesId].msgType != BridgeMsgCodec.MSG_MARK_CALLED
+        ) {
+            delete $.pendingMarks[seriesId];
         }
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
@@ -502,12 +505,14 @@ library TargetInbound {
         uint8 msgType,
         uint32 calledAt
     ) private returns (bool slotted) {
-        if (msgType != BridgeMsgCodec.MSG_MARK_CALLED && $.pendingMark[seriesId] == BridgeMsgCodec.MSG_MARK_CALLED) {
+        if (
+            msgType != BridgeMsgCodec.MSG_MARK_CALLED
+                && $.pendingMarks[seriesId].msgType == BridgeMsgCodec.MSG_MARK_CALLED
+        ) {
             _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
             return false;
         }
-        $.pendingMark[seriesId] = msgType;
-        $.pendingMarkCalledAt[seriesId] = calledAt;
+        $.pendingMarks[seriesId] = PendingMark({msgType: msgType, calledAt: calledAt});
         emit ITargetRouter.MarkSlotted(seriesId, msgType);
         return true;
     }
@@ -515,16 +520,15 @@ library TargetInbound {
     /// @dev Apply the mark waiting for a series that has just been created. A mark is a state flip and
     ///      moves no balances, so Called applies here as readily as Qualified. A failure re-announces the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
-        uint8 msgType = $.pendingMark[seriesId];
+        PendingMark memory waiting = $.pendingMarks[seriesId];
+        uint8 msgType = waiting.msgType;
         if (msgType == 0) return;
-        uint32 calledAt = $.pendingMarkCalledAt[seriesId];
-        delete $.pendingMark[seriesId];
-        delete $.pendingMarkCalledAt[seriesId];
+        uint32 calledAt = waiting.calledAt;
+        delete $.pendingMarks[seriesId];
         try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {
             emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
         } catch {
-            $.pendingMark[seriesId] = msgType;
-            $.pendingMarkCalledAt[seriesId] = calledAt;
+            $.pendingMarks[seriesId] = waiting;
             emit ITargetRouter.MarkSlotted(seriesId, msgType);
         }
     }
