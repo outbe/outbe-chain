@@ -369,6 +369,19 @@ fn apply_certified_result(
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
+        // A day may allocate no more than the nominal its tributes retired. Measured
+        // against the auction's whole limit rather than what it ends up drawing:
+        // the actual draw is only known two days later, and the limit bounds it.
+        let allocated = plan
+            .nod()
+            .nod_gratis_consumed()
+            .checked_add(request_receipt.auction_base)
+            .ok_or_else(|| crate::errors::business_failure("day allocation overflow"))?;
+        if allocated > plan.tribute().consumed_nominal_total() {
+            return Err(crate::errors::business_failure(
+                "day allocation exceeds the nominal its tributes retired",
+            ));
+        }
         // Lysis has closed and returned what it did not spend, so the auction can now draw.
         crate::ocomp_budget::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {
