@@ -40,10 +40,10 @@ abstract contract EscrowFinalizeGasBase is Test {
         // ResetPeriod.OneMinute: forced withdrawal only clears once the period has elapsed.
         vm.warp(block.timestamp + 5 minutes);
 
-        IEscrowAdapter.FinalizationInstruction[] memory instructions =
-            new IEscrowAdapter.FinalizationInstruction[](n);
+        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](n);
         for (uint256 i = 0; i < n; ++i) {
-            instructions[i] = IEscrowAdapter.FinalizationInstruction({bidder: who[i], refundedAmount: LOCK, paidAmount: 0});
+            instructions[i] =
+                IEscrowAdapter.FinalizationInstruction({bidder: who[i], refundedAmount: LOCK, paidAmount: 0});
         }
 
         uint256 before = gasleft();

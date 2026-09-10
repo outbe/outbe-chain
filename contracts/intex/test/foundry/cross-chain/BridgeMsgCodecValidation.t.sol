@@ -303,9 +303,7 @@ contract BridgeMsgCodecValidationTest is Test {
     function test_Issuance_TotalChunksBeyondTheCeiling_Reverts() public {
         uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
 
-        vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany)
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
         this.exposedEncodeIssuanceChunk(0, tooMany);
     }
 
@@ -322,9 +320,7 @@ contract BridgeMsgCodecValidationTest is Test {
             abi.encode(uint32(0), uint16(0), tooMany, IssuanceBatchLib.one(payload))
         );
 
-        vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany)
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
         this.exposedDecodeIssuance(packet);
     }
 
@@ -354,11 +350,7 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
     }
 
-    function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks)
-        external
-        pure
-        returns (bytes memory)
-    {
+    function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks) external pure returns (bytes memory) {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](1);

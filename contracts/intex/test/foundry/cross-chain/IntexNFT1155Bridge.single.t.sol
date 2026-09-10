@@ -289,7 +289,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         // Source burned; destination not minted; transfer parked under the bridge receiveId.
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "not minted yet");
-        (address to, , uint256 amount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (address to,, uint256 amount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(exists, "crosschainMint parked");
         assertEq(to, user);
         assertEq(amount, AMOUNT);
@@ -300,7 +300,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         adapterB.retryCrosschainMint(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
 
-        (, , , bool existsAfter) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, bool existsAfter) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(existsAfter, "entry cleared");
 
         // A re-retry reverts.
@@ -329,14 +329,14 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         _deliverAToB();
 
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
-        (, , , bool parked) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, bool parked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(parked, "parked on B");
 
         // Reclaim: B sends the transfer back to its origin A - the only exit that skips B's gate.
         vm.prank(user);
         adapterB.reclaimToSource{value: FEE}(receiveId, 0);
 
-        (, , , bool stillParked) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, bool stillParked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertFalse(stillParked, "entry consumed");
 
         // Deliver the reverse packet on A -> holder re-minted, cross-chain supply conserved.
