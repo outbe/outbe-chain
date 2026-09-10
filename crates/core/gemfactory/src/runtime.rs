@@ -134,7 +134,7 @@ pub fn issue_gem_position(
 
     let parked_at = storage.timestamp()?.to::<u64>();
     let position_id =
-        GemFactoryContract::generate_position_id(source_intex_id, storage.block_number()?);
+        GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
     factory.add_position(&GemPosition {

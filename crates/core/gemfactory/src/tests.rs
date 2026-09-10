@@ -766,6 +766,17 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
 }
 
 #[test]
+fn two_merchants_parking_one_series_in_a_block_get_separate_positions() {
+    let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
+    let block = 1u64;
+    assert_ne!(
+        GemFactoryContract::generate_position_id(ALICE, series, block),
+        GemFactoryContract::generate_position_id(BOB, series, block),
+        "a series has many holders and any of them may park it"
+    );
+}
+
+#[test]
 fn a_position_reports_its_full_terms() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
         let id = seed_and_park(

@@ -126,13 +126,19 @@ impl GemFactoryContract<'_> {
         self.live_head.write(head)
     }
 
-    /// `position_id = keccak256("gemposition" || source_intex_id_be || block_number_be)`.
-    /// A source Intex is parked once, so `source_intex_id` alone disambiguates.
-    pub fn generate_position_id(source_intex_id: SeriesId, block_number: u64) -> U256 {
-        let mut buf = [0u8; 11 + SERIES_ID_LEN + 8];
+    /// `position_id = keccak256("gemposition" || merchant || source_intex_id_be || block_number_be)`.
+    /// A series is held by many auction winners and any of them may park it, so the
+    /// merchant is what tells two positions on the same series in one block apart.
+    pub fn generate_position_id(
+        merchant: Address,
+        source_intex_id: SeriesId,
+        block_number: u64,
+    ) -> U256 {
+        let mut buf = [0u8; 11 + 20 + SERIES_ID_LEN + 8];
         buf[0..11].copy_from_slice(b"gemposition");
-        buf[11..11 + SERIES_ID_LEN].copy_from_slice(source_intex_id.as_bytes());
-        buf[11 + SERIES_ID_LEN..].copy_from_slice(&block_number.to_be_bytes());
+        buf[11..31].copy_from_slice(merchant.as_slice());
+        buf[31..31 + SERIES_ID_LEN].copy_from_slice(source_intex_id.as_bytes());
+        buf[31 + SERIES_ID_LEN..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

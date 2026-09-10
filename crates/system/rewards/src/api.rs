@@ -827,6 +827,43 @@ mod tests {
         });
     }
 
+    /// The reward batch mints one Gem per entry, and a Gem's id is derived from
+    /// its owner, its load and the block. Two entries for one validator would
+    /// therefore collide on that id and wedge the batch, so the day's list has to
+    /// carry each voter once, with their participation counted on that one entry.
+    #[test]
+    fn a_voter_is_listed_once_however_often_they_vote() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            fund_rewards(&ctx, U256::from(400u64));
+
+            // Twice inside one block, then again in the next one.
+            on_finalized_metadata(
+                &ctx,
+                &meta_with_hash(FB_HASH_A, 1),
+                U256::from(100u64),
+                GENESIS_TS,
+                &[VAL_X, VAL_X],
+            )
+            .unwrap();
+            on_finalized_metadata(
+                &ctx,
+                &meta_with_hash(FB_HASH_B, 2),
+                U256::from(100u64),
+                GENESIS_TS,
+                &[VAL_X],
+            )
+            .unwrap();
+
+            let voters = read_voters_for_day(&ctx, 20240101).unwrap();
+            assert_eq!(voters.len(), 1, "one entry per voter");
+            assert_eq!(voters[0].0, VAL_X);
+            assert_eq!(voters[0].1, 2, "a repeat inside one block is not a vote");
+        });
+    }
+
     #[test]
     fn read_voters_for_day_empty_when_no_metadata() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
