@@ -1199,17 +1199,6 @@
     },
     {
       "type": "error",
-      "name": "AlreadyProcessed",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "ArrayLengthMismatch",
       "inputs": []
     },
