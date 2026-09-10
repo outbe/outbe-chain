@@ -271,8 +271,28 @@ impl IntexFactoryContract<'_> {
         }
         self.called_group_count.write(&key, members.len() as u32)?;
         self.called_group_deadline.write(&key, deadline)?;
+        self.place_in_expiry_bucket(key, Self::deadline_bucket(deadline))
+    }
 
-        let day = Self::deadline_bucket(deadline);
+    /// Move a group the sweep could not finish into a later bucket. Its members
+    /// and deadline stay put; only where the sweep next finds it changes, so a
+    /// retry waits for that bucket instead of spinning every block.
+    pub(crate) fn defer_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        day: u32,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let packed = self.called_group_slot.read(&key)?;
+        if packed != 0 {
+            let (old_day, old_slot) = Self::unpack_slot(packed);
+            self.release_expiry_slot(old_day, old_slot, key)?;
+        }
+        self.place_in_expiry_bucket(key, day)
+    }
+
+    fn place_in_expiry_bucket(&mut self, key: u64, day: u32) -> Result<()> {
         let slot = self.expiry_bucket_len.read(&day)?;
         self.expiry_bucket_at
             .write(&Self::bucket_slot_key(day, slot), key)?;

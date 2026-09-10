@@ -15,6 +15,23 @@ use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
+/// Park a group in a later bucket. A failure here leaves it where it is, and the
+/// sweep re-reads that bucket next block; propagating would fail the block instead.
+fn defer_group(storage: &StorageHandle<'_>, iso_code: u16, worldwide_day: WorldwideDay, day: u32) {
+    let deferred = storage.with_checkpoint(|| {
+        IntexFactoryContract::new(storage.clone()).defer_called_group(iso_code, worldwide_day, day)
+    });
+    if let Err(error) = deferred {
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            iso_code,
+            worldwide_day = worldwide_day.value(),
+            error = ?error,
+            "expiry sweep: could not defer group"
+        );
+    }
+}
+
 /// Outcome of one pass over a called group.
 struct GroupExpiry {
     /// Members walked, for the sweep's budget accounting.
@@ -62,6 +79,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             }
 
+            // A group the pass cannot finish is parked an hour ahead rather than
+            // dropped: dropping it would strand its members' Promis load.
+            let retry_day = IntexFactoryContract::deadline_bucket(now).saturating_add(1);
             match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day)) {
                 // The slot itself was already charged above.
                 Ok(expiry) => {
@@ -72,8 +92,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                             iso_code,
                             worldwide_day = worldwide_day.value(),
                             pending = expiry.pending,
-                            "expiry sweep: group kept for the next pass"
+                            "expiry sweep: group deferred with members left"
                         );
+                        defer_group(storage, iso_code, worldwide_day, retry_day);
                     }
                 }
                 Err(error) => {
@@ -82,22 +103,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                         iso_code,
                         worldwide_day = worldwide_day.value(),
                         error = ?error,
-                        "expiry sweep: retiring group without credit"
+                        "expiry sweep: group deferred after an error"
                     );
-                    // Dropped whole: leftover records would refuse the pair a later call.
-                    let dropped = storage.with_checkpoint(|| {
-                        let mut factory = IntexFactoryContract::new(storage.clone());
-                        let members =
-                            factory
-                                .called_group_count
-                                .read(&IntexFactoryContract::scoped(
-                                    iso_code,
-                                    worldwide_day.value(),
-                                ))?;
-                        factory.remove_called_group(iso_code, worldwide_day)?;
-                        Ok(members)
-                    });
-                    budget = budget.saturating_sub(dropped.unwrap_or(1).saturating_sub(1));
+                    defer_group(storage, iso_code, worldwide_day, retry_day);
                 }
             }
             slot += 1;

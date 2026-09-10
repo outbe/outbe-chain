@@ -845,3 +845,80 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
         );
     });
 }
+
+#[test]
+fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
+    with_factory(|s| {
+        let _f = qualify_series(&s, 7, sample(7));
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_days(
+            &oracle,
+            last_closed_day,
+            pair,
+            30,
+            U256::from(EXPECTED_TRIGGER) + U256::from(1),
+        );
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+
+        // A member the registry never issued cannot expire; the group must survive it.
+        let day = WorldwideDay::new(7);
+        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+        let f = IntexFactoryContract::new(s.clone());
+        f.called_group_members
+            .write(
+                &IntexFactoryContract::group_member_key(REFERENCE_ISO, day, 1),
+                sid(20260999).to_word(),
+            )
+            .unwrap();
+        f.called_group_count.write(&key, 2).unwrap();
+
+        let deadline = f.called_group_deadline.read(&key).unwrap();
+        let first_pass =
+            IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline));
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, first_pass, CHAIN_ID),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        let unallocated = |s: &StorageHandle<'_>| {
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+        let after_first = unallocated(&s);
+        assert!(
+            !after_first.is_zero(),
+            "the member that could expire returns its load"
+        );
+
+        // The group was parked one bucket ahead instead of being dropped.
+        let retry_day = IntexFactoryContract::deadline_bucket(first_pass) + 1;
+        assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 2);
+
+        // The phantom goes away; the retry finishes the group without crediting
+        // the member the first pass already returned.
+        f.called_group_count.write(&key, 1).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
+            s.clone(),
+        );
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+
+        assert_eq!(
+            unallocated(&s),
+            after_first,
+            "a retry credits each load exactly once"
+        );
+        assert_eq!(f.first_expiry_day().unwrap(), None);
+        assert_eq!(f.called_group_count.read(&key).unwrap(), 0);
+    });
+}
