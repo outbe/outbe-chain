@@ -32,141 +32,147 @@ pub struct IssuanceParams {
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
+    /// Retired: settling is open to any payer, so nothing reads or writes this.
+    /// The slot stays declared so the fields after it keep their numbers on an
+    /// upgraded chain; it is never to be reused for anything else.
     #[attribute(order = 0)]
+    pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    /// `keccak256(series_id ++ holder)` -> monotonic minePromis sequence.
+    #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
     // A floor is only comparable to the rate of its own reference currency, so
     // every column is namespaced by ISO code and each currency walks its own trie.
-    #[attribute(order = 1)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 2)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 3)]
+    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 4)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     /// `scoped(iso, bin_id)` -> count of groups in the bin.
-    #[attribute(order = 4)]
+    #[attribute(order = 5)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
-    #[attribute(order = 5)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 6)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 7)]
+    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 8)]
     pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     /// `scoped(iso, bin_id)` -> count of groups in the bin.
-    #[attribute(order = 8)]
+    #[attribute(order = 9)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
-    #[attribute(order = 9)]
+    #[attribute(order = 10)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     // Bin each currency's sweep resumes from, so per-block work stays capped. 0 = fresh sweep.
-    #[attribute(order = 10)]
+    #[attribute(order = 11)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     // Registry index each scan resumes at, so a currency that exhausts the shared
     // budget cannot starve the ones behind it.
-    #[attribute(order = 11)]
-    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 12)]
+    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 13)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // Called-scan twin of the qualify cursor: without it a budgeted run re-walks the
     // lowest bins every day and never reaches the series above them.
-    #[attribute(order = 13)]
+    #[attribute(order = 14)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
     // whole (reference currency, worldwide day) pair shares.
-    #[attribute(order = 14)]
+    #[attribute(order = 15)]
     pub unqualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
-    #[attribute(order = 15)]
+    #[attribute(order = 16)]
     pub unqualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
-    #[attribute(order = 16)]
+    #[attribute(order = 17)]
     pub unqualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
-    #[attribute(order = 17)]
+    #[attribute(order = 18)]
     pub qualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
-    #[attribute(order = 18)]
+    #[attribute(order = 19)]
     pub qualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
-    #[attribute(order = 19)]
+    #[attribute(order = 20)]
     pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight; a date key is never 0.
-    #[attribute(order = 20)]
+    #[attribute(order = 21)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
-    #[attribute(order = 21)]
+    #[attribute(order = 22)]
     pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
-    #[attribute(order = 22)]
+    #[attribute(order = 23)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Lifecycle notices waiting for the `intex_notify` trigger to send them: the
     // scans run in a block hook, which cannot call contracts. Head and tail reset
     // to 0 whenever the queue drains empty.
-    #[attribute(order = 23)]
-    pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 24)]
+    pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 25)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
     /// Queue index -> `scoped(iso, day)` for a Qualified group, or the series word packed with its
     /// call time for a Called one: a called group has left the index, so its notice carries its own.
-    #[attribute(order = 25)]
+    #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.
-    #[attribute(order = 26)]
+    #[attribute(order = 27)]
     pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 
     // Called groups awaiting their settlement window, bucketed by the hour it closes
     // in. A called group has left the bin index, so these members are its only trace.
-    #[attribute(order = 27)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 28)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 29)]
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 30)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
     /// the head check costs no record load.
-    #[attribute(order = 30)]
-    pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 31)]
+    pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 32)]
     pub called_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
-    #[attribute(order = 32)]
+    #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // Widest terms ever issued in a currency; both only move outwards, so the range
     // they define covers series the live profile no longer names.
-    #[attribute(order = 33)]
-    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 34)]
+    pub max_call_window: outbe_primitives::storage::dsl::Map<u16, u32>,
+    #[attribute(order = 35)]
     pub min_call_threshold: outbe_primitives::storage::dsl::Map<u16, u32>,
 
     /// Slots ever used in a bucket; retired ones are zeroed in place, not compacted.
-    #[attribute(order = 35)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 36)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 37)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`.
-    #[attribute(order = 37)]
+    #[attribute(order = 38)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// `scoped(iso, day)` -> `(bucket << 32) | slot`; 0 = not queued.
-    #[attribute(order = 38)]
-    pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 39)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 40)]
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 41)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 

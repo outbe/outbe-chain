@@ -139,6 +139,6 @@ fn config_auto_profile_follows_the_network() {
 fn config_profile_slot_matches_seeder_layout() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.config_profile.slot(), U256::from(9));
+        assert_eq!(f.config_profile.slot(), U256::from(10));
     });
 }

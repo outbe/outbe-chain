@@ -241,7 +241,7 @@ SECONDS_PER_DAY = 86_400
 # and crates/core/gem/src/config.rs); genesis only picks one. The slots are pinned
 # by a test in each crate.
 PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
-INTEX_PROFILE_SLOT = 9
+INTEX_PROFILE_SLOT = 10
 GEM_PROFILE_SLOT = 42
 
 ALL_PRECOMPILE_ADDRESSES = [
