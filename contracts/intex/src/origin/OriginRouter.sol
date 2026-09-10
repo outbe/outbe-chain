@@ -616,6 +616,7 @@ contract OriginRouter is
         // Member-wise assignment (rather than a struct literal) keeps the payload within the IR stack bound.
         payload.seriesId = p.seriesId;
         payload.worldwideDay = p.worldwideDay;
+        payload.issuedAt = p.issuedAt;
         payload.issuedIntexCount = p.issuedIntexCount;
         payload.promisLoadMinor = p.promisLoadMinor;
         payload.entryPriceMinor = p.entryPriceMinor;

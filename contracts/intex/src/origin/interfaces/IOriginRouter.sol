@@ -169,6 +169,9 @@ interface IOriginRouter {
         bytes14 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
         uint32 worldwideDay;
+        /// @notice When the origin created the series. Every chain dates the series from
+        ///         this, so the call window opens on the same moment everywhere.
+        uint32 issuedAt;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;

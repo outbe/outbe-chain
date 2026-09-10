@@ -30,11 +30,12 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
 
     function _series(bytes14 seriesId, address[] memory recipients, uint256[] memory quantities)
         internal
-        pure
+        view
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
         payload.seriesId = seriesId;
         payload.worldwideDay = DAY;
+        payload.issuedAt = uint32(block.timestamp);
         payload.issuedIntexCount = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
@@ -113,7 +114,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         assertEq(intex.balanceOf(second, tokenId), 6, "second piece minted");
     }
 
-    function test_AFullMessageStaysUnderTheSendCeiling() public pure {
+    function test_AFullMessageStaysUnderTheSendCeiling() public view {
         // The caps are counts, not bytes, so pin that the worst case they admit - every
         // series slot filled, every recipient slot filled - still fits the wire.
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;

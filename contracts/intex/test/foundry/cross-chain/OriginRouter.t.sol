@@ -109,13 +109,14 @@ contract OriginRouterTest is CrossChainTest {
 
     function _baseIssuanceParams(address[] memory recipients, uint256[] memory quantities)
         internal
-        pure
+        view
         returns (IOriginRouter.IssuanceInstructionsParams[] memory batch)
     {
         batch = new IOriginRouter.IssuanceInstructionsParams[](1);
         batch[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
+            issuedAt: uint32(block.timestamp),
             issuedIntexCount: 10_000,
             promisLoadMinor: 1000,
             entryPriceMinor: 100e6,

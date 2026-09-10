@@ -173,6 +173,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
+            issuedAt: uint32(block.timestamp),
             issuedIntexCount: ISSUED_INTEX_COUNT,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: ENTRY_PRICE,
@@ -208,6 +209,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_ID,
                     worldwideDay: WORLDWIDE_DAY,
+                    issuedAt: uint32(block.timestamp),
                     issuedIntexCount: ISSUED_INTEX_COUNT,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
                     entryPriceMinor: ENTRY_PRICE,

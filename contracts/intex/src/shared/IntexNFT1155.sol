@@ -161,6 +161,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // one can mint into," which never matches an auction-cleared result.
         if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
+        // Zero is how this contract reads "no such series", so a series stamped with it
+        // would be written and then read back as absent. A future stamp would postpone
+        // the call window past what the origin agreed.
+        if (params.issuedAt == 0 || params.issuedAt > block.timestamp) {
+            revert InvalidIssuedAt(params.issuedAt);
+        }
+
         IIntexNFT1155.SeriesData memory seed = IIntexNFT1155.SeriesData({
             issuanceCurrency: params.issuanceCurrency,
             referenceCurrency: params.referenceCurrency,
@@ -174,7 +181,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
                 callThreshold: params.callTrigger.callThreshold,
                 callNoticePeriod: params.callTrigger.callNoticePeriod
             }),
-            issuedAt: uint32(block.timestamp),
+            issuedAt: params.issuedAt,
             calledAt: 0,
             totalSupply: 0,
             status: IIntexNFT1155.IntexStatus.Issued,

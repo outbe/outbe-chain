@@ -82,12 +82,12 @@ library BridgeMsgCodec {
     //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9x32 = 288
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
     //     3 static head words + 3 dynamic offsets + 3 empty length words = 9x32 = 288
-    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 12 static + 2 dynamic fields):
-    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 12 static
-    //     + 2 inner offsets + 2 empty length words = 22x32 = 704
+    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 13 static + 2 dynamic fields):
+    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 13 static
+    //     + 2 inner offsets + 2 empty length words = 23x32 = 736
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 704;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 736;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -380,6 +380,8 @@ library BridgeMsgCodec {
         bytes14 seriesId;
         /// @notice Worldwide day the series was derived from - carried so the destination records real provenance.
         uint32 worldwideDay;
+        /// @notice When the origin created the series, so every chain dates it from the same moment.
+        uint32 issuedAt;
         uint32 issuedIntexCount;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;

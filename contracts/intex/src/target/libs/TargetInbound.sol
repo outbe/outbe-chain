@@ -264,6 +264,7 @@ library TargetInbound {
                     IIntexNFT1155.CreateSeriesParams({
                         seriesId: payload.seriesId,
                         worldwideDay: payload.worldwideDay,
+                        issuedAt: payload.issuedAt,
                         issuanceCurrency: payload.issuanceCurrency,
                         referenceCurrency: payload.referenceCurrency,
                         issuedIntexCount: payload.issuedIntexCount,

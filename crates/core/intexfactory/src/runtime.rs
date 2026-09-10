@@ -90,6 +90,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
+                issuedAt: issued_at,
                 issuedIntexCount: params.issued_intex_count,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,

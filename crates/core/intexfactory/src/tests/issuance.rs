@@ -138,6 +138,7 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
     let mut payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
         seriesId: sid(series).into(),
         worldwideDay: series,
+        issuedAt: ISSUED_AT,
         issuedIntexCount: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,

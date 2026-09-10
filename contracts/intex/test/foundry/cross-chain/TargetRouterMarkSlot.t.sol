@@ -60,6 +60,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = CreateSeriesLib.seriesId(DAY);
         payload.worldwideDay = DAY;
+        payload.issuedAt = uint32(block.timestamp);
         payload.issuedIntexCount = 10;
         payload.promisLoadMinor = 1;
         payload.issuanceCurrency = 840;
