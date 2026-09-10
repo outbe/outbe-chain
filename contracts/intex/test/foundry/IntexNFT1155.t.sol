@@ -410,6 +410,21 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
+    /// @dev The Settled id is the series id with the bit above the 14-byte space set. That keeps the two
+    ///      classes apart by construction rather than by hash luck, so the widest possible series id must
+    ///      still land below the tag - widen `bytes14` and this is the test that has to fail first.
+    function test_TokenIds_ClassesCannotOverlap() public view {
+        bytes14 widest = bytes14(type(uint112).max);
+        uint256 tag = 1 << 112;
+
+        uint256 issued = nft.issuedTokenId(widest);
+        uint256 settled = nft.settledTokenId(widest);
+
+        assertLt(issued, tag, "the issued space ends below the tag");
+        assertEq(settled, issued | tag, "settled is the tagged series id");
+        assertEq(settled & ~tag, issued, "clearing the tag recovers the series");
+    }
+
     function test_TokenIds_PairAndStatus() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 

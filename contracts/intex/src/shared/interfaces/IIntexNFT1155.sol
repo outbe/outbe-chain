@@ -259,7 +259,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The Issued token id.
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
-    /// @notice Settled (soulbound) token id for a series (= `keccak256("SETTLED", seriesId)`). Pure helper.
+    /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Settled token id.
     function settledTokenId(bytes14 seriesId) external pure returns (uint256);

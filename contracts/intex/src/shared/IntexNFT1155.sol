@@ -34,9 +34,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @notice Gem factory role; allowed to call `parkIntex`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
 
-    /// @dev Domain prefix for `settledTokenId` derivation; isolates Settled ids from the
-    ///      issued token-id space.
-    bytes constant _SETTLED_DOMAIN = bytes("SETTLED");
+    /// @dev Bit that marks a Settled token id. A series id is 14 bytes, so the issued space ends at
+    ///      2**112; setting the bit directly above it separates the two classes by construction rather
+    ///      than by hash luck, and clearing it recovers the series a Settled id belongs to.
+    uint256 constant _SETTLED_TAG = 1 << 112;
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
@@ -452,7 +453,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @dev Pure helper used internally and exposed via `settledTokenId`.
     function _settledTokenId(bytes14 seriesId) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(_SETTLED_DOMAIN, seriesId)));
+        return uint256(uint112(seriesId)) | _SETTLED_TAG;
     }
 
     /// @inheritdoc IIntexNFT1155

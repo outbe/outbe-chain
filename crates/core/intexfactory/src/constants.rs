@@ -3,6 +3,7 @@
 
 #[cfg(feature = "e2e-test")]
 use alloy_primitives::{address, Address};
+use alloy_primitives::U256;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
@@ -72,3 +73,8 @@ pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
+
+/// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
+/// 2**112 and this bit sits directly above it: the classes cannot collide, and clearing it recovers
+/// the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
+pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);
