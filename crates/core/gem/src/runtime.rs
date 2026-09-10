@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::timestamp_to_date_key;
+use outbe_primitives::time::first_full_day;
 
 use crate::errors::GemError;
 use crate::precompile::IGem::{GemCalled, GemExpired, GemQualified};
@@ -60,7 +60,7 @@ impl GemContract<'_> {
         if window_days == 0 || threshold_days == 0 {
             return Ok(false);
         }
-        let issued_day = timestamp_to_date_key(item.issued_at);
+        let issued_day = first_full_day(item.issued_at);
         let mut breaches: u32 = 0;
         for (day, vwap) in window.iter().take(window_days as usize) {
             if *day < issued_day {

@@ -6,7 +6,7 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::api;
 use crate::config::GemParams;
@@ -991,6 +991,44 @@ fn call_then_forfeit_lifecycle() {
         assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
     });
+}
+
+#[test]
+fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
+    let threshold_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+    // Oldest day of a breach run that is exactly threshold-long.
+    let mut oldest_breach = timestamp_to_date_key(T_NOW);
+    for _ in 1..threshold_days {
+        oldest_breach = previous_date_key(oldest_breach);
+    }
+    let midnight = date_key_to_utc_timestamp(oldest_breach);
+
+    // Issued at midnight the gem gets that whole day and the run is long enough;
+    // issued a second later it loses the day and falls one breach short.
+    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
+        with_storage(|storage| {
+            GemContract::new(storage.clone())
+                .config_profile
+                .write(crate::config::PROFILE_PROD)
+                .unwrap();
+            let mut p = sample_params(ALICE);
+            p.issued_at = issued_at;
+            let gem_id = api::add_gem(storage, p).unwrap();
+            api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+            let threshold = api::get_gem(storage, gem_id)
+                .unwrap()
+                .unwrap()
+                .call_price_minor;
+            let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
+
+            let mut gem = GemContract::new(storage.clone());
+            assert_eq!(
+                gem.trigger_call(&window, gem_id, T_NOW).unwrap(),
+                expected,
+                "issued at {issued_at}"
+            );
+        });
+    }
 }
 
 #[test]
