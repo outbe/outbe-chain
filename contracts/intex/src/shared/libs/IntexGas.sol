@@ -17,7 +17,8 @@ library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
     /// @notice Fixed head of an AUCTION_STAGE_START, before its price rows.
-    /// @dev Measured at ~383k for the six-row maximum.
+    /// @dev A six-row start measured 383k, which `auctionStart(6)` quotes at 575k. The split between this
+    ///      head and the per-row marginal is by shape, not by separate measurement.
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     /// @notice Marginal cost of storing one reference-price row on the target.
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
@@ -54,11 +55,13 @@ library IntexGas {
     ///      share is derived from its own gas model rather than measured: reads cost 100 and writes 2,900,
     ///      and `append_bid` spends six of them per bid (11,800). Its fixed part is ~3.7k, plus ~17.6k on the
     ///      branch that supersedes a generation - the dearer path, so the budget is cut from it. The router's
-    ///      own share of a 64-bid batch is ~144k.
+    ///      own share of a 64-bid batch is ~144k. Together that puts a 64-bid batch near 921k, which
+    ///      `bidsBatch(64)` quotes at 1.38M.
     uint256 internal constant BIDS_BASE = 250_000;
     uint256 internal constant BIDS_PER_ITEM = 17_700;
-    /// @dev Handler overhead only; createSeries is charged per series. Measured ~2.64M for the widest chunk
-    ///      and ~1.73M for one series at the recipient cap, which separates the two marginals.
+    /// @dev Handler overhead only; createSeries is charged per series. Two measurements separate the
+    ///      marginals: 2.64M for the widest chunk, which `issuance(8, 24)` quotes at 3.97M, and 1.73M for
+    ///      one series at the recipient cap, quoted at 2.61M.
     uint256 internal constant ISSUANCE_BASE = 250_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
@@ -67,10 +70,13 @@ library IntexGas {
     ///      64-bidder chunk against the canonical Compact over a mainnet fork
     ///      (`EscrowAdapter.compactgas.t.sol`), which is ~5.9k per bidder dearer than the `MockTheCompact`
     ///      the rest of the suite runs on - so the budget is cut from the real custody, not the stand-in.
+    ///      `refund(64)` quotes that chunk at 5.58M.
     uint256 internal constant REFUND_BASE = 560_000;
     uint256 internal constant REFUND_PER_ITEM = 78_500;
     /// @dev Sized on the failure path: a rejected item is recorded while the tokens are already burned on
-    ///      the source. Measured ~2.06M for a full rejected batch against ~664k for one that all lands.
+    ///      the source. Measured 2.06M for a full rejected batch against 664k for one that all lands;
+    ///      `nftMint(16)` quotes 3.07M, so the rejected path keeps the 1.5x margin and the happy one runs
+    ///      well under it.
     uint256 internal constant NFT_MINT_BASE = 225_000;
     uint256 internal constant NFT_MINT_PER_ITEM = 178_000;
 
