@@ -520,9 +520,9 @@ fn send_notice(
     if members.is_empty() {
         return Ok(());
     }
-    // Charged before the send, and a group wider than the budget still goes whole:
-    // it has no cursor to resume from, so the overshoot is one group at most.
-    *messages = messages.saturating_add(router_calls(members.len()));
+    // The drain charged the first call on the way in. A group wider than the budget still
+    // goes whole: it has no cursor to resume from, so the overshoot is one group at most.
+    *messages = messages.saturating_add(router_calls(members.len()).saturating_sub(1));
     notify_qualified(storage, worldwide_day, &members)
 }
 

@@ -1119,3 +1119,32 @@ fn a_qualify_sweep_over_several_currencies_always_ends() {
         );
     });
 }
+
+/// A qualified notice costs the router calls it makes, one per eight series, and no
+/// more, so a firing sends a full budget of one-series groups.
+#[test]
+fn a_firing_sends_a_full_budget_of_qualified_groups() {
+    with_factory(|s| {
+        let mut factory = IntexFactoryContract::new(s.clone());
+        let budget = crate::constants::MAX_ROUTER_CALLS_PER_FIRING;
+        for id in 1..=budget + 5 {
+            factory
+                .insert_qualified_group(
+                    REFERENCE_ISO,
+                    WorldwideDay::new(id),
+                    U256::from(EXPECTED_TRIGGER),
+                    &[sid(id)],
+                )
+                .unwrap();
+            qualified::enqueue_notice(
+                &mut factory,
+                qualified::NOTICE_QUALIFIED,
+                U256::from(IntexFactoryContract::scoped(REFERENCE_ISO, id)),
+            )
+            .unwrap();
+        }
+
+        qualified::drain_notices(&block_at(&s, 1, MATURE_TS)).unwrap();
+        assert_eq!(factory.notify_head.read().unwrap(), budget);
+    });
+}
