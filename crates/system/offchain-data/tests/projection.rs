@@ -242,6 +242,7 @@ fn tribute_partition_retired(day: u32) -> LogData {
 
 fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> NodItemState {
     NodItemState {
+        is_settled: false,
         nod_id,
         owner,
         gratis_load_minor: U256::from(101),
@@ -273,6 +274,7 @@ fn nod_stored(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData 
 
 fn bucket_body(bucket_key: B256) -> NodBucketState {
     NodBucketState {
+        settled_nods: 0,
         bucket_key,
         worldwide_day: WorldwideDay::new(20260715),
         floor_price_minor: U256::from(102),

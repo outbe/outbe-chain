@@ -768,6 +768,7 @@ mod tests {
 
     fn bucket_body(last: u8) -> (WwdEntityId, Vec<u8>, crate::Commitment) {
         let body = NodBucketBodyV1 {
+            settled_nods: 0,
             bucket_key: B256::repeat_byte(last),
             worldwide_day: WorldwideDay::new(20_260_717),
             floor_price_minor: U256::from(10),
@@ -1029,6 +1030,7 @@ mod tests {
             PointReadResultV1::Unavailable
         );
         let changed = NodBucketBodyV1 {
+            settled_nods: 0,
             bucket_key: B256::repeat_byte(7),
             worldwide_day: WorldwideDay::new(20_260_717),
             floor_price_minor: U256::from(999),
@@ -1083,6 +1085,7 @@ mod tests {
         };
         let nod_id = WwdEntityId::from_day_and_digest(day, [0x32; 32]);
         let nod = NodItemBodyV1 {
+            is_settled: false,
             nod_id,
             owner: Address::repeat_byte(0x42),
             gratis_load_minor: U256::from(1),

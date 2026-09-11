@@ -263,6 +263,7 @@ fn tribute(id: WwdEntityId, owner: Address, price: u64) -> TributeBodyV1 {
 
 fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
     NodItemBodyV1 {
+        is_settled: false,
         nod_id: id,
         owner,
         gratis_load_minor: U256::from(1),
@@ -642,6 +643,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
     let owner = address!("2100000000000000000000000000000000000002");
     let mut item = nod_item(entity(8, 21), owner);
     let mut bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(22),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
@@ -739,6 +741,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
     nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::new(8),
         floor_price_minor: U256::from(10),
@@ -868,6 +871,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     let stale_nod = nod_item(entity(8, 28), owner);
     let stale_bucket_id = entity(8, 29);
     let stale_bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: bucket_key_for(stale_bucket_id),
         worldwide_day: stale_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(4),
@@ -878,6 +882,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     };
     let missing_bucket_id = entity(8, 30);
     let missing_bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: bucket_key_for(missing_bucket_id),
         worldwide_day: missing_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(6),
@@ -1750,6 +1755,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
     nod_updated.gratis_load_minor = U256::from(99);
 
     let bucket_original = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x8c),
         worldwide_day: WorldwideDay::new(14),
         floor_price_minor: U256::from(10),
@@ -1805,6 +1811,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
         FixtureBody::Tribute(tribute(entity(14, 0x8d), owner, 100)),
         FixtureBody::NodItem(nod_item(entity(14, 0x8e), owner)),
         FixtureBody::NodBucket(NodBucketBodyV1 {
+            settled_nods: 0,
             bucket_key: B256::repeat_byte(0x8f),
             worldwide_day: WorldwideDay::new(14),
             floor_price_minor: U256::from(10),
@@ -1974,6 +1981,7 @@ fn body_codecs_cover_all_three_closed_variants() {
     let owner = address!("a00000000000000000000000000000000000000a");
     let item = nod_item(entity(16, 10), owner);
     let bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(11),
         worldwide_day: WorldwideDay::new(16),
         floor_price_minor: U256::from(12),
@@ -2156,6 +2164,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     let day = WorldwideDay::new(u32::MAX);
     let id = WwdEntityId::from_day_and_digest(day, [0xff; 32]);
     let maximum = NodItemBodyV1 {
+        is_settled: false,
         nod_id: id,
         owner: Address::repeat_byte(0xff),
         gratis_load_minor: U256::MAX,
@@ -2248,6 +2257,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
 
 fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
     NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0xff),
         worldwide_day: day,
         floor_price_minor: U256::MAX,
@@ -2266,6 +2276,7 @@ fn shrinking_a_body_zeroes_the_storage_tail_it_frees() {
     let day = WorldwideDay::new(u32::MAX);
     let widest = widest_bucket(day);
     let narrowest = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: widest.bucket_key,
         worldwide_day: day,
         floor_price_minor: U256::ZERO,

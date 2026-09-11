@@ -38,6 +38,7 @@ fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
 
 fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
     NodItemState {
+        is_settled: false,
         nod_id,
         owner,
         gratis_load_minor: U256::MAX,
@@ -62,6 +63,7 @@ fn bucket_key_for(id: WwdEntityId) -> B256 {
 
 fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
     NodBucketState {
+        settled_nods: 0,
         bucket_key: bucket_key_for(bucket_id),
         worldwide_day: bucket_id.worldwide_day(),
         floor_price_minor: U256::MAX,
@@ -280,6 +282,7 @@ fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
 fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [
         NodItemState {
+            is_settled: false,
             nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
             owner: Address::ZERO,
             gratis_load_minor: U256::ZERO,
@@ -292,6 +295,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             issued_at: 0,
         },
         NodItemState {
+            is_settled: false,
             nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
             owner: Address::repeat_byte(u8::MAX),
             gratis_load_minor: U256::MAX,
@@ -320,6 +324,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
 
     for body in [
         NodBucketState {
+            settled_nods: 0,
             bucket_key: B256::ZERO,
             worldwide_day: WorldwideDay::new(0),
             floor_price_minor: U256::ZERO,
@@ -947,4 +952,63 @@ fn run_isolated_mongo(test_name: &str, test: fn(StorageReaderHandle, StorageWrit
     if let Err(payload) = result {
         std::panic::resume_unwind(payload);
     }
+}
+
+#[test]
+fn paid_entitlement_projects_reopens_and_keeps_owner_membership() {
+    let storage = Arc::new(MemoryStorage::new());
+    let repository = NodRepositoryReader::new(storage.clone());
+    let mut item = nod(nod_id(99), Address::repeat_byte(0x99));
+    let id = bucket_id(item.bucket_key, item.worldwide_day);
+    let mut bucket = bucket(id);
+    bucket.bucket_key = item.bucket_key;
+    bucket.total_nods = 1;
+    bucket.is_qualified = true;
+    let mut session = repository
+        .projection_session(&[item.nod_id], &[id])
+        .unwrap();
+    storage
+        .apply_atomic(
+            &session
+                .store_item(item.nod_id, Value::new(stored_nod(&item)).unwrap(), None)
+                .unwrap(),
+        )
+        .unwrap();
+    storage
+        .apply_atomic(
+            &session
+                .store_bucket(id, Value::new(stored_bucket(&bucket)).unwrap(), None)
+                .unwrap(),
+        )
+        .unwrap();
+    item.is_settled = true;
+    bucket.settled_nods = 1;
+    storage
+        .apply_atomic(
+            &session
+                .store_item(item.nod_id, Value::new(stored_nod(&item)).unwrap(), None)
+                .unwrap(),
+        )
+        .unwrap();
+    storage
+        .apply_atomic(
+            &session
+                .store_bucket(id, Value::new(stored_bucket(&bucket)).unwrap(), None)
+                .unwrap(),
+        )
+        .unwrap();
+    let reopened = NodRepositoryReader::new(storage);
+    assert!(reopened.get(item.nod_id).unwrap().unwrap().is_settled);
+    assert_eq!(reopened.get_bucket(id).unwrap().unwrap().settled_nods, 1);
+    let owned = reopened
+        .list_by_owner(
+            item.owner,
+            NodPageRequest {
+                after: None,
+                limit: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(owned.records.len(), 1);
+    assert!(owned.records[0].is_settled);
 }

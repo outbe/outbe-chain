@@ -26,7 +26,7 @@ pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    request: MineGratisRequest<'_>,
+    request: MineGratisRequest,
 ) -> Result<U256> {
     runtime::mine_gratis(storage, scope, parent, request)
 }
@@ -51,4 +51,16 @@ pub fn materialize_certified_nods(
     crate::materialization::materialize_certified_nods_authorized(
         storage, scope, parent, batch, profile, limits,
     )
+}
+
+/// Pays a qualified owner-held Nod for later mining.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: WwdEntityId,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    runtime::settle_nod(storage, scope, parent, caller, nod_id, paynote_proof)
 }

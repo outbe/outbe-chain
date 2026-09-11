@@ -91,6 +91,7 @@ fn nod_item(owner: Address, iso: u16) -> NodItemState {
 fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemState {
     let worldwide_day = WorldwideDay::new(WWD);
     NodItemState {
+        is_settled: false,
         nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
         owner,
         gratis_load_minor: U256::from(11),
@@ -866,5 +867,167 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
                 .unwrap(),
             2
         );
+    });
+}
+
+#[test]
+fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercise() {
+    harness(|storage, scope, parent| {
+        let items: Vec<_> = [0x91, 0x92, 0x93, 0x95]
+            .into_iter()
+            .map(|seed| {
+                let item = nod_item(Address::repeat_byte(seed), ISO);
+                api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
+                item
+            })
+            .collect();
+        let key = items[0].bucket_key;
+        let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, key);
+        let mut nod = NodContract::new(storage.clone());
+        nod.qualify_bucket(scope, parent, key).unwrap();
+        // Settle the middle member, exercising swap-remove of the unpaid tail.
+        api::settle_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, items[1].nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(storage, scope, parent, id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        api::settle_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, items[3].nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(storage, scope, parent, id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        api::remove_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, items[3].nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(storage, scope, parent, id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let bucket = api::get_bucket(storage, scope, parent, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((bucket.total_nods, bucket.settled_nods), (3, 1));
+        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 2);
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 1);
+        let past = at + NOTICE + 1;
+        finalize_through(storage, past);
+        // A failed Promis credit must restore every unpaid body and index before retry.
+        let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        limit.set_total_unallocated(U256::MAX).unwrap();
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(nod.total_supply().unwrap(), 3);
+        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 2);
+        assert!(api::get_item(storage, scope, parent, items[0].nod_id)
+            .unwrap()
+            .is_some());
+        assert!(api::get_item(storage, scope, parent, items[2].nod_id)
+            .unwrap()
+            .is_some());
+        assert_eq!(reserve(storage), U256::MAX);
+        limit.set_total_unallocated(U256::ZERO).unwrap();
+        assert_eq!(scan(storage, scope, parent, past), 2);
+        let expected = items[0].gratis_load_minor + items[2].gratis_load_minor;
+        assert_eq!(reserve(storage), expected);
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert_eq!(reserve(storage), expected);
+        let bucket = api::get_bucket(storage, scope, parent, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((bucket.total_nods, bucket.settled_nods), (1, 1));
+        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 0);
+        assert_eq!(nod.total_supply().unwrap(), 1);
+        assert_eq!(called_at(storage, key), at);
+        assert_eq!(
+            nod.read_call_terms(key).unwrap().call_notice_period,
+            CALL_NOTICE_PERIOD
+        );
+        api::remove_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, items[1].nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(storage, scope, parent, id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(api::get_bucket(storage, scope, parent, id)
+            .unwrap()
+            .is_none());
+        assert_eq!(nod.total_supply().unwrap(), 0);
+        assert_eq!(nod.callable_buckets.len().unwrap(), 0);
+        assert_eq!(reserve(storage), expected);
+    });
+}
+
+#[test]
+fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
+    harness(|storage, scope, parent| {
+        let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x94), ISO);
+        let id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        api::settle_nod(
+            storage,
+            scope,
+            api::load_item(storage, scope, parent, item.nod_id)
+                .unwrap()
+                .unwrap(),
+            api::load_bucket(storage, scope, parent, id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, scope, parent, at), 0);
+        assert_eq!(called_at(storage, item.bucket_key), 0);
+        let nod = NodContract::new(storage.clone());
+        nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
+        nod.bucket_nod_count.write(&item.bucket_key, 1).unwrap();
+        nod.bucket_nods
+            .write(
+                &NodContract::bucket_nod_key(item.bucket_key, 0),
+                item.nod_id,
+            )
+            .unwrap();
+        let past = at + NOTICE + 1;
+        finalize_through(storage, past);
+        assert_eq!(scan(storage, scope, parent, past), 0);
+        assert!(
+            api::get_item(storage, scope, parent, item.nod_id)
+                .unwrap()
+                .unwrap()
+                .is_settled
+        );
+        assert_eq!(nod.total_supply().unwrap(), 1);
+        assert_eq!(reserve(storage), U256::ZERO);
     });
 }

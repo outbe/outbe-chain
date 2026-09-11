@@ -125,6 +125,7 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     for height in 1..=2_u64 {
         let owner = Address::repeat_byte(height as u8);
         let item = NodItemState {
+            is_settled: false,
             nod_id: derive_poseidon_entity_id(owner, day).unwrap(),
             owner,
             gratis_load_minor: U256::from(123_456),

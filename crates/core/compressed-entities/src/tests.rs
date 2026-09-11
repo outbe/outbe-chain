@@ -122,6 +122,7 @@ fn tribute_v1_uses_one_strict_canonical_protobuf_representation() {
 #[test]
 fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
     let body = NodItemBodyV1 {
+        is_settled: false,
         nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::from(1), [0x11; 32]),
         owner: Address::repeat_byte(0x22),
         gratis_load_minor: U256::from(1),
@@ -155,14 +156,11 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
     assert_eq!(decode_nod_item_v1(&payload).unwrap(), body);
 }
 
-/// Field 12 carried the Nod's settled flag until settlement moved to a PayNote
-/// spend at mine time. It was written only when a Nod was settled, so retiring
-/// it left every live body's bytes untouched — but a body that does carry it
-/// describes state this schema no longer has, and must be refused rather than
-/// quietly decoded without it.
+/// Optional settlement state preserves legacy bytes and strictly round-trips.
 #[test]
-fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
+fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
     let body = NodItemBodyV1 {
+        is_settled: false,
         nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::from(1), [0x11; 32]),
         owner: Address::repeat_byte(0x22),
         gratis_load_minor: U256::from(1),
@@ -180,10 +178,15 @@ fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
     // `0x60, 0x01` is field 12, varint wire type, value 1 — the settled marker.
     let mut settled = payload.clone();
     settled.extend_from_slice(&[0x60, 0x01]);
-    assert!(matches!(
-        decode_nod_item_v1(&settled),
-        Err(CanonicalBodyError::UnknownField { field: 12 })
-    ));
+    let decoded = decode_nod_item_v1(&settled).unwrap();
+    assert!(decoded.is_settled);
+    assert_eq!(encode_nod_item_v1(&decoded).unwrap(), settled);
+    let mut explicit_zero = payload.clone();
+    explicit_zero.extend_from_slice(&[0x60, 0]);
+    assert!(decode_nod_item_v1(&explicit_zero).is_err());
+    let mut invalid_bool = payload;
+    invalid_bool.extend_from_slice(&[0x60, 2]);
+    assert!(decode_nod_item_v1(&invalid_bool).is_err());
 }
 
 /// Field 8 carried the Nod's cost until it became a derivation from the
@@ -223,6 +226,7 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
 #[test]
 fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     let body = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),
@@ -246,6 +250,18 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     let payload = encode_nod_bucket_v1(&body).unwrap();
     assert_eq!(payload, expected);
     assert_eq!(decode_nod_bucket_v1(&payload).unwrap(), body);
+
+    let settled = NodBucketBodyV1 {
+        settled_nods: 1,
+        ..body.clone()
+    };
+    let mut expected_settled = expected.clone();
+    expected_settled.extend_from_slice(&[0x40, 1]);
+    assert_eq!(encode_nod_bucket_v1(&settled).unwrap(), expected_settled);
+    assert_eq!(decode_nod_bucket_v1(&expected_settled).unwrap(), settled);
+    let mut explicit_settled_zero = expected.clone();
+    explicit_settled_zero.extend_from_slice(&[0x40, 0]);
+    assert!(decode_nod_bucket_v1(&explicit_settled_zero).is_err());
 
     // Field 7 is omitted on zero, so bodies written before the currency
     // existed keep their exact prior bytes. This is what keeps the pinned
@@ -412,6 +428,7 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
     ));
 
     let nod_item = NodItemBodyV1 {
+        is_settled: false,
         nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::from(1), [0x11; 32]),
         owner: Address::repeat_byte(0x22),
         gratis_load_minor: U256::from(1),
@@ -436,6 +453,7 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
     ));
 
     let nod_bucket = NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0x33),
         worldwide_day: WorldwideDay::from(1),
         floor_price_minor: U256::from(1),

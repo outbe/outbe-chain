@@ -115,6 +115,11 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
+        if item.is_settled {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "cannot issue a settled Nod".into(),
+            ));
+        }
         // ISO 0 is not a currency, and its bin namespace aliases the
         // un-namespaced key while never appearing in the oracle's
         // reference-currency registry — a bucket parked there would be
@@ -148,6 +153,7 @@ impl NodContract<'_> {
         let final_bucket = match current_bucket.as_ref() {
             Some(current) => {
                 let mut bucket = nod_bucket_from_verified(current)?;
+                self.check_bucket_parity(&bucket)?;
                 bucket.total_nods = bucket.total_nods.checked_add(1).ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                         "Nod bucket {bucket_id} member count overflow"
@@ -157,6 +163,7 @@ impl NodContract<'_> {
             }
             None => {
                 let bucket = NodBucketState {
+                    settled_nods: 0,
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
@@ -182,7 +189,8 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
-        self.insert_bucket_member(item.bucket_key, item.nod_id, final_bucket.total_nods)?;
+        self.insert_bucket_member(item.bucket_key, item.nod_id, unpaid_count(&final_bucket)?)?;
+        self.check_bucket_parity(&final_bucket)?;
         let canonical_item = crate::repository::canonical_item(item);
         mint(
             self.storage_handle(),
@@ -215,15 +223,8 @@ impl NodContract<'_> {
     ) -> Result<()> {
         let (item, current_item) = item.into_parts();
         let (mut bucket, current_bucket) = bucket.into_parts();
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-        if current_bucket.entity_id() != bucket_id {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
-                    "loaded Nod bucket {} does not match item bucket {bucket_id}",
-                    current_bucket.entity_id()
-                )),
-            );
-        }
+        self.check_loaded_bucket(&item, &bucket, &current_bucket)?;
+        let bucket_id = current_bucket.entity_id();
         bucket.total_nods = bucket.total_nods.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                 "Nod bucket {bucket_id} has zero members during removal"
@@ -236,7 +237,16 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
-        self.remove_bucket_member(item.bucket_key, item.nod_id, bucket.total_nods)?;
+        if item.is_settled {
+            bucket.settled_nods = bucket.settled_nods.checked_sub(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_id} settled count underflow"
+                ))
+            })?;
+        } else {
+            self.remove_bucket_member(item.bucket_key, item.nod_id, unpaid_count(&bucket)?)?;
+        }
+        self.check_bucket_parity(&bucket)?;
         delete(self.storage_handle(), scope, current_item)?;
         if bucket.total_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
@@ -252,6 +262,69 @@ impl NodContract<'_> {
                 BodyInput::NodBucket(&canonical),
             )
         }
+    }
+
+    /// Moves one unpaid member into the live paid count, preserving ownership and supply.
+    pub(crate) fn record_nod_settled(
+        &mut self,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+        bucket: LoadedNodBucket,
+    ) -> Result<()> {
+        let (mut item, current_item) = item.into_parts();
+        let (mut bucket, current_bucket) = bucket.into_parts();
+        self.check_loaded_bucket(&item, &bucket, &current_bucket)?;
+        if item.is_settled || !bucket.is_qualified {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "Nod settlement requires an unpaid qualified item".into(),
+            ));
+        }
+        bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                "Nod settled count overflow".into(),
+            )
+        })?;
+        self.remove_bucket_member(item.bucket_key, item.nod_id, unpaid_count(&bucket)?)?;
+        self.check_bucket_parity(&bucket)?;
+        item.is_settled = true;
+        update(
+            self.storage_handle(),
+            scope,
+            current_item,
+            BodyInput::NodItem(&crate::repository::canonical_item(&item)),
+        )?;
+        update(
+            self.storage_handle(),
+            scope,
+            current_bucket,
+            BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
+        )
+    }
+
+    fn check_loaded_bucket(
+        &self,
+        item: &NodItemState,
+        bucket: &NodBucketState,
+        current: &VerifiedBody,
+    ) -> Result<()> {
+        let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
+        if current.entity_id() != expected {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "loaded Nod bucket {} does not match item bucket {expected}",
+                    current.entity_id()
+                )),
+            );
+        }
+        self.check_bucket_parity(bucket)
+    }
+
+    fn check_bucket_parity(&self, bucket: &NodBucketState) -> Result<()> {
+        self.expect_member_parity(
+            bucket.bucket_key,
+            self.bucket_nod_count.read(&bucket.bucket_key)?,
+            unpaid_count(bucket)?,
+        )
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
@@ -338,14 +411,14 @@ impl NodContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Appends `nod_id` to its bucket's member list. `total_nods` is the loaded
-    /// body's post-increment count, so the EVM mirror is written from the same
+    /// Appends `nod_id` to its bucket's unpaid member list. `unpaid_nods` is the loaded
+    /// body's post-increment unpaid count, so the EVM mirror is written from the same
     /// value the body carries and the two cannot drift.
     pub(crate) fn insert_bucket_member(
         &mut self,
         bucket_key: B256,
         nod_id: WwdEntityId,
-        total_nods: u64,
+        unpaid_nods: u64,
     ) -> Result<()> {
         let index = self.bucket_nod_count.read(&bucket_key)?;
         self.bucket_nods
@@ -356,18 +429,18 @@ impl NodContract<'_> {
                 "Nod bucket {bucket_key} member index overflow"
             ))
         })?;
-        self.expect_member_parity(bucket_key, next, total_nods)?;
+        self.expect_member_parity(bucket_key, next, unpaid_nods)?;
         self.bucket_nod_count.write(&bucket_key, next)?;
         Ok(())
     }
 
-    /// Swap-removes `nod_id` from its bucket's member list. `total_nods` is the
-    /// loaded body's post-decrement count.
+    /// Swap-removes `nod_id` from its bucket's unpaid member list. `unpaid_nods` is the
+    /// loaded body's post-decrement unpaid count.
     pub(crate) fn remove_bucket_member(
         &mut self,
         bucket_key: B256,
         nod_id: WwdEntityId,
-        total_nods: u64,
+        unpaid_nods: u64,
     ) -> Result<()> {
         let index = self.bucket_nod_index.read(&nod_id)?;
         let last = self
@@ -379,6 +452,18 @@ impl NodContract<'_> {
                     "Nod bucket {bucket_key} member count underflow during removal"
                 ))
             })?;
+        if index > last
+            || self
+                .bucket_nods
+                .read(&Self::bucket_nod_key(bucket_key, index))?
+                != nod_id
+        {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod {nod_id} is not indexed in bucket {bucket_key}"
+                )),
+            );
+        }
         let last_key = Self::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;
@@ -395,7 +480,7 @@ impl NodContract<'_> {
         }
         self.bucket_nods.write(&last_key, WwdEntityId::ZERO)?;
         self.bucket_nod_index.clear(&nod_id)?;
-        self.expect_member_parity(bucket_key, last, total_nods)?;
+        self.expect_member_parity(bucket_key, last, unpaid_nods)?;
         self.bucket_nod_count.write(&bucket_key, last)?;
         Ok(())
     }
@@ -403,14 +488,14 @@ impl NodContract<'_> {
     /// The forfeit sweep enumerates members through the EVM mirror but burns
     /// through the bucket body, so a divergence between the two would silently
     /// under- or over-burn. Fail loudly instead.
-    fn expect_member_parity(&self, bucket_key: B256, members: u32, total_nods: u64) -> Result<()> {
-        if u64::from(members) == total_nods {
+    fn expect_member_parity(&self, bucket_key: B256, members: u32, unpaid_nods: u64) -> Result<()> {
+        if u64::from(members) == unpaid_nods {
             return Ok(());
         }
         Err(
             outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                 "Nod bucket {bucket_key} member index holds {members} entries but the body \
-                 counts {total_nods}"
+                 counts {unpaid_nods}"
             )),
         )
     }
@@ -511,6 +596,18 @@ impl NodContract<'_> {
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
+}
+
+fn unpaid_count(bucket: &NodBucketState) -> Result<u64> {
+    bucket
+        .total_nods
+        .checked_sub(bucket.settled_nods)
+        .ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                "Nod bucket {} settled count exceeds live count",
+                bucket.bucket_key
+            ))
+        })
 }
 
 pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {

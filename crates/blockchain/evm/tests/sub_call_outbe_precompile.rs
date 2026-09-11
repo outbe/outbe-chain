@@ -257,6 +257,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let repository = NodRepositoryWriter::new(reader, writer);
     repository
         .put_bucket(&NodBucketState {
+            settled_nods: 0,
             bucket_key,
             worldwide_day: day,
             floor_price_minor: U256::from(10),
@@ -267,6 +268,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         })
         .unwrap();
     let item = NodItemState {
+        is_settled: false,
         nod_id,
         owner,
         gratis_load_minor: U256::from(11),

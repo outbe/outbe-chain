@@ -10463,6 +10463,7 @@ mod tests {
                         &scope,
                         &empty_reader,
                         &NodItemState {
+                            is_settled: false,
                             nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
                             owner: proposer,
                             gratis_load_minor: U256::from(1_000_000u64),
@@ -10508,6 +10509,7 @@ mod tests {
             let writer: StorageWriterHandle = adapter;
             NodRepositoryWriter::new(reader.clone(), writer)
                 .put_bucket(&NodBucketState {
+                    settled_nods: 0,
                     bucket_key,
                     worldwide_day,
                     floor_price_minor,
@@ -10771,6 +10773,7 @@ mod tests {
                         &scope,
                         &nod_reader,
                         &NodItemState {
+                            is_settled: false,
                             nod_id,
                             owner: nod_owner,
                             gratis_load_minor: U256::from(1),
@@ -10861,6 +10864,7 @@ mod tests {
                 &scope,
                 &nod_reader,
                 &NodItemState {
+                    is_settled: false,
                     nod_id,
                     owner: nod_owner,
                     gratis_load_minor: U256::from(1),

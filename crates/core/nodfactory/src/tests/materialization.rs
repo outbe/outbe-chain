@@ -610,7 +610,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                     nod_id,
                     nonce: 0,
                     auth: dummy_auth(),
-                    paynote_proof: &[],
                 },
             )
         })
@@ -621,6 +620,10 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
             if reason == &NodFactoryError::NodGenerationNotMaterialized.to_string()
     ));
 
+    assert!(
+        matches!(world.settle(nod_id, population.actions[0].owner, &[]).unwrap_err(),
+        PrecompileError::Revert(reason) if reason == NodFactoryError::NodGenerationNotMaterialized.to_string())
+    );
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
@@ -634,6 +637,9 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     let paynote_proof = world
         .fund_note(NOTE_ASSET, population.actions[0].owner, cost.max(1), cost)
         .0;
+    world
+        .settle(nod_id, population.actions[0].owner, &paynote_proof)
+        .unwrap();
     let nonce = find_valid_nonce(nod_id);
     assert_eq!(
         world
@@ -650,7 +656,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                             population.actions[0].owner,
                             population.actions[0].gratis_load_minor,
                         ),
-                        paynote_proof: &paynote_proof,
                     },
                 )
             })
