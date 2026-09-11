@@ -91,7 +91,7 @@ pub fn next_date_key(date_key: u32) -> u32 {
 /// issued exactly at midnight, the next one otherwise.
 pub fn first_full_day(issued_at: u64) -> u32 {
     let day = timestamp_to_date_key(issued_at);
-    if issued_at % SECONDS_PER_DAY == 0 {
+    if issued_at.is_multiple_of(SECONDS_PER_DAY) {
         day
     } else {
         next_date_key(day)
