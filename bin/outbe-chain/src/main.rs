@@ -1732,7 +1732,7 @@ fn run_node() -> eyre::Result<()> {
             .prune_config(builder.config().chain.as_ref());
         validate_compressed_storage_runtime_config(CompressedStorageRuntimeConfig {
             persistence_threshold: builder.config().engine.persistence_threshold,
-            memory_block_buffer_target: builder.config().engine.memory_block_buffer_target,
+            memory_block_buffer_target: builder.config().engine.memory_block_buffer_target(),
             max_pending_acks: outbe_consensus::config::MAX_PENDING_ACKS,
             receipts_pruning_enabled: prune_config
                 .as_ref()

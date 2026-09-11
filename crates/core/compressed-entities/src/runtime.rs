@@ -22,10 +22,15 @@ use crate::{
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types)]
-    "../../../contracts/precompiles/src/ITribute.sol"
-);
+// Generated ABI methods follow the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types)]
+        "../../../contracts/precompiles/src/ITribute.sol"
+    );
+}
+pub use abi::ITribute;
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types)]
     "../../../contracts/precompiles/src/INod.sol"

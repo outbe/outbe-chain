@@ -126,6 +126,7 @@ where
             CallScheme::Call
         },
         is_static: effective_is_static,
+        charged_new_account_state_gas: false,
     };
 
     // Construct fresh borrow-mode Evm wrapping &mut ctx.

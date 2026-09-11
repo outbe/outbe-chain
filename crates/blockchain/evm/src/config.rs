@@ -364,8 +364,11 @@ pub struct OutbeNextBlockEnvAttributes {
 }
 
 impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
-    fn build_pending_env(parent: &SealedHeader<OutbeHeader>) -> Self {
-        let mut inner = NextBlockEnvAttributes::build_pending_env(parent);
+    fn build_pending_env(
+        parent: &SealedHeader<OutbeHeader>,
+        block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+    ) -> Self {
+        let mut inner = NextBlockEnvAttributes::build_pending_env(parent, block_overrides);
         inner.suggested_fee_recipient = outbe_primitives::addresses::REWARDS_ADDRESS;
         Self {
             inner,
@@ -410,27 +413,34 @@ impl BlockAssembler<OutbeEvmConfig> for OutbeBlockAssembler {
             bundle_state,
             state_provider,
             state_root,
+            block_access_list_hash,
             ..
         } = input;
 
         let parent = SealedHeader::new_unhashed(parent.clone().into_header().into_inner());
 
-        let block = self.inner.assemble_block(BlockAssemblerInput::<
-            alloy_evm::eth::EthBlockExecutorFactory<
-                reth_ethereum::evm::RethReceiptBuilder,
-                Arc<ChainSpec<OutbeHeader>>,
-                OutbeEvmFactory,
-            >,
-        >::new(
-            evm_env,
-            execution_ctx.inner,
-            &parent,
-            transactions,
-            output,
-            bundle_state,
-            state_provider,
-            state_root,
-        ))?;
+        let block = self.inner.assemble_block(
+            BlockAssemblerInput::<
+                alloy_evm::eth::EthBlockExecutorFactory<
+                    reth_ethereum::evm::RethReceiptBuilder,
+                    Arc<ChainSpec<OutbeHeader>>,
+                    OutbeEvmFactory,
+                >,
+            >::new(
+                evm_env,
+                execution_ctx.inner,
+                &parent,
+                transactions,
+                output,
+                bundle_state,
+                state_provider,
+                state_root,
+                block_access_list_hash,
+            ),
+            None,
+            None,
+            None,
+        )?;
 
         // `inner.extra_data` already encodes `timestamp_millis_part`
         // (under tag 0x05) - see `OutbeBlockBuilder::finish` in
@@ -2037,7 +2047,7 @@ mod tests {
     fn pending_env_disables_outbe_hooks_and_uses_rewards_beneficiary() {
         let parent = test_parent_with_millis_part(321);
 
-        let attrs = OutbeNextBlockEnvAttributes::build_pending_env(&parent);
+        let attrs = OutbeNextBlockEnvAttributes::build_pending_env(&parent, None);
 
         assert_eq!(
             attrs.inner.suggested_fee_recipient,

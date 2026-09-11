@@ -357,7 +357,7 @@ mod tests {
     use commonware_cryptography::{Hasher as _, Sha256, Signer as _};
     use commonware_utils::{
         ordered::{Quorum as _, Set as OrderedSet},
-        N3f1, TryCollect as _,
+        TryCollect as _,
     };
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
 
@@ -402,7 +402,7 @@ mod tests {
             .collect();
         let verifier =
             HybridScheme::<MinSig>::verifier(b"resolver-test", set, dkg.polynomial).unwrap();
-        let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(payload).as_ref()));
+        let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload]).as_ref()));
         let proposal = Proposal::new(round, parent_view, digest);
         let subject = Subject::Finalize {
             proposal: &proposal,
@@ -412,7 +412,10 @@ mod tests {
             .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
             .collect();
         let certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap();
         (
             Finalization {

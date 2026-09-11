@@ -57,7 +57,11 @@ pub fn bootstrap_and_save(
     // The consensus layer uses an ordered `Set<PublicKey>` sorted by public key bytes.
     // The share index (Participant(i)) must match the position in this sorted set.
     let mut keys: Vec<bls12381::PrivateKey> = (0..n as usize)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
 
     // Sort keys by their public key bytes (same ordering as Set<PublicKey>).

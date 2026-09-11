@@ -95,7 +95,6 @@ use outbe_validatorset::{
     committee_snapshot_key, contract::ValidatorSet, read_committee_snapshot,
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
 };
-use rand_core::OsRng;
 use reth_basic_payload_builder::{BuildArguments, PayloadBuilder, PayloadConfig};
 use reth_chainspec::{ChainInfo, ChainSpec, ChainSpecBuilder, ChainSpecProvider};
 use reth_ethereum::{Transaction, TransactionSigned};
@@ -310,8 +309,13 @@ impl BytecodeReader for TestProvider {
 }
 
 impl HashedPostStateProvider for TestProvider {
-    fn hashed_post_state(&self, state: &revm::database::BundleState) -> HashedPostState {
-        HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state())
+    fn hashed_post_state(
+        &self,
+        state: &revm::database::BundleState,
+    ) -> ProviderResult<HashedPostState> {
+        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            state.state(),
+        ))
     }
 }
 
@@ -651,7 +655,9 @@ fn run_atomic_request_lifecycle(reach_quorum: bool) {
         ce_artifact.commitment_scheme_version,
         ACTIVE_COMMITMENT_SCHEME
     );
-    let exact_post_state = provider.hashed_post_state(&executed.execution_output.state);
+    let exact_post_state = provider
+        .hashed_post_state(&executed.execution_output.state)
+        .unwrap();
     let expected_state_root = provider.state_root_for(exact_post_state.clone());
     assert_eq!(
         payload.block().header().state_root(),
@@ -1418,7 +1424,9 @@ fn build_canonical_ocomp_successor(
         historical_replay, *executed.execution_output,
         "proposer/historical replay must agree at OCOMP model height {height}"
     );
-    let exact_post_state = provider.hashed_post_state(&executed.execution_output.state);
+    let exact_post_state = provider
+        .hashed_post_state(&executed.execution_output.state)
+        .unwrap();
     assert_eq!(
         payload.block().header().state_root(),
         provider.state_root_for(exact_post_state),
@@ -1979,7 +1987,7 @@ fn build_dkg() -> Dkg {
         .cloned()
         .map(PublicKey::from)
         .collect::<Vec<_>>();
-    let mut rng = OsRng;
+    let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
     Dkg {
         keys,
@@ -2034,12 +2042,16 @@ fn finalized_parent_metadata(
         .map(|key| key.sign(&namespace, &vote_message))
         .collect::<Vec<_>>();
     let certificate = HybridCertificate::<MinSig> {
-        signers: Signers::from(
-            dkg.keys.len(),
+        signers: Signers::new(
+            dkg.keys.len() as u32,
             (0..u32::try_from(dkg.keys.len()).unwrap()).map(Participant::new),
-        ),
+        )
+        .unwrap(),
         bls_aggregated_vote: aggregate::combine_signatures::<MinPk, _>(
-            signatures.iter().map(|signature| signature.as_ref()),
+            commonware_utils::iter::NonEmpty::try_new(
+                signatures.iter().map(|signature| signature.as_ref()),
+            )
+            .unwrap(),
         ),
         vrf_proof: VrfProof::<MinSig> {
             material_version: VRF_MATERIAL_VERSION,

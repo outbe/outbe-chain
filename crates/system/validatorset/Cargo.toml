@@ -29,6 +29,7 @@ commonware-math.workspace = true
 commonware-parallel.workspace = true
 commonware-utils.workspace = true
 rand.workspace = true
+rand-commonware.workspace = true
 rand_chacha = "0.3"
 
 [lints]

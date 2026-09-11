@@ -205,7 +205,7 @@ impl DkgSession {
             return Err(TeeError::DkgSeamOrder("start_dealer called twice"));
         }
         let (dealer, pub_msg, priv_msgs) = Dealer::<Variant, PrivKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             self.info.clone(),
             self.signing_key.clone(),
             previous_share,
@@ -249,7 +249,10 @@ impl DkgSession {
             .player
             .as_mut()
             .ok_or(TeeError::DkgSeamOrder("player already finalized"))?;
-        Ok(player.dealer_message::<N3f1>(dealer, pub_msg, priv_msg))
+        Ok(player
+            .dealer_message::<N3f1>(dealer, pub_msg, priv_msg)
+            .ok()
+            .flatten())
     }
 
     /// Seam C - record a player's acknowledgement at this party's dealer. The
@@ -289,7 +292,11 @@ impl DkgSession {
             finalize_logs.record(dealer_pk, log);
         }
         let (output, share) = player
-            .finalize::<N3f1, Batch>(&mut rand_core::OsRng, finalize_logs, &Sequential)
+            .finalize::<N3f1, Batch>(
+                &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+                finalize_logs,
+                &Sequential,
+            )
             .map_err(|e| dkg_err("player finalize", e))?;
         // Retain the group output + this party's share resident so Seam F
         // (offer-key partial-sign + group-sig recovery) can run on a later
@@ -352,7 +359,7 @@ impl DkgSession {
             partials.push(partial);
         }
         let group_sig =
-            threshold::recover::<Variant, _, N3f1>(output.public(), partials.iter(), &Sequential)
+            threshold::recover::<Variant, _>(output.public(), partials.iter(), &Sequential)
                 .map_err(|e| dkg_err("recover offer group signature", e))?;
         // `sigma` (the encoded group signature) is retained resident by the caller
         // so the exact permanent key survives restart and can be delivered through
@@ -423,6 +430,7 @@ pub fn build_ceremony_info(
         round,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants,
     )

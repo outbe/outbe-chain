@@ -29,7 +29,9 @@ fn l1_addr() -> Address {
 }
 
 fn keypair() -> (Private, Vec<u8>) {
-    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let public = public.encode().to_vec();
     (private, public)
 }

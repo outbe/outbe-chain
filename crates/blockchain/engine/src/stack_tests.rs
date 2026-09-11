@@ -6,13 +6,13 @@ use commonware_consensus::{
     simplex::{
         elector::{Config as _, Elector as _, RoundRobin},
         types::{Activity, Finalization, Finalize, Proposal, Subject},
-        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
+        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardPolicy,
     },
     types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
     Reporter,
 };
 use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};
-use commonware_cryptography::certificate::{Provider as _, Scheme as _};
+use commonware_cryptography::certificate::{Scheme as _, Verifier as _};
 use commonware_cryptography::sha256::Digest as Sha256Digest;
 use commonware_cryptography::{Hasher as _, Sha256};
 use commonware_math::algebra::Random;
@@ -161,12 +161,13 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                                         signer.clone(),
                                         b"radicle-shutdown-test",
                                         "127.0.0.1:0".parse().unwrap(),
+                                        NZUsize!(32),
                                         1024 * 1024,
                                     );
                                     let (mut network, _oracle) =
                                         lookup::Network::new(ctx.child("network"), cfg);
                                     let (sender, receiver) =
-                                        network.register(42, Quota::per_second(NZU32!(64)), 64);
+                                        network.register(42, Quota::per_second(NZU32!(64)));
                                     assert!(network_tx.send(network.start()).is_ok());
                                     let (_, local) = LocalEndpointIdentityChannel::create(
                                         LocalEndpointIdentity {
@@ -374,6 +375,10 @@ where
     fn block(&mut self, _peer: Self::PublicKey) -> Feedback {
         Feedback::Ok
     }
+    fn blocked(&mut self) -> commonware_p2p::BlockedSubscription<Self::PublicKey> {
+        let (_, receiver) = commonware_utils::channel::ring::channel(NZUsize!(1));
+        receiver
+    }
 }
 
 #[test]
@@ -427,7 +432,7 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
             relay: MockRelay::new(),
             reporter: MockReporter::new(),
             strategy: Sequential,
-            forwarding: ForwardingPolicy::Disabled,
+            forward: ForwardPolicy::Disabled,
             partition: "stack_shutdown_voter_journal".to_owned(),
             epoch,
             floor: Floor::Genesis(mock_genesis(epoch)),
@@ -435,10 +440,11 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
             leader_timeout: Duration::from_millis(10),
             certification_timeout: Duration::from_millis(20),
             timeout_retry: Duration::from_millis(40),
-            activity_timeout: ViewDelta::new(16),
-            skip_timeout: ViewDelta::new(4),
+            view_retention: ViewDelta::new(16),
+            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+            track_historical_votes: true,
             fetch_timeout: Duration::from_millis(20),
-            fetch_concurrent: NZUsize!(2),
+
             replay_buffer: NZUsize!(64 * 1024),
             write_buffer: NZUsize!(4 * 1024),
             page_cache: CacheRef::from_pooler(
@@ -566,7 +572,7 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             relay: MockRelay::new(),
             reporter: MockReporter::new(),
             strategy: Sequential,
-            forwarding: ForwardingPolicy::Disabled,
+            forward: ForwardPolicy::Disabled,
             partition: "fatal_stack_exit_voter_journal".to_owned(),
             epoch,
             floor: Floor::Genesis(mock_genesis(epoch)),
@@ -574,10 +580,11 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             leader_timeout: Duration::from_millis(200),
             certification_timeout: Duration::from_millis(400),
             timeout_retry: Duration::from_millis(800),
-            activity_timeout: ViewDelta::new(16),
-            skip_timeout: ViewDelta::new(4),
+            view_retention: ViewDelta::new(16),
+            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+            track_historical_votes: true,
             fetch_timeout: Duration::from_millis(20),
-            fetch_concurrent: NZUsize!(2),
+
             replay_buffer: NZUsize!(64 * 1024),
             write_buffer: NZUsize!(4 * 1024),
             page_cache: CacheRef::from_pooler(
@@ -681,7 +688,7 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             relay: MockRelay::new(),
             reporter: MockReporter::new(),
             strategy: Sequential,
-            forwarding: ForwardingPolicy::Disabled,
+            forward: ForwardPolicy::Disabled,
             partition: "fatal_stack_exit_voter_journal".to_owned(),
             epoch,
             floor: Floor::Genesis(mock_genesis(epoch)),
@@ -689,10 +696,11 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             leader_timeout: Duration::from_millis(200),
             certification_timeout: Duration::from_millis(400),
             timeout_retry: Duration::from_millis(800),
-            activity_timeout: ViewDelta::new(16),
-            skip_timeout: ViewDelta::new(4),
+            view_retention: ViewDelta::new(16),
+            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+            track_historical_votes: true,
             fetch_timeout: Duration::from_millis(20),
-            fetch_concurrent: NZUsize!(2),
+
             replay_buffer: NZUsize!(64 * 1024),
             write_buffer: NZUsize!(4 * 1024),
             page_cache: CacheRef::from_pooler(
@@ -786,7 +794,7 @@ fn terminal_drain_diagnostic_preserves_the_original_stack_error_chain() {
 
 #[test]
 fn radicle_channel_is_frozen_before_network_start() {
-    assert_eq!(radicle_channel_config(), (8, 32, config::CHANNEL_BACKLOG));
+    assert_eq!(radicle_channel_config(), (8, 32));
 }
 
 #[test]
@@ -957,7 +965,11 @@ fn run_test_dkg_complete() -> (
     use commonware_utils::N3f1;
 
     let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by(|a, b| {
         commonware_codec::Encode::encode(&a.public_key())
@@ -972,6 +984,7 @@ fn run_test_dkg_complete() -> (
         0,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -984,7 +997,7 @@ fn run_test_dkg_complete() -> (
 
     for key in &keys {
         let (dealer, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             key.clone(),
             None,
@@ -1009,11 +1022,10 @@ fn run_test_dkg_complete() -> (
                 .iter()
                 .position(|k| &k.public_key() == player_pk)
                 .unwrap();
-            if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[player_idx]
+                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_idx]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();
@@ -1042,7 +1054,7 @@ fn run_test_dkg_complete() -> (
     let (output, share) = players
         .remove(0)
         .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core::OsRng,
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             dkg_logs,
             &Sequential,
         )
@@ -1087,6 +1099,7 @@ fn signed_dkg_logs(
         round,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -1097,7 +1110,7 @@ fn signed_dkg_logs(
     let mut private_messages = Vec::new();
     for key in &keys {
         let (dealer, public, private) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             key.clone(),
             None,
@@ -1123,11 +1136,10 @@ fn signed_dkg_logs(
                 .iter()
                 .position(|key| key.public_key() == *player)
                 .unwrap();
-            if let Some(ack) = players[player_index].dealer_message::<N3f1>(
-                dealer.clone(),
-                public.clone(),
-                share.clone(),
-            ) {
+            if let Some(ack) = players[player_index]
+                .dealer_message::<N3f1>(dealer.clone(), public.clone(), share.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_index]
                     .receive_player_ack(player.clone(), ack)
                     .unwrap();
@@ -1173,7 +1185,7 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
     let proposal = commonware_consensus::simplex::types::Proposal::new(
         Round::new(Epoch::new(0), View::new(2)),
         View::new(1),
-        commonware_cryptography::Sha256::hash(b"stack-test"),
+        commonware_cryptography::Sha256::hash(&[b"stack-test"]),
     );
     let subject = Subject::Notarize {
         proposal: &proposal,
@@ -1184,7 +1196,10 @@ fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
         .collect();
 
     schemes[0]
-        .assemble::<_, commonware_utils::N3f1>(attestations, &Sequential)
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+            &Sequential,
+        )
         .unwrap()
 }
 
@@ -1873,26 +1888,24 @@ fn recovered_boundary_rejects_stale_threshold_material() {
 
 #[derive(Clone, Default)]
 struct EmptyMarshalBuffer {
-    pending_digest_subscribers: Arc<StdMutex<Vec<oneshot::Sender<ConsensusBlock>>>>,
-    pending_commitment_subscribers: Arc<StdMutex<Vec<oneshot::Sender<ConsensusBlock>>>>,
+    pending_digest_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
+    pending_commitment_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
 }
 
 impl Buffer<outbe_consensus::marshal_types::Variant> for EmptyMarshalBuffer {
-    // commonware 2026.5.0 dropped `type CachedBlock` (the block type is now
-    // `V::Block`) and added `type PublicKey`.
     type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
     async fn find_by_digest(
         &self,
         _digest: outbe_consensus::digest::Digest,
-    ) -> Option<ConsensusBlock> {
+    ) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
     async fn find_by_commitment(
         &self,
         _commitment: outbe_consensus::digest::Digest,
-    ) -> Option<ConsensusBlock> {
+    ) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
@@ -1903,7 +1916,7 @@ impl Buffer<outbe_consensus::marshal_types::Variant> for EmptyMarshalBuffer {
     fn subscribe_by_digest(
         &self,
         _digest: outbe_consensus::digest::Digest,
-    ) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_digest_subscribers.lock().unwrap().push(tx);
         Some(rx)
@@ -1912,19 +1925,18 @@ impl Buffer<outbe_consensus::marshal_types::Variant> for EmptyMarshalBuffer {
     fn subscribe_by_commitment(
         &self,
         _commitment: outbe_consensus::digest::Digest,
-    ) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_commitment_subscribers.lock().unwrap().push(tx);
         Some(rx)
     }
 
-    // `finalized` is now SYNC; `proposed` was removed and replaced by `send`.
-    fn finalized(&self, _commitment: outbe_consensus::digest::Digest) {}
+    fn retire(&self, _update: marshal::core::Retirement<outbe_consensus::digest::Digest>) {}
 
     fn send(
         &self,
         _round: Round,
-        _block: ConsensusBlock,
+        _block: Arc<ConsensusBlock>,
         _recipients: Recipients<Self::PublicKey>,
     ) {
     }
@@ -2100,7 +2112,7 @@ where
             partition_prefix,
             // `mailbox_size` is now `NonZeroUsize`.
             mailbox_size: NonZeroUsize::new(32).unwrap(),
-            view_retention_timeout: ViewDelta::new(10_000),
+            view_retention: ViewDelta::new(10_000),
             prunable_items_per_section: items_per_section,
             page_cache,
             replay_buffer,
@@ -2185,7 +2197,12 @@ fn recovery_finalization_fixture(
         .iter()
         .map(|scheme| Finalize::sign(scheme, proposal.clone()).unwrap())
         .collect();
-    let finalization = Finalization::from_finalizes(&verifier, &finalizes, &Sequential).unwrap();
+    let finalization = Finalization::from_finalizes(
+        &verifier,
+        commonware_utils::iter::NonEmpty::try_new(finalizes.iter()).unwrap(),
+        &Sequential,
+    )
+    .unwrap();
     let provider = HybridSchemeProvider::new();
     let _ = provider.register(round.epoch(), verifier);
     (provider, finalization)
@@ -3139,7 +3156,9 @@ fn test_build_boundary_artifact_deterministic() {
 fn test_build_boundary_artifact_allows_extra_validator_not_in_threshold_output() {
     let (keys, _participants, output, _polynomial) = run_test_dkg();
     let mut all_pks: Vec<_> = keys.iter().map(|k| k.public_key()).collect();
-    let extra_key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let extra_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     all_pks.push(extra_key.public_key());
 
     let refreshed_set = validators::ValidatorSet {
@@ -3598,7 +3617,9 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
 
 #[test]
 fn test_build_peer_map_from_bootnodes() {
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
     let pk_bytes = commonware_codec::Encode::encode(&pk);
 
@@ -3642,8 +3663,12 @@ fn test_require_genesis_hash_rejects_missing_hash() {
 
 #[test]
 fn test_ordered_validator_addresses_rejects_missing_participant_key() {
-    let key_a = bls12381::PrivateKey::random(rand_core::OsRng);
-    let key_b = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key_a = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
+    let key_b = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         vec![key_a.public_key(), key_b.public_key()]
             .into_iter()
@@ -3888,7 +3913,9 @@ fn test_register_epoch_validation_providers_is_available_and_first_wins() {
 
 #[test]
 fn test_build_peer_map_prefers_static_address() {
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
     let pk_bytes = commonware_codec::Encode::encode(&pk);
 
@@ -3915,7 +3942,9 @@ fn test_build_peer_map_prefers_static_address() {
 
 #[test]
 fn test_build_peer_map_excludes_invalid_registry_without_bootnode_fallback() {
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
     let pk_bytes = commonware_codec::Encode::encode(&pk);
 
@@ -3935,7 +3964,9 @@ fn test_build_peer_map_excludes_invalid_registry_without_bootnode_fallback() {
 
 #[test]
 fn test_build_peer_map_supports_asymmetric_registry_address() {
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
     let ingress: std::net::SocketAddr = "10.0.0.1:30400".parse().unwrap();
     let egress: std::net::SocketAddr = "10.0.0.2:30401".parse().unwrap();
@@ -3956,7 +3987,9 @@ fn test_build_peer_map_supports_asymmetric_registry_address() {
 
 #[test]
 fn test_build_peer_map_excludes_unreachable() {
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
 
     // No p2p_address and no bootnode entry -> excluded.
@@ -4760,7 +4793,7 @@ mod muxer_contract {
     const LINK: Link = Link {
         latency: Duration::from_millis(0),
         jitter: Duration::from_millis(0),
-        success_rate: 1.0,
+        success_rate: commonware_utils::Probability::new(1, 1).unwrap(),
     };
     const CAPACITY: usize = 4;
     const TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
@@ -4781,6 +4814,7 @@ mod muxer_contract {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
                 tracked_peer_sets: commonware_utils::NZUsize!(4),
+                max_peers_per_set: commonware_utils::NZUsize!(32),
             },
         );
         network.start();

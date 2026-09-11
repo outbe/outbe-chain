@@ -25,7 +25,7 @@ use commonware_cryptography::{
 use commonware_parallel::Sequential;
 use commonware_utils::{
     ordered::{Quorum as _, Set},
-    N3f1, TryCollect as _,
+    TryCollect as _,
 };
 use futures::channel::mpsc;
 use outbe_consensus::{
@@ -96,7 +96,7 @@ fn valid_notarization() -> NotarizationFixture {
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
             .unwrap();
     let payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
-        Sha256::hash(b"test-payload").as_ref(),
+        Sha256::hash(&[b"test-payload"]).as_ref(),
     ));
     let proposal = Proposal::new(
         Round::new(Epoch::new(0), View::new(2)),
@@ -111,7 +111,10 @@ fn valid_notarization() -> NotarizationFixture {
         .map(|scheme| scheme.sign::<OutbeDigest>(subject).unwrap())
         .collect();
     let certificate = verifier
-        .assemble::<_, N3f1>(attestations, &Sequential)
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+            &Sequential,
+        )
         .unwrap();
     (
         Notarization {
@@ -214,7 +217,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     // payload; the verifier will reject the post-mutation Notarization.
     let original_hash = notarization.proposal.payload.0;
     notarization.proposal.payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
-        Sha256::hash(b"tampered-payload").as_ref(),
+        Sha256::hash(&[b"tampered-payload"]).as_ref(),
     ));
     let tampered_hash = notarization.proposal.payload.0;
     assert_ne!(original_hash, tampered_hash);

@@ -1,7 +1,6 @@
 use alloy_evm::EvmInternals;
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
-use revm::context::Block;
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use revm::Database;

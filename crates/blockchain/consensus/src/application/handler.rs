@@ -194,10 +194,7 @@ fn finalized_parent_attestation_from_phase1_system_tx(
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_consensus::types::{Height, Round, View};
-use commonware_cryptography::{
-    bls12381::{primitives::variant::MinSig, PublicKey},
-    certificate::Provider as _,
-};
+use commonware_cryptography::bls12381::{primitives::variant::MinSig, PublicKey};
 use commonware_utils::channel::oneshot;
 use futures::StreamExt;
 use outbe_primitives::{
@@ -994,7 +991,7 @@ impl ApplicationShared {
                         .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)
                         .await
                     {
-                        Ok(Ok(block)) => block,
+                        Ok(Ok(block)) => (*block).clone(),
                         Ok(Err(_)) => {
                             return Err(eyre::eyre!(
                                 "failed to resolve parent block {} for proposal",
@@ -1121,17 +1118,12 @@ impl ApplicationShared {
                     );
                     return Ok(ProposeOutcome::RetentionUnavailable);
                 }
-                // Cache the proposed block into marshal NOW, at propose time, so
-                // the proposer can always SERVE it on demand (verifiers pull via
-                // subscribe_by_digest) - independent of whether the later
-                // `Relay::broadcast` wire-push succeeds. commonware 2026.5.0
-                // split dissemination: `proposed` caches + stashes locally;
-                // `forward` (driven from `Relay::broadcast`) does the wire-push.
-                // Decoupling cache from push makes a dropped push recoverable via
-                // pull instead of losing the view (bp-1).
-                let durable = self.marshal_mailbox.proposed(round, block).await;
+                // Persist before returning the proposal. The new `proposed` API also
+                // broadcasts; `verified` retains our separate durable-cache and
+                // Relay::broadcast paths, so a dropped push remains recoverable by pull.
+                let durable = self.marshal_mailbox.verified(round, block).await;
                 if !durable {
-                    // `proposed()` returns false only when the marshal actor's ack
+                    // `verified()` returns false only when the marshal actor's ack
                     // channel is closed - i.e. marshal is gone/shutting down. The
                     // block is then NOT durably cached (not servable on pull, not
                     // stashed for `forward`), so this proposal cannot be resolved by
@@ -2381,7 +2373,7 @@ mod tests {
         Hasher, Sha256, Signer as _,
     };
     use commonware_parallel::Sequential;
-    use commonware_utils::{ordered::Quorum as _, N3f1};
+    use commonware_utils::ordered::Quorum as _;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 
@@ -2442,7 +2434,9 @@ mod tests {
         let proposal = Proposal::new(
             Round::new(Epoch::new(0), View::new(5)),
             View::new(4),
-            Digest(B256::from_slice(Sha256::hash(b"handler-finalize").as_ref())),
+            Digest(B256::from_slice(
+                Sha256::hash(&[b"handler-finalize"]).as_ref(),
+            )),
         );
         let subject = Subject::Finalize {
             proposal: &proposal,
@@ -2456,7 +2450,10 @@ mod tests {
             })
             .collect();
         let certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .expect("certificate should assemble");
 
         let scheme_provider = HybridSchemeProvider::new();

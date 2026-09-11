@@ -29,7 +29,7 @@ use commonware_consensus::{
     types::Epoch,
     Viewable as _,
 };
-use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use futures::{channel::mpsc, StreamExt};
 
@@ -125,7 +125,7 @@ impl FinalizeVerifyActor {
         epoch: Epoch,
         finalize: Finalize<HybridScheme<MinSig>, Digest>,
     ) {
-        let Some(scheme) = certificate::Provider::scoped(&self.scheme_provider, epoch) else {
+        let Some(scheme) = self.scheme_provider.scoped(epoch) else {
             return;
         };
         let mut rng = bls_batch_verification_rng();

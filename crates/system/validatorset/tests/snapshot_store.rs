@@ -890,8 +890,8 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
     use commonware_math::algebra::Random;
     use commonware_parallel::Sequential;
     use commonware_utils::{ordered, N3f1, TryCollect as _};
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
+    use rand_commonware::rngs::ChaCha20Rng;
+    use rand_commonware::SeedableRng;
 
     // Use a stable arbitrary seed so the DKG fixture is deterministic.
     let mut rng = ChaCha20Rng::seed_from_u64(277_u64);
@@ -910,6 +910,7 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
         0,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -938,11 +939,10 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
                 .iter()
                 .position(|k| &k.public_key() == player_pk)
                 .unwrap();
-            if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[player_idx]
+                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_idx]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();

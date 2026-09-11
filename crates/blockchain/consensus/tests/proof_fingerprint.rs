@@ -14,8 +14,8 @@ use outbe_consensus::proof::{
     invalid_vrf_evidence_hash_v2, CommitteeEntry, CommitteeSnapshot, VrfProof,
 };
 use proptest::prelude::*;
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 fn sample_vrf_proof(seed: u64, version: u64) -> VrfProof<MinSig> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);

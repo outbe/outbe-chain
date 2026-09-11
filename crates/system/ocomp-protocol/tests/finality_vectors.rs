@@ -72,7 +72,7 @@ use outbe_primitives::{
     storage::types::StorageKey as _,
     OutbeBlock, OutbeReceipt,
 };
-use rand::{rngs::StdRng, SeedableRng as _};
+use rand_commonware::{rngs::StdRng, SeedableRng as _};
 use reth_chainspec::ChainInfo;
 use reth_primitives_traits::{Account, Bytecode, SealedBlock};
 use reth_storage_api::{
@@ -239,8 +239,9 @@ fn finalization_bytes(dkg: &Dkg, signer_indices: &[u32], header_hash: B256) -> V
         .iter()
         .map(|index| dkg.keys[*index as usize].sign(&namespace, &vote_message))
         .collect::<Vec<_>>();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(signatures.iter().map(AsRef::as_ref));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(signatures.iter().map(AsRef::as_ref)).unwrap(),
+    );
     let seed_message = proposal.round.encode().to_vec();
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
@@ -248,10 +249,11 @@ fn finalization_bytes(dkg: &Dkg, signer_indices: &[u32], header_hash: B256) -> V
         &seed_message,
     );
     let certificate = HybridCertificate::<MinSig> {
-        signers: Signers::from(
-            dkg.keys.len(),
+        signers: Signers::new(
+            dkg.keys.len() as u32,
             signer_indices.iter().copied().map(Participant::new),
-        ),
+        )
+        .unwrap(),
         bls_aggregated_vote,
         vrf_proof: VrfProof {
             material_version: VRF_MATERIAL_VERSION,
@@ -643,8 +645,13 @@ impl StateProofProvider for FixtureStateProvider {
 }
 
 impl HashedPostStateProvider for FixtureStateProvider {
-    fn hashed_post_state(&self, bundle_state: &revm::database::BundleState) -> HashedPostState {
-        HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state())
+    fn hashed_post_state(
+        &self,
+        bundle_state: &revm::database::BundleState,
+    ) -> ProviderResult<HashedPostState> {
+        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            bundle_state.state(),
+        ))
     }
 }
 

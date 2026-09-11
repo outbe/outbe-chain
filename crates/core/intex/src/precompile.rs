@@ -5,7 +5,7 @@
 //! Every method is a view; `reject_value` rejects any `msg.value` before a read.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
@@ -18,10 +18,15 @@ use crate::schema::{
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IIntex.sol"
-);
+// Generated ABI methods follow the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IIntex.sol"
+    );
+}
+pub use abi::IIntex;
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,

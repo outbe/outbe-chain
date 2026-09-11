@@ -103,8 +103,9 @@ pub(crate) fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> 
 /// Outbe EVM wrapper.
 ///
 /// Upstream `EthEvm::transact_system_call` delegates to revm's EIP system-call
-/// helper, which builds a 30M-gas tx. Outbe begin-zone system transactions are
-/// protocol transactions with their own 10B-gas execution lane, so calls into
+/// helper, which uses the upstream system-call gas budget. Outbe begin-zone
+/// system transactions are protocol transactions with their own 10B-gas execution
+/// lane, so calls into
 /// `OUTBE_SYSTEM_TX_ADDRESS` build the system-call `TxEnv` locally with
 /// `SYSTEM_TX_ARTIFACT_GAS_LIMIT`. Other system calls keep upstream semantics.
 #[expect(missing_debug_implementations)]
@@ -471,7 +472,7 @@ impl EvmFactory for OutbeEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>, EthInterpreter>> =
         OutbeEvm<DB, I, Self::Precompiles>;
     type Tx = TxEnv;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type Error<DBError: revm::context::DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
     type Context<DB: Database> = EthEvmContext<DB>;
     type Spec = SpecId;
@@ -655,7 +656,10 @@ mod tests {
             Bytes::new(),
         );
 
-        assert_eq!(evm.ctx().tx.gas_limit, USER_BLOCK_GAS_LIMIT);
+        assert_eq!(
+            evm.ctx().tx.gas_limit,
+            revm::handler::system_call::SYSTEM_CALL_GAS_LIMIT
+        );
         assert_eq!(evm.ctx().block.gas_limit, USER_BLOCK_GAS_LIMIT);
     }
 }

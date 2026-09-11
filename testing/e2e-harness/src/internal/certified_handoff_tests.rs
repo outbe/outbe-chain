@@ -6,10 +6,7 @@ use commonware_cryptography::{
     bls12381::primitives::variant::MinSig, certificate::Scheme as _, Signer as _,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::{
-    ordered::{Quorum as _, Set},
-    N3f1,
-};
+use commonware_utils::ordered::{Quorum as _, Set};
 use outbe_consensus::{
     block::ConsensusBlock,
     bls::{bootstrap_dkg_for_participants, ParticipantDkgBootstrapResult},
@@ -152,7 +149,10 @@ impl Committee {
             })
             .collect::<Vec<_>>();
         let certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap();
         let finalization: Finalization = Finalization {
             proposal,

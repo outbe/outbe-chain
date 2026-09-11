@@ -68,6 +68,7 @@ impl OutbePayloadAttributes {
                 withdrawals: Some(Vec::new()),
                 parent_beacon_block_root,
                 slot_number: None,
+                target_gas_limit: None,
             },
             timestamp_millis_part,
             extra_data,
@@ -217,6 +218,12 @@ impl OutbeExecutionData {
     }
 }
 
+impl From<OutbeBuiltPayload> for OutbeExecutionData {
+    fn from(payload: OutbeBuiltPayload) -> Self {
+        Self::new(Arc::new(payload.block().clone()))
+    }
+}
+
 impl reth_node_builder::ExecutionPayload for OutbeExecutionData {
     fn parent_hash(&self) -> B256 {
         self.block.parent_hash()
@@ -275,7 +282,10 @@ impl PayloadTypes for OutbePayloadTypes {
     type BuiltPayload = OutbeBuiltPayload;
     type PayloadAttributes = OutbePayloadAttributes;
 
-    fn block_to_payload(block: SealedBlock<OutbeBlock>) -> Self::ExecutionData {
+    fn block_to_payload(
+        block: SealedBlock<OutbeBlock>,
+        _bal: Option<Bytes>,
+    ) -> Self::ExecutionData {
         Self::ExecutionData::new(Arc::new(block))
     }
 }

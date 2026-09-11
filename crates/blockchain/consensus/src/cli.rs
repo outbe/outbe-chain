@@ -137,7 +137,11 @@ pub fn execute_validator_identities(
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
 
     let mut keys: Vec<commonware_cryptography::bls12381::PrivateKey> = (0..num_validators)
-        .map(|_| commonware_cryptography::bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            commonware_cryptography::bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|key| key.public_key().encode());
 

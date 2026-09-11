@@ -102,7 +102,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
             let mut block_future = std::pin::pin!(block_future);
             let mut sleep = std::pin::pin!(sleep);
             commonware_macros::select! {
-                result = &mut block_future => result.ok(),
+                result = &mut block_future => result.ok().map(|block| (*block).clone()),
                 _ = &mut sleep => None,
             }
         })

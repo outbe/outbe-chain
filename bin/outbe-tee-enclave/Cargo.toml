@@ -104,6 +104,8 @@ commonware-parallel.workspace = true
 commonware-codec.workspace = true
 commonware-consensus.workspace = true
 rand_core.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

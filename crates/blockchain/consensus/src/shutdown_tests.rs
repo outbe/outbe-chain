@@ -10,7 +10,7 @@ use commonware_actor::{Feedback, Unreliable};
 use commonware_codec::DecodeExt as _;
 use commonware_consensus::{
     simplex::{
-        elector::RoundRobin, types::Vote, Config as SimplexConfig, Engine, Floor, ForwardingPolicy,
+        elector::RoundRobin, types::Vote, Config as SimplexConfig, Engine, Floor, ForwardPolicy,
     },
     types::{Epoch, View, ViewDelta},
     Viewable as _,
@@ -121,6 +121,10 @@ where
     fn block(&mut self, _peer: Self::PublicKey) -> Feedback {
         Feedback::Ok
     }
+    fn blocked(&mut self) -> commonware_p2p::BlockedSubscription<Self::PublicKey> {
+        let (_, receiver) = commonware_utils::channel::ring::channel(commonware_utils::NZUsize!(1));
+        receiver
+    }
 }
 
 #[test]
@@ -174,7 +178,7 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
                 relay: MockRelay::new(),
                 reporter,
                 strategy: Sequential,
-                forwarding: ForwardingPolicy::Disabled,
+                forward: ForwardPolicy::Disabled,
                 partition: "shutdown_voter_journal".to_owned(),
                 epoch,
                 floor: Floor::Genesis(mock_genesis(epoch)),
@@ -182,10 +186,11 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
                 leader_timeout: Duration::from_millis(10),
                 certification_timeout: Duration::from_millis(20),
                 timeout_retry: Duration::from_millis(40),
-                activity_timeout: ViewDelta::new(16),
-                skip_timeout: ViewDelta::new(4),
+                view_retention: ViewDelta::new(16),
+                skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+                track_historical_votes: true,
                 fetch_timeout: Duration::from_millis(20),
-                fetch_concurrent: NZUsize!(2),
+
                 replay_buffer: NZUsize!(64 * 1024),
                 write_buffer: NZUsize!(4 * 1024),
                 page_cache: CacheRef::from_pooler(&context, PAGE_SIZE, PAGE_CACHE_SIZE),
@@ -308,7 +313,7 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
             relay: MockRelay::new(),
             reporter: MockReporter::new(),
             strategy: Sequential,
-            forwarding: ForwardingPolicy::Disabled,
+            forward: ForwardPolicy::Disabled,
             partition: partition.to_owned(),
             epoch,
             floor: Floor::Genesis(mock_genesis(epoch)),
@@ -320,10 +325,11 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
             leader_timeout: Duration::from_millis(200),
             certification_timeout: Duration::from_millis(400),
             timeout_retry: Duration::from_millis(800),
-            activity_timeout: ViewDelta::new(16),
-            skip_timeout: ViewDelta::new(4),
+            view_retention: ViewDelta::new(16),
+            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+            track_historical_votes: true,
             fetch_timeout: Duration::from_millis(20),
-            fetch_concurrent: NZUsize!(2),
+
             replay_buffer: NZUsize!(64 * 1024),
             write_buffer: NZUsize!(4 * 1024),
             page_cache: CacheRef::from_pooler(context, PAGE_SIZE, PAGE_CACHE_SIZE),

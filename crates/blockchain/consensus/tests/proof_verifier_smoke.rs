@@ -21,8 +21,8 @@ use outbe_consensus::proof::{
     verify_v2_proof_low_level, CommitteeSnapshotView, HybridCertificate, V2VerifyError,
     VoteBinding, VoteSubject, VrfProof,
 };
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 const VOTE_NAMESPACE: &[u8] = b"outbe_FINALIZE";
 const VOTE_MESSAGE: &[u8] = b"finalize-proposal-message";
@@ -52,17 +52,19 @@ fn build_committee(n: u32) -> Committee {
 
 fn build_certificate(committee: &Committee, signer_indices: &[u32]) -> HybridCertificate<MinSig> {
     let participants = committee.keys.len();
-    let signers = Signers::from(
-        participants,
+    let signers = Signers::new(
+        participants as u32,
         signer_indices.iter().copied().map(Participant::new),
-    );
+    )
+    .unwrap();
 
     let sigs: Vec<_> = signer_indices
         .iter()
         .map(|&i| committee.keys[i as usize].sign(VOTE_NAMESPACE, VOTE_MESSAGE))
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     let threshold_signature = sign_message::<MinSig>(
         &committee.vrf_threshold_private,

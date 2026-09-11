@@ -259,11 +259,9 @@ impl CommitteeChain {
         epoch: Epoch,
         finalization: &Finalization<HybridScheme<MinSig>, Digest>,
     ) -> Result<()> {
-        let scheme =
-            commonware_cryptography::certificate::Provider::scoped(&self.scheme_provider, epoch)
-                .ok_or_else(|| {
-                    eyre::eyre!("no committee verifier registered for epoch {}", epoch.get())
-                })?;
+        let scheme = self.scheme_provider.scoped(epoch).ok_or_else(|| {
+            eyre::eyre!("no committee verifier registered for epoch {}", epoch.get())
+        })?;
         let mut rng = bls_batch_verification_rng();
         if !finalization.verify(&mut rng, scheme.as_ref(), &Sequential) {
             bail!(
@@ -307,7 +305,7 @@ mod tests {
     use commonware_storage::archive::Identifier;
     use commonware_utils::{
         ordered::{Quorum as _, Set as OrderedSet},
-        N3f1, TryCollect as _,
+        TryCollect as _,
     };
 
     /// A single committee + its DKG, used to build BOTH a boundary block's
@@ -397,7 +395,7 @@ mod tests {
         /// A finalization for `epoch` signed by this committee.
         fn finalization(&self, epoch: Epoch) -> Finalization<HybridScheme<MinSig>, Digest> {
             let digest = Digest::from(alloy_primitives::B256::from_slice(
-                Sha256::hash(format!("blk-{}", epoch.get()).as_bytes()).as_ref(),
+                Sha256::hash(&[format!("blk-{}", epoch.get()).as_bytes()]).as_ref(),
             ));
             self.finalization_for(epoch, digest)
         }
@@ -460,7 +458,10 @@ mod tests {
                 .map(|index| signers[*index].sign::<Digest>(subject).unwrap())
                 .collect();
             let certificate = verifier
-                .assemble::<_, N3f1>(attestations, &Sequential)
+                .assemble(
+                    commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                    &Sequential,
+                )
                 .unwrap();
             Finalization {
                 proposal,
@@ -483,9 +484,9 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Debug, Default)]
     struct MemoryCertificates {
-        by_height: BTreeMap<u64, crate::marshal_types::Finalization>,
+        by_height: Arc<std::sync::Mutex<BTreeMap<u64, crate::marshal_types::Finalization>>>,
     }
 
     impl Certificates for MemoryCertificates {
@@ -494,18 +495,26 @@ mod tests {
         type Scheme = HybridScheme<MinSig>;
         type Error = Infallible;
 
+        async fn has(&self, height: Height) -> Result<bool, Self::Error> {
+            Ok(self.by_height.lock().unwrap().contains_key(&height.get()))
+        }
+
         async fn put(
-            &mut self,
+            self,
             height: Height,
             _digest: Self::BlockDigest,
             finalization: crate::marshal_types::Finalization,
-        ) -> Result<(), Self::Error> {
-            self.by_height.entry(height.get()).or_insert(finalization);
-            Ok(())
+        ) -> Result<Self, Self::Error> {
+            self.by_height
+                .lock()
+                .unwrap()
+                .entry(height.get())
+                .or_insert(finalization);
+            Ok(self)
         }
 
-        async fn sync(&mut self) -> Result<(), Self::Error> {
-            Ok(())
+        async fn sync(self) -> Result<Self, Self::Error> {
+            Ok(self)
         }
 
         async fn get(
@@ -513,9 +522,11 @@ mod tests {
             id: Identifier<'_, Self::BlockDigest>,
         ) -> Result<Option<crate::marshal_types::Finalization>, Self::Error> {
             let value = match id {
-                Identifier::Index(height) => self.by_height.get(&height).cloned(),
+                Identifier::Index(height) => self.by_height.lock().unwrap().get(&height).cloned(),
                 Identifier::Key(digest) => self
                     .by_height
+                    .lock()
+                    .unwrap()
                     .values()
                     .find(|finalization| finalization.proposal.payload == *digest)
                     .cloned(),
@@ -523,40 +534,53 @@ mod tests {
             Ok(value)
         }
 
-        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
-            self.by_height.retain(|height, _| *height >= min.get());
-            Ok(())
+        async fn prune(self, min: Height) -> Result<Self, Self::Error> {
+            self.by_height
+                .lock()
+                .unwrap()
+                .retain(|height, _| *height >= min.get());
+            Ok(self)
         }
 
         fn last_index(&self) -> Option<Height> {
             self.by_height
+                .lock()
+                .unwrap()
                 .last_key_value()
                 .map(|(height, _)| Height::new(*height))
         }
 
         fn ranges_from(&self, from: Height) -> impl Iterator<Item = (Height, Height)> {
             self.by_height
+                .lock()
+                .unwrap()
                 .range(from.get()..)
                 .map(|(height, _)| (Height::new(*height), Height::new(*height)))
+                .collect::<Vec<_>>()
+                .into_iter()
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Debug, Default)]
     struct MemoryBlocks {
-        by_height: BTreeMap<u64, crate::block::ConsensusBlock>,
+        by_height: Arc<std::sync::Mutex<BTreeMap<u64, crate::block::ConsensusBlock>>>,
     }
 
     impl Blocks for MemoryBlocks {
         type Block = crate::block::ConsensusBlock;
         type Error = Infallible;
 
-        async fn put(&mut self, block: Self::Block) -> Result<(), Self::Error> {
-            self.by_height.entry(block.height().get()).or_insert(block);
-            Ok(())
+        async fn put(self, block: Self::Block) -> Result<Self, Self::Error> {
+            self.by_height
+                .lock()
+                .unwrap()
+                .entry(block.height().get())
+                .or_insert(block);
+            Ok(self)
         }
 
-        async fn sync(&mut self) -> Result<(), Self::Error> {
-            Ok(())
+        async fn sync(self) -> Result<Self, Self::Error> {
+            Ok(self)
         }
 
         async fn get(
@@ -564,9 +588,11 @@ mod tests {
             id: Identifier<'_, Digest>,
         ) -> Result<Option<Self::Block>, Self::Error> {
             let value = match id {
-                Identifier::Index(height) => self.by_height.get(&height).cloned(),
+                Identifier::Index(height) => self.by_height.lock().unwrap().get(&height).cloned(),
                 Identifier::Key(digest) => self
                     .by_height
+                    .lock()
+                    .unwrap()
                     .values()
                     .find(|block| block.digest() == *digest)
                     .cloned(),
@@ -574,26 +600,42 @@ mod tests {
             Ok(value)
         }
 
-        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
-            self.by_height.retain(|height, _| *height >= min.get());
-            Ok(())
+        async fn prune(self, min: Height) -> Result<Self, Self::Error> {
+            self.by_height
+                .lock()
+                .unwrap()
+                .retain(|height, _| *height >= min.get());
+            Ok(self)
         }
 
         fn missing_items(&self, start: Height, max: usize) -> Vec<Height> {
-            let Some(last) = self.by_height.last_key_value().map(|(height, _)| *height) else {
+            let Some(last) = self
+                .by_height
+                .lock()
+                .unwrap()
+                .last_key_value()
+                .map(|(height, _)| *height)
+            else {
                 return Vec::new();
             };
             (start.get()..=last)
-                .filter(|height| !self.by_height.contains_key(height))
+                .filter(|height| !self.by_height.lock().unwrap().contains_key(height))
                 .take(max)
                 .map(Height::new)
                 .collect()
         }
 
         fn next_gap(&self, value: Height) -> (Option<Height>, Option<Height>) {
-            let current = self.by_height.contains_key(&value.get()).then_some(value);
+            let current = self
+                .by_height
+                .lock()
+                .unwrap()
+                .contains_key(&value.get())
+                .then_some(value);
             let next = self
                 .by_height
+                .lock()
+                .unwrap()
                 .range(value.get().saturating_add(1)..)
                 .next()
                 .map(|(height, _)| Height::new(*height));
@@ -602,14 +644,16 @@ mod tests {
 
         fn last_index(&self) -> Option<Height> {
             self.by_height
+                .lock()
+                .unwrap()
                 .last_key_value()
                 .map(|(height, _)| Height::new(*height))
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Debug, Default)]
     struct DurableCrashBlocks {
-        durable: BTreeMap<u64, crate::block::ConsensusBlock>,
+        durable: Arc<std::sync::Mutex<BTreeMap<u64, crate::block::ConsensusBlock>>>,
         buffered: BTreeMap<u64, crate::block::ConsensusBlock>,
         fail_next_sync: bool,
     }
@@ -618,49 +662,54 @@ mod tests {
         type Block = crate::block::ConsensusBlock;
         type Error = std::io::Error;
 
-        async fn put(&mut self, block: Self::Block) -> Result<(), Self::Error> {
+        async fn put(mut self, block: Self::Block) -> Result<Self, Self::Error> {
             let height = block.height().get();
-            if !self.durable.contains_key(&height) {
+            if !self.durable.lock().unwrap().contains_key(&height) {
                 self.buffered.entry(height).or_insert(block);
             }
-            Ok(())
+            Ok(self)
         }
 
-        async fn sync(&mut self) -> Result<(), Self::Error> {
+        async fn sync(mut self) -> Result<Self, Self::Error> {
             if std::mem::take(&mut self.fail_next_sync) {
                 return Err(std::io::Error::other("injected block sync crash"));
             }
-            self.durable.append(&mut self.buffered);
-            Ok(())
+            self.durable.lock().unwrap().append(&mut self.buffered);
+            Ok(self)
         }
 
         async fn get(
             &self,
             id: Identifier<'_, Digest>,
         ) -> Result<Option<Self::Block>, Self::Error> {
+            let durable = self.durable.lock().unwrap();
             let value = match id {
-                Identifier::Index(height) => self
-                    .buffered
-                    .get(&height)
-                    .or_else(|| self.durable.get(&height)),
+                Identifier::Index(height) => {
+                    self.buffered.get(&height).or_else(|| durable.get(&height))
+                }
                 Identifier::Key(digest) => self
                     .buffered
                     .values()
-                    .chain(self.durable.values())
+                    .chain(durable.values())
                     .find(|block| block.digest() == *digest),
             };
             Ok(value.cloned())
         }
 
-        async fn prune(&mut self, min: Height) -> Result<(), Self::Error> {
-            self.durable.retain(|height, _| *height >= min.get());
+        async fn prune(mut self, min: Height) -> Result<Self, Self::Error> {
+            self.durable
+                .lock()
+                .unwrap()
+                .retain(|height, _| *height >= min.get());
             self.buffered.retain(|height, _| *height >= min.get());
-            Ok(())
+            Ok(self)
         }
 
         fn missing_items(&self, start: Height, max: usize) -> Vec<Height> {
             let last = self
                 .durable
+                .lock()
+                .unwrap()
                 .keys()
                 .chain(self.buffered.keys())
                 .max()
@@ -670,7 +719,8 @@ mod tests {
             };
             (start.get()..=last)
                 .filter(|height| {
-                    !self.durable.contains_key(height) && !self.buffered.contains_key(height)
+                    !self.durable.lock().unwrap().contains_key(height)
+                        && !self.buffered.contains_key(height)
                 })
                 .take(max)
                 .map(Height::new)
@@ -678,10 +728,12 @@ mod tests {
         }
 
         fn next_gap(&self, value: Height) -> (Option<Height>, Option<Height>) {
-            let contains =
-                self.durable.contains_key(&value.get()) || self.buffered.contains_key(&value.get());
+            let contains = self.durable.lock().unwrap().contains_key(&value.get())
+                || self.buffered.contains_key(&value.get());
             let next = self
                 .durable
+                .lock()
+                .unwrap()
                 .keys()
                 .chain(self.buffered.keys())
                 .filter(|height| **height > value.get())
@@ -693,6 +745,8 @@ mod tests {
 
         fn last_index(&self) -> Option<Height> {
             self.durable
+                .lock()
+                .unwrap()
                 .keys()
                 .chain(self.buffered.keys())
                 .max()
@@ -765,14 +819,20 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         for height in [10_u64, 11, 12] {
             let record = records.get(&height).unwrap();
             certificates
                 .by_height
+                .lock()
+                .unwrap()
                 .insert(height, record.finalization.clone());
-            blocks.by_height.insert(height, record.block.clone());
+            blocks
+                .by_height
+                .lock()
+                .unwrap()
+                .insert(height, record.block.clone());
         }
 
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -782,8 +842,8 @@ mod tests {
             e0,
             Height::new(10),
             Height::new(12),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("paired suffix must authenticate through the epoch boundary");
 
@@ -819,15 +879,21 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         for height in [8_u64, 9] {
             let record = records.get(&height).unwrap();
             certificates
                 .by_height
+                .lock()
+                .unwrap()
                 .insert(height, record.finalization.clone());
         }
-        blocks.by_height.insert(9, records[&9].block.clone());
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(9, records[&9].block.clone());
 
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -836,8 +902,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("restart must recover an earlier authenticated successor preannounce");
 
@@ -879,16 +945,28 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         certificates
             .by_height
+            .lock()
+            .unwrap()
             .insert(10, records[&10].finalization.clone());
         certificates
             .by_height
+            .lock()
+            .unwrap()
             .insert(12, records[&12].finalization.clone());
-        blocks.by_height.insert(10, records[&10].block.clone());
-        blocks.by_height.insert(11, records[&11].block.clone());
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(10, records[&10].block.clone());
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(11, records[&11].block.clone());
 
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -897,18 +975,18 @@ mod tests {
             e0,
             Height::new(10),
             Height::new(12),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("authenticated suffix must repair either missing archive companion");
 
         for height in 10_u64..=12 {
             assert_eq!(
-                certificates.by_height[&height].encode(),
+                certificates.by_height.lock().unwrap()[&height].encode(),
                 records[&height].finalization.encode()
             );
             assert_eq!(
-                blocks.by_height[&height].encode(),
+                blocks.by_height.lock().unwrap()[&height].encode(),
                 records[&height].block.encode()
             );
         }
@@ -958,14 +1036,20 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         for height in 10_u64..=22 {
             let record = &records[&height];
             certificates
                 .by_height
+                .lock()
+                .unwrap()
                 .insert(height, record.finalization.clone());
-            blocks.by_height.insert(height, record.block.clone());
+            blocks
+                .by_height
+                .lock()
+                .unwrap()
+                .insert(height, record.block.clone());
         }
 
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -975,8 +1059,8 @@ mod tests {
             e0,
             Height::new(10),
             Height::new(22),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("one replay suffix may authenticate several epoch transitions");
 
@@ -1004,12 +1088,18 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         certificates
             .by_height
+            .lock()
+            .unwrap()
             .insert(9, records[&9].finalization.clone());
-        blocks.by_height.insert(9, records[&9].block.clone());
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(9, records[&9].block.clone());
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -1018,8 +1108,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(10),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
@@ -1047,13 +1137,17 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         certificates
             .by_height
+            .lock()
+            .unwrap()
             .insert(9, records[&9].finalization.clone());
         blocks
             .by_height
+            .lock()
+            .unwrap()
             .insert(9, certified_block(&c0, e0, 9, vec![0xFF]).block);
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1063,8 +1157,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
@@ -1108,10 +1202,18 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
-        certificates.by_height.insert(9, local_finalization.clone());
-        blocks.by_height.insert(9, records[&9].block.clone());
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
+        certificates
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(9, local_finalization.clone());
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(9, records[&9].block.clone());
 
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -1120,8 +1222,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("distinct valid quorum certificates for one proposal must reconcile");
 
@@ -1132,13 +1234,13 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("restarting with the retained alternate certificate must be idempotent");
 
         assert_eq!(
-            certificates.by_height[&9].encode(),
+            certificates.by_height.lock().unwrap()[&9].encode(),
             local_finalization.encode(),
             "reconciliation must retain the already-valid local certificate"
         );
@@ -1165,12 +1267,16 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         let forged = attacker.finalization_for(e0, records[&9].block.digest());
         assert_eq!(forged.proposal, records[&9].finalization.proposal);
-        certificates.by_height.insert(9, forged);
-        blocks.by_height.insert(9, records[&9].block.clone());
+        certificates.by_height.lock().unwrap().insert(9, forged);
+        blocks
+            .by_height
+            .lock()
+            .unwrap()
+            .insert(9, records[&9].block.clone());
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -1179,8 +1285,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
@@ -1251,10 +1357,14 @@ mod tests {
                 c0.participants.clone(),
             )));
             let epocher = FollowerEpocher::new(10, 0);
-            let mut certificates = MemoryCertificates::default();
-            let mut blocks = MemoryBlocks::default();
-            certificates.by_height.insert(9, conflict);
-            blocks.by_height.insert(9, records[&9].block.clone());
+            let certificates = MemoryCertificates::default();
+            let blocks = MemoryBlocks::default();
+            certificates.by_height.lock().unwrap().insert(9, conflict);
+            blocks
+                .by_height
+                .lock()
+                .unwrap()
+                .insert(9, records[&9].block.clone());
 
             let error =
                 futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1264,8 +1374,8 @@ mod tests {
                     e0,
                     Height::new(9),
                     Height::new(9),
-                    &mut certificates,
-                    &mut blocks,
+                    certificates.clone(),
+                    blocks.clone(),
                 ))
                 .unwrap_err()
                 .to_string();
@@ -1310,14 +1420,18 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
         for height in [7_u64, 8, 9] {
             certificates
                 .by_height
+                .lock()
+                .unwrap()
                 .insert(height, records[&height].finalization.clone());
             blocks
                 .by_height
+                .lock()
+                .unwrap()
                 .insert(height, records[&height].block.clone());
         }
 
@@ -1328,8 +1442,8 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
@@ -1368,8 +1482,8 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -1378,8 +1492,8 @@ mod tests {
             e0,
             Height::new(8),
             Height::new(11),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
@@ -1414,8 +1528,8 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
@@ -1424,15 +1538,15 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
 
         assert!(error.contains("finalization payload differs from block at height 9"));
-        assert!(!certificates.by_height.contains_key(&9));
-        assert!(!blocks.by_height.contains_key(&9));
+        assert!(!certificates.by_height.lock().unwrap().contains_key(&9));
+        assert!(!blocks.by_height.lock().unwrap().contains_key(&9));
     }
 
     #[test]
@@ -1481,8 +1595,8 @@ mod tests {
                 c0.participants.clone(),
             )));
             let epocher = FollowerEpocher::new(10, 0);
-            let mut certificates = MemoryCertificates::default();
-            let mut blocks = MemoryBlocks::default();
+            let certificates = MemoryCertificates::default();
+            let blocks = MemoryBlocks::default();
 
             let error =
                 futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1492,15 +1606,15 @@ mod tests {
                     e0,
                     Height::new(9),
                     Height::new(9),
-                    &mut certificates,
-                    &mut blocks,
+                    certificates.clone(),
+                    blocks.clone(),
                 ))
                 .unwrap_err()
                 .to_string();
 
             assert!(error.contains(expected_error), "{name}: {error}");
-            assert!(certificates.by_height.is_empty(), "{name}");
-            assert!(blocks.by_height.is_empty(), "{name}");
+            assert!(certificates.by_height.lock().unwrap().is_empty(), "{name}");
+            assert!(blocks.by_height.lock().unwrap().is_empty(), "{name}");
         }
     }
 
@@ -1526,8 +1640,8 @@ mod tests {
             c0.participants.clone(),
         )));
         let epocher = FollowerEpocher::new(10, 0);
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = DurableCrashBlocks {
+        let certificates = MemoryCertificates::default();
+        let blocks = DurableCrashBlocks {
             fail_next_sync: true,
             ..Default::default()
         };
@@ -1538,14 +1652,14 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .unwrap_err()
         .to_string();
         assert!(error.contains("failed to sync repaired follower replay blocks"));
-        assert!(certificates.by_height.contains_key(&9));
-        assert!(!blocks.durable.contains_key(&9));
+        assert!(certificates.by_height.lock().unwrap().contains_key(&9));
+        assert!(!blocks.durable.lock().unwrap().contains_key(&9));
 
         // Restart sees the durable finalization-only tail and repairs its block.
         let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
@@ -1553,7 +1667,7 @@ mod tests {
             c0.participants.clone(),
         )));
         let epocher = FollowerEpocher::new(10, 0);
-        let mut blocks = DurableCrashBlocks::default();
+        let blocks = DurableCrashBlocks::default();
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             &chain,
             &source,
@@ -1561,11 +1675,11 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("restart must repair a durable finalization-only crash cut");
-        assert!(blocks.durable.contains_key(&9));
+        assert!(blocks.durable.lock().unwrap().contains_key(&9));
 
         // Crash cut 2: a block-only durable tail is repaired symmetrically.
         let chain = Arc::new(std::sync::Mutex::new(CommitteeChain::new(
@@ -1573,9 +1687,12 @@ mod tests {
             c0.participants.clone(),
         )));
         let epocher = FollowerEpocher::new(10, 0);
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = DurableCrashBlocks {
-            durable: BTreeMap::from([(9, records[&9].block.clone())]),
+        let certificates = MemoryCertificates::default();
+        let blocks = DurableCrashBlocks {
+            durable: Arc::new(std::sync::Mutex::new(BTreeMap::from([(
+                9,
+                records[&9].block.clone(),
+            )]))),
             ..Default::default()
         };
         futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1585,15 +1702,15 @@ mod tests {
             e0,
             Height::new(9),
             Height::new(9),
-            &mut certificates,
-            &mut blocks,
+            certificates.clone(),
+            blocks.clone(),
         ))
         .expect("restart must repair a durable block-only crash cut");
         assert_eq!(
-            certificates.by_height[&9].encode(),
+            certificates.by_height.lock().unwrap()[&9].encode(),
             records[&9].finalization.encode()
         );
-        assert_eq!(blocks.durable.len(), 1);
+        assert_eq!(blocks.durable.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -1616,8 +1733,8 @@ mod tests {
             e0,
             c0.participants.clone(),
         )));
-        let mut certificates = MemoryCertificates::default();
-        let mut blocks = MemoryBlocks::default();
+        let certificates = MemoryCertificates::default();
+        let blocks = MemoryBlocks::default();
 
         for _ in 0..2 {
             futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -1627,19 +1744,22 @@ mod tests {
                 e0,
                 Height::new(9),
                 Height::new(9),
-                &mut certificates,
-                &mut blocks,
+                certificates.clone(),
+                blocks.clone(),
             ))
             .expect("repeated authenticated repair must be idempotent");
         }
 
-        assert_eq!(certificates.by_height.len(), 1);
-        assert_eq!(blocks.by_height.len(), 1);
+        assert_eq!(certificates.by_height.lock().unwrap().len(), 1);
+        assert_eq!(blocks.by_height.lock().unwrap().len(), 1);
         assert_eq!(
-            certificates.by_height[&9].encode(),
+            certificates.by_height.lock().unwrap()[&9].encode(),
             records[&9].finalization.encode()
         );
-        assert_eq!(blocks.by_height[&9].encode(), records[&9].block.encode());
+        assert_eq!(
+            blocks.by_height.lock().unwrap()[&9].encode(),
+            records[&9].block.encode()
+        );
     }
 
     #[test]
@@ -1860,9 +1980,10 @@ mod tests {
             .unwrap();
         chain.verify_finalization(e6, &c6.finalization(e6)).unwrap();
         assert_eq!(chain.highest_registered(), Some(e6));
-        let verifier =
-            commonware_cryptography::certificate::Provider::scoped(chain.scheme_provider(), e6)
-                .expect("epoch-6 verifier is registered");
+        let verifier = chain
+            .scheme_provider()
+            .scoped(e6)
+            .expect("epoch-6 verifier is registered");
         assert_eq!(
             verifier.expected_vrf_material_version(),
             e6.get(),
@@ -2016,7 +2137,7 @@ mod tests {
     fn finalized_delivery_wire_format_round_trips() {
         use crate::block::ConsensusBlock;
         use commonware_codec::Read as _;
-        use commonware_cryptography::certificate::Scheme as _;
+        use commonware_cryptography::certificate::Verifier as _;
 
         let epoch = Epoch::new(3);
         let c = committee(20);
@@ -2088,7 +2209,7 @@ mod tests {
     fn served_finalization_round_trips_to_verified_certified_block() {
         use crate::block::ConsensusBlock;
         use commonware_codec::Read as _;
-        use commonware_cryptography::certificate::Scheme as _;
+        use commonware_cryptography::certificate::Verifier as _;
 
         let epoch = Epoch::new(4);
         let c = committee(40);

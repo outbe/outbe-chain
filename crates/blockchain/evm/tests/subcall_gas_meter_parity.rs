@@ -15,7 +15,7 @@ use outbe_evm::gas::SubcallGasMeter;
 use proptest::prelude::*;
 use revm::interpreter::Gas;
 
-fn snapshot(gas: &Gas) -> (u64, u64, i64, u64, u64) {
+fn snapshot(gas: &Gas) -> (u64, u64, i64, i64, u64) {
     (
         gas.limit(),
         gas.remaining(),
@@ -25,7 +25,7 @@ fn snapshot(gas: &Gas) -> (u64, u64, i64, u64, u64) {
     )
 }
 
-fn snapshot_outbe(meter: &SubcallGasMeter) -> (u64, u64, i64, u64, u64) {
+fn snapshot_outbe(meter: &SubcallGasMeter) -> (u64, u64, i64, i64, u64) {
     (
         meter.limit(),
         meter.remaining(),
@@ -119,7 +119,7 @@ proptest! {
     #[test]
     fn set_state_gas_spent_byte_equal(
         limit in 0u64..=u64::MAX,
-        vals in proptest::collection::vec(0u64..=u64::MAX, 1..16),
+        vals in proptest::collection::vec(i64::MIN..=i64::MAX, 1..16),
     ) {
         let mut upstream = Gas::new(limit);
         let mut outbe = SubcallGasMeter::new(limit);

@@ -27,6 +27,7 @@ outbe-metadosis.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
 rand.workspace = true
+rand-commonware.workspace = true
 reth-chainspec.workspace = true
 reth-primitives-traits.workspace = true
 reth-storage-api.workspace = true

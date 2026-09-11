@@ -469,14 +469,14 @@ pub struct ParticipantDkgBootstrapResult {
 /// should be used instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
     let n = NonZeroU32::new(n).ok_or_else(|| eyre::eyre!("validator count must be > 0"))?;
-    let mut rng = rand_core::OsRng;
+    let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
 
     let (polynomial, shares) =
         dkg::deal_anonymous::<MinSig, N3f1>(&mut rng, Mode::NonZeroCounter, n);
 
     debug!(
         validators = n.get(),
-        threshold = polynomial.required::<N3f1>(),
+        threshold = polynomial.required(),
         "bootstrapped DKG with centralized dealing"
     );
 
@@ -493,7 +493,7 @@ pub fn bootstrap_dkg_for_participants(
     participants: Set<bls12381::PublicKey>,
 ) -> Result<ParticipantDkgBootstrapResult> {
     ensure!(!participants.is_empty(), "validator count must be > 0");
-    let mut rng = rand_core::OsRng;
+    let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let validators = participants.len();
 
     let (output, shares) =
@@ -504,7 +504,7 @@ pub fn bootstrap_dkg_for_participants(
 
     debug!(
         validators,
-        threshold = polynomial.required::<N3f1>(),
+        threshold = polynomial.required(),
         "bootstrapped participant-bound DKG with centralized dealing"
     );
 
@@ -583,7 +583,9 @@ mod tests {
     #[test]
     fn test_individual_key_roundtrip_file() {
         use commonware_math::algebra::Random;
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let backend = KeyBackend::Plaintext;
 
         let file = NamedTempFile::new().unwrap();
@@ -598,7 +600,9 @@ mod tests {
         use commonware_cryptography::{Signer as _, Verifier as _};
         use commonware_math::algebra::Random;
 
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let pk = key.public_key();
 
         let sig = key.sign(b"test-ns", b"hello");
@@ -749,7 +753,9 @@ mod tests {
     #[test]
     fn test_encrypted_individual_key_roundtrip() {
         use commonware_math::algebra::Random;
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let backend = KeyBackend::Encrypted("key-secret".into());
 
         let file = NamedTempFile::new().unwrap();

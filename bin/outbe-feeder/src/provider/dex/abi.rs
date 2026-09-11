@@ -1,4 +1,7 @@
 //! Upstream pool ABI subsets. See the feeder README for authoritative sources.
+// Generated ABI methods follow the Solidity argument lists.
+#![allow(clippy::too_many_arguments)]
+
 use alloy_sol_types::sol;
 
 sol! {

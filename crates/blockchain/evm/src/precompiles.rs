@@ -816,7 +816,7 @@ where
         )
     }
 
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+    fn warm_addresses(&self) -> &alloy_primitives::map::AddressSet {
         self.eth.warm_addresses()
     }
 

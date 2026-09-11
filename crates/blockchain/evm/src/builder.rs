@@ -174,7 +174,9 @@ where
 
         db.merge_transitions(BundleRetention::Reverts);
 
-        let hashed_state = state.hashed_post_state(&db.bundle_state);
+        let hashed_state = state
+            .hashed_post_state(&db.bundle_state)
+            .map_err(BlockExecutionError::other)?;
         let (state_root, trie_updates) = match state_root_precomputed {
             Some(precomputed) => precomputed,
             None => state
@@ -200,6 +202,7 @@ where
             &db.bundle_state,
             &state,
             state_root,
+            None,
         ))?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
@@ -219,6 +222,7 @@ where
         }
 
         Ok(BlockBuilderOutcome {
+            block_access_list: None,
             execution_result: result,
             hashed_state,
             trie_updates,
@@ -465,8 +469,13 @@ mod tests {
     }
 
     impl HashedPostStateProvider for DeterministicEmptyStateProvider {
-        fn hashed_post_state(&self, bundle_state: &revm::database::BundleState) -> HashedPostState {
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state())
+        fn hashed_post_state(
+            &self,
+            bundle_state: &revm::database::BundleState,
+        ) -> ProviderResult<HashedPostState> {
+            Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+                bundle_state.state(),
+            ))
         }
     }
 
@@ -1016,7 +1025,7 @@ mod tests {
 
         let reexecuted_hashed_state = provider.hashed_post_state(&validator_state.bundle_state);
         let (reexecuted_root, _) = provider
-            .state_root_with_updates(reexecuted_hashed_state)
+            .state_root_with_updates(reexecuted_hashed_state.unwrap())
             .expect("re-executed state root must be computed");
 
         assert_eq!(
@@ -1171,7 +1180,7 @@ mod tests {
         let validator_state = validator_executor.into_state();
         let reexecuted_hashed_state = provider.hashed_post_state(&validator_state.bundle_state);
         let (reexecuted_root, _) = provider
-            .state_root_with_updates(reexecuted_hashed_state)
+            .state_root_with_updates(reexecuted_hashed_state.unwrap())
             .expect("re-executed state root must be computed");
 
         assert_eq!(
@@ -1210,6 +1219,7 @@ mod tests {
                 &receipt_validation_spec,
                 &receipt_result,
                 None,
+                None,
             )
             .is_err(),
             "the fixture must reach Reth's receipt-root rejection seam",
@@ -1246,7 +1256,7 @@ mod tests {
         let state = state_executor.into_state();
         let reexecuted_hashed_state = provider.hashed_post_state(&state.bundle_state);
         let (actual_state_root, _) = provider
-            .state_root_with_updates(reexecuted_hashed_state)
+            .state_root_with_updates(reexecuted_hashed_state.unwrap())
             .expect("state root must be computed at Reth's validation seam");
         assert_ne!(
             wrong_state_block.header().inner.state_root,

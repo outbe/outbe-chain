@@ -23,8 +23,8 @@ use commonware_cryptography::{
 };
 use commonware_utils::Participant;
 use outbe_consensus::proof::{HybridCertificate, VrfProof};
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 /// Deterministic constructor: n=4 participants, signer indices {0, 2, 3},
 /// VRF present with material version = 1 and a MinSig key seeded from 7.
@@ -33,7 +33,7 @@ use rand_chacha::ChaCha20Rng;
 /// the pre-move `outbe-consensus::hybrid` encoder and verified to equal the
 /// post-move `outbe-consensus-proof::hybrid_wire` encoder output.
 fn mandatory_vrf_fixture() -> HybridCertificate<MinSig> {
-    let signers = Signers::from(4, [0u32, 2, 3].into_iter().map(Participant::new));
+    let signers = Signers::new(4, [0u32, 2, 3].into_iter().map(Participant::new)).unwrap();
 
     let sigs: Vec<_> = [0u32, 2, 3]
         .into_iter()
@@ -42,8 +42,9 @@ fn mandatory_vrf_fixture() -> HybridCertificate<MinSig> {
             sk.sign(b"hybrid_codec_compat", b"vote")
         })
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     let mut rng = ChaCha20Rng::seed_from_u64(7);
     let (private, _public) = keypair::<_, MinSig>(&mut rng);
