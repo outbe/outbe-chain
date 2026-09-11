@@ -527,9 +527,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 
 #[test]
 fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
-    // Entry 3.0 and a one-unit load cost 3 reference minor units; at COEN/EUR 2.5
-    // against COEN/USD 3.0 the exact obligation is 2.5 EUR units. Flooring the
-    // whole thing charges 2; rounding the converted cost up charged 3.
+    // Exact obligation 2.5 EUR units: flooring charges 2, rounding up charged 3.
     let mut provider = test_storage(Some(U256::from(3_000_000u64)));
     let proof = note_proof(&mut provider, STABLE_EUR, ALICE, NOTE_AMOUNT);
     StorageHandle::enter(&mut provider, |storage| {
@@ -549,9 +547,8 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
 
 #[test]
 fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
-    // Entry 1.500001 and a one-unit load: the reference cost floors to 1, but the
-    // obligation is 1.500001 six-decimal units. An eighteen-decimal asset carries
-    // all of it; scaling the floored 1 would have charged 1e12 instead.
+    // The reference cost floors to 1, the obligation is 1.500001: an eighteen-
+    // decimal asset carries all of it, scaling the floored 1 charged 1e12.
     let mut provider = test_storage(Some(U256::from(1_500_001u64)));
     let proof = note_proof(&mut provider, STABLE_18, ALICE, NOTE_AMOUNT);
     StorageHandle::enter(&mut provider, |storage| {

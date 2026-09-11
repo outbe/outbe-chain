@@ -294,8 +294,7 @@ fn discharge_cost(
     })
 }
 
-/// The Nod's cost in the settlement asset's minor units: `entry x load` at full
-/// precision, floored once into the asset's units (C34).
+/// The Nod's cost in the settlement asset's minor units, floored once.
 pub(crate) fn settlement_units(
     entry_price_minor: U256,
     gratis_load_minor: U256,

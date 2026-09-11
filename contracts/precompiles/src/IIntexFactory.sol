@@ -22,9 +22,9 @@ interface IIntexFactory {
     function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes calldata payNoteProof) external;
 
     /// @notice What settling `amount` units of `seriesId` with `paymentToken` costs,
-    ///         and which of the series' two currencies that token settles on. The
-    ///         whole operation is priced at full precision and floored once, exactly
-    ///         as `settle` charges it. Reverts for a token the series does not accept.
+    ///         and which of the series' two currencies that token settles on. Priced
+    ///         exactly as `settle` charges it. Reverts for a token the series does
+    ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
     /// @return payableUnits Amount to pay, in `paymentToken`'s own minor units.
     function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount)

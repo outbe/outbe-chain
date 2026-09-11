@@ -285,10 +285,9 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-/// Cost of `amount` units in payment-token minor units: the whole operation's
-/// obligation at full precision, the FX leg included, floored once (C34).
-/// `rate` is `(COEN/target, COEN/reference)` when the token is not in the
-/// reference currency.
+/// Cost of `amount` units in payment-token minor units, floored once over the
+/// whole operation. `rate` is `(COEN/target, COEN/reference)` when the token is
+/// not in the reference currency.
 pub(crate) fn settlement_units(
     product: U256,
     amount: U256,

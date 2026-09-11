@@ -46,9 +46,8 @@ interface INod {
         uint256 floorPriceMinor;
         uint256 gratisLoadMinor;
         uint256 costOfGratisMinor;
-        /// The Nod's cost in its reference currency at six decimals. `mineGratis`
-        /// charges this amount re-expressed in the settlement asset's own decimals,
-        /// so a note must carry it scaled, not verbatim.
+        /// The Nod's cost in its reference currency at six decimals; `mineGratis`
+        /// charges it re-expressed in the settlement asset's own decimals.
         uint256 costAmountMinor;
         bool isQualified;
         uint16 issuanceCurrency;

@@ -1,6 +1,6 @@
 //! Rounding rule shared by Nod, Intex and Gem settlement: the obligation is
 //! computed at full precision, any FX leg included, then floored once into the
-//! settlement asset's minor units. Dust from the floor stays with the payer.
+//! settlement asset's minor units.
 
 use alloy_primitives::U256;
 use core::fmt;
@@ -8,7 +8,7 @@ use core::fmt;
 /// Widest asset the factories settle in.
 pub const MAX_ASSET_DECIMALS: u8 = 18;
 
-/// Ways the floor can refuse. Factories map these onto their own error enums.
+/// Ways the floor can refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoundingError {
     UnsupportedDecimals(u8),
@@ -33,9 +33,8 @@ impl fmt::Display for RoundingError {
 
 /// `floor(numerator x 10^asset_decimals / (denominator x 10^obligation_decimals))`.
 ///
-/// `numerator / denominator` is the obligation in the settlement currency carrying
-/// `obligation_decimals`; a rate leg belongs in that fraction so it is floored
-/// together with the unit scaling rather than on its own.
+/// `numerator / denominator` is the obligation carrying `obligation_decimals`; a
+/// rate leg belongs in that fraction so it is floored with the unit scaling.
 pub fn floor_to_asset_units(
     numerator: U256,
     denominator: U256,

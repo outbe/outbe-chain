@@ -519,9 +519,8 @@ const NOTE_ASSET: Address = Address::new([0x71; 20]);
 
 #[test]
 fn a_cost_that_does_not_divide_evenly_is_floored_and_the_note_matches_it() {
-    // entry 0.500001 x load 0.001 = 500.001 six-decimal units: the chain charges
-    // 500, the same figure `costAmountMinor` advertises. Rounding the obligation
-    // up would demand 501 and refuse the owner's note.
+    // 500.001 six-decimal units: the chain charges 500, the figure
+    // `costAmountMinor` advertises. Rounding up would demand 501.
     let mut world = World::new();
     let input = NodIssueParams {
         entry_price_minor: U256::from(500_001u64),

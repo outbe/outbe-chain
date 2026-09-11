@@ -87,11 +87,8 @@ pub fn next_date_key(date_key: u32) -> u32 {
     timestamp_to_date_key(ts)
 }
 
-/// First UTC day a right issued at `issued_at` gets in full.
-///
-/// Issuance exactly at midnight UTC leaves the whole day ahead, so that day
-/// counts; issuance any later gets only part of it, and counting starts on the
-/// next one.
+/// First UTC day a right issued at `issued_at` gets in full: its own day when
+/// issued exactly at midnight, the next one otherwise.
 pub fn first_full_day(issued_at: u64) -> u32 {
     let day = timestamp_to_date_key(issued_at);
     if issued_at % SECONDS_PER_DAY == 0 {

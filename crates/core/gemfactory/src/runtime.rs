@@ -384,9 +384,8 @@ fn accept_payment_asset(
     Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
-/// Cost of one gem in `asset`'s minor units. The obligation is `entry x load x rate`
-/// at full precision; the issuance rail folds the COEN cross rate into the same
-/// fraction, so the whole thing is floored once into the asset's units (C34).
+/// Cost of one gem in `asset`'s minor units. The issuance rail folds the COEN
+/// cross rate into the same fraction, so the whole thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -432,9 +431,8 @@ pub(crate) fn settlement_units(
         .map_err(|e| GemFactoryError::from(e).into())
 }
 
-/// The gem's cost in its reference currency, six decimals: the formula the
-/// issuance guard applies, off a stored record. Settlement no longer floors
-/// here - it carries full precision through to the asset's own units.
+/// The gem's cost in its reference currency at six decimals: the formula the
+/// issuance guard applies. Settlement does not floor here.
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
     compute_cost(

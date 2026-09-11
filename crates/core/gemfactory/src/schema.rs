@@ -127,8 +127,8 @@ impl GemFactoryContract<'_> {
     }
 
     /// `position_id = keccak256("gemposition" || merchant || source_intex_id_be || block_number_be)`.
-    /// A series is held by many auction winners and any of them may park it, so the
-    /// merchant is what tells two positions on the same series in one block apart.
+    /// A series is held by many winners and any may park it, so the merchant is
+    /// what tells two positions on the same series in one block apart.
     pub fn generate_position_id(
         merchant: Address,
         source_intex_id: SeriesId,

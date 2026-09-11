@@ -10,8 +10,8 @@ interface INodFactory {
         uint256 floorPriceMinor,
         uint256 gratisLoadMinor,
         uint256 entryPriceMinor,
-        /// @notice Reference-currency cost at six decimals; the payment is this
-        ///         scaled to the settlement asset's decimals.
+        /// @notice Reference-currency cost at six decimals; the payment scales it
+        ///         to the settlement asset's decimals.
         uint256 costAmountMinor
     );
 

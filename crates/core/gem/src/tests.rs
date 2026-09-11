@@ -1001,8 +1001,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
     provider.set_timestamp(U256::from(T_NOW));
     let pinned_day = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = qualified_gem(&storage);
-        // A price no bin can hold: the window is unusable, but the chain may not
-        // fall over for it - a begin-block error would fail the whole block.
+        // A price no bin can hold; a begin-block error would fail the whole block.
         let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
