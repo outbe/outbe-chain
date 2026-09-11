@@ -1,5 +1,5 @@
-mod admission;
 pub(crate) mod actor;
+mod admission;
 pub(crate) mod ingress;
 
 pub(crate) use actor::{Actor, Config};

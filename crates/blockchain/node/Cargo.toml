@@ -54,7 +54,6 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-sol-types.workspace = true
-either.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

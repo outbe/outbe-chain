@@ -109,7 +109,8 @@ impl CredisContract<'_> {
     }
 
     /// Interest accrued on the outstanding principal since the accrual anchor:
-    /// simple, non-compounding, ACT/365 over **whole** elapsed UTC days rounded up.
+    /// simple, non-compounding, ACT/365 over whole elapsed days, floored in the
+    /// user's favor to the asset's minor unit (C34).
     pub fn accrued_interest(position: &Position, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(position, now);
         if days == 0 || position.outstanding.is_zero() || position.policy_rate.is_zero() {
@@ -125,7 +126,7 @@ impl CredisContract<'_> {
         let denominator = U256::from(DAYS_PER_YEAR)
             .checked_mul(SCALE_1E6_U256)
             .ok_or(CredisError::ArithmeticOverflow)?;
-        Ok(numerator.div_ceil(denominator))
+        Ok(numerator / denominator)
     }
 
     /// Opens a position and returns its derived
@@ -217,9 +218,8 @@ impl CredisContract<'_> {
     /// - a payment below the accrued interest is rejected outright;
     /// - only what the position needs is consumed, so an over-payment is not
     ///   over-pulled - the caller charges `Settlement::total_paid`;
-    /// - collateral release is principal-proportional and floored, except on the
-    ///   final settlement, which releases exactly what is left so no dust
-    ///   remains locked.
+    /// - collateral release is principal-proportional, rounded up and capped by
+    ///   the locked remainder; final settlement releases exactly what is left.
     pub fn settle(&mut self, position_id: U256, amount: U256, now: u64) -> Result<Settlement> {
         let mut position = self.load_position(position_id)?;
         let state_before = position.lifecycle_state()?;
@@ -237,9 +237,8 @@ impl CredisContract<'_> {
         }
         let principal_paid = (amount - interest).min(position.outstanding);
 
-        // Floor division favors the protocol on every partial; the final
-        // settlement short-circuits to the exact remainder so the sum of
-        // releases closes on `collateral` with nothing stranded.
+        // C34 favors the user on each partial. Repeated ceilings can exhaust
+        // collateral before principal, so cap every return at the remainder.
         let gratis_released = if principal_paid == position.outstanding {
             position.collateral_locked
         } else {
@@ -247,7 +246,8 @@ impl CredisContract<'_> {
                 .collateral
                 .checked_mul(principal_paid)
                 .ok_or(CredisError::ArithmeticOverflow)?
-                / position.principal
+                .div_ceil(position.principal)
+                .min(position.collateral_locked)
         };
 
         position.outstanding = position
@@ -312,9 +312,8 @@ impl CredisContract<'_> {
     /// lapsed. Only the unpaid share is written off: every settlement already
     /// released its proportional share, so whatever the owner settled they have
     /// already reclaimed. The invariant that holds exactly is
-    /// `sum released + collateral_locked == G`; because each partial release is
-    /// floored, `collateral_locked >= floor(G x P_out / P)`, with the drift
-    /// always toward the protocol.
+    /// `sum released + collateral_locked == G`. Rounded-up partial returns may
+    /// leave zero collateral even while principal remains outstanding.
     ///
     /// Returns what the caller must burn and credit; the position itself is
     /// closed here.
