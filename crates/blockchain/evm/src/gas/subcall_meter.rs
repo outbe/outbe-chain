@@ -63,7 +63,7 @@ impl SubcallGasMeter {
     ///
     /// Mirrors revm Gas::state_gas_spent.
     #[inline]
-    pub const fn state_gas_spent(&self) -> u64 {
+    pub const fn state_gas_spent(&self) -> i64 {
         self.inner.state_gas_spent()
     }
 
@@ -110,7 +110,7 @@ impl SubcallGasMeter {
     ///
     /// Mirrors revm Gas::set_state_gas_spent.
     #[inline]
-    pub fn set_state_gas_spent(&mut self, val: u64) {
+    pub fn set_state_gas_spent(&mut self, val: i64) {
         self.inner.set_state_gas_spent(val)
     }
 

@@ -175,6 +175,7 @@ pub fn dispatch(
                         &storage,
                         SeriesId::from(c.seriesId),
                         c.paymentToken,
+                        c.amount,
                     )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,

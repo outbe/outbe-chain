@@ -27,14 +27,14 @@ use commonware_cryptography::{
         },
         PrivateKey, PublicKey,
     },
-    certificate::{Scheme as _, Signers},
+    certificate::{Scheme as _, Signers, Verifier as _},
     sha256::Digest as Sha256Digest,
     Signer,
 };
 use commonware_parallel::Sequential;
 use commonware_utils::{
     ordered::{Quorum, Set},
-    N3f1, Participant,
+    Participant,
 };
 use outbe_consensus::bls::bootstrap_dkg_for_participants;
 use outbe_consensus::hybrid::{HybridScheme, VrfMaterialProvider};
@@ -48,9 +48,8 @@ use outbe_consensus::proof::{
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
-use rand_core::OsRng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 // -- Shared fixture --------------------------------------------------------
 
@@ -154,10 +153,11 @@ fn build_cert(
     proof_kind: ParentParticipationProof,
 ) -> HybridCertificate<MinSig> {
     let participants = dkg.keys.len();
-    let signers = Signers::from(
-        participants,
+    let signers = Signers::new(
+        participants as u32,
         signer_indices.iter().copied().map(Participant::new),
-    );
+    )
+    .unwrap();
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
     // vote namespaces bind the ordered committee; build the canonical `Set`
@@ -172,8 +172,9 @@ fn build_cert(
         .iter()
         .map(|&i| dkg.keys[i as usize].sign(&namespace, &vote_message))
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
@@ -296,16 +297,19 @@ fn assembled_finalization_passes_hybrid_and_phase1_verification() {
         proposal: &proposal,
     };
     let certificate = verifier
-        .assemble::<_, N3f1>(
-            signers
-                .iter()
-                .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(
+                signers
+                    .iter()
+                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+            )
+            .unwrap(),
             &Sequential,
         )
         .expect("verified local attestations assemble");
 
-    assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
-        &mut OsRng,
+    assert!(verifier.verify_certificate::<_, Sha256Digest>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
         subject,
         &certificate,
         &Sequential,
@@ -361,15 +365,16 @@ fn wrong_bls_domain_rejects() {
     let sigs: Vec<_> = (0..4)
         .map(|i| dkg.keys[i].sign(b"WRONG_NAMESPACE", &vote_message))
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
         &hybrid_seed_namespace(),
         &seed_message,
     );
     let cert: HybridCertificate<MinSig> = HybridCertificate {
-        signers: Signers::from(4, (0..4).map(Participant::new)),
+        signers: Signers::new(4, (0..4).map(Participant::new)).unwrap(),
         bls_aggregated_vote,
         vrf_proof: VrfProof::<MinSig> {
             material_version: VRF_MATERIAL_VERSION,

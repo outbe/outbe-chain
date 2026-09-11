@@ -45,6 +45,7 @@ outbe-validatorset.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk-canonical.workspace = true
 rand.workspace = true
+rand-commonware.workspace = true
 revm.workspace = true
 serde.workspace = true
 serde_json.workspace = true

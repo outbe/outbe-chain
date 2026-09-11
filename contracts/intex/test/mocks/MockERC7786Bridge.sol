@@ -35,6 +35,9 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
 
     uint256 private _nonce;
 
+    /// @dev Stands in for the hub's `_executed` set, see {_chargeHubDedup}.
+    mapping(bytes32 receiveId => bool executed) private _hubExecuted;
+
     error DeliveryReturnedInvalidValue(bytes4 got);
 
     function setFee(uint256 fee_) external {
@@ -119,7 +122,18 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
         // Mirror the hub's receiveId (binds source + payload) so recipients that key per-message work off it (e.g. the
         // NFT bridge clients' failed-mint parking) see a stable, unique id; a `deliverLast` replay reuses the same id.
         bytes32 receiveId = keccak256(abi.encode(sender, payload));
+        _chargeHubDedup(receiveId);
         bytes4 result = IERC7786Recipient(target).receiveMessage(receiveId, sender, payload);
         if (result != IERC7786Recipient.receiveMessage.selector) revert DeliveryReturnedInvalidValue(result);
+    }
+
+    /// @dev The hub marks every delivery in its `_executed` set before handing the message to the recipient, so a
+    ///      measurement taken through this stand-in has to carry that cold read and cold write or it understates
+    ///      every inbound message. Unlike the hub this does not reject a repeat: a real wrapped payload carries the
+    ///      sending hub's nonce, so production ids are unique and replay protection is the client's business -
+    ///      which is what the idempotency suites exercise through {deliverLast}.
+    function _chargeHubDedup(bytes32 receiveId) private {
+        if (_hubExecuted[receiveId]) return;
+        _hubExecuted[receiveId] = true;
     }
 }

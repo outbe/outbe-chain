@@ -62,7 +62,7 @@ impl CwDigest for Digest {
 }
 
 impl commonware_math::algebra::Random for Digest {
-    fn random(mut rng: impl rand_core::CryptoRngCore) -> Self {
+    fn random(mut rng: impl rand_core_commonware::CryptoRng) -> Self {
         let mut array = B256::ZERO;
         rng.fill_bytes(&mut *array);
         Self(array)

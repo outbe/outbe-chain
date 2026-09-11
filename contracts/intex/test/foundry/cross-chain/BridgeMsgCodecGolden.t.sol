@@ -245,6 +245,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
         p.seriesId = "20260212-TRY-U";
         p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
+        p.issuedAt = 0x66778899;
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
@@ -264,6 +265,7 @@ contract BridgeMsgCodecGoldenTest is Test {
 
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
+        assertEq(d.issuedAt, 0x66778899, "issuedAt");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");

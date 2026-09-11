@@ -10,7 +10,7 @@ use commonware_consensus::{
 };
 use commonware_cryptography::{
     bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
+    certificate::{Scheme as _, Verifier as _},
     Signer as _,
 };
 use commonware_p2p::Recipients;
@@ -24,7 +24,7 @@ use commonware_utils::{
     channel::oneshot,
     ordered::{Quorum, Set},
     vec::NonEmptyVec,
-    N3f1, TryCollect as _,
+    TryCollect as _,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
@@ -152,8 +152,8 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
 
 #[derive(Clone, Default)]
 struct EmptyMarshalBuffer {
-    pending_digest_subscribers: Arc<StdMutex<Vec<oneshot::Sender<ConsensusBlock>>>>,
-    pending_commitment_subscribers: Arc<StdMutex<Vec<oneshot::Sender<ConsensusBlock>>>>,
+    pending_digest_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
+    pending_commitment_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
 }
 
 impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
@@ -161,11 +161,11 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     // `V::Block`) and added `type PublicKey`.
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<ConsensusBlock> {
+    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<ConsensusBlock> {
+    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
@@ -173,7 +173,10 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     // We retain the pending sender (so the receiver never resolves) and hand
     // back `Some(rx)`, preserving the "block is never available" semantics this
     // empty buffer represents.
-    fn subscribe_by_digest(&self, _digest: Digest) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    fn subscribe_by_digest(
+        &self,
+        _digest: Digest,
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_digest_subscribers
             .lock()
@@ -185,7 +188,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     fn subscribe_by_commitment(
         &self,
         _commitment: Digest,
-    ) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_commitment_subscribers
             .lock()
@@ -194,13 +197,13 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
         Some(rx)
     }
 
-    // `finalized` is now SYNC; `proposed` was removed and replaced by `send`.
-    fn finalized(&self, _commitment: Digest) {}
+    // Retiring unavailable data is a no-op for this empty test buffer.
+    fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
 
     fn send(
         &self,
         _round: Round,
-        _block: ConsensusBlock,
+        _block: Arc<ConsensusBlock>,
         _recipients: Recipients<Self::PublicKey>,
     ) {
     }
@@ -208,8 +211,8 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 
 /// Marshal buffer that records every `send` (the wire-broadcast hook).
 ///
-/// commonware 2026.5.0 routes `marshal.forward(round, commitment, recipients)`
-/// to `buffer.send(round, block, recipients)`, whereas `marshal.proposed(..)`
+/// commonware 2026.9.0 routes `marshal.forward(round, commitment, recipients)`
+/// to `buffer.send(round, block, recipients)`, whereas `marshal.verified(..)`
 /// only caches locally. Recording `send` lets a test prove the broadcast
 /// actually fired (BUG-A: the proposer kept the block only in its local cache).
 #[derive(Clone, Default)]
@@ -221,15 +224,18 @@ struct RecordingMarshalBuffer {
 impl Buffer<crate::marshal_types::Variant> for RecordingMarshalBuffer {
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<ConsensusBlock> {
+    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<ConsensusBlock> {
+    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
         None
     }
 
-    fn subscribe_by_digest(&self, _digest: Digest) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    fn subscribe_by_digest(
+        &self,
+        _digest: Digest,
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (_tx, rx) = oneshot::channel();
         Some(rx)
     }
@@ -237,14 +243,19 @@ impl Buffer<crate::marshal_types::Variant> for RecordingMarshalBuffer {
     fn subscribe_by_commitment(
         &self,
         _commitment: Digest,
-    ) -> Option<oneshot::Receiver<ConsensusBlock>> {
+    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
         let (_tx, rx) = oneshot::channel();
         Some(rx)
     }
 
-    fn finalized(&self, _commitment: Digest) {}
+    fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
 
-    fn send(&self, round: Round, block: ConsensusBlock, recipients: Recipients<Self::PublicKey>) {
+    fn send(
+        &self,
+        round: Round,
+        block: Arc<ConsensusBlock>,
+        recipients: Recipients<Self::PublicKey>,
+    ) {
         self.sends
             .lock()
             .expect("recording buffer sends mutex must not be poisoned")
@@ -425,7 +436,7 @@ where
             partition_prefix,
             // `mailbox_size` is now `NonZeroUsize`.
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
-            view_retention_timeout: ViewDelta::new(10_000),
+            view_retention: ViewDelta::new(10_000),
             prunable_items_per_section: items_per_section,
             page_cache,
             replay_buffer,
@@ -765,7 +776,7 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
             let round = Round::new(Epoch::new(0), View::new(1));
             let block = consensus_block_with_number(0xAB, 7);
             let digest = block.digest();
-            let _durable = marshal_mailbox.proposed(round, block).await;
+            let _durable = marshal_mailbox.verified(round, block).await;
 
             // Relay::broadcast must forward DIRECTLY to marshal (no app-mailbox hop).
             let (mut app, _app_rx) =
@@ -842,7 +853,7 @@ fn forward_without_prior_proposed_is_safe_noop() {
 
             // proposed() THEN forward() -> a send is recorded (marshal alive; no-op above
             // was the no-prior-proposed fallback, not a dead actor).
-            let _durable = marshal_mailbox.proposed(round, block).await;
+            let _durable = marshal_mailbox.verified(round, block).await;
             let _ = app.broadcast(
                 digest,
                 commonware_consensus::simplex::Plan::Propose { round },
@@ -937,7 +948,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             let parent_block = consensus_block_with_number(0x42, 120);
             let parent_digest = parent_block.digest();
             let _ = marshal_mailbox
-                .proposed(finalized_round, parent_block.clone())
+                .verified(finalized_round, parent_block.clone())
                 .await;
 
             {
@@ -1010,7 +1021,7 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
             let parent_digest = parent_block.digest();
 
             // FinalizationView has the anchor hash, but we deliberately do NOT
-            // `marshal.proposed(parent_block)` - the marshal store lags behind
+            // `marshal.verified(parent_block)` - the marshal store lags behind
             // FinalizationView (the epoch-boundary first-slot race).
             {
                 let mut view = shared.finalization_view.write();
@@ -1236,10 +1247,13 @@ fn finalization_metadata_from_context(
         .map(|signer| Finalize::sign(signer, proposal.clone()).expect("finalize vote"))
         .collect::<Vec<_>>();
     let certificate = verifier
-        .assemble::<_, N3f1>(
-            finalizes
-                .iter()
-                .map(|finalize| finalize.attestation.clone()),
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(
+                finalizes
+                    .iter()
+                    .map(|finalize| finalize.attestation.clone()),
+            )
+            .unwrap(),
             &Sequential,
         )
         .expect("finalization certificate should assemble");
@@ -1303,7 +1317,7 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
             )
             .await;
 
-            let _ = marshal_mailbox.proposed(round, block).await;
+            let _ = marshal_mailbox.verified(round, block).await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(finalization));
@@ -1373,7 +1387,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
             // and report its finalization, so `get_finalization(height)` returns it
             // - the post-restart state where the in-process selection store is
             // empty but marshal still holds the parent.
-            let _ = marshal_mailbox.proposed(round, block.clone()).await;
+            let _ = marshal_mailbox.verified(round, block.clone()).await;
             let mut reporter = marshal_mailbox.clone();
             let _ = reporter.report(Activity::Finalization(finalization));
             let info = wait_for_marshal_info(&clock, &marshal_mailbox, digest).await;
@@ -1463,7 +1477,7 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
             // post-restart ApplicationShared below has a fresh empty
             // FinalizedParentCertStore via finalizer_test_shared(...).
             let _ = marshal_mailbox
-                .proposed(finalized_round, parent_block.clone())
+                .verified(finalized_round, parent_block.clone())
                 .await;
             let mut reporter = marshal_mailbox.clone();
             let _ = reporter.report(Activity::Finalization(finalization));
@@ -1572,12 +1586,12 @@ fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
             .await;
 
             let _ = marshal_mailbox
-                .proposed(previous_round, previous_block.clone())
+                .verified(previous_round, previous_block.clone())
                 .await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.proposed(current_round, current_block).await;
+            let _ = marshal_mailbox.verified(current_round, current_block).await;
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(current_finalization));
 
@@ -1671,12 +1685,12 @@ fn consensus_metadata_verify_rejects_forged_missed_proposers() {
             .await;
 
             let _ = marshal_mailbox
-                .proposed(previous_round, previous_block.clone())
+                .verified(previous_round, previous_block.clone())
                 .await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(previous_finalization));
-            let _ = marshal_mailbox.proposed(current_round, current_block).await;
+            let _ = marshal_mailbox.verified(current_round, current_block).await;
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(current_finalization));
 
@@ -1731,7 +1745,7 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
             )
             .await;
 
-            let _ = marshal_mailbox.proposed(round, block).await;
+            let _ = marshal_mailbox.verified(round, block).await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(finalization));

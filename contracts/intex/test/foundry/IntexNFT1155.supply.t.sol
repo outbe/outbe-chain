@@ -46,6 +46,32 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
+    function test_CreateSeries_RejectsAnIssuedAtItCannotHonour() public {
+        vm.warp(1_700_000_000);
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
+
+        params.issuedAt = 0;
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidIssuedAt.selector, uint32(0)));
+        nft.createSeries(params);
+
+        params.issuedAt = uint32(block.timestamp) + 1;
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.InvalidIssuedAt.selector, params.issuedAt));
+        nft.createSeries(params);
+    }
+
+    function test_CreateSeries_KeepsTheOriginsIssuedAt() public {
+        vm.warp(1_700_000_000);
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
+        params.issuedAt = uint32(block.timestamp) - 3600;
+
+        vm.prank(bridger);
+        nft.createSeries(params);
+
+        assertEq(nft.readData(SERIES_ID).issuedAt, params.issuedAt);
+    }
+
     function test_Issue_AtCap_Succeeds() public {
         uint32 cap = 100;
         _createSeries(cap);

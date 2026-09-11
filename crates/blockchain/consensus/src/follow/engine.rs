@@ -31,7 +31,7 @@ use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
 use commonware_storage::archive::Identifier;
 use eyre::{ensure, eyre, Result};
 use futures::FutureExt as _;
-use rand::{CryptoRng, RngCore};
+use rand_commonware::{CryptoRng, Rng as RngCore};
 use tracing::info;
 
 use crate::digest::Digest;
@@ -275,9 +275,9 @@ pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
     anchor_epoch: Epoch,
     lower: Height,
     upper: Height,
-    certificates: &mut FC,
-    blocks: &mut FB,
-) -> Result<Epoch>
+    mut certificates: FC,
+    mut blocks: FB,
+) -> Result<(Epoch, FC, FB)>
 where
     F: FinalizedSource,
     FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
@@ -291,7 +291,7 @@ where
     );
 
     let lower_epoch = prepare_committee_chain(chain, source, epocher, anchor_epoch, lower).await?;
-    recover_pending_successor_before_lower(chain, source, epocher, lower_epoch, lower, blocks)
+    recover_pending_successor_before_lower(chain, source, epocher, lower_epoch, lower, &blocks)
         .await?;
 
     let mut wrote_certificates = false;
@@ -338,7 +338,7 @@ where
                     })?;
             }
             None => {
-                certificates
+                certificates = certificates
                     .put(height, digest, certified.finalization.clone())
                     .await
                     .map_err(|error| {
@@ -366,7 +366,7 @@ where
                 height.get()
             ),
             None => {
-                blocks.put(certified.block).await.map_err(|error| {
+                blocks = blocks.put(certified.block).await.map_err(|error| {
                     eyre!(
                         "failed to repair follower replay block at height {}: {error}",
                         height.get()
@@ -378,22 +378,26 @@ where
     }
 
     if wrote_certificates {
-        certificates.sync().await.map_err(|error| {
+        certificates = certificates.sync().await.map_err(|error| {
             eyre!("failed to sync repaired follower replay finalizations: {error}")
         })?;
     }
     if wrote_blocks {
-        blocks
+        blocks = blocks
             .sync()
             .await
             .map_err(|error| eyre!("failed to sync repaired follower replay blocks: {error}"))?;
     }
 
-    Ok(chain
-        .lock()
-        .expect("committee chain mutex poisoned")
-        .highest_registered()
-        .unwrap_or(anchor_epoch))
+    Ok((
+        chain
+            .lock()
+            .expect("committee chain mutex poisoned")
+            .highest_registered()
+            .unwrap_or(anchor_epoch),
+        certificates,
+        blocks,
+    ))
 }
 
 async fn recover_pending_successor_before_lower<F, FB>(

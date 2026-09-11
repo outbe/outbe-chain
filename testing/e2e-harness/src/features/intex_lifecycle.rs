@@ -364,15 +364,15 @@ fn settle_part(world: &mut World) {
 
         // A price the series refuses would fail here rather than inside `settle`,
         // where the revert reads as a balance problem instead of a currency one.
-        let cost = test_issuance::quote_cost(&url, series, currency.asset)
+        let units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
+        let cost = test_issuance::quote_cost(&url, series, currency.asset, units)
             .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
         assert_eq!(
             cost,
-            expected_settlement_cost(),
+            expected_settlement_cost() * U256::from(units),
             "series {series} settlement quote differs from fixture entry price and load"
         );
 
-        let units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
         let proof = settlement_note(
             world,
             holder,
@@ -429,9 +429,9 @@ fn payment_in_vault(world: &mut World) {
 fn expected_settlement_cost() -> U256 {
     // Entry price and load each use six decimals; the fixture pays in its
     // six-decimal reference USD asset, so no cross-currency conversion applies.
-    let product = U256::from(ENTRY_PRICE_MINOR) * U256::from(PROMIS_LOAD_MINOR);
-    let scale = U256::from(1_000_000);
-    (product + scale - U256::from(1)) / scale
+    // The product divides exactly, so the per-unit cost times the units settled
+    // is what the chain's single floor over the whole operation charges.
+    U256::from(ENTRY_PRICE_MINOR) * U256::from(PROMIS_LOAD_MINOR) / U256::from(1_000_000)
 }
 
 fn lifecycle_checkpoint(world: &World) -> FinalizedCheckpoint {
@@ -691,11 +691,11 @@ fn settle_remainder(world: &mut World) {
             "series {series} remaining issued units differ from fixture"
         );
         let units = u32::try_from(issued).expect("issued units fit a uint32");
-        let cost = test_issuance::quote_cost(&url, series, currency.asset)
+        let cost = test_issuance::quote_cost(&url, series, currency.asset, units)
             .unwrap_or_else(|| panic!("series {series} does not accept the settlement token"));
         assert_eq!(
             cost,
-            expected_settlement_cost(),
+            expected_settlement_cost() * U256::from(units),
             "Called series {series} settlement quote differs from fixture"
         );
         let proof = settlement_note(

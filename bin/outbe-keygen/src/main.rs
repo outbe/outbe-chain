@@ -244,7 +244,9 @@ fn cmd_generate(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
 
-    let key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let pk = key.public_key();
     let pk_bytes = pk.encode();
     let pubkey_hash = keccak256(&pk_bytes);
@@ -449,7 +451,9 @@ fn generate_validator_bundle(
     }
 
     // 1. BLS12-381 MinPk consensus key.
-    let bls_key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let bls_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let bls_pk_bytes = bls_key.public_key().encode();
     let bls_public_key: [u8; 48] = bls_pk_bytes
         .as_ref()
@@ -646,7 +650,9 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
 
     // 1. Generate BLS12-381 keypair.
-    let bls_key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let bls_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let bls_pk = bls_key.public_key();
     let bls_pk_bytes = bls_pk.encode();
     let bls_pubkey_hash = keccak256(&bls_pk_bytes);

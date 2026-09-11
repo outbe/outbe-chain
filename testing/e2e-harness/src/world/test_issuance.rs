@@ -65,7 +65,7 @@ sol! {
 
     interface IIntexSettlement {
         function settle(bytes14 seriesId, address intexHolder, uint256 amount, bytes payNoteProof) external;
-        function quoteSettlement(bytes14 seriesId, address paymentToken) external view returns (uint16 settlementCurrency, uint256 payableUnits);
+        function quoteSettlement(bytes14 seriesId, address paymentToken, uint256 amount) external view returns (uint16 settlementCurrency, uint256 payableUnits);
     }
 
     struct ReferenceCurrencyPrice {
@@ -230,15 +230,22 @@ pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -
     Ok(())
 }
 
-/// What one unit of `series` costs in `payment_token`'s minor units. Reverts on a
-/// token the series does not accept, which is the check worth failing loudly.
-pub fn quote_cost(url: &str, series: FixedBytes<14>, payment_token: Address) -> Option<U256> {
+/// What settling `units` of `series` costs in `payment_token`'s minor units.
+/// Reverts on a token the series does not accept, which is the check worth
+/// failing loudly.
+pub fn quote_cost(
+    url: &str,
+    series: FixedBytes<14>,
+    payment_token: Address,
+    units: u32,
+) -> Option<U256> {
     eth::read_call(
         url,
         INTEX_FACTORY,
         &IIntexSettlement::quoteSettlementCall {
             seriesId: series,
             paymentToken: payment_token,
+            amount: U256::from(units),
         },
     )
     .map(|quote| quote.payableUnits)

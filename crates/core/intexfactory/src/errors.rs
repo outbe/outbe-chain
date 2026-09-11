@@ -1,6 +1,7 @@
 //! Module-local error types. Other errors come from
 //! `outbe_primitives::error::PrecompileError`.
 
+use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -25,8 +26,8 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("payment token has unsupported decimals {0}")]
-    UnsupportedPaymentDecimals(u8),
+    #[error("{0}")]
+    Rounding(RoundingError),
     #[error("payment token {0} has no registered vault")]
     PaymentTokenNotRegistered(alloy_primitives::Address),
     #[error("payment token currency {0} does not match the series")]
@@ -88,5 +89,11 @@ impl From<outbe_common::pow::PowError> for IntexFactoryError {
 impl From<IntexFactoryError> for PrecompileError {
     fn from(err: IntexFactoryError) -> Self {
         PrecompileError::Revert(err.to_string())
+    }
+}
+
+impl From<RoundingError> for IntexFactoryError {
+    fn from(err: RoundingError) -> Self {
+        Self::Rounding(err)
     }
 }

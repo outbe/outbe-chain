@@ -181,7 +181,11 @@ pub(crate) fn dkg_runtime_artifacts() -> (
     Bytes,
 ) {
     let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|a| a.public_key().encode());
 
@@ -193,6 +197,7 @@ pub(crate) fn dkg_runtime_artifacts() -> (
         7,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -204,7 +209,7 @@ pub(crate) fn dkg_runtime_artifacts() -> (
 
     for key in &keys {
         let (dealer, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             key.clone(),
             None,
@@ -228,11 +233,10 @@ pub(crate) fn dkg_runtime_artifacts() -> (
                 .iter()
                 .position(|k| &k.public_key() == player_pk)
                 .unwrap();
-            if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[player_idx]
+                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_idx]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();
@@ -258,7 +262,11 @@ pub(crate) fn dkg_runtime_artifacts() -> (
     }
     let (output, _share) = players
         .remove(0)
-        .finalize::<N3f1, Batch>(&mut rand_core::OsRng, dkg_logs, &Sequential)
+        .finalize::<N3f1, Batch>(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            dkg_logs,
+            &Sequential,
+        )
         .unwrap();
     let polynomial = output.public().clone();
 

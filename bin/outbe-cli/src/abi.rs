@@ -31,7 +31,12 @@ pub const OUTBE_SYSTEM_TX_ADDR: Address = address!("0xff000000000000000000000000
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
-sol!("../../contracts/precompiles/src/ITribute.sol");
+// Alloy 1.6 generates event constructors with the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod tribute_abi {
+    alloy_sol_types::sol!("../../contracts/precompiles/src/ITribute.sol");
+}
+pub use tribute_abi::ITribute;
 sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 sol!("../../contracts/precompiles/src/ICycle.sol");
 sol!("../../contracts/precompiles/src/INod.sol");

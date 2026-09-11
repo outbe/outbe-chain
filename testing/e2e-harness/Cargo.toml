@@ -132,6 +132,8 @@ commonware-utils.workspace = true
 blst.workspace = true
 k256 = { workspace = true, optional = true }
 rand_core.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 rustix.workspace = true
 
 # The e2e runner is a binary: the CLI defines the environment (validators, TEE

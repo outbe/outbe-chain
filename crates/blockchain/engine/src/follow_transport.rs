@@ -26,7 +26,7 @@ use alloy_primitives::B256;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_cryptography::certificate::Scheme as _;
+use commonware_cryptography::certificate::Verifier as _;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;

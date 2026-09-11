@@ -38,20 +38,19 @@ contract IntexNFT1155Bridge is
     IERC1155Bridgeable public immutable token;
 
     /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted; `exists` distinguishes
-    ///         never-failed from failed-and-retried.
+    ///         never-failed from failed-and-retried. The revert data is not kept: neither
+    ///         `retryCrosschainMint` nor `reclaimToSource` reads it, and `CrosschainMintFailed` carries
+    ///         it for whoever diagnoses the failure. Ordered so the address, chain and flag share a slot.
     struct FailedCrosschainMint {
         address to;
+        uint32 srcChainId;
+        bool exists;
         uint256 tokenId;
         uint256 amount;
-        uint32 srcChainId;
-        bytes reason;
-        bool exists;
     }
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Bridge
     struct IntexNFT1155BridgeStorage {
-        /// @dev Inbound message ids already minted (defence-in-depth; the hub also dedups).
-        mapping(bytes32 receiveId => bool) processed;
         /// @dev Per-message map of items whose `token.crosschainMint` reverted.
         mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
     }
@@ -87,10 +86,10 @@ contract IntexNFT1155Bridge is
     function failedCrosschainMints(bytes32 receiveId, uint256 idx)
         external
         view
-        returns (address to, uint256 tokenId, uint256 amount, bytes memory reason, bool exists)
+        returns (address to, uint256 tokenId, uint256 amount, bool exists)
     {
         FailedCrosschainMint storage f = _bs().failedCrosschainMints[receiveId][idx];
-        return (f.to, f.tokenId, f.amount, f.reason, f.exists);
+        return (f.to, f.tokenId, f.amount, f.exists);
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
@@ -228,10 +227,6 @@ contract IntexNFT1155Bridge is
     }
 
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
-        IntexNFT1155BridgeStorage storage $ = _bs();
-        if ($.processed[receiveId]) revert AlreadyProcessed(receiveId);
-        $.processed[receiveId] = true;
-
         if (message.length < IntexNFT1155BridgeCodec.HEADER_LEN) {
             revert IntexNFT1155BridgeCodec.InvalidPayloadLength(message.length, IntexNFT1155BridgeCodec.HEADER_LEN);
         }
@@ -289,9 +284,8 @@ contract IntexNFT1155Bridge is
         // ok
         }
         catch (bytes memory reason) {
-            _bs().failedCrosschainMints[receiveId][idx] = FailedCrosschainMint({
-                to: to, tokenId: tokenId, amount: amount, srcChainId: srcChainId, reason: reason, exists: true
-            });
+            _bs().failedCrosschainMints[receiveId][idx] =
+                FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, amount: amount});
             emit CrosschainMintFailed(srcChainId, receiveId, idx, to, tokenId, amount, reason);
         }
     }

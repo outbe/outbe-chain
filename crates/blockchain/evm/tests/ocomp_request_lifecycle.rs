@@ -95,7 +95,6 @@ use outbe_validatorset::{
     committee_snapshot_key, contract::ValidatorSet, read_committee_snapshot,
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
 };
-use rand_core::OsRng;
 use reth_basic_payload_builder::{BuildArguments, PayloadBuilder, PayloadConfig};
 use reth_chainspec::{ChainInfo, ChainSpec, ChainSpecBuilder, ChainSpecProvider};
 use reth_ethereum::{Transaction, TransactionSigned};
@@ -310,8 +309,13 @@ impl BytecodeReader for TestProvider {
 }
 
 impl HashedPostStateProvider for TestProvider {
-    fn hashed_post_state(&self, state: &revm::database::BundleState) -> HashedPostState {
-        HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state())
+    fn hashed_post_state(
+        &self,
+        state: &revm::database::BundleState,
+    ) -> ProviderResult<HashedPostState> {
+        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            state.state(),
+        ))
     }
 }
 
@@ -463,7 +467,16 @@ struct PreparedParent {
 }
 
 #[test]
-fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
+fn real_payload_builder_commits_atomic_request_expiry_without_retry() {
+    run_atomic_request_lifecycle(false);
+}
+
+#[test]
+fn real_payload_builder_commits_atomic_request_quorum_under_saturation() {
+    run_atomic_request_lifecycle(true);
+}
+
+fn run_atomic_request_lifecycle(reach_quorum: bool) {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -642,7 +655,9 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
         ce_artifact.commitment_scheme_version,
         ACTIVE_COMMITMENT_SCHEME
     );
-    let exact_post_state = provider.hashed_post_state(&executed.execution_output.state);
+    let exact_post_state = provider
+        .hashed_post_state(&executed.execution_output.state)
+        .unwrap();
     let expected_state_root = provider.state_root_for(exact_post_state.clone());
     assert_eq!(
         payload.block().header().state_root(),
@@ -932,50 +947,41 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
     );
     assert_eq!(voting_open.record.status, OcompJobStatus::VotingOpen);
 
-    let initial_deadline = voting_open
-        .record
-        .finalized
-        .as_ref()
-        .expect("initial voting-open record remains finalized")
-        .deadline_height;
-    let initial_voting =
-        ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
-    let initial_votes = (0_u8..2)
-        .map(|validator_index| {
-            let vote = initial_voting.signed_vote(validator_index);
-            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
-                .expect("canonical non-quorum vote calldata");
-            pooled_vote_transaction(Bytes::from(calldata), validator_index)
-        })
-        .collect::<Vec<_>>();
-    let no_quorum = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        voting_open.header,
-        &voting_open.storage,
-        open_height + 1,
-        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
-        requested.data.intentId,
-        initial_votes,
+    assert_ne!(requested.data.intentId, B256::ZERO);
+    assert_eq!(
+        terminal_receipt
+            .logs
+            .iter()
+            .filter(|log| {
+                log.address == METADOSIS_ADDRESS
+                    && IMetadosis::OffchainJobRequested::decode_log(log).is_ok()
+            })
+            .count(),
+        1
     );
-    assert_eq!(no_quorum.record.status, OcompJobStatus::VotingOpen);
-    assert!(no_quorum
-        .record
-        .finalized
-        .as_ref()
-        .is_some_and(|record| record.quorum.is_none()));
+    assert!(terminal_receipt
+        .logs
+        .iter()
+        .all(|log| log.address != TRIBUTE_FACTORY_ADDRESS));
 
-    let mut retry_parent = no_quorum.header;
-    let mut retry_storage = no_quorum.storage;
-    let mut initial_terminal = no_quorum.record;
-    for height in (open_height + 2)..=initial_deadline {
-        let built = build_canonical_ocomp_successor(
+    if !reach_quorum {
+        let initial_deadline = voting_open
+            .record
+            .finalized
+            .as_ref()
+            .expect("initial voting-open record remains finalized")
+            .deadline_height;
+        let initial_voting =
+            ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
+        let initial_votes = (0_u8..2)
+            .map(|validator_index| {
+                let vote = initial_voting.signed_vote(validator_index);
+                let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
+                    .expect("canonical non-quorum vote calldata");
+                pooled_vote_transaction(Bytes::from(calldata), validator_index)
+            })
+            .collect::<Vec<_>>();
+        let no_quorum = build_canonical_ocomp_successor(
             &chain_spec,
             &prepared.tree_service,
             &signer,
@@ -984,139 +990,119 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
             &dkg,
             &snapshot,
             proposer,
-            retry_parent,
-            &retry_storage,
-            height,
-            prepared.request_time + (height - REQUEST_HEIGHT),
+            voting_open.header,
+            &voting_open.storage,
+            open_height + 1,
+            prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
             requested.data.intentId,
-            Vec::new(),
+            initial_votes,
         );
-        retry_parent = built.header;
-        retry_storage = built.storage;
-        initial_terminal = built.record;
-    }
-    assert_eq!(initial_terminal.status, OcompJobStatus::Expired);
-    let initial_terminal_evidence = initial_terminal
-        .terminal
-        .as_ref()
-        .expect("deadline retains the initial terminal evidence");
-    assert_eq!(
-        initial_terminal_evidence.outcome,
-        OcompTerminalOutcome::Expired
-    );
-    assert_eq!(initial_terminal_evidence.terminal_height, initial_deadline);
-    assert!(initial_terminal_evidence.completed_binding.is_none());
+        assert_eq!(no_quorum.record.status, OcompJobStatus::VotingOpen);
+        assert!(no_quorum
+            .record
+            .finalized
+            .as_ref()
+            .is_some_and(|record| record.quorum.is_none()));
 
-    let retry_request_height = initial_deadline + 1;
-    let retry_request = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        retry_parent,
-        &retry_storage,
-        retry_request_height,
-        prepared.request_time + (retry_request_height - REQUEST_HEIGHT),
-        requested.data.intentId,
-        Vec::new(),
-    );
-    assert_eq!(retry_request.record.status, OcompJobStatus::Expired);
-    assert_eq!(retry_request.requested_intents.len(), 1);
-    let retry_intent_id = retry_request.requested_intents[0];
-    let retry_record = read_ocomp_job_record(&retry_request.storage, retry_intent_id);
-    assert_eq!(retry_record.status, OcompJobStatus::AwaitingFinality);
-    assert_eq!(retry_record.intent.pending_nonce, 1);
-    assert_eq!(retry_record.intent.attempt, 1);
-    assert_eq!(
-        retry_record
-            .intent
-            .frozen_metadosis_values
-            .request_budget_split_receipt_hash,
-        finalized_record
-            .intent
-            .frozen_metadosis_values
-            .request_budget_split_receipt_hash,
-        "retry must preserve the original request budget receipt"
-    );
-
-    let retry_finality_height = retry_request_height + 1;
-    let retry_finality = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        retry_request.header,
-        &retry_request.storage,
-        retry_finality_height,
-        prepared.request_time + (retry_finality_height - REQUEST_HEIGHT),
-        retry_intent_id,
-        Vec::new(),
-    );
-    let retry_finalized = retry_finality
-        .record
-        .finalized
-        .as_ref()
-        .expect("retry request receives canonical finality")
-        .clone();
-    let retry_open_height = retry_finalized.open_height;
-    let mut retry_voting_parent = retry_finality.header;
-    let mut retry_voting_storage = retry_finality.storage;
-    for height in (retry_finality_height + 1)..retry_open_height {
-        let built = build_canonical_ocomp_successor(
-            &chain_spec,
-            &prepared.tree_service,
-            &signer,
-            &runtime_body_readers,
-            &fork_install,
-            &dkg,
-            &snapshot,
-            proposer,
-            retry_voting_parent,
-            &retry_voting_storage,
-            height,
-            prepared.request_time + (height - REQUEST_HEIGHT),
-            retry_intent_id,
-            Vec::new(),
+        let mut expiry_parent = no_quorum.header;
+        let mut expiry_storage = no_quorum.storage;
+        let mut initial_terminal = no_quorum.record;
+        for height in (open_height + 2)..=initial_deadline {
+            let built = build_canonical_ocomp_successor(
+                &chain_spec,
+                &prepared.tree_service,
+                &signer,
+                &runtime_body_readers,
+                &fork_install,
+                &dkg,
+                &snapshot,
+                proposer,
+                expiry_parent,
+                &expiry_storage,
+                height,
+                prepared.request_time + (height - REQUEST_HEIGHT),
+                requested.data.intentId,
+                Vec::new(),
+            );
+            expiry_parent = built.header;
+            expiry_storage = built.storage;
+            initial_terminal = built.record;
+        }
+        assert_eq!(initial_terminal.status, OcompJobStatus::Expired);
+        let initial_terminal_evidence = initial_terminal
+            .terminal
+            .as_ref()
+            .expect("deadline retains the initial terminal evidence");
+        assert_eq!(
+            initial_terminal_evidence.outcome,
+            OcompTerminalOutcome::Expired
         );
-        assert_eq!(built.record.status, OcompJobStatus::AwaitingFinality);
-        retry_voting_parent = built.header;
-        retry_voting_storage = built.storage;
-    }
-    let retry_voting_open = build_canonical_ocomp_successor(
-        &chain_spec,
-        &prepared.tree_service,
-        &signer,
-        &runtime_body_readers,
-        &fork_install,
-        &dkg,
-        &snapshot,
-        proposer,
-        retry_voting_parent,
-        &retry_voting_storage,
-        retry_open_height,
-        prepared.request_time + (retry_open_height - REQUEST_HEIGHT),
-        retry_intent_id,
-        Vec::new(),
-    );
-    assert_eq!(retry_voting_open.record.status, OcompJobStatus::VotingOpen);
+        assert_eq!(initial_terminal_evidence.terminal_height, initial_deadline);
+        assert!(initial_terminal_evidence.completed_binding.is_none());
 
-    let voting =
-        ResultVotingScenario::for_intent(&retry_voting_open.record.intent, retry_finalized.job_id);
+        // Expiry is terminal. Keep executing canonical blocks and check the
+        // public projection, including the absence of a successor or Lysis output.
+        for height in (initial_deadline + 1)..=(initial_deadline + 3) {
+            let built = build_canonical_ocomp_successor(
+                &chain_spec,
+                &prepared.tree_service,
+                &signer,
+                &runtime_body_readers,
+                &fork_install,
+                &dkg,
+                &snapshot,
+                proposer,
+                expiry_parent,
+                &expiry_storage,
+                height,
+                prepared.request_time + (height - REQUEST_HEIGHT),
+                requested.data.intentId,
+                Vec::new(),
+            );
+            assert!(
+                built.requested_intents.is_empty(),
+                "expired day must not request a retry"
+            );
+            assert_eq!(
+                built.record, initial_terminal,
+                "terminal evidence must remain immutable"
+            );
+            let mut state = HashMapStorageProvider::new(CHAIN_ID);
+            state.storage = built.storage.clone();
+            StorageHandle::enter(&mut state, |storage| {
+                let projection = outbe_metadosis::api::worldwide_day(storage.clone(), prepared.wwd)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(projection.status, outbe_metadosis::WwdStatus::Failed);
+                assert_eq!(
+                    projection.membership,
+                    outbe_metadosis::WwdMembership::Closed
+                );
+                assert!(matches!(
+                    outbe_metadosis::api::get_active_lysis_generation(storage.clone(), prepared.wwd),
+                    Err(outbe_primitives::error::PrecompileError::Revert(reason))
+                        if reason == "ActiveGenerationV1 not found"
+                ));
+                assert!(matches!(
+                    outbe_metadosis::api::get_lysis_terminal_receipt(storage, requested.data.intentId),
+                    Err(outbe_primitives::error::PrecompileError::Revert(reason))
+                        if reason == "AggregateActivationReceiptV1 not found"
+                ));
+            });
+            expiry_parent = built.header;
+            expiry_storage = built.storage;
+        }
+        return;
+    }
+
+    let voting = ResultVotingScenario::for_intent(&voting_open.record.intent, finalized.job_id);
     let voting_result = voting.result().clone();
 
     let signed_votes = (0_u8..3)
         .map(|validator_index| (validator_index, voting.signed_vote(validator_index)))
         .collect::<Vec<_>>();
     let mut voting_open_state = HashMapStorageProvider::new(CHAIN_ID);
-    voting_open_state.storage = retry_voting_open.storage.clone();
+    voting_open_state.storage = voting_open.storage.clone();
     StorageHandle::enter(&mut voting_open_state, |storage| {
         for (validator_index, vote) in &signed_votes {
             let prefix = vote.prefix();
@@ -1159,11 +1145,11 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
         &dkg,
         &snapshot,
         proposer,
-        retry_voting_open.header,
-        &retry_voting_open.storage,
-        retry_open_height + 1,
-        prepared.request_time + (retry_open_height + 1 - REQUEST_HEIGHT),
-        retry_intent_id,
+        voting_open.header,
+        &voting_open.storage,
+        open_height + 1,
+        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
+        requested.data.intentId,
         saturated_transactions,
     );
     assert!(
@@ -1198,7 +1184,7 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
     assert_eq!(
         q_forming.record.status,
         OcompJobStatus::Completed,
-        "retry quorum must complete: initial_deadline={initial_deadline}, retry_request_height={retry_request_height}, retry_open_height={retry_open_height}, record={:?}",
+        "quorum must complete before expiry: open_height={open_height}, record={:?}",
         q_forming.record
     );
     let completed = q_forming
@@ -1241,8 +1227,11 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
         assert_eq!(accountability.quorum.as_ref(), Some(&quorum));
 
         let terminal_receipt = AggregateActivationReceiptV1::decode_canonical(
-            &outbe_metadosis::api::get_lysis_terminal_receipt(storage.clone(), retry_intent_id)
-                .expect("public q-forming terminal receipt"),
+            &outbe_metadosis::api::get_lysis_terminal_receipt(
+                storage.clone(),
+                requested.data.intentId,
+            )
+            .expect("public q-forming terminal receipt"),
             &poc_schema_limits(),
         )
         .unwrap();
@@ -1265,23 +1254,6 @@ fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
             outbe_metadosis::WwdMembership::Closed
         );
     });
-
-    assert_ne!(requested.data.intentId, B256::ZERO);
-    assert_eq!(
-        terminal_receipt
-            .logs
-            .iter()
-            .filter(|log| {
-                log.address == METADOSIS_ADDRESS
-                    && IMetadosis::OffchainJobRequested::decode_log(log).is_ok()
-            })
-            .count(),
-        1
-    );
-    assert!(terminal_receipt
-        .logs
-        .iter()
-        .all(|log| log.address != TRIBUTE_FACTORY_ADDRESS));
 }
 
 struct CanonicalOcompSuccessor {
@@ -1293,20 +1265,6 @@ struct CanonicalOcompSuccessor {
     user_transaction_hashes: Vec<B256>,
     user_receipt_successes: Vec<bool>,
     user_receipt_cumulative_gas: Vec<u64>,
-}
-
-fn read_ocomp_job_record(
-    storage: &HashMap<(Address, U256), U256>,
-    intent_id: B256,
-) -> OcompJobRecordV1 {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.storage = storage.clone();
-    StorageHandle::enter(&mut provider, |storage| {
-        let encoded = outbe_metadosis::api::get_offchain_job(storage, intent_id)
-            .expect("canonical public OCOMP job query");
-        OcompJobRecordV1::decode_canonical(&encoded, &poc_schema_limits())
-            .expect("canonical public OCOMP job decodes")
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1466,7 +1424,9 @@ fn build_canonical_ocomp_successor(
         historical_replay, *executed.execution_output,
         "proposer/historical replay must agree at OCOMP model height {height}"
     );
-    let exact_post_state = provider.hashed_post_state(&executed.execution_output.state);
+    let exact_post_state = provider
+        .hashed_post_state(&executed.execution_output.state)
+        .unwrap();
     assert_eq!(
         payload.block().header().state_root(),
         provider.state_root_for(exact_post_state),
@@ -2027,7 +1987,7 @@ fn build_dkg() -> Dkg {
         .cloned()
         .map(PublicKey::from)
         .collect::<Vec<_>>();
-    let mut rng = OsRng;
+    let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
     Dkg {
         keys,
@@ -2082,12 +2042,16 @@ fn finalized_parent_metadata(
         .map(|key| key.sign(&namespace, &vote_message))
         .collect::<Vec<_>>();
     let certificate = HybridCertificate::<MinSig> {
-        signers: Signers::from(
-            dkg.keys.len(),
+        signers: Signers::new(
+            dkg.keys.len() as u32,
             (0..u32::try_from(dkg.keys.len()).unwrap()).map(Participant::new),
-        ),
+        )
+        .unwrap(),
         bls_aggregated_vote: aggregate::combine_signatures::<MinPk, _>(
-            signatures.iter().map(|signature| signature.as_ref()),
+            commonware_utils::iter::NonEmpty::try_new(
+                signatures.iter().map(|signature| signature.as_ref()),
+            )
+            .unwrap(),
         ),
         vrf_proof: VrfProof::<MinSig> {
             material_version: VRF_MATERIAL_VERSION,

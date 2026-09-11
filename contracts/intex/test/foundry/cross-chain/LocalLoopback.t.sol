@@ -338,6 +338,7 @@ contract LocalLoopbackTest is Test {
         issuance[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: CreateSeriesLib.seriesId(DAY),
             worldwideDay: DAY,
+            issuedAt: uint32(block.timestamp),
             issuedIntexCount: 50,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: 1e6,

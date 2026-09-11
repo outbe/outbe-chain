@@ -50,7 +50,7 @@ use commonware_utils::{
     N3f1,
 };
 use eyre::Result;
-use rand_core::{RngCore, SeedableRng};
+use rand_commonware::{Rng as RngCore, SeedableRng};
 // Intentionally `tokio::sync::mpsc`: `progress_tx` / `finalized_log_rx` are created
 // cross-crate by `outbe-engine` (`crates/blockchain/engine/src/stack.rs`) and have no
 // timer/spawn dependency, so they are runtime-agnostic and do not require the tokio
@@ -248,6 +248,7 @@ pub async fn run_initial_dkg_durable(
         round,
         previous_output,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         dealers,
         participants.clone(),
     )
@@ -262,7 +263,8 @@ pub async fn run_initial_dkg_durable(
                 }
                 None => {
                     let mut seed = [0u8; 32];
-                    rand_core::OsRng.fill_bytes(&mut seed);
+                    rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng)
+                        .fill_bytes(&mut seed);
                     // Persist before the first network-visible dealer message.
                     let snapshot = DkgDealerRetrySnapshot {
                         ceremony_id,
@@ -275,7 +277,8 @@ pub async fn run_initial_dkg_durable(
             },
             None => {
                 let mut seed = [0u8; 32];
-                rand_core::OsRng.fill_bytes(&mut seed);
+                rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng)
+                    .fill_bytes(&mut seed);
                 DkgDealerRetrySnapshot {
                     ceremony_id,
                     seed,
@@ -297,7 +300,7 @@ pub async fn run_initial_dkg_durable(
             .seed;
         let (dealer, my_pub_msg, priv_msgs) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_chacha::ChaCha20Rng::from_seed(dealer_seed),
+                rand_commonware::rngs::ChaCha20Rng::from_seed(dealer_seed),
                 info.clone(),
                 signing_key.clone(),
                 previous_share,
@@ -828,7 +831,7 @@ pub async fn run_initial_dkg_durable(
     // substitute for local Player state and cannot promote a shareless validator.
     let (output, share) = player
         .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core::OsRng,
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             finalize_logs,
             &Sequential,
         )
@@ -936,6 +939,7 @@ pub async fn run_reshare_dealer_only_durable(
         round,
         Some(previous_output),
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         dealers,
         participants.clone(),
     )
@@ -958,7 +962,8 @@ pub async fn run_reshare_dealer_only_durable(
             }
             None => {
                 let mut seed = [0u8; 32];
-                rand_core::OsRng.fill_bytes(&mut seed);
+                rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng)
+                    .fill_bytes(&mut seed);
                 let snapshot = DkgDealerRetrySnapshot {
                     ceremony_id,
                     seed,
@@ -970,7 +975,7 @@ pub async fn run_reshare_dealer_only_durable(
         },
         None => {
             let mut seed = [0u8; 32];
-            rand_core::OsRng.fill_bytes(&mut seed);
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng).fill_bytes(&mut seed);
             DkgDealerRetrySnapshot {
                 ceremony_id,
                 seed,
@@ -981,7 +986,7 @@ pub async fn run_reshare_dealer_only_durable(
 
     let (mut dealer, my_pub_msg, priv_msgs) =
         Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_chacha::ChaCha20Rng::from_seed(dealer_retry_snapshot.seed),
+            rand_commonware::rngs::ChaCha20Rng::from_seed(dealer_retry_snapshot.seed),
             info.clone(),
             signing_key,
             Some(previous_share),
@@ -1326,7 +1331,7 @@ fn chain_finalized_reconstructable(
         logs.record(dealer_pk.clone(), log.clone());
     }
     observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-        &mut rand_core::OsRng,
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
         logs,
         &Sequential,
     )
@@ -1586,6 +1591,7 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants.clone(),
         )
@@ -1597,7 +1603,7 @@ mod tests {
         for key in keys {
             let (dealer, pub_msg, priv_msgs) =
                 Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                    rand_core::OsRng,
+                    rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                     info.clone(),
                     key.clone(),
                     None,
@@ -1622,11 +1628,10 @@ mod tests {
                     .iter()
                     .position(|key| key.public_key() == *player_pk)
                     .unwrap();
-                if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                    dealer_pk.clone(),
-                    pub_msg.clone(),
-                    priv_msg.clone(),
-                ) {
+                if let Some(ack) = players[player_idx]
+                    .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                    .expect("fixture dealing must be valid")
+                {
                     dealers[dealer_idx]
                         .receive_player_ack(player_pk.clone(), ack)
                         .unwrap();
@@ -1651,7 +1656,7 @@ mod tests {
             }
             let (player_output, share) = player
                 .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-                    &mut rand_core::OsRng,
+                    &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                     dkg_logs,
                     &Sequential,
                 )
@@ -1701,7 +1706,11 @@ mod tests {
             .start(|context| async move {
                 // Generate 3 validator keys, sorted by public key (same as bootstrap).
                 let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-                    .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+                    .map(|_| {
+                        bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                            rand_commonware::rngs::SysRng,
+                        ))
+                    })
                     .collect();
                 keys.sort_by_key(|a| a.public_key().encode());
 
@@ -1781,7 +1790,11 @@ mod tests {
         commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
             .start(|context| async move {
                 let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-                    .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+                    .map(|_| {
+                        bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                            rand_commonware::rngs::SysRng,
+                        ))
+                    })
                     .collect();
                 keys.sort_by_key(|a| a.public_key().encode());
 
@@ -1929,6 +1942,7 @@ mod tests {
                     1,
                     Some(previous_output.clone()),
                     Mode::NonZeroCounter,
+                    commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
                     old_participants.clone(),
                     target_participants.clone(),
                 )
@@ -2039,6 +2053,7 @@ mod tests {
                     1,
                     Some(previous_output.clone()),
                     Mode::NonZeroCounter,
+                    commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
                     participants.clone(),
                     participants.clone(),
                 )
@@ -2158,6 +2173,7 @@ mod tests {
                     1,
                     Some(previous_output.clone()),
                     Mode::NonZeroCounter,
+                    commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
                     participants.clone(),
                     participants.clone(),
                 )
@@ -2170,7 +2186,7 @@ mod tests {
                 let byzantine_pk = keys[0].public_key();
                 let (byz_dealer, _pub, _priv) =
                     Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                        rand_core::OsRng,
+                        rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                         info.clone(),
                         keys[0].clone(),
                         Some(previous_shares[1].clone()),
@@ -2300,6 +2316,7 @@ mod tests {
                     1,
                     Some(previous_output.clone()),
                     Mode::NonZeroCounter,
+                    commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
                     old_participants.clone(),
                     target_participants.clone(),
                 )
@@ -2450,7 +2467,11 @@ mod tests {
         assert!(online <= n);
 
         let mut keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+            })
             .collect();
         keys.sort_by_key(|a| a.public_key().encode());
 
@@ -2671,6 +2692,7 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants,
         )
@@ -2678,7 +2700,7 @@ mod tests {
         let seed = [0x33; 32];
 
         let (_, first_pub, first_priv) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_chacha::ChaCha20Rng::from_seed(seed),
+            rand_commonware::rngs::ChaCha20Rng::from_seed(seed),
             info.clone(),
             keys[0].clone(),
             None,
@@ -2686,7 +2708,7 @@ mod tests {
         .unwrap();
         let (mut recovered_dealer, recovered_pub, recovered_priv) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_chacha::ChaCha20Rng::from_seed(seed),
+                rand_commonware::rngs::ChaCha20Rng::from_seed(seed),
                 info.clone(),
                 keys[0].clone(),
                 None,
@@ -2716,6 +2738,7 @@ mod tests {
             Player::<MinSig, bls12381::PrivateKey>::new(info, keys[1].clone()).unwrap();
         let ack = player
             .dealer_message::<N3f1>(keys[0].public_key(), first_pub, priv_msg)
+            .expect("fixture dealing must be valid")
             .unwrap();
         let ceremony_id = DkgCeremonyId {
             round: 0,
@@ -2793,6 +2816,7 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants,
         )
@@ -2803,7 +2827,7 @@ mod tests {
         let dealer_pk = dealer_key.public_key();
         let player_pk = player_key.public_key();
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             dealer_key,
             None,
@@ -2858,6 +2882,7 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants,
         )
@@ -2868,7 +2893,7 @@ mod tests {
         let dealer_pk = dealer_key.public_key();
         let player_pk = player_key.public_key();
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             dealer_key.clone(),
             None,
@@ -2876,7 +2901,7 @@ mod tests {
         .unwrap();
         let (_, conflicting_pub_msg, conflicting_priv_msgs) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_core::OsRng,
+                rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 info.clone(),
                 dealer_key,
                 None,
@@ -2936,12 +2961,13 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants,
         )
         .unwrap();
         let (_, _, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info,
             keys[0].clone(),
             None,

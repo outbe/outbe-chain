@@ -11,6 +11,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
+use outbe_common::settlement::floor_to_asset_units;
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
@@ -133,7 +134,7 @@ pub fn issue_gem_position(
 
     let parked_at = storage.timestamp()?.to::<u64>();
     let position_id =
-        GemFactoryContract::generate_position_id(source_intex_id, storage.block_number()?);
+        GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
     factory.add_position(&GemPosition {
@@ -381,10 +382,8 @@ fn accept_payment_asset(
     Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
-/// Cost of one gem in `asset`'s minor units. The reference rail needs no rate; the
-/// issuance rail converts through COEN, decimals folded into the same division so
-/// it rounds once. The rates cancel only because both legs are `COEN/<iso>` markets,
-/// which the oracle quotes at six decimals and every other market at eighteen.
+/// Cost of one gem in `asset`'s minor units. The issuance rail folds the COEN
+/// cross rate into the same fraction, so the whole thing is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -392,18 +391,47 @@ fn cost_in_token(
     currency: PaymentCurrency,
 ) -> Result<U256> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let cost = gem_cost_minor(item)?;
-    if currency == PaymentCurrency::Reference {
-        return cost_to_payment_units(cost, U256::ONE, U256::ONE, asset_decimals);
-    }
-
-    let rate_issuance = fresh_coen_rate_for(storage.clone(), item.issuance_currency)?;
-    let rate_reference = fresh_coen_rate_for(storage.clone(), item.reference_currency)?;
-    cost_to_payment_units(cost, rate_issuance, rate_reference, asset_decimals)
+    let rate = match currency {
+        PaymentCurrency::Reference => None,
+        PaymentCurrency::Issuance => Some((
+            fresh_coen_rate_for(storage.clone(), item.issuance_currency)?,
+            fresh_coen_rate_for(storage.clone(), item.reference_currency)?,
+        )),
+    };
+    settlement_units(item, rate, asset_decimals)
 }
 
-/// The gem's cost in its reference currency, derived from the record: the same
-/// `entry x load x rate` the issuance path computed, off the same stored inputs.
+/// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,
+/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail.
+pub(crate) fn settlement_units(
+    item: &outbe_gem::GemData,
+    rate: Option<(U256, U256)>,
+    asset_decimals: u8,
+) -> Result<U256> {
+    const OBLIGATION_DECIMALS: u32 = 12;
+    let percent = U256::from(100u64);
+    let obligation = item
+        .entry_price_minor
+        .checked_mul(item.promis_load_minor)
+        .ok_or(GemFactoryError::Overflow)?
+        .checked_mul(U256::from(cost_rate(item.gem_type)))
+        .ok_or(GemFactoryError::Overflow)?;
+    let (numerator, denominator) = match rate {
+        Some((to, from)) => (
+            obligation
+                .checked_mul(to)
+                .ok_or(GemFactoryError::Overflow)?,
+            from.checked_mul(percent).ok_or(GemFactoryError::Overflow)?,
+        ),
+        None => (obligation, percent),
+    };
+    floor_to_asset_units(numerator, denominator, OBLIGATION_DECIMALS, asset_decimals)
+        .map_err(|e| GemFactoryError::from(e).into())
+}
+
+/// The gem's cost in its reference currency at six decimals: the formula the
+/// issuance guard applies. Settlement does not floor here.
+#[cfg(test)]
 pub(crate) fn gem_cost_minor(item: &outbe_gem::GemData) -> Result<U256> {
     compute_cost(
         item.entry_price_minor,
@@ -419,43 +447,6 @@ fn cost_rate(gem_type: u8) -> u64 {
     } else {
         100
     }
-}
-
-/// Six-decimal cost into payment-token minor units, rounded up exactly once.
-fn cost_to_payment_units(
-    cost: U256,
-    rate_numerator: U256,
-    rate_denominator: U256,
-    payment_decimals: u8,
-) -> Result<U256> {
-    const COST_DECIMALS: u32 = 6;
-    const MAX_PAYMENT_DECIMALS: u8 = 18;
-
-    if payment_decimals > MAX_PAYMENT_DECIMALS {
-        return Err(GemFactoryError::UnsupportedPaymentDecimals(payment_decimals).into());
-    }
-    if rate_denominator.is_zero() {
-        return Err(PrecompileError::Revert(
-            "settlement rate denominator is zero".into(),
-        ));
-    }
-
-    let mut numerator = cost
-        .checked_mul(rate_numerator)
-        .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
-    let mut denominator = rate_denominator;
-    let payment_decimals = u32::from(payment_decimals);
-    if payment_decimals < COST_DECIMALS {
-        denominator = denominator
-            .checked_mul(U256::from(10u64).pow(U256::from(COST_DECIMALS - payment_decimals)))
-            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
-    } else if payment_decimals > COST_DECIMALS {
-        numerator = numerator
-            .checked_mul(U256::from(10u64).pow(U256::from(payment_decimals - COST_DECIMALS)))
-            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
-    }
-
-    Ok(numerator.div_ceil(denominator))
 }
 
 /// Reads the settlement asset's ISO 4217 code via a static sub-call.

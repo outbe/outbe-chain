@@ -25,6 +25,17 @@ for sol_file in ./src/interfaces/I*.sol; do
     echo "  WARNING: no compiled artifact for ${contract}" >&2
   fi
 done
+
+# The bridge and the native wrapper are consumed by web/ through typechain, so their ABIs ship too.
+for target in "src/ERC7786TokenBridge.sol:ERC7786TokenBridge" "src/canonical/WCOEN.sol:WCOEN"; do
+  contract="${target##*:}"
+  if forge inspect "$target" abi --json > ./abi-export/${contract}.json 2>/dev/null; then
+    echo "  exported ${contract}"
+  else
+    rm -f ./abi-export/${contract}.json
+    echo "  WARNING: no compiled artifact for ${contract}" >&2
+  fi
+done
 '''
 
 [tasks.test]

@@ -87,6 +87,16 @@ pub fn next_date_key(date_key: u32) -> u32 {
     timestamp_to_date_key(ts)
 }
 
+/// First UTC day a right issued at `issued_at` gets in full.
+pub fn first_full_day(issued_at: u64) -> u32 {
+    let day = timestamp_to_date_key(issued_at);
+    if issued_at.is_multiple_of(SECONDS_PER_DAY) {
+        day
+    } else {
+        next_date_key(day)
+    }
+}
+
 /// Computes the integer number of UTC days between two date keys.
 ///
 /// Returns `Ok(0)` when `utc_day == genesis_utc_day`,
@@ -253,6 +263,19 @@ impl StorageKey for WorldwideDay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits() {
+        let midnight = date_key_to_utc_timestamp(20240101);
+        assert_eq!(first_full_day(midnight), 20240101);
+        assert_eq!(first_full_day(midnight + 1), 20240102);
+        assert_eq!(first_full_day(midnight + SECONDS_PER_DAY - 1), 20240102);
+        // Across a year boundary the next key is not the numeric successor.
+        assert_eq!(
+            first_full_day(date_key_to_utc_timestamp(20241231) + 1),
+            20250101
+        );
+    }
 
     #[test]
     fn timestamp_to_date_key_uses_utc() {

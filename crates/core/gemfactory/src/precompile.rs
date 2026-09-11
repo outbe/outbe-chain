@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolInterface};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
@@ -14,10 +14,15 @@ use crate::schema::GemFactoryContract;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IGemFactory.sol"
-);
+// Alloy 1.6 generates event constructors with the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IGemFactory.sol"
+    );
+}
+pub use abi::IGemFactory;
 
 /// Base gas charged by the registry before invoking [`dispatch`]: `settleGem`
 /// verifies a PayNote spend proof, which is real native work every validator

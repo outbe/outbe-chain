@@ -108,6 +108,10 @@ pub struct HybridRandomElector<V: Variant> {
 const SEED_ROUND_WINDOW: u64 = u8::MAX as u64;
 
 impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
+    fn terms(&self) -> elector::Terms {
+        elector::Terms::rotating()
+    }
+
     fn elect(&self, round: Round, certificate: Option<&HybridCertificate<V>>) -> Participant {
         let verified_seed = match (
             certificate,
@@ -278,7 +282,7 @@ mod tests {
     use commonware_consensus::{simplex::types::Subject, types::View};
     use commonware_cryptography::{certificate::Scheme as _, sha256::Digest as Sha256Digest};
     use commonware_parallel::Sequential;
-    use commonware_utils::{ordered::Quorum as _, N3f1};
+    use commonware_utils::ordered::Quorum as _;
 
     #[test]
     fn test_hybrid_elector() {
@@ -325,7 +329,10 @@ mod tests {
             .collect();
 
         let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap();
         let seed = certificate.raw_vrf_seed_bytes();
 
@@ -371,7 +378,10 @@ mod tests {
             .collect();
 
         let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap();
 
         let elector: HybridRandomElector<MinSig> = HybridRandom::default().build(&participants);
@@ -431,7 +441,10 @@ mod tests {
             .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
             .collect();
         let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap();
         let provider = VrfMaterialProvider::<MinSig>::new(0, dkg.polynomial.clone(), None);
         (participants, provider, certificate)
@@ -476,10 +489,13 @@ mod tests {
             .collect();
         let subject = Subject::Nullify { round: cert_round };
         let mut certificate = schemes[0]
-            .assemble::<_, N3f1>(
-                schemes
-                    .iter()
-                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(
+                    schemes
+                        .iter()
+                        .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                )
+                .unwrap(),
                 &Sequential,
             )
             .unwrap();

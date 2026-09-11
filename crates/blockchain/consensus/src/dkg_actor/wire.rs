@@ -273,7 +273,11 @@ mod tests {
         Set<bls12381::PublicKey>,
     ) {
         let mut keys: Vec<bls12381::PrivateKey> = (0..n)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+            })
             .collect();
         keys.sort_by(|a, b| {
             use commonware_cryptography::Signer;
@@ -291,6 +295,7 @@ mod tests {
             0,
             None,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants.clone(),
         )
@@ -313,7 +318,7 @@ mod tests {
         let cfg = wire_cfg(max_players, &participants);
 
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info,
             keys[0].clone(),
             None,
@@ -345,7 +350,7 @@ mod tests {
 
         // Dealer 0 sends to Player 1, Player 1 produces an ack.
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             keys[0].clone(),
             None,
@@ -364,6 +369,7 @@ mod tests {
                 pub_msg,
                 priv_msg,
             )
+            .expect("fixture dealing must be valid")
             .expect("player should produce an ack");
 
         let msg = DkgMessage::Ack {
@@ -389,7 +395,7 @@ mod tests {
         // Create a dealer, give it acks, then finalize.
         let (mut dealer, pub_msg, priv_msgs) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_core::OsRng,
+                rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 info.clone(),
                 keys[0].clone(),
                 None,
@@ -404,11 +410,14 @@ mod tests {
                 .unwrap();
             let mut player =
                 Player::<MinSig, bls12381::PrivateKey>::new(info.clone(), key.clone()).unwrap();
-            if let Some(ack) = player.dealer_message::<N3f1>(
-                commonware_cryptography::Signer::public_key(&keys[0]),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = player
+                .dealer_message::<N3f1>(
+                    commonware_cryptography::Signer::public_key(&keys[0]),
+                    pub_msg.clone(),
+                    priv_msg.clone(),
+                )
+                .expect("fixture dealing must be valid")
+            {
                 dealer.receive_player_ack(player_pk.clone(), ack).unwrap();
             }
         }
@@ -457,7 +466,7 @@ mod tests {
         let cfg = wire_cfg(NonZeroU32::new(3).unwrap(), &participants);
 
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info,
             keys[0].clone(),
             None,
@@ -482,7 +491,7 @@ mod tests {
         let wrong_id = DkgCeremonyId::new(b"test", 1, None, &participants);
 
         let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info,
             keys[0].clone(),
             None,

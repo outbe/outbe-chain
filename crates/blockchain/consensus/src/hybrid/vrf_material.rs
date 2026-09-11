@@ -18,7 +18,7 @@ use commonware_cryptography::bls12381::primitives::{
     variant::{PartialSignature, Variant},
 };
 use commonware_parallel::Strategy;
-use commonware_utils::{Faults, Participant};
+use commonware_utils::Participant;
 
 use crate::proof::hybrid_wire::VrfProof;
 
@@ -134,7 +134,7 @@ impl<V: Variant> VrfMaterialProvider<V> {
         })
     }
 
-    pub(crate) fn recover_proof<M: Faults>(
+    pub(crate) fn recover_proof(
         &self,
         version: u64,
         seed_partials: &[PartialSignature<V>],
@@ -143,7 +143,7 @@ impl<V: Variant> VrfMaterialProvider<V> {
         self.with_state(|state| {
             let material = state.materials.get(&version)?;
             let signature =
-                threshold::recover::<V, _, M>(&material.polynomial, seed_partials.iter(), strategy)
+                threshold::recover::<V, _>(&material.polynomial, seed_partials.iter(), strategy)
                     .ok()?;
             Some(VrfProof {
                 material_version: version,

@@ -74,8 +74,6 @@ pub const DEFAULT_PAYLOAD_RETURN_TIME: Duration = Duration::from_millis(450);
 pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
 /// Internal mailbox size for consensus engine actors.
 pub const ENGINE_MAILBOX_SIZE: usize = 256;
-/// Channel message backlog for P2P channels.
-pub const CHANNEL_BACKLOG: usize = 16_384;
 
 /// Default epoch length in blocks, used when genesis.json does not specify
 /// `config.epochLengthBlocks`. ~1 hour at a ~3s block - the cadence for DKG
@@ -87,10 +85,6 @@ pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
 
 /// Activity timeout in views (track this many behind finalized tip).
 pub const ACTIVITY_TIMEOUT: u32 = 1000;
-/// Skip timeout in views (skip lazy leader after this many inactive views).
-pub const SKIP_TIMEOUT: u32 = 5;
-/// Number of concurrent certificate fetch requests.
-pub const FETCH_CONCURRENT: usize = 3;
 
 /// Default DKG prepare window before planned activation (~10 minutes at ~1s/block).
 pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 600;

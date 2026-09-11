@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use commonware_consensus::{marshal, types::ViewDelta};
-use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
+use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Verifier as _};
 use commonware_parallel::Sequential;
 use commonware_runtime::{buffer::paged::CacheRef, deterministic, Runner as _, Supervisor as _};
 use commonware_storage::archive::immutable;
@@ -102,7 +102,7 @@ async fn pending_marshal(
             ))),
             partition_prefix: "driver-test".into(),
             mailbox_size: NonZeroUsize::new(32).unwrap(),
-            view_retention_timeout: ViewDelta::new(100),
+            view_retention: ViewDelta::new(100),
             prunable_items_per_section: items,
             page_cache: cache,
             replay_buffer: buffer,

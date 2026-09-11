@@ -30,7 +30,7 @@ commonware-utils.workspace = true
 commonware-math.workspace = true
 commonware-parallel.workspace = true
 commonware-macros.workspace = true
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network"] }
@@ -56,6 +56,8 @@ eyre.workspace = true
 futures.workspace = true
 hex.workspace = true
 rand.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 rand_chacha = "0.3"
 serde.workspace = true
 serde_json.workspace = true
@@ -67,7 +69,7 @@ metrics.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.5.0" }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 metrics-util = "0.20"

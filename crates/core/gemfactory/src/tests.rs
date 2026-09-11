@@ -526,26 +526,46 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
-fn the_issuance_rail_rounds_up_exactly_once() {
-    // COEN/USD 7.0 and a one-unit load put the cost at 7 minor units. Converting
-    // it at COEN/EUR 1.000001 lands on 1.000001 units, so a single round-up gives
-    // 2 and a second rounding anywhere in the chain could not.
-    let usd_rate = U256::from(7u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(usd_rate));
+fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
+    // Exact obligation 2.5 EUR units: flooring charges 2, rounding up charged 3.
+    let mut provider = test_storage(Some(U256::from(3_000_000u64)));
     let proof = note_proof(&mut provider, STABLE_EUR, ALICE, NOTE_AMOUNT);
     StorageHandle::enter(&mut provider, |storage| {
-        register_currency(&storage, 978, U256::from(1_000_001u64));
+        register_currency(&storage, 978, U256::from(2_500_000u64));
         let gem_id =
             issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         assert_eq!(
             runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
-            U256::from(7u64)
+            U256::from(3u64)
         );
         runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
     });
 
     assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+}
+
+#[test]
+fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
+    // The reference cost floors to 1, the obligation is 1.500001: an eighteen-
+    // decimal asset carries all of it, scaling the floored 1 charged 1e12.
+    let mut provider = test_storage(Some(U256::from(1_500_001u64)));
+    let proof = note_proof(&mut provider, STABLE_18, ALICE, NOTE_AMOUNT);
+    StorageHandle::enter(&mut provider, |storage| {
+        let gem_id =
+            issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        assert_eq!(
+            runtime::gem_cost_minor(&gem_api::get_gem(&storage, gem_id).unwrap().unwrap()).unwrap(),
+            U256::ONE
+        );
+        runtime::settle_gem(&storage, ALICE, gem_id, &proof).unwrap();
+    });
+
+    assert_eq!(
+        settled_event(&provider).amountPaid,
+        U256::from(1_500_001_000_000u64)
+    );
 }
 
 #[test]
@@ -762,6 +782,17 @@ fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
     });
 
     assert_eq!(settled_event(&provider).amountPaid, quoted);
+}
+
+#[test]
+fn two_merchants_parking_one_series_in_a_block_get_separate_positions() {
+    let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
+    let block = 1u64;
+    assert_ne!(
+        GemFactoryContract::generate_position_id(ALICE, series, block),
+        GemFactoryContract::generate_position_id(BOB, series, block),
+        "a series has many holders and any of them may park it"
+    );
 }
 
 #[test]

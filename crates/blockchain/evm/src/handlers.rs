@@ -213,7 +213,9 @@ pub mod vote {
         }
 
         fn l2_register_payload(chain_id: u64, l1_address: Address) -> String {
-            let (_, public_key) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+            let (_, public_key) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ));
             serde_json::json!({
                 "operation": "register",
                 "chainId": chain_id,
