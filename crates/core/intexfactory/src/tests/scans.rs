@@ -631,9 +631,7 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     });
 }
 
-/// A Called series with nothing realized, so expiry forfeits all of it. Bucket
-/// tests need real members: a phantom cannot expire, and the sweep now keeps a
-/// group until every member does.
+/// A Called series with nothing realized, so expiry forfeits all of it.
 fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
     let series_id = sid(worldwide_day);
     outbe_intex::api::create_series(
@@ -937,7 +935,6 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
             "the member that could expire returns its load"
         );
 
-        // The group was parked one bucket ahead instead of being dropped.
         let retry_day = IntexFactoryContract::deadline_bucket(first_pass) + 1;
         assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
         assert_eq!(f.called_group_count.read(&key).unwrap(), 2);
@@ -961,7 +958,6 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
         retry_day
     });
 
-    // The deferral is visible on-chain, once, and names the pass that finishes it.
     let sig = IIntexFactory::ExpiryDeferred::SIGNATURE_HASH;
     let deferred: Vec<_> = provider
         .get_events(INTEX_FACTORY_ADDRESS)

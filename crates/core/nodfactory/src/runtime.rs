@@ -180,8 +180,7 @@ fn mine_gratis_inner(
         auth,
         paynote_proof,
     } = input;
-    // Anyone may submit: the note is bound to the caller, the Gratis to the
-    // owner through their modify key.
+    // Anyone may submit; the note is bound to the caller, the Gratis to the owner.
     validate_pow(nod_id, item.body().owner, nonce)?;
 
     if !bucket.body().is_qualified {
@@ -312,8 +311,7 @@ fn check_settlement_asset(
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
-/// scheme and mapping failures onto [`NodFactoryError`]. A Nod is exercised
-/// once, so its mining sequence is fixed at zero.
+/// scheme and mapping failures onto [`NodFactoryError`].
 pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_pow(nod_id.to_u256(), owner, 0, nonce)
         .map_err(|e| NodFactoryError::from(e).into())

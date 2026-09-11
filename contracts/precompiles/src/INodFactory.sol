@@ -61,8 +61,7 @@ interface INodFactory {
     /// @param nodId        Identifier of the Nod. Any caller may submit; the
     /// Gratis goes to the Nod's owner.
     /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || owner || uint32(0) || nonce_be8)`
-    /// MUST have the protocol's required leading zero bytes; the sequence is
-    /// zero because a Nod is exercised once.
+    /// MUST have the protocol's required leading zero bytes.
     /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
     /// under the owner's Gratis modify key.
     /// @param opNonce MUST equal the owner's current on-chain gratis op-nonce;

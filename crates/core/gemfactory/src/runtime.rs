@@ -516,8 +516,7 @@ pub fn mine_promis(
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may submit: the mint is authorized by the owner's modify key and
-    // lands with the owner whoever relays it.
+    // Anyone may submit; the owner's modify key authorizes the mint.
     if item.state != GemState::Settled as u8 {
         return Err(GemFactoryError::InvalidState.into());
     }
@@ -643,7 +642,6 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 
 /// PoW gate for `mine_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-/// A gem is exercised once, so its mining sequence is fixed at zero.
 pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, owner, 0, nonce).map_err(|e| GemFactoryError::from(e).into())
 }

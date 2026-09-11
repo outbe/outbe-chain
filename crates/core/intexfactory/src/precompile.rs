@@ -1,9 +1,8 @@
 //! ABI dispatch for the IntexFactory precompile at `INTEX_FACTORY_ADDRESS`.
 //!
-//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` are
-//! user-facing and open to any sender: each names the holder it acts for, and
-//! `caller = msg.sender` only binds the PayNote spent. None accept value,
-//! except `distribute`, which credits auction proceeds.
+//! Routing only: decode -> runtime -> encode. `settle` / `minePromis` name the
+//! holder they act for, so `caller = msg.sender` only binds the PayNote spent.
+//! None accept value, except `distribute`, which credits auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};

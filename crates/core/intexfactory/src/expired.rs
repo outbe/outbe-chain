@@ -15,9 +15,8 @@ use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
-/// Park a group in a later bucket. Returns false when it could not be moved:
-/// the group is still in this bucket, and the caller must stop the pass rather
-/// than walk on, or the bucket's tail sweep would retire it without credit.
+/// Park a group in a later bucket. False means it is still in this bucket and
+/// the caller must stop the pass, or the tail sweep retires it without credit.
 fn defer_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
@@ -52,12 +51,10 @@ fn defer_group(
     true
 }
 
-/// Outcome of one pass over a called group.
 struct GroupExpiry {
     /// Members walked, for the sweep's budget accounting.
     members: u32,
-    /// Members a deterministic error left unretired. A non-zero count keeps the
-    /// group alive so the next sweep can finish it.
+    /// Members left unretired; a non-zero count keeps the group alive.
     pending: u32,
 }
 
@@ -99,8 +96,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                 continue;
             }
 
-            // A group the pass cannot finish is parked an hour ahead rather than
-            // dropped: dropping it would strand its members' Promis load.
+            // Parked an hour ahead rather than dropped.
             let retry_day = IntexFactoryContract::deadline_bucket(now).saturating_add(1);
             match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day)) {
                 // The slot itself was already charged above.
@@ -156,9 +152,8 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Expire one group in a single credit. A member left unretired keeps the group,
-/// so re-walking is normal: members an earlier pass retired are skipped rather
-/// than re-expired, and each load is credited exactly once.
+/// Expire one group in a single credit. Re-walking is normal, so members an
+/// earlier pass retired are skipped and each load is credited exactly once.
 fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,

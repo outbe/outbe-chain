@@ -254,8 +254,7 @@ impl IntexFactoryContract<'_> {
     }
 
     /// Move a group the sweep could not finish into a later bucket. Its members
-    /// and deadline stay put; only where the sweep next finds it changes, so a
-    /// retry waits for that bucket instead of spinning every block.
+    /// and deadline stay put; only where the sweep next finds it changes.
     pub(crate) fn defer_called_group(
         &mut self,
         reference_currency: u16,

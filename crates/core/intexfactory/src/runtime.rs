@@ -775,12 +775,9 @@ pub fn settle(
         return Err(IntexFactoryError::AmountExceedsBalance.into());
     }
 
-    // Last, so a doomed settle never pays for proof verification. The note is
-    // bound to the caller; the settled units are not.
+    // Last, so a doomed settle never pays for proof verification.
     discharge_cost(storage, &series, amount, settler, paynote_proof)?;
 
-    // Burn Issued from the holder and issue Settled back to them: paying for a
-    // right never moves it.
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,

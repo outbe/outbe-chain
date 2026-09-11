@@ -150,9 +150,7 @@ fn settlement_quote_dispatch() {
     });
 }
 
-/// The headline rule of permissionless settlement: the payer supplies the note,
-/// the holder keeps the right. A settle from a stranger must succeed and the
-/// Settled units must be booked to the holder, never to whoever paid.
+/// A settle from a stranger must succeed and book the units to the holder.
 #[test]
 fn anyone_may_settle_and_the_units_stay_with_the_holder() {
     use crate::sol_ext::{IReferenceCurrency, IERC1155, IERC20};
@@ -185,7 +183,6 @@ fn anyone_may_settle_and_the_units_stay_with_the_holder() {
     );
     storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
 
-    // The note is the payer's: binding it to them is all the caller is for.
     let fixture = outbe_paynote::test_support::note_and_spend_proof(
         CHAIN_ID,
         payment_token(),

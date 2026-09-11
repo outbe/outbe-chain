@@ -3,9 +3,8 @@
 //! All factories use the same SHA256 PoW scheme so off-chain miners can reuse
 //! a single tooling implementation: the digest is taken over
 //! `id_be32 || owner || seq_be4 || nonce_be8` and the hash must have
-//! [`POW_DIFFICULTY`] leading zero bytes. Binding the owner keeps a solution
-//! found for one right from serving anyone else's; `seq` is the mining
-//! sequence, fixed at zero for rights exercised once.
+//! [`POW_DIFFICULTY`] leading zero bytes. The owner is in the preimage so a
+//! solution found for one right cannot serve anyone else's.
 
 use alloy_primitives::{Address, U256};
 use ring::digest::{digest, SHA256};

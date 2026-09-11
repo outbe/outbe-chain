@@ -32,9 +32,8 @@ pub struct IssuanceParams {
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// Retired: settling is open to any payer, so nothing reads or writes this.
-    /// The slot stays declared so the fields after it keep their numbers on an
-    /// upgraded chain; it is never to be reused for anything else.
+    /// Retired and never read; the slot stays declared so the fields after it
+    /// keep their numbers on an upgraded chain. Not to be reused.
     #[attribute(order = 0)]
     pub retired_authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 

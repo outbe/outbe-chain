@@ -361,8 +361,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
             )
         })
         .unwrap_err();
-    // A relayer may submit, so the rejection comes from the authorization it
-    // could not forge, not from who sent it.
+    // The rejection is the authorization, not the sender.
     assert!(matches!(error, PrecompileError::Revert(_)));
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
