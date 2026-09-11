@@ -1402,7 +1402,7 @@ pub(crate) fn chain_id_b256(world: &World) -> B256 {
 
 pub(crate) fn find_pow_nonce(id: U256, owner: Address) -> u64 {
     (0_u64..100_000)
-        .find(|nonce| outbe_common::pow::validate_pow(id, owner, 0, *nonce).is_ok())
+        .find(|nonce| outbe_common::pow::validate_pow(id, owner, *nonce).is_ok())
         .expect("bounded PoW nonce")
 }
 

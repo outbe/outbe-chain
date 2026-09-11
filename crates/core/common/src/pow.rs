@@ -4,7 +4,8 @@
 //! a single tooling implementation: the digest is taken over
 //! `id_be32 || owner || seq_be4 || nonce_be8` and the hash must have
 //! [`POW_DIFFICULTY`] leading zero bytes. The owner is in the preimage so a
-//! solution found for one right cannot serve anyone else's.
+//! solution found for one right cannot serve anyone else's; the sequence is
+//! zero here, for rights that are exercised once.
 
 use alloy_primitives::{Address, U256};
 use ring::digest::{digest, SHA256};
@@ -22,11 +23,10 @@ pub enum PowError {
 }
 
 /// SHA256 over `id_be32 || owner || seq_be4 || nonce_be8`.
-pub fn compute_pow_hash(id: U256, owner: Address, seq: u32, nonce: u64) -> [u8; 32] {
+pub fn compute_pow_hash(id: U256, owner: Address, nonce: u64) -> [u8; 32] {
     let mut data = [0u8; 64];
     data[..32].copy_from_slice(&id.to_be_bytes::<32>());
     data[32..52].copy_from_slice(owner.as_slice());
-    data[52..56].copy_from_slice(&seq.to_be_bytes());
     data[56..].copy_from_slice(&nonce.to_be_bytes());
     let digest = digest(&SHA256, &data);
     let mut out = [0u8; 32];
@@ -36,8 +36,8 @@ pub fn compute_pow_hash(id: U256, owner: Address, seq: u32, nonce: u64) -> [u8; 
 
 /// Validates that [`compute_pow_hash`] has [`POW_DIFFICULTY`] leading zero
 /// bytes.
-pub fn validate_pow(id: U256, owner: Address, seq: u32, nonce: u64) -> Result<(), PowError> {
-    let hash = compute_pow_hash(id, owner, seq, nonce);
+pub fn validate_pow(id: U256, owner: Address, nonce: u64) -> Result<(), PowError> {
+    let hash = compute_pow_hash(id, owner, nonce);
     for byte in &hash[..POW_DIFFICULTY] {
         if *byte != 0 {
             return Err(PowError::InsufficientProofOfWork);
@@ -54,26 +54,20 @@ mod tests {
     const OWNER: Address = address!("00000000000000000000000000000000000000a1");
     const OTHER: Address = address!("00000000000000000000000000000000000000b2");
 
-    /// Brute-force the lowest nonce that satisfies `validate_pow` for the
-    /// current `POW_DIFFICULTY`. With difficulty=1 the expected loop length
-    /// is ~256 iterations.
-    fn find_valid_nonce(id: U256, owner: Address, seq: u32) -> u64 {
-        for nonce in 0u64..100_000 {
-            if validate_pow(id, owner, seq, nonce).is_ok() {
-                return nonce;
-            }
-        }
-        panic!("no valid nonce found in 100k attempts")
+    fn find_valid_nonce(id: U256, owner: Address) -> u64 {
+        (0u64..100_000)
+            .find(|nonce| validate_pow(id, owner, *nonce).is_ok())
+            .expect("difficulty 1 resolves in ~256 tries")
     }
 
     #[test]
-    fn compute_pow_hash_matches_sha256_of_id_owner_seq_and_nonce() {
+    fn compute_pow_hash_matches_sha256_of_the_documented_preimage() {
         let id = U256::from(0x1234_5678u64);
-        let got = compute_pow_hash(id, OWNER, 3, 42);
+        let got = compute_pow_hash(id, OWNER, 42);
 
         let mut data = id.to_be_bytes::<32>().to_vec();
         data.extend_from_slice(OWNER.as_slice());
-        data.extend_from_slice(&3u32.to_be_bytes());
+        data.extend_from_slice(&0u32.to_be_bytes());
         data.extend_from_slice(&42u64.to_be_bytes());
         let expected = digest(&SHA256, &data);
 
@@ -81,45 +75,33 @@ mod tests {
     }
 
     #[test]
-    fn valid_nonce_passes() {
+    fn a_solution_is_bound_to_its_owner() {
         let id = U256::from(0xABCDu64);
-        let nonce = find_valid_nonce(id, OWNER, 0);
-        assert!(validate_pow(id, OWNER, 0, nonce).is_ok());
+        let nonce = (0u64..100_000)
+            .find(|n| validate_pow(id, OWNER, *n).is_ok() && validate_pow(id, OTHER, *n).is_err())
+            .expect("a solution that fits only its owner");
+        assert!(validate_pow(id, OWNER, nonce).is_ok());
+        assert_eq!(
+            validate_pow(id, OTHER, nonce),
+            Err(PowError::InsufficientProofOfWork)
+        );
     }
 
     #[test]
-    fn a_solution_is_bound_to_its_owner_and_sequence() {
+    fn valid_nonce_passes() {
         let id = U256::from(0xABCDu64);
-        let nonce = (0u64..100_000)
-            .find(|n| {
-                validate_pow(id, OWNER, 0, *n).is_ok()
-                    && validate_pow(id, OTHER, 0, *n).is_err()
-                    && validate_pow(id, OWNER, 1, *n).is_err()
-            })
-            .expect("a solution that fits only its owner and sequence");
-        assert_eq!(
-            validate_pow(id, OTHER, 0, nonce),
-            Err(PowError::InsufficientProofOfWork)
-        );
-        assert_eq!(
-            validate_pow(id, OWNER, 1, nonce),
-            Err(PowError::InsufficientProofOfWork)
-        );
+        assert!(validate_pow(id, OWNER, find_valid_nonce(id, OWNER)).is_ok());
     }
 
     #[test]
     fn insufficient_pow_is_rejected() {
         let id = U256::from(7u64);
-        // Find a nonce whose first byte is non-zero (fails difficulty=1).
-        for nonce in 0u64..100_000 {
-            if compute_pow_hash(id, OWNER, 0, nonce)[0] != 0 {
-                assert_eq!(
-                    validate_pow(id, OWNER, 0, nonce),
-                    Err(PowError::InsufficientProofOfWork)
-                );
-                return;
-            }
-        }
-        panic!("no failing nonce found");
+        let nonce = (0u64..100_000)
+            .find(|n| compute_pow_hash(id, OWNER, *n)[0] != 0)
+            .expect("a failing nonce");
+        assert_eq!(
+            validate_pow(id, OWNER, nonce),
+            Err(PowError::InsufficientProofOfWork)
+        );
     }
 }
