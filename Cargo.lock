@@ -8932,6 +8932,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-common",
  "outbe-intex",
  "outbe-macros",
  "outbe-oracle",

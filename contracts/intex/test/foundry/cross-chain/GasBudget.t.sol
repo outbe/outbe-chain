@@ -178,6 +178,7 @@ contract GasBudgetTest is CrossChainTest {
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_PREFIX,
                     worldwideDay: WORLDWIDE_DAY,
+                    issuedAt: uint32(block.timestamp),
                     issuedIntexCount: 10_000,
                     promisLoadMinor: 1e6,
                     entryPriceMinor: 100e6,
@@ -221,6 +222,7 @@ contract GasBudgetTest is CrossChainTest {
             batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 worldwideDay: WORLDWIDE_DAY,
+                issuedAt: uint32(block.timestamp),
                 issuedIntexCount: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,

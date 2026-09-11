@@ -1,4 +1,5 @@
 use outbe_common::pow::PowError;
+use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -56,8 +57,8 @@ pub enum GemFactoryError {
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("settlement asset has unsupported decimals {0}")]
-    UnsupportedPaymentDecimals(u8),
+    #[error("{0}")]
+    Rounding(RoundingError),
 
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
@@ -87,6 +88,12 @@ pub enum GemFactoryError {
 impl From<GemFactoryError> for PrecompileError {
     fn from(value: GemFactoryError) -> Self {
         PrecompileError::Revert(value.to_string())
+    }
+}
+
+impl From<RoundingError> for GemFactoryError {
+    fn from(value: RoundingError) -> Self {
+        Self::Rounding(value)
     }
 }
 

@@ -41,11 +41,12 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function _series(bytes14 seriesId, address recipient, uint256 quantity)
         internal
-        pure
+        view
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
         payload.seriesId = seriesId;
         payload.worldwideDay = DAY;
+        payload.issuedAt = uint32(block.timestamp);
         payload.issuedIntexCount = 100;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;

@@ -160,6 +160,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error TokenAlreadyExists(uint256 tokenId);
     /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
     error ZeroIssuedIntexCount();
+    /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
+    error InvalidIssuedAt(uint32 issuedAt);
     /// @notice A settlement or burn amount was zero.
     error ZeroAmount();
     /// @notice A mint or crosschainMint quantity exceeds the range its packed storage field can hold.
@@ -193,6 +195,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     struct CreateSeriesParams {
         bytes14 seriesId;
         uint32 worldwideDay;
+        /// @notice When the origin created the series; the call window is dated from it.
+        uint32 issuedAt;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 issuedIntexCount;

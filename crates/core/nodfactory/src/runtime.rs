@@ -6,12 +6,13 @@
 //! [`NOD_FACTORY_ADDRESS`].
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
+use outbe_common::settlement::floor_to_asset_units;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
@@ -19,6 +20,7 @@ use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
+use crate::sol_ext::IERC20;
 
 /// Issues a Nod through the block-scoped compressed-body lifecycle.
 pub fn issue_nod(
@@ -259,8 +261,6 @@ fn discharge_cost(
     caller: Address,
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
-    let cost = nod_api::cost_amount_minor(entry_price_minor, item.gratis_load_minor)?;
-
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
     // PayNote notes are bearer instruments: the proof names its own spender and
@@ -274,6 +274,11 @@ fn discharge_cost(
         .into());
     }
     check_settlement_asset(storage, item.reference_currency, claim.asset)?;
+    let cost = settlement_units(
+        entry_price_minor,
+        item.gratis_load_minor,
+        read_decimals(storage, claim.asset)?,
+    )?;
     if claim.spend_amount != cost {
         return Err(NodFactoryError::PayNoteCostMismatch {
             covered: claim.spend_amount,
@@ -287,6 +292,27 @@ fn discharge_cost(
         nullifier: claim.nullifier,
         spend_amount: claim.spend_amount,
     })
+}
+
+/// The Nod's cost in the settlement asset's minor units, floored once.
+pub(crate) fn settlement_units(
+    entry_price_minor: U256,
+    gratis_load_minor: U256,
+    asset_decimals: u8,
+) -> Result<U256> {
+    const OBLIGATION_DECIMALS: u32 = 12;
+    let obligation = entry_price_minor
+        .checked_mul(gratis_load_minor)
+        .ok_or_else(|| PrecompileError::Revert("nod cost overflow".into()))?;
+    floor_to_asset_units(obligation, U256::ONE, OBLIGATION_DECIMALS, asset_decimals)
+        .map_err(|e| NodFactoryError::from(e).into())
+}
+
+/// Reads the settlement asset's `decimals()` via a static sub-call.
+fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
+    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("settlement asset decimals undecodable".into()))
 }
 
 /// Rejects a note whose asset the vault router does not register under

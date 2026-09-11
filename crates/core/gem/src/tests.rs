@@ -6,7 +6,7 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::api;
 use crate::config::GemParams;
@@ -991,6 +991,95 @@ fn call_then_forfeit_lifecycle() {
         assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
     });
+}
+
+#[test]
+fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let pinned_day = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = qualified_gem(&storage);
+        // A price no bin can hold; a begin-block error would fail the whole block.
+        let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&last_closed_day)
+            .write(&pair, U256::MAX)
+            .unwrap();
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        let ctx = block_ctx(&storage);
+        assert_eq!(crate::hooks::scan_and_call(&ctx).unwrap(), 0);
+        assert_eq!(
+            api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8,
+            "the gem is untouched, not lost"
+        );
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(
+            gem.call_scan_failed_day.read(&840).unwrap(),
+            last_closed_day,
+            "the currency is marked for the day it failed on"
+        );
+
+        // Another slice of the same pass skips it instead of re-reading the window.
+        gem.call_sweep_day.write(last_closed_day).unwrap();
+        assert_eq!(crate::hooks::run_call_slice(&ctx).unwrap(), 0);
+        last_closed_day
+    });
+
+    let skipped: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::CallScanSkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(skipped.len(), 1, "one event for the day, not one per slice");
+    assert_eq!(skipped[0].referenceCurrency, 840);
+    assert_eq!(skipped[0].utcDay, pinned_day);
+}
+
+#[test]
+fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
+    let threshold_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+    // Oldest day of a breach run that is exactly threshold-long.
+    let mut oldest_breach = timestamp_to_date_key(T_NOW);
+    for _ in 1..threshold_days {
+        oldest_breach = previous_date_key(oldest_breach);
+    }
+    let midnight = date_key_to_utc_timestamp(oldest_breach);
+
+    // A second past midnight loses the day and falls one breach short.
+    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
+        with_storage(|storage| {
+            GemContract::new(storage.clone())
+                .config_profile
+                .write(crate::config::PROFILE_PROD)
+                .unwrap();
+            let mut p = sample_params(ALICE);
+            p.issued_at = issued_at;
+            let gem_id = api::add_gem(storage, p).unwrap();
+            api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+            let threshold = api::get_gem(storage, gem_id)
+                .unwrap()
+                .unwrap()
+                .call_price_minor;
+            let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
+
+            let mut gem = GemContract::new(storage.clone());
+            assert_eq!(
+                gem.trigger_call(&window, gem_id, T_NOW).unwrap(),
+                expected,
+                "issued at {issued_at}"
+            );
+        });
+    }
 }
 
 #[test]

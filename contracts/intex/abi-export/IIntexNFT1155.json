@@ -105,6 +105,11 @@
               "internalType": "uint32"
             },
             {
+              "name": "issuedAt",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
               "name": "issuanceCurrency",
               "type": "uint16",
               "internalType": "uint16"
@@ -1170,6 +1175,17 @@
         },
         {
           "name": "nowTs",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidIssuedAt",
+      "inputs": [
+        {
+          "name": "issuedAt",
           "type": "uint32",
           "internalType": "uint32"
         }

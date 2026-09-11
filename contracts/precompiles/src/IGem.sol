@@ -48,4 +48,7 @@ interface IGem {
     event GemCalled(uint256 indexed gemId, uint64 calledAt);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
     event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoad);
+    /// @notice A reference currency was left out of one day's Call scan because its
+    ///         window price could not be indexed. The next daily pass tries it again.
+    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 }

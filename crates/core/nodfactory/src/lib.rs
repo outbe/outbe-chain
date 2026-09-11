@@ -12,6 +12,7 @@ pub mod errors;
 pub mod materialization;
 pub mod precompile;
 pub mod runtime;
+pub mod sol_ext;
 
 #[cfg(test)]
 mod tests;
