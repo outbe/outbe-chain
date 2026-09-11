@@ -58,7 +58,6 @@ hex.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
-rand_chacha = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
