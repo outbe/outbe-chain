@@ -8,7 +8,7 @@
 //! so a depositor cannot fund a note in a cheap token and spend it as an
 //! expensive one.
 //!
-//! A **spend** consumes the frozen `outbe.paynote@1.1.0` UltraHonkKeccak proof:
+//! A **spend** consumes the frozen `outbe.paynote@1.2.0` UltraHonkKeccak proof:
 //! it proves membership under an accepted root, publishes a nullifier, and — for
 //! a partial spend — the deterministic change commitment. Notes are bearer
 //! instruments: spend authority is knowledge of the note spend key, not an
@@ -27,7 +27,7 @@
 pub mod api;
 pub mod client;
 pub mod errors;
-pub mod hash;
+pub use outbe_zk_canonical::paynote::{hash, Field};
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
@@ -38,6 +38,12 @@ pub mod test_support;
 
 pub use api::PayNoteClaim;
 pub use schema::PayNoteContract;
+
+/// Cryptographic suite used by PayNote.
+pub use outbe_zk_canonical::paynote::PayNoteSuite as PayNoteSuit;
+
+/// In-memory commitment tree for PayNote clients.
+pub use outbe_zk_canonical::paynote::Tree as PayNoteTree;
 
 #[cfg(test)]
 mod tests;

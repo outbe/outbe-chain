@@ -12,17 +12,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_paynote::client::Tree;
-use outbe_paynote::hash::{
-    address_field, field_from_be_bytes, field_to_be_bytes, note_commitment, note_nullifier,
-    note_sn, Field,
-};
+use outbe_paynote::client::{new_tree, witness};
+use outbe_paynote::hash::{note_commitment, note_nullifier, note_sn};
 use outbe_paynote::test_support::combined_from;
+use outbe_paynote::Field;
+use outbe_paynote::PayNoteSuit;
+use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::protocol::zk::ProofGenerator;
-use outbe_protocol::OutbeV1;
+use outbe_protocol::Codec as _;
+use outbe_protocol::FieldElement as _;
 use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
-use outbe_zk_canonical::u256;
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
@@ -48,8 +48,7 @@ impl Note {
         static NEXT_SPEND_KEY: AtomicU64 = AtomicU64::new(0x005e_771e);
         let spend_key = Field::from(NEXT_SPEND_KEY.fetch_add(1, Ordering::Relaxed));
         let serial = note_sn(spend_key).expect("note serial");
-        let commitment =
-            note_commitment(chain_id, serial, asset.into(), amount).expect("note commitment");
+        let commitment = note_commitment(chain_id, serial, asset, amount).expect("note commitment");
         Self {
             chain_id,
             asset,
@@ -62,7 +61,7 @@ impl Note {
 
     /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
-        B256::new(field_to_be_bytes(self.serial))
+        PayNoteSuit::field_to_b256(&self.serial).unwrap()
     }
 }
 
@@ -117,13 +116,13 @@ pub(crate) fn deposit_and_prove(
     prove_spend(world, port, &note, payer)
 }
 
-/// Proves a full spend of `note` by `spender` against the pool's live tree.
+/// Proves a full spend of `note` by `owner` against the pool's live tree.
 ///
 /// Every leaf ever appended is read back from `NewNote`, so the proof is built
 /// against the same root the chain will check it under — including any notes
 /// other scenarios deposited.
-pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Address) -> Vec<u8> {
-    let mut tree = Tree::new(note.chain_id).expect("paynote tree");
+pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, owner: Address) -> Vec<u8> {
+    let mut tree = new_tree(note.chain_id).expect("paynote tree");
     for (index, commitment) in deposited_leaves(world, port) {
         assert_eq!(
             tree.leaves().len(),
@@ -132,30 +131,32 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         );
         tree.append(commitment).expect("append NewNote commitment");
     }
-    let (leaf_index, auth_path) = tree
-        .witness(note.commitment)
-        .expect("the scenario's own deposit must be in the pool");
+    let (leaf_index, auth_path) =
+        witness(&tree, note.commitment).expect("the scenario's own deposit must be in the pool");
 
     let public = PublicInputs {
         chain_id: note.chain_id,
         root: tree.root(),
         nullifier: note_nullifier(note.commitment, note.spend_key).expect("note nullifier"),
-        asset: address_field(note.asset.into()),
-        spender: address_field(spender.into()),
-        spend_amount: u256::to_limbs(note.amount),
+        asset: note.asset.to_field().unwrap(),
+        owner: owner.to_field().unwrap(),
+        spend_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         // A full spend leaves no change; the circuit requires the zero
         // sentinel rather than a note for nothing.
         change_commitment: Field::from(0_u64),
     };
     let witness = Witness {
-        note_amount: u256::to_limbs(note.amount),
+        note_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
         note_spend_key: note.spend_key,
         leaf_index,
         auth_path,
     };
-    let proof =
-        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
-            .expect("paynote spend proof");
+    let proof = ProofGenerator::<PayNoteSuit, PayNote>::generate(
+        &Barretenberg::default(),
+        &witness,
+        &public,
+    )
+    .expect("paynote spend proof");
     combined_from(&public, &proof.proof)
 }
 
@@ -198,7 +199,7 @@ fn decode_new_note(log: &serde_json::Value) -> Option<(u32, Field)> {
         .ok()?
         .try_into()
         .ok()?;
-    let commitment = field_from_be_bytes(&commitment_bytes)?;
+    let commitment = PayNoteSuit::field_from_b256(&B256::from(commitment_bytes)).ok()?;
 
     let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
     if data.len() != 3 * 32 {

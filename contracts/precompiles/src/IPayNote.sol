@@ -64,8 +64,8 @@ interface IPayNote {
 
     /// @notice A note was spent through the Rust `consume` API.
     /// @param asset The spent note's bound ERC20 (indexed).
-    /// @param spender Recipient bound by the proof (indexed).
+    /// @param owner Recipient bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
     /// @param spendAmount Units released by the spend.
-    event NoteUsed(address indexed asset, address indexed spender, bytes32 indexed nullifier, uint256 spendAmount);
+    event NoteUsed(address indexed asset, address indexed owner, bytes32 indexed nullifier, uint256 spendAmount);
 }

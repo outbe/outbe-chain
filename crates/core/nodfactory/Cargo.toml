@@ -22,6 +22,7 @@ thiserror.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+outbe-protocol.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils"] }
 # Real PayNote proofs for the cost-discharge tests.
 outbe-paynote = { workspace = true, features = ["test-utils"] }

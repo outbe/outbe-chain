@@ -5,28 +5,31 @@
 //! tree, replay, token, and event effects one rollback unit. All guards precede
 //! mutation. Guard failures convert from [`PayNoteError`] (which fixes the
 //! revert texts and the fatal/revert split) via `From`.
+//! `PayNoteSuit` encodes BN254 fields as exactly 32 big-endian bytes.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use ark_ff::Zero;
 use outbe_primitives::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::noir::paynote::Paynote;
 use outbe_zk_canonical::paynote::{
-    decode_public_inputs as decode_paynote_public_inputs, PublicInputs as PayNotePublicInputs,
+    alloy::PublicInputs as PayNotePublicInputs,
+    decode_public_inputs as decode_paynote_public_inputs,
 };
 
 use crate::errors::PayNoteError;
-use crate::hash::{
-    empty_subtrees, field_from_be_bytes, field_to_be_bytes, merkle_node, note_commitment, Field,
-};
+use crate::hash::{empty_subtrees, merkle_node, note_commitment};
 use crate::precompile::IPayNote;
 use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
 use crate::sol_ext::IERC20;
+use crate::Field;
+use crate::PayNoteSuit;
 
 /// The validated public claim a spend proof carries, returned to the consuming
 /// module. PayNote books the nullifier and any change note; deciding what the
@@ -34,7 +37,7 @@ use crate::sol_ext::IERC20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayNoteClaim {
     pub asset: Address,
-    pub spender: Address,
+    pub owner: Address,
     pub spend_amount: U256,
     /// The canonical nullifier this spend booked. It is the only public
     /// identifier of the payment, so a consuming module can record which note
@@ -45,7 +48,7 @@ pub struct PayNoteClaim {
 /// Reads the live chain ID and derives its full in-memory empty ladder.
 fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     let chain_id = storage.chain_id()?;
-    let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH)?;
+    let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).map_err(|_| PayNoteError::Hash)?;
     Ok((chain_id, zeros))
 }
 
@@ -68,17 +71,21 @@ pub(crate) fn append(
     for (level, zero) in zeros.iter().enumerate().take(PAYNOTE_TREE_DEPTH) {
         let level_byte = u8::try_from(level).map_err(|_| PayNoteError::CorruptFrontier)?;
         if (index >> level) & 1 == 0 {
-            paynote
-                .filled_subtrees
-                .write(&level_byte, B256::new(field_to_be_bytes(current)))?;
-            current = merkle_node(current, *zero)?;
+            paynote.filled_subtrees.write(
+                &level_byte,
+                PayNoteSuit::field_to_b256(&current)
+                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+            )?;
+            current = merkle_node(current, *zero).map_err(|_| PayNoteError::Hash)?;
         } else {
             let left = paynote.filled_subtrees.read(&level_byte)?;
-            let left = field_from_be_bytes(&left.0).ok_or(PayNoteError::CorruptFrontier)?;
-            current = merkle_node(left, current)?;
+            let left =
+                PayNoteSuit::field_from_b256(&left).map_err(|_| PayNoteError::CorruptFrontier)?;
+            current = merkle_node(left, current).map_err(|_| PayNoteError::Hash)?;
         }
     }
-    let root_after = B256::new(field_to_be_bytes(current));
+    let root_after = PayNoteSuit::field_to_b256(&current)
+        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
     paynote.current_root.write(root_after)?;
     paynote.leaf_count.write(index + 1)?;
     paynote.recent_roots.push(root_after)?;
@@ -103,9 +110,8 @@ pub(crate) fn deposit(
     if asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    let serial = field_from_be_bytes(&note_sn.0).ok_or(PayNoteError::InvalidInput(
-        "noteSn is not a canonical BN254 field".into(),
-    ))?;
+    let serial = PayNoteSuit::field_from_b256(&note_sn)
+        .map_err(|_| PayNoteError::InvalidInput("noteSn is not a canonical BN254 field".into()))?;
     if serial.is_zero() {
         return Err(PayNoteError::InvalidInput("noteSn must be non-zero".into()).into());
     }
@@ -121,11 +127,13 @@ pub(crate) fn deposit(
     // actually moves — never caller-supplied — so Merkle membership attests
     // both. A caller-chosen leaf would let a depositor fund a note in a cheap
     // token and spend it as an expensive one.
-    let commitment = note_commitment(chain_id, serial, asset.into(), amount)?;
+    let commitment =
+        note_commitment(chain_id, serial, asset, amount).map_err(|_| PayNoteError::Hash)?;
     if commitment.is_zero() {
         return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
     }
-    let commitment_word = B256::new(field_to_be_bytes(commitment));
+    let commitment_word = PayNoteSuit::field_to_b256(&commitment)
+        .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
     if paynote.commitments.read(&commitment_word)? {
         return Err(PayNoteError::CommitmentExists.into());
     }
@@ -163,7 +171,8 @@ pub(crate) fn deposit(
         outbe_vaultrouter::api::deposit(&storage, asset, units)?;
 
         if leaf_count == 0 {
-            let empty_root = B256::new(field_to_be_bytes(zeros[PAYNOTE_TREE_DEPTH]));
+            let empty_root = PayNoteSuit::field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
+                .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
             paynote.current_root.write(empty_root)?;
             paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW)?;
             paynote.recent_roots.push(empty_root)?;
@@ -176,7 +185,8 @@ pub(crate) fn deposit(
             IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
                 commitment: commitment_word,
                 leafIndex: index,
-                rootAfter: root_after_word(root_after),
+                rootAfter: PayNoteSuit::field_to_b256(&root_after)
+                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                 asset,
                 noteAmount: amount,
             }),
@@ -185,11 +195,7 @@ pub(crate) fn deposit(
     })
 }
 
-fn root_after_word(root: Field) -> B256 {
-    B256::new(field_to_be_bytes(root))
-}
-
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.1.0` spend proof,
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.2.0` spend proof,
 /// nullify the note, append any change commitment, and return the validated
 /// claim. Moves no tokens.
 ///
@@ -199,12 +205,13 @@ fn root_after_word(root: Field) -> B256 {
 ///
 /// Notes are bearer instruments — spend authority is knowledge of the spend
 /// key, not an address — so there is deliberately no caller check. The circuit
-/// binds `spender` as the payout target, so a third party who replays someone
+/// binds `owner` as the payout target, so a third party who replays someone
 /// else's proof only spends their own gas; the claim still names the intended
-/// spender.
+/// owner.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
+        .and_then(TryInto::try_into)
         .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;
@@ -222,29 +229,29 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }
-    if claim.spender.is_zero() {
-        return Err(PayNoteError::InvalidInput("spender must be non-zero".into()).into());
+    if claim.owner.is_zero() {
+        return Err(PayNoteError::InvalidInput("owner must be non-zero".into()).into());
     }
     if claim.spend_amount.is_zero() {
         return Err(PayNoteError::InvalidInput("spend_amount must be non-zero".into()).into());
     }
 
-    let nullifier = field_from_be_bytes(&claim.nullifier).ok_or(PayNoteError::InvalidInput(
-        "nullifier is not a canonical BN254 field".into(),
-    ))?;
+    let nullifier = PayNoteSuit::field_from_b256(&claim.nullifier).map_err(|_| {
+        PayNoteError::InvalidInput("nullifier is not a canonical BN254 field".into())
+    })?;
     if nullifier.is_zero() {
         return Err(PayNoteError::InvalidInput("nullifier must be non-zero".into()).into());
     }
-    let change = field_from_be_bytes(&claim.change_commitment).ok_or(
-        PayNoteError::InvalidInput("changeCommitment is not a canonical BN254 field".into()),
-    )?;
+    let change = PayNoteSuit::field_from_b256(&claim.change_commitment).map_err(|_| {
+        PayNoteError::InvalidInput("changeCommitment is not a canonical BN254 field".into())
+    })?;
 
-    let root_word = B256::new(claim.root);
+    let root_word = claim.root;
     if !paynote.recent_roots.read_all()?.contains(&root_word) {
         return Err(PayNoteError::RootNotRecent.into());
     }
 
-    let nullifier_word = B256::new(field_to_be_bytes(nullifier));
+    let nullifier_word = claim.nullifier;
     if paynote.spent_nullifiers.read(&nullifier_word)? {
         return Err(PayNoteError::NullifierSpent.into());
     }
@@ -263,7 +270,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     // A full spend requires the zero change sentinel; a partial spend appends
     // exactly the circuit-derived deterministic change.
     let partial = !change.is_zero();
-    let change_word = B256::new(field_to_be_bytes(change));
+    let change_word = claim.change_commitment;
     if partial {
         if paynote.leaf_count.read()? >= PAYNOTE_TREE_CAPACITY {
             return Err(PayNoteError::TreeFull.into());
@@ -290,7 +297,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
                 asset: claim.asset,
-                spender: claim.spender,
+                owner: claim.owner,
                 nullifier: nullifier_word,
                 spendAmount: claim.spend_amount,
             }),
@@ -301,7 +308,8 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                 IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
                     commitment: change_word,
                     leafIndex: index,
-                    rootAfter: root_after_word(root_after),
+                    rootAfter: PayNoteSuit::field_to_b256(&root_after)
+                        .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
                     asset: claim.asset,
                     // Sentinel: a change note's remaining value is private.
                     noteAmount: U256::ZERO,
@@ -313,7 +321,7 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
 
     Ok(PayNoteClaim {
         asset: claim.asset,
-        spender: claim.spender,
+        owner: claim.owner,
         spend_amount: claim.spend_amount,
         nullifier: nullifier_word,
     })

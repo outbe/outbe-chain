@@ -8606,10 +8606,8 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "ark-bn254",
  "ark-ff 0.6.0",
  "outbe-macros",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-zk-backend",
@@ -9183,6 +9181,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-paynote",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-validatorset",
@@ -9358,11 +9357,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "ark-bn254",
  "ark-ff 0.6.0",
  "outbe-macros",
  "outbe-paynote",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-vaultrouter",
@@ -9463,7 +9460,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.14.0#984d57ed0d2f014a1a74d0b3b4b0769801957791"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -9534,7 +9531,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.14.0#984d57ed0d2f014a1a74d0b3b4b0769801957791"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10022,7 +10019,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.14.0#984d57ed0d2f014a1a74d0b3b4b0769801957791"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
 dependencies = [
  "acir",
  "acvm",
@@ -10040,7 +10037,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.14.0#984d57ed0d2f014a1a74d0b3b4b0769801957791"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.19.0#d2e0e157838b2cb1c473ee8670bf90ef23eb50c1"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
