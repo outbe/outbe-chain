@@ -815,7 +815,13 @@
           ]
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "released",
+          "type": "uint128",
+          "internalType": "uint128"
+        }
+      ],
       "stateMutability": "nonpayable"
     },
     {

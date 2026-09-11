@@ -94,15 +94,31 @@ type EvmCtx = revm::Context<
 ///
 /// `PUSH32 <word>, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`
 ///
-/// One word is enough for both counterparties: the ERC20 returns `1`, read as
-/// `true` by `transferFrom` and `approve`; the vault returns its own asset
-/// address, which `asset()` needs verbatim and `deposit()` reads as a share
-/// count nothing in this flow inspects.
+/// The vault returns its own asset address, which `asset()` needs verbatim
+/// and `deposit()` reads as a share count nothing in this flow inspects.
 fn always_returns(word: B256) -> AccountInfo {
     let mut code = vec![0x7f];
     code.extend_from_slice(word.as_slice());
     code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
     let bytecode = Bytecode::new_raw(Bytes::from(code));
+    AccountInfo {
+        code_hash: bytecode.hash_slow(),
+        code: Some(bytecode),
+        ..Default::default()
+    }
+}
+
+/// Returns six for `decimals()` and true for `transferFrom` and `approve`.
+fn settlement_asset() -> AccountInfo {
+    let code = alloy_primitives::hex!(
+        // Load the selector, compare with decimals(), and jump to offset 25.
+        "60003560e01c63313ce56714601957"
+        // Return true for ERC20 transfers and approvals.
+        "600160005260206000f3"
+        // JUMPDEST; return six decimals, matching COST's reference minor units.
+        "5b600660005260206000f3"
+    );
+    let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&code));
     AccountInfo {
         code_hash: bytecode.hash_slow(),
         code: Some(bytecode),
@@ -175,7 +191,7 @@ fn fixture() -> (
     test_enclave::install();
 
     let mut database = CacheDB::new(EmptyDB::default());
-    database.insert_account_info(ASSET, always_returns(B256::from(U256::from(1))));
+    database.insert_account_info(ASSET, settlement_asset());
     database.insert_account_info(VAULT, always_returns(ASSET.into_word()));
 
     let adapter = Arc::new(MemoryStorage::new());

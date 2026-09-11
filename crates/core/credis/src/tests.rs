@@ -172,17 +172,17 @@ fn worked_example_ledger_closes_exactly() {
         let first = credis
             .settle(id, U256::from(400_000_000u64), at(100))
             .unwrap();
-        // I = ceil(1_000_000_000 x 0.04 x 100/365) = $10.958905
-        assert_eq!(first.interest, U256::from(10_958_905u64));
-        assert_eq!(first.principal_paid, U256::from(389_041_095u64));
+        // I = floor(1_000_000_000 x 0.04 x 100/365) = $10.958904
+        assert_eq!(first.interest, U256::from(10_958_904u64));
+        assert_eq!(first.principal_paid, U256::from(389_041_096u64));
         assert_eq!(first.total_paid, U256::from(400_000_000u64));
-        // deltaG = 2000e18 x 389_041_095 / 1e9 = 778.08219 COEN
-        assert_eq!(first.gratis_released, U256::from(778_082_190u64));
+        // deltaG = 2e9 x 389_041_096 / 1e9 = 778.082192 Gratis
+        assert_eq!(first.gratis_released, U256::from(778_082_192u64));
         assert!(!first.closed);
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(610_958_905u64));
-        assert_eq!(p.collateral_locked, U256::from(1_221_917_810u64));
+        assert_eq!(p.outstanding, U256::from(610_958_904u64));
+        assert_eq!(p.collateral_locked, U256::from(1_221_917_808u64));
         assert_eq!(p.last_settled_at, at(100), "accrual restarts");
 
         // --- Day 458: the call. ---------------------------------------------
@@ -196,21 +196,21 @@ fn worked_example_ledger_closes_exactly() {
             .settle(id, U256::from(400_000_000u64), at(465))
             .unwrap();
         // d = 365 exactly, so I = P_out x 4%.
-        assert_eq!(second.interest, U256::from(24_438_357u64));
-        assert_eq!(second.principal_paid, U256::from(375_561_643u64));
-        assert_eq!(second.gratis_released, U256::from(751_123_286u64));
+        assert_eq!(second.interest, U256::from(24_438_356u64));
+        assert_eq!(second.principal_paid, U256::from(375_561_644u64));
+        assert_eq!(second.gratis_released, U256::from(751_123_288u64));
 
         let p = credis.get_position(id).unwrap();
-        assert_eq!(p.outstanding, U256::from(235_397_262u64));
-        assert_eq!(p.collateral_locked, U256::from(470_794_524u64));
+        assert_eq!(p.outstanding, U256::from(235_397_260u64));
+        assert_eq!(p.collateral_locked, U256::from(470_794_520u64));
 
         // --- Day 472: the window lapses. ------------------------------------
         let void = credis.void_position(id, at(472)).unwrap();
-        assert_eq!(void.gratis_burned, U256::from(470_794_524u64));
-        assert_eq!(void.principal_written_off, U256::from(235_397_262u64));
+        assert_eq!(void.gratis_burned, U256::from(470_794_520u64));
+        assert_eq!(void.principal_written_off, U256::from(235_397_260u64));
         // 7 days of interest on the remainder - never collected.
-        assert_eq!(void.interest_written_off, U256::from(180_579u64));
-        // Unpaid fraction 235_397_262 / 1_000_000_000 = 23.5397262%, at scale 1e6.
+        assert_eq!(void.interest_written_off, U256::from(180_578u64));
+        // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
         assert_eq!(void.cca, cca());
         assert_eq!(void.eoa_ct, eoa_ct());
@@ -222,8 +222,8 @@ fn worked_example_ledger_closes_exactly() {
         let principal = first.principal_paid + second.principal_paid + void.principal_written_off;
         assert_eq!(principal, U256::from(PRINCIPAL), "principal closes on P");
 
-        // Interest collected across both settlements: $35.397262.
-        assert_eq!(first.interest + second.interest, U256::from(35_397_262u64));
+        // Interest collected across both settlements: $35.397260.
+        assert_eq!(first.interest + second.interest, U256::from(35_397_260u64));
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Void);
@@ -527,8 +527,8 @@ fn settlement_stays_open_on_unchanged_terms_while_called() {
             .unwrap();
         // Same arithmetic as the un-called day-100 settlement: being called
         // changes nothing about the terms.
-        assert_eq!(paid.interest, U256::from(10_958_905u64));
-        assert_eq!(paid.principal_paid, U256::from(389_041_095u64));
+        assert_eq!(paid.interest, U256::from(10_958_904u64));
+        assert_eq!(paid.principal_paid, U256::from(389_041_096u64));
         assert_eq!(
             credis.get_position(id).unwrap().lifecycle_state().unwrap(),
             CredisState::Called,
@@ -591,7 +591,7 @@ fn repeated_partials_release_exactly_the_collateral() {
 }
 
 #[test]
-fn interest_rounds_up_and_collateral_release_rounds_down() {
+fn interest_rounds_down_to_asset_minor_units() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis, 1);
@@ -600,18 +600,59 @@ fn interest_rounds_up_and_collateral_release_rounds_down() {
         let position = credis.get_position(id).unwrap();
         assert_eq!(
             CredisContract::accrued_interest(&position, at(1)).unwrap(),
-            U256::from(109_590u64),
-            "interest rounds up, favoring the protocol"
+            U256::from(109_589u64),
+            "interest rounds down, favoring the user"
         );
 
         // G/P = 2e9/1e9 = 2, so each minor unit of principal frees exactly 2
-        // gratis units and the floored release is exact here.
+        // gratis units and the release is exact here.
         let paid = credis
-            .settle(id, U256::from(109_590u64) + U256::from(3u64), at(1))
+            .settle(id, U256::from(109_589u64) + U256::from(3u64), at(1))
             .unwrap();
         assert_eq!(paid.principal_paid, U256::from(3u64));
         assert_eq!(paid.gratis_released, U256::from(6u64));
     });
+}
+
+#[test]
+fn rounded_up_returns_are_capped_and_final_settlement_returns_the_remainder() {
+    for (payments, expected) in [
+        (&[1u64, 1, 1, 1, 4, 1, 1][..], &[1u64, 1, 1, 1, 2, 0, 0][..]),
+        (&[3, 7][..], &[2, 4][..]),
+    ] {
+        with_credis(|storage| {
+            let mut credis = CredisContract::new(storage);
+            let mut terms = params(handle(1), alice());
+            terms.principal = U256::from(10u64);
+            terms.collateral = U256::from(6u64);
+            let id = credis.open_position(terms).unwrap();
+            // A positive fractional interest obligation also floors to zero.
+            assert_eq!(
+                CredisContract::accrued_interest(&credis.get_position(id).unwrap(), at(1)).unwrap(),
+                U256::ZERO
+            );
+
+            let mut total_returned = U256::ZERO;
+            let mut total_paid = U256::ZERO;
+            for (&payment, &returned) in payments.iter().zip(expected) {
+                let result = credis.settle(id, U256::from(payment), at(0)).unwrap();
+                assert_eq!(result.gratis_released, U256::from(returned));
+                total_returned += result.gratis_released;
+                total_paid += result.principal_paid;
+                let position = credis.get_position(id).unwrap();
+                assert_eq!(
+                    total_returned + position.collateral_locked,
+                    position.collateral
+                );
+                assert_eq!(total_paid + position.outstanding, position.principal);
+            }
+            assert_eq!(
+                credis.get_position(id).unwrap().lifecycle_state().unwrap(),
+                CredisState::Settled
+            );
+            assert_eq!(total_returned, U256::from(6u64));
+        });
+    }
 }
 
 #[test]
@@ -662,12 +703,12 @@ fn dust_settlements_cannot_evade_the_coupon() {
 
         // A full year on, the whole coupon is still owed - on the one minor
         // unit of principal the dust settlement retired:
-        // ceil(999_999_999 x 4%) = 40_000_000.
+        // floor(999_999_999 x 4%) = 39_999_999.
         let position = credis.get_position(id).unwrap();
         assert_eq!(position.outstanding, U256::from(PRINCIPAL - 1));
         assert_eq!(
             CredisContract::accrued_interest(&position, at(365)).unwrap(),
-            U256::from(40_000_000u64)
+            U256::from(39_999_999u64)
         );
     });
 }
@@ -1155,7 +1196,7 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
     });
     assert_eq!(
         ICredis::accruedInterestCall::abi_decode_returns(&out).unwrap(),
-        U256::from(10_958_905u64)
+        U256::from(10_958_904u64)
     );
 }
 

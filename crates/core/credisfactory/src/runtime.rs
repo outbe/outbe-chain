@@ -267,6 +267,12 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     let now = storage.timestamp()?.to::<u64>();
     let void = CredisContract::new(storage.clone()).void_position(position_id, now)?;
 
+    // Rounded-up partial returns can exhaust collateral before the debt. The
+    // write-off still completes, but there is no burn, Fidelity sale or credit.
+    if void.gratis_burned.is_zero() {
+        return Ok(());
+    }
+
     // Recover the pledger EOA from the position's sealed `eoa_ct` through the enclave so
     // the burn / fidelity drop address the right confidential ledgers (reveal once, use
     // for both).
