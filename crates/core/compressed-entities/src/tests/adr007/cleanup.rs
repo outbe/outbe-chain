@@ -127,6 +127,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
         FixtureBody::Tribute(tribute(entity(14, 0x8d), owner, 100)),
         FixtureBody::NodItem(nod_item(entity(14, 0x8e), owner)),
         FixtureBody::NodBucket(NodBucketBodyV1 {
+            settled_nods: 0,
             bucket_key: B256::repeat_byte(0x8f),
             worldwide_day: WorldwideDay::new(14),
             floor_price_minor: U256::from(10),
@@ -188,6 +189,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     let day = WorldwideDay::new(u32::MAX);
     let id = WwdEntityId::from_day_and_digest(day, [0xff; 32]);
     let maximum = NodItemBodyV1 {
+        is_settled: false,
         nod_id: id,
         owner: Address::repeat_byte(0xff),
         gratis_load_minor: U256::MAX,
@@ -280,6 +282,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
 
 fn widest_bucket(day: WorldwideDay) -> NodBucketBodyV1 {
     NodBucketBodyV1 {
+        settled_nods: 0,
         bucket_key: B256::repeat_byte(0xff),
         worldwide_day: day,
         floor_price_minor: U256::MAX,
