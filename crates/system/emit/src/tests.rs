@@ -789,7 +789,7 @@ fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
     assert_revert(
         result,
         &format!(
-            "Emit mint proof is malformed: zk_verify: combined proof length is {} bytes, expected {}",
+            "Emit mint proof is malformed: zk proof error: zk_verify: combined proof length is {} bytes, expected {}",
             EMIT_MINT_COMBINED_LEN - 32,
             EMIT_MINT_COMBINED_LEN
         ),

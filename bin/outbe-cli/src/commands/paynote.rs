@@ -19,14 +19,16 @@ use outbe_paynote::{
     PayNoteSuit, PayNoteTree,
 };
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
-use outbe_protocol::codec::u256_limbs_be;
 use outbe_protocol::{
     codec::FieldElement,
     protocol::zk::{Circuit, CircuitId, ProofGenerator},
     Codec,
 };
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg};
-use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs, Witness};
+use outbe_zk_canonical::noir::paynote::{
+    alloy::{PublicInputs, Witness},
+    Paynote,
+};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -564,30 +566,30 @@ fn prove(
     let (leaf_index, auth_path) = witness(tree, note.commitment.to_field()?)?;
     let public = PublicInputs {
         chain_id: note.chain_id,
-        root: tree.root(),
-        nullifier: note.nullifier()?.to_field()?,
-        asset: note.asset.to_field()?,
-        owner: owner.to_field()?,
-        spend_amount: u256_limbs_be(&amount.to_be_bytes::<32>()),
-        change_commitment: change
-            .as_ref()
-            .map(|n| n.commitment.to_field())
-            .transpose()?
-            .unwrap_or(Field::from(0)),
+        root: PayNoteSuit::field_to_b256(&tree.root())?,
+        nullifier: note.nullifier()?,
+        asset: note.asset,
+        owner,
+        spend_amount: amount,
+        change_commitment: change.as_ref().map_or(B256::ZERO, |n| n.commitment),
     };
-    let witness = Witness {
-        note_amount: u256_limbs_be(&note.amount.to_be_bytes::<32>()),
-        note_spend_key: note.key()?,
+    let mut witness = Witness {
+        note_amount: note.amount,
+        note_spend_key: note.spend_key,
         leaf_index,
-        auth_path,
+        auth_path: auth_path.map(|_| B256::ZERO),
     };
+    for (word, field) in witness.auth_path.iter_mut().zip(auth_path) {
+        *word = PayNoteSuit::field_to_b256(&field)?;
+    }
+    let circuit_public = public.try_into()?;
     let proof = ProofGenerator::<PayNoteSuit, Paynote>::generate(
         &Barretenberg::default(),
-        &witness,
-        &public,
+        &witness.try_into()?,
+        &circuit_public,
     )
     .map_err(|_| eyre::eyre!("paynote proof generation failed; check Barretenberg/SRS setup"))?;
-    let fields = <Paynote as Circuit<PayNoteSuit>>::public_inputs(&public);
+    let fields = <Paynote as Circuit<PayNoteSuit>>::public_inputs(&circuit_public);
     let mut combined = Vec::new();
     combined.extend_from_slice(&u32::try_from(fields.len())?.to_be_bytes());
     for value in fields {
@@ -624,9 +626,7 @@ async fn spend_proof(
         call(
             client,
             PAYNOTE_ADDRESS,
-            IPayNote::isKnownRootCall {
-                root: PayNoteSuit::field_to_b256(&public.root)?
-            }
+            IPayNote::isKnownRootCall { root: public.root }
         )
         .await?,
         "proof root expired during generation; rerun spend-proof"
@@ -640,7 +640,7 @@ async fn spend_proof(
     let output = json!({ "version": 1, "circuit": format!("{}@{}", Paynote::LABEL, Paynote::VERSION), "proof": format!("0x{}", hex::encode(&combined)),
         "source_commitment": note.commitment, "chain_id": note.chain_id, "pool": PAYNOTE_ADDRESS,
         "asset": note.asset, "owner": owner, "spend_amount": amount.to_string(),
-        "root": PayNoteSuit::field_to_b256(&public.root)?, "nullifier": PayNoteSuit::field_to_b256(&public.nullifier)?, "change_commitment": PayNoteSuit::field_to_b256(&public.change_commitment)? });
+        "root": public.root, "nullifier": public.nullifier, "change_commitment": public.change_commitment });
     let proof_path = save_json(
         &dir.join("proofs"),
         &format!("{:#x}.json", keccak256(&combined)),
