@@ -160,7 +160,9 @@ mod tests {
     use super::*;
 
     fn valid_public_key_hex() -> String {
-        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         format!("0x{}", hex::encode(public.encode()))
     }
 

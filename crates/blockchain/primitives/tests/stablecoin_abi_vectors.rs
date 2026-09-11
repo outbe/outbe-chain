@@ -5,10 +5,15 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IStablecoin.sol"
 );
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IStablecoinFactory.sol"
-);
+// Generated ABI methods follow the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IStablecoinFactory.sol"
+    );
+}
+pub use abi::IStablecoinFactory;
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"

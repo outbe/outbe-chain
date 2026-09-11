@@ -47,7 +47,7 @@ use commonware_runtime::{
 };
 use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
 use eyre::{ensure, Result, WrapErr};
-use rand_core::CryptoRngCore;
+use rand_core_commonware::CryptoRng;
 use reth_ethereum::chainspec::EthChainSpec as _;
 use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};
 use reth_ethereum::provider::{BlockHashReader, StateProviderFactory};
@@ -98,11 +98,10 @@ use outbe_node::{
 };
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
-fn radicle_channel_config() -> (u64, u32, usize) {
+fn radicle_channel_config() -> (u64, u32) {
     (
         config::RADICLE_ENDPOINT_CHANNEL,
         config::RADICLE_ENDPOINT_CHANNEL_QUOTA,
-        config::CHANNEL_BACKLOG,
     )
 }
 
@@ -491,8 +490,6 @@ fn validate_certified_follower_recovery_record(
     upstream_block: &outbe_consensus::block::ConsensusBlock,
     schemes: &HybridSchemeProvider<MinSig>,
 ) -> Result<CertifiedFollowerRecoveryAnchor> {
-    use commonware_cryptography::certificate::Provider as _;
-
     ensure!(
         local_block.number() == height,
         "local archived block reports height {}, expected {height}",
@@ -537,7 +534,7 @@ fn validate_certified_follower_recovery_record(
             local_epoch.get()
         )
     })?;
-    let mut local_rng = rand_core::OsRng;
+    let mut local_rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     ensure!(
         local_finalization.verify(
             &mut local_rng,
@@ -546,7 +543,7 @@ fn validate_certified_follower_recovery_record(
         ),
         "local archived finalization certificate failed verification at height {height}",
     );
-    let mut upstream_rng = rand_core::OsRng;
+    let mut upstream_rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     ensure!(
         upstream_finalization.verify(
             &mut upstream_rng,
@@ -2482,7 +2479,7 @@ async fn run_follow_stack<E>(
 where
     E: BufferPooler
         + Clock
-        + CryptoRngCore
+        + CryptoRng
         + Network
         + Resolver
         + Spawner
@@ -2666,7 +2663,6 @@ fn reconcile_certified_follower_record(
     finalization: &outbe_consensus::marshal_types::Finalization,
     block: &outbe_consensus::block::ConsensusBlock,
 ) -> Result<()> {
-    use commonware_cryptography::certificate::Provider as _;
     use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
 
     let epoch = finalization.proposal.round.epoch();
@@ -2732,7 +2728,7 @@ async fn run_certified_follow_stack<E>(
 where
     E: BufferPooler
         + Clock
-        + CryptoRngCore
+        + CryptoRng
         + Network
         + Resolver
         + Spawner
@@ -2743,7 +2739,7 @@ where
         + 'static,
 {
     use commonware_consensus::marshal;
-    use commonware_cryptography::certificate::Scheme as _;
+    use commonware_cryptography::certificate::Verifier as _;
     use commonware_storage::archive::immutable;
     use outbe_consensus::follow::{
         run_follow_engine, CommitteeChain, FinalizedSource as _, FollowEngineConfig,
@@ -2879,18 +2875,21 @@ where
     let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     if replay_suffix_upper > 0 {
-        outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
-            &chain,
-            &upstream_client,
-            &epocher,
-            anchor_epoch,
-            Height::new(replay_suffix_lower),
-            Height::new(replay_suffix_upper),
-            &mut finalizations_archive,
-            &mut blocks_archive,
-        )
-        .await
-        .wrap_err("failed to authenticate and normalize follower replay suffix")?;
+        let (_, restored_finalizations, restored_blocks) =
+            outbe_consensus::follow::engine::authenticate_and_reconcile_replay_suffix(
+                &chain,
+                &upstream_client,
+                &epocher,
+                anchor_epoch,
+                Height::new(replay_suffix_lower),
+                Height::new(replay_suffix_upper),
+                finalizations_archive,
+                blocks_archive,
+            )
+            .await
+            .wrap_err("failed to authenticate and normalize follower replay suffix")?;
+        finalizations_archive = restored_finalizations;
+        blocks_archive = restored_blocks;
     }
 
     let archive_finalization_tip =
@@ -2959,7 +2958,7 @@ where
                 start: marshal::Start::Genesis(marshal_genesis_anchor.clone()),
                 partition_prefix: partition_prefix.clone(),
                 mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
-                view_retention_timeout: ViewDelta::new(view_retention_timeout),
+                view_retention: ViewDelta::new(view_retention_timeout),
                 prunable_items_per_section: nonzero_u64(
                     config::PRUNABLE_ITEMS_PER_SECTION,
                     "PRUNABLE_ITEMS_PER_SECTION",
@@ -2984,7 +2983,7 @@ where
             },
         )
         .await;
-    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
     let recovery_height =
         select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
             marshal_processed: last_consensus_finalized.get(),
@@ -3285,7 +3284,7 @@ pub fn run_consensus_stack<E>(
 where
     E: BufferPooler
         + Clock
-        + CryptoRngCore
+        + CryptoRng
         + Network
         + Resolver
         + Spawner
@@ -3315,7 +3314,7 @@ async fn run_consensus_stack_inner<E>(
 where
     E: BufferPooler
         + Clock
-        + CryptoRngCore
+        + CryptoRng
         + Network
         + Resolver
         + Spawner
@@ -3391,10 +3390,12 @@ where
     // Chain state is the only runtime source of validator membership. For a
     // fresh network this is the genesis ValidatorSet storage; for restart/join
     // this is the synced canonical state.
-    let initial_peer_height = node.provider
+    let initial_peer_height = node
+        .provider
         .last_block_number()
         .wrap_err("failed to read startup P2P admission height")?;
-    let initial_peer_hash = node.provider
+    let initial_peer_hash = node
+        .provider
         .block_hash(initial_peer_height)?
         .ok_or_else(|| eyre::eyre!("startup P2P admission block is missing"))?;
     let mut validator_set =
@@ -3408,11 +3409,15 @@ where
 
     // -- 3. Set up P2P network -------------------------------------------
     let p2p_namespace = ocomp_p2p_namespace(ocomp_install_hash);
+    // Cover the full registered validator set plus a local non-validator identity.
+    let max_peers_per_set =
+        NonZeroUsize::new(outbe_consensus::bls::MAX_VALIDATORS as usize + 1).unwrap();
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
             &p2p_namespace,
             args.listen_address,
+            max_peers_per_set,
             config::MAX_P2P_MESSAGE_SIZE,
         )
     } else {
@@ -3420,6 +3425,7 @@ where
             signing_key.clone(),
             &p2p_namespace,
             args.listen_address,
+            max_peers_per_set,
             config::MAX_P2P_MESSAGE_SIZE,
         )
     };
@@ -3427,73 +3433,44 @@ where
     let (mut network, mut oracle) = lookup::Network::new(ctx.child("network"), network_cfg);
 
     // Register Simplex consensus channels (will be wrapped in Muxers).
-    let votes = network.register(
-        config::VOTES_CHANNEL,
-        Quota::per_second(NZU32!(128)),
-        config::CHANNEL_BACKLOG,
-    );
-    let certificates = network.register(
-        config::CERTIFICATES_CHANNEL,
-        Quota::per_second(NZU32!(128)),
-        config::CHANNEL_BACKLOG,
-    );
-    let resolver = network.register(
-        config::RESOLVER_CHANNEL,
-        Quota::per_second(NZU32!(64)),
-        config::CHANNEL_BACKLOG,
-    );
+    let votes = network.register(config::VOTES_CHANNEL, Quota::per_second(NZU32!(128)));
+    let certificates =
+        network.register(config::CERTIFICATES_CHANNEL, Quota::per_second(NZU32!(128)));
+    let resolver = network.register(config::RESOLVER_CHANNEL, Quota::per_second(NZU32!(64)));
 
     // Register broadcast channel for block dissemination (buffered engine).
-    let broadcast_channel = network.register(
-        config::BROADCAST_CHANNEL,
-        Quota::per_second(NZU32!(32)),
-        config::CHANNEL_BACKLOG,
-    );
+    let broadcast_channel =
+        network.register(config::BROADCAST_CHANNEL, Quota::per_second(NZU32!(32)));
 
     // Register marshal resolver channel for on-demand block backfill.
-    let marshal_channel = network.register(
-        config::MARSHAL_CHANNEL,
-        Quota::per_second(NZU32!(64)),
-        config::CHANNEL_BACKLOG,
-    );
+    let marshal_channel = network.register(config::MARSHAL_CHANNEL, Quota::per_second(NZU32!(64)));
 
     // Register DKG ceremony channel (muxed by reshare round).
-    let dkg_channel = network.register(
-        config::DKG_CHANNEL,
-        Quota::per_second(NZU32!(128)),
-        config::CHANNEL_BACKLOG,
-    );
+    let dkg_channel = network.register(config::DKG_CHANNEL, Quota::per_second(NZU32!(128)));
 
     // Register the one-time TEE bootstrap channel (only when a TEE enclave
     // sidecar is configured). Used once at startup, like the DKG, to coordinate
     // the committee's enclave registrations + EVM signatures into the block-1
     // `TeeBootstrap` payload. Registered before `network.start()`.
-    let mut tee_bootstrap_channel = args.tee_enclave_socket.as_ref().map(|_| {
-        network.register(
-            config::TEE_BOOTSTRAP_CHANNEL,
-            Quota::per_second(NZU32!(64)),
-            config::CHANNEL_BACKLOG,
-        )
-    });
+    let mut tee_bootstrap_channel = args
+        .tee_enclave_socket
+        .as_ref()
+        .map(|_| network.register(config::TEE_BOOTSTRAP_CHANNEL, Quota::per_second(NZU32!(64))));
 
     // Register the one-time TEE DKG channel (only when a TEE enclave sidecar is
     // configured). Carries the enclave identity exchange + dealer/player gossip +
     // offer-key partial-signature round that derives the shared tribute offer key
     // at startup. Registered before `network.start()`.
-    let mut tee_dkg_channel = args.tee_enclave_socket.as_ref().map(|_| {
-        network.register(
-            config::TEE_DKG_CHANNEL,
-            Quota::per_second(NZU32!(128)),
-            config::CHANNEL_BACKLOG,
-        )
-    });
+    let mut tee_dkg_channel = args
+        .tee_enclave_socket
+        .as_ref()
+        .map(|_| network.register(config::TEE_DKG_CHANNEL, Quota::per_second(NZU32!(128))));
 
     let radicle_channel = radicle_endpoint.as_ref().map(|_| {
-        let (channel, quota, backlog) = radicle_channel_config();
+        let (channel, quota) = radicle_channel_config();
         network.register(
             channel,
             Quota::per_second(NonZeroU32::new(quota).expect("Radicle quota is non-zero")),
-            backlog,
         )
     });
 
@@ -3649,7 +3626,7 @@ where
     // part of the genesis-formation proof; without it a crash-restart with
     // execution height 0 could incorrectly start DKG round 0.
     use commonware_consensus::marshal;
-    use commonware_cryptography::{certificate::Scheme as CertScheme, Signer as _};
+    use commonware_cryptography::{certificate::Verifier as CertVerifier, Signer as _};
     use commonware_storage::archive::immutable;
 
     let certificate_scheme_provider = HybridSchemeProvider::<MinSig>::new();
@@ -3752,7 +3729,7 @@ where
                 start: marshal::Start::Genesis(marshal_genesis_anchor),
                 partition_prefix: partition_prefix.clone(),
                 mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
-                view_retention_timeout: ViewDelta::new(view_retention_timeout),
+                view_retention: ViewDelta::new(view_retention_timeout),
                 prunable_items_per_section: nonzero_u64(
                     config::PRUNABLE_ITEMS_PER_SECTION,
                     "PRUNABLE_ITEMS_PER_SECTION",
@@ -3782,7 +3759,7 @@ where
     // means no durable consensus finalization yet (fresh genesis). Map that to
     // height 0, preserving the prior non-optional `Height` semantics used by the
     // genesis-formation proof, crash-recovery detection, and executor start.
-    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
 
     info!(
         marshal_processed_height = last_consensus_finalized.get(),
@@ -4514,7 +4491,6 @@ where
             peer_provider: oracle.clone(),
             blocker: oracle.clone(),
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
-            initial: std::time::Duration::from_secs(1),
             timeout: std::time::Duration::from_secs(2),
             fetch_retry_timeout: std::time::Duration::from_millis(100),
             priority_requests: false,
@@ -5022,7 +4998,8 @@ where
                 )?;
                 let recovered_peer_map = build_peer_map(&activated_validator_set, &bootnode_map);
                 eyre::ensure!(
-                    peer_manager_mailbox.overwrite(recovered_peer_map) == commonware_actor::Feedback::Ok,
+                    peer_manager_mailbox.overwrite(recovered_peer_map)
+                        == commonware_actor::Feedback::Ok,
                     "peer_manager closed during recovery admission"
                 );
                 validator_set = activated_validator_set;
@@ -5288,7 +5265,7 @@ where
             blocker: oracle.clone(),
             automaton: application.clone(),
             relay: application.clone(),
-            forwarding: simplex::ForwardingPolicy::Disabled,
+            forward: simplex::ForwardPolicy::Disabled,
             reporter: combined_reporter,
             strategy: commonware_parallel::Sequential,
             partition: format!("outbe-simplex-{}", current_epoch),
@@ -5301,10 +5278,10 @@ where
             leader_timeout: bt.leader_timeout,
             certification_timeout: bt.certification_timeout,
             timeout_retry: config::DEFAULT_NULLIFY_REBROADCAST,
-            activity_timeout: ViewDelta::new(u64::from(config::ACTIVITY_TIMEOUT)),
-            skip_timeout: ViewDelta::new(u64::from(config::SKIP_TIMEOUT)),
+            view_retention: ViewDelta::new(u64::from(config::ACTIVITY_TIMEOUT)),
+            skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+            track_historical_votes: true,
             fetch_timeout: config::DEFAULT_PEER_RESPONSE_TIMEOUT,
-            fetch_concurrent: nonzero_usize(config::FETCH_CONCURRENT, "FETCH_CONCURRENT")?,
         };
 
         // -- f. Start engine ---------------------------------------------

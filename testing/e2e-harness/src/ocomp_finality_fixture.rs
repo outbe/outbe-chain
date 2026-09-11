@@ -61,7 +61,7 @@ use outbe_primitives::{
     storage::types::StorageKey as _,
     OutbeBlock,
 };
-use rand::{rngs::StdRng, SeedableRng as _};
+use rand_commonware::{rngs::StdRng, SeedableRng as _};
 use reth_chainspec::ChainInfo;
 use reth_primitives_traits::{Account, Bytecode, SealedBlock};
 use reth_storage_api::{
@@ -330,8 +330,13 @@ impl StateProofProvider for LysisOpeningState {
 }
 
 impl HashedPostStateProvider for LysisOpeningState {
-    fn hashed_post_state(&self, bundle_state: &revm::database::BundleState) -> HashedPostState {
-        HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state())
+    fn hashed_post_state(
+        &self,
+        bundle_state: &revm::database::BundleState,
+    ) -> ProviderResult<HashedPostState> {
+        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            bundle_state.state(),
+        ))
     }
 }
 
@@ -914,8 +919,9 @@ fn finalization_bytes(dkg: &Dkg, header_hash: B256) -> Vec<u8> {
         .iter()
         .map(|index| dkg.keys[*index as usize].sign(&namespace, &vote_message))
         .collect::<Vec<_>>();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(signatures.iter().map(AsRef::as_ref));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(signatures.iter().map(AsRef::as_ref)).unwrap(),
+    );
     let seed_message = proposal.round.encode().to_vec();
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,
@@ -925,10 +931,11 @@ fn finalization_bytes(dkg: &Dkg, header_hash: B256) -> Vec<u8> {
     Finalization::<HybridScheme<MinSig>, Sha256Digest> {
         proposal,
         certificate: HybridCertificate::<MinSig> {
-            signers: Signers::from(
-                dkg.keys.len(),
+            signers: Signers::new(
+                dkg.keys.len() as u32,
                 SIGNER_INDICES.iter().copied().map(Participant::new),
-            ),
+            )
+            .unwrap(),
             bls_aggregated_vote,
             vrf_proof: VrfProof {
                 material_version: VRF_MATERIAL_VERSION,

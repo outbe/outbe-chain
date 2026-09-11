@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B256};
 use commonware_consensus::types::Round;
 use commonware_cryptography::{
     bls12381::{primitives::variant::MinSig, PublicKey},
-    certificate::{Provider as _, Scheme as _},
+    certificate::Scheme as _,
 };
 use commonware_utils::ordered::Quorum as _;
 use outbe_primitives::{addresses::REWARDS_ADDRESS, system_tx::OcompLifecycleActivation};

@@ -62,6 +62,7 @@ outbe-paynote.workspace = true
 outbe-emit.workspace = true
 
 # Alloy
+alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
@@ -130,6 +131,8 @@ commonware-codec.workspace = true
 commonware-utils.workspace = true
 commonware-math.workspace = true
 rand_core.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 
 [features]
 # Point the precompiles at a throwaway contract set an e2e run can deploy itself.

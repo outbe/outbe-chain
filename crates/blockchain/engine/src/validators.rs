@@ -1051,7 +1051,9 @@ mod tests {
 
     #[test]
     fn test_load_signing_key_roundtrip() {
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         outbe_consensus::bls::save_individual_key(

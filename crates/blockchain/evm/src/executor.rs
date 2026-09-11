@@ -8,10 +8,9 @@ use alloy_consensus::Transaction as _;
 use alloy_eips::eip7685::Requests;
 use alloy_evm::{
     block::{
-        state_changes::{balance_increment_state, post_block_balance_increments},
-        BlockExecutionError, BlockExecutor, BlockValidationError, CommitChanges, ExecutableTx,
-        GasOutput, InternalBlockExecutionError, OnStateHook, StateChangePostBlockSource,
-        StateChangeSource, StateDB,
+        state_changes::post_block_balance_increments, BlockExecutionError, BlockExecutor,
+        BlockValidationError, CommitChanges, ExecutableTx, GasOutput, InternalBlockExecutionError,
+        StateDB,
     },
     eth::{dao_fork, eip6110, EthBlockExecutor, EthTxResult},
     revm::context::Block as _,
@@ -1557,7 +1556,7 @@ where
         let chain_id = self.inner.evm.chain_id();
         let proposer = self.inner.evm.block().beneficiary();
         let scope = self.compressed_entities_scope.clone();
-        let (changes, events, seal_output) = {
+        let (_changes, events, seal_output) = {
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(
                 db,
@@ -1598,15 +1597,7 @@ where
                 "compressed-entity end_block emitted an unexpected event",
             ));
         }
-        if !changes.is_empty() {
-            use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
-            self.inner.system_caller.on_state(
-                StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
-                    "compressed_entities_end_block",
-                )),
-                &changes,
-            );
-        }
+
         self.compressed_entities_started = false;
         self.compressed_entities_seal_output = Some(seal_output);
         Ok(())
@@ -1725,15 +1716,6 @@ where
             .db_mut()
             .increment_balances(balance_increments.clone())
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
-
-        self.inner.system_caller.try_on_state_with(|| {
-            balance_increment_state(&balance_increments, self.inner.evm.db_mut()).map(|state| {
-                (
-                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
-                    std::borrow::Cow::Owned(state),
-                )
-            })
-        })?;
 
         self.ethereum_post_execution_requests = Some(requests);
         Ok(())
@@ -2600,8 +2582,8 @@ where
     /// safety contract: the preflight runs in `apply_pre_execution_changes`
     /// AFTER marker preservation plus pending-RPC short-circuit AND BEFORE
     /// `run_outbe_pre_execution_hooks` plus the main tx loop. Marker
-    /// preservation `on_state` is the only state-root signal that precedes
-    /// Phase 1 verify. The hook-changes `on_state` signal and the Phase 1
+    /// preservation commit is the only state-root signal that precedes
+    /// Phase 1 verify. The lifecycle hook commits and the Phase 1
     /// commit itself (still in the main tx loop pending 's
     /// gating consumer) only happen after a successful verify.
     fn verify_phase1_in_preexec(
@@ -2869,8 +2851,7 @@ where
     /// The commit is performed via `inner.commit_transaction`, which is the
     /// same code path the main tx loop uses for system txs - it pushes the
     /// Phase 1 receipt at `receipts[0]`, commits state via `db.commit`,
-    /// signals Reth's parallel state-root task via
-    /// `system_caller.on_state(StateChangeSource::Transaction(0), &state)`,
+    /// signals Reth's parallel state-root task via `State::commit`,
     /// and updates the executor's gas accumulators. State-root ordering is
     /// preserved because `verify_phase1_in_preexec` ran (and accepted) the
     /// proof before this method is called.
@@ -3220,10 +3201,8 @@ where
         // 2. Deploy 0xEF marker bytecode to all Outbe runtime addresses.
         //    Without bytecode these accounts are "empty" under EIP-161 and their
         //    storage is silently discarded during state root calculation.
-        //    Must notify system_caller hook so reth's parallel state root task
-        //    sees these changes (reth v1.11+).
+        //    State::commit notifies reth's parallel state root task.
         {
-            use alloy_evm::block::{StateChangePreBlockSource, StateChangeSource};
             use revm::state::{Account, Bytecode, EvmState};
             // Single source of truth (see `marker_addresses` + its superset test).
             let precompile_addresses = marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
@@ -3252,18 +3231,6 @@ where
             }
 
             if !marker_state.is_empty() {
-                // EIP-161 preservation marker bytecode injection for
-                // outbe precompile addresses (not EIP-2935).
-                // `BlockHashesContract` is reserved for the actual
-                // EIP-2935 blockhash systemcall; this path is an
-                // outbe-specific protocol step that needs the catch-all
-                // `Other` variant for honest tracing/observability.
-                self.inner.system_caller.on_state(
-                    StateChangeSource::PreBlock(StateChangePreBlockSource::Other(
-                        "outbe_precompile_marker_bytecode",
-                    )),
-                    &marker_state,
-                );
                 self.inner.evm.db_mut().commit(marker_state);
             }
         }
@@ -3280,7 +3247,7 @@ where
             let chain_id = self.inner.evm.chain_id();
             let proposer = self.inner.evm.block().beneficiary();
             let scope = self.compressed_entities_scope.clone();
-            let (changes, events) = {
+            let (_changes, events) = {
                 let db = self.inner.evm.db_mut();
                 let ctx = build_block_context(
                     db,
@@ -3306,15 +3273,7 @@ where
                     "compressed-entity begin_block emitted an unexpected event",
                 ));
             }
-            if !changes.is_empty() {
-                use alloy_evm::block::{StateChangePreBlockSource, StateChangeSource};
-                self.inner.system_caller.on_state(
-                    StateChangeSource::PreBlock(StateChangePreBlockSource::Other(
-                        "compressed_entities_begin_block",
-                    )),
-                    &changes,
-                );
-            }
+
             self.compressed_entities_started = true;
         }
 
@@ -3372,10 +3331,9 @@ where
             .as_ref()
             .and_then(|b| b.peek_genesis_validators());
 
-        // 5. Run Outbe block hooks and collect all state changes for hook notification.
-        //    The provider is scoped so the mutable DB borrow is released before
-        //    we notify the state root hook via system_caller.
-        let (hook_changes, hook_events) = {
+        // 5. Run Outbe block hooks. The provider flush commits through State,
+        //    which notifies the parallel state root hook.
+        let (_hook_changes, hook_events) = {
             let db = self.inner.evm.db_mut();
             let ctx = build_block_context(
                 db,
@@ -3428,22 +3386,7 @@ where
         let (whitelisted_hook_logs, _tracing_only_hook_logs) = partition_hook_events(&hook_events);
         self.whitelisted_hook_event_logs = whitelisted_hook_logs;
 
-        // 6. Notify reth's parallel state root task about all pre-exec hook changes.
-        //    These are outbe lifecycle ticks (Rewards / ValidatorSet /
-        //    Staking / Oracle / NOD), not EIP-2935/4788/7002 system calls,
-        //    so the source is labelled via the catch-all `Other` variant
-        //    to keep trace output honest.
-        if !hook_changes.is_empty() {
-            use alloy_evm::block::{StateChangePreBlockSource, StateChangeSource};
-            self.inner.system_caller.on_state(
-                StateChangeSource::PreBlock(StateChangePreBlockSource::Other(
-                    "outbe_pre_exec_hooks",
-                )),
-                &hook_changes,
-            );
-        }
-
-        // 7. Receipt-visible begin-zone system phases are real transactions in
+        // 6. Receipt-visible begin-zone system phases are real transactions in
         // the block body and execute in the normal tx loop before user txs.
         // Oracle slash-window work is part of that OracleSlashWindow system tx,
         // so there are no direct post-system storage hooks here.
@@ -4164,7 +4107,7 @@ where
                 // increment lands in `State<DB>` BEFORE the inner tx runs.
                 // A REVERT inside the tx affects only its own journal frame
                 // and cannot undo the flushed counter write.
-                let (authorize_outcome, sponsorship_events, sponsorship_changes) = {
+                let (authorize_outcome, sponsorship_events, _sponsorship_changes) = {
                     let db = self.inner.evm.db_mut();
                     let ctx = BlockContext::new_with_genesis_hash(
                         block_number,
@@ -4201,34 +4144,10 @@ where
                     // surfaces them; today the only writer pushes on
                     // success and is gated by `.and_then`.
                     let events = provider.take_events();
-                    // Drain the committed counter-write so the parallel
-                    // state-root task observes it through the same
-                    // `OnStateHook` channel that begin-block hooks use
-                    // (see line 1944). Without this notification the
-                    // parallel task computes a partial root that omits
-                    // ZEROFEE_ADDRESS' counter slot and forces a fallback
-                    // recompute at block close - correctness is preserved
-                    // because the final root walks the full bundle state,
-                    // but the parallel optimisation is lost.
+                    // State::commit already notified the parallel state root hook.
                     let changes = provider.take_committed_changes();
                     (result, events, changes)
                 };
-
-                // Notify the parallel state-root task about the counter
-                // write committed via the provider above. The pre-fee
-                // counter increment is logically part of THIS transaction's
-                // processing - `Transaction(idx)` is the canonical variant
-                // alloy-evm itself uses in `commit_transaction` after each
-                // tx (see alloy_evm::block::state_hook). `receipts.len()`
-                // is this tx's zero-based index: its receipt has not yet
-                // been pushed when the pre-fee hook runs.
-                if !sponsorship_changes.is_empty() {
-                    use alloy_evm::block::StateChangeSource;
-                    self.inner.system_caller.on_state(
-                        StateChangeSource::Transaction(self.inner.receipts.len()),
-                        &sponsorship_changes,
-                    );
-                }
 
                 if let Err(err) = authorize_outcome {
                     // account for this zero-fee soft-failure and reject
@@ -4424,10 +4343,6 @@ where
         Ok((evm, result))
     }
 
-    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.inner.set_state_hook(hook)
-    }
-
     fn evm_mut(&mut self) -> &mut Self::Evm {
         self.inner.evm_mut()
     }
@@ -4449,7 +4364,7 @@ mod tests {
     };
     use alloy_evm::{
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
-        RecoveredTx as _,
+        Evm as _, RecoveredTx as _,
     };
     use alloy_primitives::{
         address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
@@ -6405,13 +6320,11 @@ mod tests {
 
     #[test]
     fn active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions() {
-        use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
-
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum ObservedWrite {
             EthereumPostBlock,
             CompressedEntitiesSeal,
-            Transaction(usize),
+            TerminalTransaction,
         }
 
         let signer = test_evm_signer();
@@ -6438,17 +6351,21 @@ mod tests {
 
         let observed_writes = Arc::new(Mutex::new(Vec::new()));
         let hook_writes = observed_writes.clone();
-        executor.set_state_hook(Some(Box::new(
-            move |source, _changes: &revm::state::EvmState| {
-                let observed = match source {
-                    StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
-                        "compressed_entities_end_block",
-                    )) => Some(ObservedWrite::CompressedEntitiesSeal),
-                    StateChangeSource::PostBlock(_) => Some(ObservedWrite::EthereumPostBlock),
-                    StateChangeSource::Transaction(index) => {
-                        Some(ObservedWrite::Transaction(index))
-                    }
-                    StateChangeSource::PreBlock(_) => None,
+        executor.evm_mut().db_mut().set_state_hook(Some(Box::new(
+            move |changes: revm::state::EvmState| {
+                // Revm reports committed state directly; distinguish the terminal
+                // call target, CE-only seal, and Ethereum post-block commits.
+                let observed = if changes
+                    .contains_key(&outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS)
+                {
+                    Some(ObservedWrite::TerminalTransaction)
+                } else if changes.len() == 1
+                    && changes
+                        .contains_key(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
+                {
+                    Some(ObservedWrite::CompressedEntitiesSeal)
+                } else {
+                    Some(ObservedWrite::EthereumPostBlock)
                 };
                 if let Some(observed) = observed {
                     hook_writes.lock().unwrap().push(observed);
@@ -6490,6 +6407,7 @@ mod tests {
                 .expect("begin system tx executes");
         }
 
+        observed_writes.lock().unwrap().clear();
         let end = config
             .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
             .expect("terminal system tx builds");
@@ -6509,7 +6427,7 @@ mod tests {
             .expect("compressed entities seal executes after OSR2");
         let terminal_transaction_index = writes_after_terminal
             .iter()
-            .position(|write| *write == ObservedWrite::Transaction(begin.len()))
+            .position(|write| *write == ObservedWrite::TerminalTransaction)
             .expect("OSR2 commits as the terminal transaction");
         assert!(
             ethereum_post_block_index < terminal_transaction_index
@@ -9104,7 +9022,11 @@ mod tests {
         let epoch = 0u64;
         // Real BLS committee of 4 (committee addresses are the late-credit voters).
         let keys: Vec<bls12381::PrivateKey> = (0..4)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+            })
             .collect();
         let addrs: Vec<Address> = (0..4).map(|i| Address::with_last_byte(i + 0x40)).collect();
         let snapshot = CommitteeSnapshot {
@@ -9170,7 +9092,9 @@ mod tests {
             .iter()
             .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &msg))
             .collect();
-        let agg = aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+        let agg = aggregate::combine_signatures::<MinPk, _>(
+            commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+        );
         let mut aggregate_signature = [0u8; 96];
         aggregate_signature.copy_from_slice(&agg.encode());
         let mut signer_bitmap = vec![0u8; 4usize.div_ceil(8)];
@@ -10553,6 +10477,13 @@ mod tests {
                         U256::from(450_000_000u64),
                     )
                     .expect("seed compact Nod scheduling state");
+                    // Keep the rate fresh at the block that qualifies this bucket.
+                    let (.., pair_index) =
+                        outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+                    outbe_oracle::schema::OracleContract::new(storage.clone())
+                        .exchange_rate_timestamp
+                        .write(&pair_index, TEST_BLOCK_TIMESTAMP_BASE + 1)
+                        .unwrap();
                     staged = Some(
                         outbe_compressed_entities::end_block(storage, &scope)
                             .expect("close compressed-entity seed scope")
@@ -10599,8 +10530,6 @@ mod tests {
         };
 
         let run = |expected_validator_body: bool, readers: RuntimeBodyReaders| {
-            use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
-
             let signer = test_evm_signer();
             let (mut state, _tree_directory, tree_service, seed_hash) = seed_state();
             let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
@@ -10635,33 +10564,6 @@ mod tests {
                 execution.expected_begin_system_txs = system_txs.clone();
             }
             let mut executor = config.create_executor(evm, execution);
-            let cleanup_hook_observation = Arc::new(Mutex::new(None));
-            let cleanup_hook_capture = cleanup_hook_observation.clone();
-            executor.set_state_hook(Some(Box::new(
-                move |source, changes: &revm::state::EvmState| {
-                    let StateChangeSource::PostBlock(StateChangePostBlockSource::Other(name)) =
-                        source
-                    else {
-                        return;
-                    };
-                    if name != "compressed_entities_end_block" {
-                        return;
-                    }
-                    let compressed_entities = changes
-                        .get(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
-                        .expect("end-block hook must carry compressed-entity account changes");
-                    let cleared_slots = compressed_entities
-                        .storage
-                        .values()
-                        .filter(|slot| {
-                            slot.is_changed()
-                                && !slot.original_value.is_zero()
-                                && slot.present_value.is_zero()
-                        })
-                        .count();
-                    *cleanup_hook_capture.lock().unwrap() = Some(cleared_slots);
-                },
-            )));
             super::with_phase1_verify_disabled(|| {
                 executor
                     .apply_pre_execution_changes()
@@ -10673,6 +10575,29 @@ mod tests {
                     .expect("begin-zone transaction must execute");
             }
             let receipts = executor.receipts().to_vec();
+            let cleanup_hook_observation = Arc::new(Mutex::new(None));
+            let cleanup_hook_capture = cleanup_hook_observation.clone();
+            executor.evm_mut().db_mut().set_state_hook(Some(Box::new(
+                move |changes: revm::state::EvmState| {
+                    let Some(compressed_entities) =
+                        changes.get(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
+                    else {
+                        return;
+                    };
+                    let cleared_slots = compressed_entities
+                        .storage
+                        .values()
+                        .filter(|slot| {
+                            slot.is_changed()
+                                && !slot.original_value.is_zero()
+                                && slot.present_value.is_zero()
+                        })
+                        .count();
+                    if cleared_slots > 0 {
+                        *cleanup_hook_capture.lock().unwrap() = Some(cleared_slots);
+                    }
+                },
+            )));
             // Match the production payload-builder ordering: finalize CE while
             // the parallel-root hook is attached, prove the zeroing diff was
             // observed, then detach the hook and freeze/finalize the root.
@@ -10701,7 +10626,7 @@ mod tests {
                 cleanup_hook_cleared_slots > 0,
                 "pre-root hook must expose at least one temporary CE slot changing to zero"
             );
-            executor.set_state_hook(None);
+            executor.evm_mut().db_mut().set_state_hook(None);
             let (evm, block_result) = executor.finish().expect("block finish must succeed");
             drop(evm);
             let bundle = state.bundle_state.clone();

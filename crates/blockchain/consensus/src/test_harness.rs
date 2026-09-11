@@ -117,7 +117,7 @@ pub fn mock_genesis(epoch: Epoch) -> Sha256Digest {
     let mut hasher = Sha256::default();
     hasher.update(b"outbe-test-harness/genesis");
     hasher.update(&epoch.get().to_be_bytes());
-    hasher.finalize()
+    hasher.finalize().1
 }
 
 impl Automaton for MockAutomaton {
@@ -132,7 +132,7 @@ impl Automaton for MockAutomaton {
         hasher.update(&context.parent.0.get().to_be_bytes());
         hasher.update(&context.parent.1.encode());
         hasher.update(&context.leader.encode());
-        let digest = hasher.finalize();
+        let digest = hasher.finalize().1;
         let (tx, rx) = oneshot::channel();
         tx.send_lossy(digest);
         rx
@@ -179,7 +179,7 @@ impl ConsensusRelay for MockRelay {
         _plan: Self::Plan,
     ) -> commonware_actor::Feedback {
         // The mock store is in-memory and never closes; with
-        // `ForwardingPolicy::Disabled` the engine only emits
+        // `ForwardPolicy::Disabled` the engine only emits
         // `Plan::Propose`, so storing the self-describing digest for
         // every plan is behaviour-preserving. Always accepted.
         self.payloads
@@ -359,6 +359,7 @@ impl Harness {
             SimConfig {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
+                max_peers_per_set: NonZeroUsize::new(n).expect("non-empty committee"),
                 tracked_peer_sets: commonware_utils::NZUsize!(4),
             },
         );
@@ -423,7 +424,7 @@ impl Harness {
         let link = Link {
             latency: Duration::from_millis(0),
             jitter: Duration::from_millis(0),
-            success_rate: 1.0,
+            success_rate: commonware_utils::probability!(1.0),
         };
         for i in 0..n {
             for j in 0..n {
@@ -602,7 +603,7 @@ impl Harness {
                         relay,
                         reporter: reporter.clone(),
                         strategy: Sequential,
-                        forwarding: commonware_consensus::simplex::ForwardingPolicy::Disabled,
+                        forward: commonware_consensus::simplex::ForwardPolicy::Disabled,
                         partition: format!("harness_n{i}_e{}", epoch.get()),
                         mailbox_size: NonZeroUsize::new(256).expect("nonzero"),
                         epoch,
@@ -613,10 +614,10 @@ impl Harness {
                         leader_timeout,
                         certification_timeout: leader_timeout * 2,
                         timeout_retry: leader_timeout * 4,
-                        activity_timeout: ViewDelta::new(64),
-                        skip_timeout: ViewDelta::new(8),
+                        view_retention: ViewDelta::new(64),
+                        skip: commonware_consensus::simplex::SkipPolicy::Disabled,
+                        track_historical_votes: true,
                         fetch_timeout: leader_timeout,
-                        fetch_concurrent: NonZeroUsize::new(2).expect("nonzero"),
                     };
                     let engine = Engine::new(
                         task_ctx

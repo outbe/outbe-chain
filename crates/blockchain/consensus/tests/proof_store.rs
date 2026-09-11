@@ -27,7 +27,7 @@ use commonware_cryptography::{
 use commonware_parallel::Sequential;
 use commonware_utils::{
     ordered::{Quorum as _, Set},
-    N3f1, TryCollect as _,
+    TryCollect as _,
 };
 use futures::channel::mpsc;
 use futures::StreamExt as _;
@@ -118,7 +118,7 @@ fn valid_notarization_with(
         fx.dkg.polynomial.clone(),
     )
     .unwrap();
-    let payload = OutbeDigest::from(B256::from_slice(Sha256::hash(payload_bytes).as_ref()));
+    let payload = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload_bytes]).as_ref()));
     let proposal = Proposal::new(
         Round::new(Epoch::new(0), View::new(2)),
         View::new(1),
@@ -132,7 +132,10 @@ fn valid_notarization_with(
         .map(|scheme| scheme.sign::<OutbeDigest>(subject).unwrap())
         .collect();
     let certificate = verifier
-        .assemble::<_, N3f1>(attestations, &Sequential)
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+            &Sequential,
+        )
         .unwrap();
     Notarization {
         proposal,

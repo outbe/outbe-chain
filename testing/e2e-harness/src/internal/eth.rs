@@ -117,6 +117,23 @@ fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 
     next.max(u128::from(MIN_PROTOCOL_BASE_FEE))
 }
 
+// Alloy 1.6 generates event constructors with the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod event_abi {
+    alloy_sol_types::sol!("../../contracts/precompiles/src/ITribute.sol");
+    alloy_sol_types::sol!("../../contracts/precompiles/src/INodFactory.sol");
+    #[cfg(feature = "ocomp-integration")]
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IGemFactory.sol");
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IMetadosis.sol");
+    alloy_sol_types::sol!(
+        #![sol(extra_derives(Debug, PartialEq))]
+        "../../contracts/precompiles/src/IStablecoinFactory.sol"
+    );
+}
+#[cfg(feature = "ocomp-integration")]
+pub use event_abi::IGemFactory;
+pub use event_abi::{IMetadosis, INodFactory, IStablecoinFactory, ITribute};
+
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node
 // dispatches.
@@ -125,10 +142,10 @@ sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IGovernance.sol");
 sol!("../../contracts/precompiles/src/IL2Registry.sol");
-sol!("../../contracts/precompiles/src/ITribute.sol");
+
 sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 sol!("../../contracts/precompiles/src/INod.sol");
-sol!("../../contracts/precompiles/src/INodFactory.sol");
+
 sol!("../../contracts/precompiles/src/IGratis.sol");
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IGratisFactory.sol");
@@ -138,13 +155,12 @@ sol!("../../contracts/precompiles/src/IPromis.sol");
 sol!("../../contracts/precompiles/src/IPromisFactory.sol");
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IGem.sol");
-#[cfg(feature = "ocomp-integration")]
-sol!("../../contracts/precompiles/src/IGemFactory.sol");
+
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IVaultRouter.sol");
 #[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IPayNote.sol");
-sol!("../../contracts/precompiles/src/IMetadosis.sol");
+
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
 sol!("../../contracts/precompiles/src/IDesis.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
@@ -172,11 +188,6 @@ sol! {
 sol!(
     #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IVote.sol"
-);
-
-sol!(
-    #![sol(extra_derives(Debug, PartialEq))]
-    "../../contracts/precompiles/src/IStablecoinFactory.sol"
 );
 
 sol!(

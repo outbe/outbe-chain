@@ -1,3 +1,4 @@
+use super::TEST_CHAIN_ID;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy_primitives::{B256, U256};
@@ -100,7 +101,7 @@ fn update_tee_policy(
 ) -> TeePolicyV1 {
     TeePolicyV1 {
         policy_version,
-        chain_id: U256::from(1).to_be_bytes(),
+        chain_id: U256::from(TEST_CHAIN_ID).to_be_bytes(),
         genesis_hash,
         activation_height,
         predecessor_policy_hash,
@@ -173,7 +174,7 @@ fn software_update_activation_promotes_its_staged_tee_policy() {
         current.policy_hash().unwrap(),
         B256::repeat_byte(0x66),
     );
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(1, genesis_hash);
+    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = TeeRegistry::new(storage.clone());
@@ -213,7 +214,7 @@ fn software_update_activation_promotes_ocomp_and_keeps_the_predecessor_readable(
     let current = ocomp_authority(genesis_hash);
     let successor = ocomp_successor(genesis_hash, activation);
     let limits = poc_schema_limits();
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(1, genesis_hash);
+    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = OcompRegistry::new(storage.clone());
@@ -268,7 +269,7 @@ fn handler_failure_rolls_back_tee_policy_promotion_with_update_activation() {
         current.policy_hash().unwrap(),
         B256::repeat_byte(0x69),
     );
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(1, genesis_hash);
+    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = TeeRegistry::new(storage.clone());
@@ -327,7 +328,7 @@ fn activating_update_discards_staged_policy_owned_by_canceled_update() {
         current.policy_hash().unwrap(),
         B256::repeat_byte(0x6c),
     );
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(1, genesis_hash);
+    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut registry = TeeRegistry::new(storage.clone());

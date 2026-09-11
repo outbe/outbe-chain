@@ -24,7 +24,7 @@ use commonware_cryptography::{
 use commonware_parallel::Sequential;
 use commonware_utils::{
     ordered::{Quorum as _, Set},
-    N3f1, TryCollect as _,
+    TryCollect as _,
 };
 use outbe_consensus::{
     bls::bootstrap_dkg,
@@ -93,7 +93,7 @@ fn notarization_for(
         .collect();
     let verifier =
         HybridScheme::<MinSig>::verifier(b"resolver-test", participants, dkg.polynomial).unwrap();
-    let payload = OutbeDigest::from(B256::from_slice(Sha256::hash(payload_bytes).as_ref()));
+    let payload = OutbeDigest::from(B256::from_slice(Sha256::hash(&[payload_bytes]).as_ref()));
     let proposal = Proposal::new(round, parent_view, payload);
     let subject = Subject::Notarize {
         proposal: &proposal,
@@ -103,7 +103,10 @@ fn notarization_for(
         .map(|scheme| scheme.sign::<OutbeDigest>(subject).unwrap())
         .collect();
     let certificate = verifier
-        .assemble::<_, N3f1>(attestations, &Sequential)
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+            &Sequential,
+        )
         .unwrap();
     (
         Notarization {
@@ -228,7 +231,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
             .put_certified_notarization(witness_for(
                 round,
                 View::new(1),
-                B256::from_slice(Sha256::hash(b"branch-y").as_ref()),
+                B256::from_slice(Sha256::hash(&[b"branch-y"]).as_ref()),
             ))
             .unwrap();
 
@@ -244,7 +247,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
                 &context,
                 ProofFetchKey {
                     round,
-                    parent_hash: B256::from_slice(Sha256::hash(b"branch-y").as_ref()),
+                    parent_hash: B256::from_slice(Sha256::hash(&[b"branch-y"]).as_ref()),
                 },
                 &[0u32, 1, 2],
             )
@@ -305,7 +308,7 @@ fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other
         let parent_view = View::new(1);
         let (competing, verifier) = notarization_for(round, parent_view, b"competing-branch-x");
         let competing_hash = competing.proposal.payload.0;
-        let requested_hash = B256::from_slice(Sha256::hash(b"requested-branch-y").as_ref());
+        let requested_hash = B256::from_slice(Sha256::hash(&[b"requested-branch-y"]).as_ref());
         assert_ne!(competing_hash, requested_hash);
 
         let store = FinalizedParentCertStore::new();
@@ -373,7 +376,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
                 &context,
                 ProofFetchKey {
                     round,
-                    parent_hash: B256::from_slice(Sha256::hash(b"any").as_ref()),
+                    parent_hash: B256::from_slice(Sha256::hash(&[b"any"]).as_ref()),
                 },
                 // More targets than ATTEMPTS - resolver must cap to ATTEMPTS.
                 &[0u32, 1, 2, 3, 4],

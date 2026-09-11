@@ -218,8 +218,12 @@ fn try_reconstruct(
     for (dealer, log) in finalized_dealer_logs.clone() {
         logs.record(dealer, log);
     }
-    observe::<MinSig, bls12381::PublicKey, N3f1, Batch>(&mut rand_core::OsRng, logs, &Sequential)
-        .map_err(|error| eyre::eyre!("{error}"))
+    observe::<MinSig, bls12381::PublicKey, N3f1, Batch>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        logs,
+        &Sequential,
+    )
+    .map_err(|error| eyre::eyre!("{error}"))
 }
 
 /// Outcome of offering a P2P dealer-log candidate to the gossip buffer.

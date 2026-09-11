@@ -278,7 +278,9 @@ fn register_l2_network_with_zk(world: &mut World) {
     let key = operator_key(world);
     let l1_address = operator_address(world, &key);
 
-    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+        rand_commonware::rngs::SysRng,
+    ));
     let public = public.encode().to_vec();
     world.state.l2_bls_private_hex = Some(hex::encode(private.encode()));
     world.state.l2_chain_id = Some(L2_CHAIN_ID);

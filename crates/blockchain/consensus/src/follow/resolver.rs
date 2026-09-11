@@ -144,7 +144,11 @@ async fn resolve_one<F, L>(
     F: FinalizedSource,
     L: LocalBlockSource,
 {
-    let Fetch { key, subscriber } = fetch;
+    let Fetch {
+        key,
+        subscriber,
+        span,
+    } = fetch;
     debug!(%key, "resolver received fetch");
     let value = match &key {
         Key::Block(commitment) => {
@@ -208,7 +212,7 @@ async fn resolve_one<F, L>(
 
     let delivery = Delivery {
         key,
-        subscribers: NonEmptyVec::new(subscriber),
+        subscribers: NonEmptyVec::new((subscriber, span)),
     };
     // AWAIT the marshal's validation response. Dropping the returned receiver is
     // the resolver-protocol CANCELLATION signal: the marshal checks

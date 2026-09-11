@@ -43,8 +43,8 @@ use commonware_parallel::Sequential;
 use commonware_runtime::{deterministic, Quota};
 use commonware_utils::ordered::{Quorum as _, Set};
 use commonware_utils::TryCollect as _;
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng as _;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng as _;
 
 use super::actor::run_initial_dkg;
 
@@ -85,6 +85,7 @@ fn run_seeded_round(
         0,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -115,11 +116,14 @@ fn run_seeded_round(
                 .iter()
                 .position(|k| k.public_key() == *player_pk)
                 .unwrap();
-            if let Some(ack) = players[pi].dealer_message::<commonware_utils::N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[pi]
+                .dealer_message::<commonware_utils::N3f1>(
+                    dealer_pk.clone(),
+                    pub_msg.clone(),
+                    priv_msg.clone(),
+                )
+                .expect("fixture dealing must be valid")
+            {
                 dealers[di]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();
@@ -220,6 +224,7 @@ fn below_threshold_dealers_cannot_mint_key() {
         1,
         Some(output_a),
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         too_few,
         a_set,
     )
@@ -252,14 +257,15 @@ fn foreign_previous_output_rejected() {
         1,
         Some(output_b),
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         a_set.clone(),
         a_set,
     )
     .expect_err("a foreign previous output must be rejected");
 
     assert!(
-        matches!(err, DkgError::UnknownDealer(_)),
-        "expected UnknownDealer (key-substitution) rejection, got {err:?}"
+        matches!(err, DkgError::DealerNotInRound(_)),
+        "expected DealerNotInRound (key-substitution) rejection, got {err:?}"
     );
 }
 
@@ -282,6 +288,7 @@ fn sim_full_ceremony_completes_and_all_agree() {
             SimConfig {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
+                max_peers_per_set: commonware_utils::NZUsize!(32),
                 tracked_peer_sets: commonware_utils::NZUsize!(4),
             },
         );
@@ -301,7 +308,7 @@ fn sim_full_ceremony_completes_and_all_agree() {
         let link = Link {
             latency: Duration::from_millis(0),
             jitter: Duration::from_millis(0),
-            success_rate: 1.0,
+            success_rate: commonware_utils::probability!(1.0),
         };
         for i in 0..n {
             for j in 0..n {
@@ -362,6 +369,7 @@ fn sim_single_missing_dealer_times_out_clean() {
             SimConfig {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
+                max_peers_per_set: commonware_utils::NZUsize!(32),
                 tracked_peer_sets: commonware_utils::NZUsize!(4),
             },
         );
@@ -381,7 +389,7 @@ fn sim_single_missing_dealer_times_out_clean() {
         let link = Link {
             latency: Duration::from_millis(0),
             jitter: Duration::from_millis(0),
-            success_rate: 1.0,
+            success_rate: commonware_utils::probability!(1.0),
         };
         for i in 0..n {
             for j in 0..n {

@@ -66,7 +66,7 @@
 //!    category (2.) and become pending.
 
 use crate::{
-    blobstore::BlobStore,
+    blobstore::{BlobStore, PooledBlobSidecar},
     error::{PoolError, PoolErrorKind, PoolResult},
     identifier::{SenderId, SenderIdentifiers, TransactionId},
     metrics::BlobStoreMetrics,
@@ -383,8 +383,13 @@ where
         &self,
         max: usize,
     ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
-        let mut out = Vec::new();
-        self.append_pooled_transactions_max(max, &mut out);
+        if max == 0 {
+            return Vec::new()
+        }
+
+        let pool = self.get_pool_data();
+        let mut out = Vec::with_capacity(max.min(pool.all().len()));
+        out.extend(pool.all().transactions_iter().filter(|tx| tx.propagate).take(max).cloned());
         out
     }
 
@@ -459,13 +464,13 @@ where
         if max == 0 {
             return Vec::new();
         }
-        self.get_pool_data()
-            .all()
-            .transactions_iter()
-            .filter(|tx| tx.propagate)
-            .take(max)
-            .map(|tx| *tx.hash())
-            .collect()
+
+        let pool = self.get_pool_data();
+        let mut out = Vec::with_capacity(max.min(pool.all().len()));
+        out.extend(
+            pool.all().transactions_iter().filter(|tx| tx.propagate).take(max).map(|tx| *tx.hash()),
+        );
+        out
     }
 
     /// Converts the internally tracked transaction to the pooled format.
@@ -691,7 +696,9 @@ where
 
             // Enforce the pool size limits if at least one transaction was added successfully
             let discarded = if results.iter().any(Result::is_ok) {
-                pool.discard_worst()
+                let discarded = pool.discard_worst();
+                pool.update_size_metrics();
+                discarded
             } else {
                 Default::default()
             };
@@ -708,14 +715,20 @@ where
             self.delete_discarded_blobs(discarded.iter());
             self.with_event_listener(|listener| listener.discarded_many(&discarded));
 
-            let discarded_hashes =
-                discarded.into_iter().map(|tx| *tx.hash()).collect::<HashSet<_>>();
+            // Linear search avoids allocating a hash set for small eviction batches.
+            const MAX_LINEAR_SEARCH_DISCARDS: usize = 4;
+            let discarded_hashes = (discarded.len() > MAX_LINEAR_SEARCH_DISCARDS)
+                .then(|| discarded.iter().map(|tx| *tx.hash()).collect::<HashSet<_>>());
+            let is_discarded = |hash: &TxHash| match &discarded_hashes {
+                Some(hashes) => hashes.contains(hash),
+                None => discarded.iter().any(|tx| tx.hash() == hash),
+            };
 
             // A newly added transaction may be immediately discarded, so we need to
             // adjust the result here
             for res in &mut results {
                 if let Ok(AddedTransactionOutcome { hash, .. }) = res &&
-                    discarded_hashes.contains(hash)
+                    is_discarded(hash)
                 {
                     *res = Err(PoolError::new(*hash, PoolErrorKind::DiscardedOnInsert))
                 }
@@ -1113,7 +1126,7 @@ where
         self.pool.write().prune_transactions(hashes)
     }
 
-    /// Removes and returns all transactions that are present in the pool.
+    /// Retains only transactions that are not present in the pool.
     pub fn retain_unknown<A>(&self, announcement: &mut A)
     where
         A: HandleMempoolData,
@@ -1123,6 +1136,18 @@ where
         }
         let pool = self.get_pool_data();
         announcement.retain_by_hash(|tx| !pool.contains(tx))
+    }
+
+    /// Retains only transactions that are present in the pool.
+    pub fn retain_contains<A>(&self, announcement: &mut A)
+    where
+        A: HandleMempoolData,
+    {
+        if announcement.is_empty() {
+            return
+        }
+        let pool = self.get_pool_data();
+        announcement.retain_by_hash(|tx| pool.contains(tx))
     }
 
     /// Returns the transaction by hash.
@@ -1275,7 +1300,7 @@ where
     }
 
     /// Inserts a blob transaction into the blob store
-    fn insert_blob(&self, hash: TxHash, blob: BlobTransactionSidecarVariant) {
+    fn insert_blob(&self, hash: TxHash, blob: PooledBlobSidecar) {
         debug!(target: "txpool", "[{:?}] storing blob sidecar", hash);
         if let Err(err) = self.blob_store.insert(hash, blob) {
             warn!(target: "txpool", %err, "[{:?}] failed to insert blob", hash);
@@ -1337,7 +1362,7 @@ struct AddedTransactionMeta<T: PoolTransaction> {
     /// The transaction that was added to the pool
     added: AddedTransaction<T>,
     /// Optional blob sidecar for EIP-4844 transactions
-    blob_sidecar: Option<BlobTransactionSidecarVariant>,
+    blob_sidecar: Option<PooledBlobSidecar>,
 }
 
 /// Tracks an added transaction and all graph changes caused by adding it.
@@ -1641,7 +1666,7 @@ impl<T: PoolTransaction> OnNewCanonicalStateOutcome<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        blobstore::{BlobStore, InMemoryBlobStore},
+        blobstore::{BlobStore, InMemoryBlobStore, PooledBlobSidecar},
         identifier::SenderId,
         test_utils::{MockTransaction, TestPoolBuilder},
         validate::ValidTransaction,
@@ -1706,7 +1731,7 @@ mod tests {
 
             // Insert the sidecar into the blob store if the current index is within the blob limit.
             if n < blob_limit.max_txs {
-                blob_store.insert(*tx.get_hash(), sidecar.clone()).unwrap();
+                blob_store.insert(*tx.get_hash(), sidecar.clone().into()).unwrap();
             }
 
             // Add the transaction to the pool with external origin and valid outcome.
@@ -1718,7 +1743,7 @@ mod tests {
                     bytecode_hash: None,
                     transaction: ValidTransaction::ValidWithSidecar {
                         transaction: tx,
-                        sidecar: sidecar.clone(),
+                        sidecar: PooledBlobSidecar::from(sidecar.clone()),
                     },
                     propagate: true,
                     authorities: None,

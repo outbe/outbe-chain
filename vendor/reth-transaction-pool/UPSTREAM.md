@@ -2,12 +2,12 @@
 
 - Project: `paradigmxyz/reth`
 - Package: `reth-transaction-pool`
-- Release: `v2.2.0`
-- Source commit: `88505c7fcbfdebfd3b56d88c86b62e950043c6c4`
+- Release: `v2.5.2`
+- Source commit: `5a6940e351fed80458fe6c9da8581cbe4b8bd036`
 - Local semantic delta: queued-lifetime maintenance emits one structured
   `outbe::txpool` warning for each transaction actually removed, including its
   hash, sender, nonce, and `queued_lifetime` reason.
 
-The eviction filter, wall-clock deadline, interval, removal operation, blob
-cleanup, transaction types, pool state, and all consensus behavior are
-unchanged.
+The eviction filter, deadline, removal operation and consensus behavior are
+unchanged. Workspace manifest inheritance is expanded for standalone vendoring;
+the self dev-dependency resolves to this local package.

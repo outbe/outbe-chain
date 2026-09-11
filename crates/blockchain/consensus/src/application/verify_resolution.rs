@@ -86,7 +86,7 @@ pub(crate) async fn resolve_for_verify(
                 elapsed_ms = started_at.elapsed().as_millis(),
                 "verify resolve finished"
             );
-            Ok(block)
+            Ok((*block).clone())
         }
         Ok(Err(_)) => {
             debug!(

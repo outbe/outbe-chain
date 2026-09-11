@@ -446,6 +446,7 @@ impl Mailbox {
             round,
             previous_output,
             Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             dealers.clone(),
             participants.clone(),
         )

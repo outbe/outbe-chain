@@ -238,7 +238,7 @@ mod tests {
             let mut mailbox = Mailbox::new(tx);
             let (ack, waiter) = Exact::handle();
 
-            let _ = mailbox.report(Update::Block(make_test_block(0xA1), ack));
+            let _ = mailbox.report(Update::Block(make_test_block(0xA1).into(), ack));
 
             // The closed mailbox acknowledges the cloned block update inline, so
             // the waiter resolves immediately. Race it against a runtime `Clock`

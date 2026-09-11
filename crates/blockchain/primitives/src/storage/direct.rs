@@ -135,7 +135,14 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
                     .state
                     .storage(addr, key)
                     .map_err(|e| PrecompileError::Storage(format!("storage({addr},{key}): {e}")))?;
-                storage.insert(key, EvmStorageSlot::new_changed(original, new_value, 0));
+                storage.insert(
+                    key,
+                    EvmStorageSlot::new_changed(
+                        original,
+                        new_value,
+                        revm::state::TransactionId::ZERO,
+                    ),
+                );
             }
 
             let mut account = Account::from(info);
