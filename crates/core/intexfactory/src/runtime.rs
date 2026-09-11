@@ -17,7 +17,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -1054,7 +1054,7 @@ pub(crate) fn compute_pow_hash(
     out
 }
 
-/// The PoW hash must have `POW_DIFFICULTY` leading zero bytes.
+/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
     holder: Address,
     promis_amount: U256,
@@ -1063,10 +1063,5 @@ pub(crate) fn validate_pow(
     nonce: u64,
 ) -> Result<()> {
     let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce);
-    for b in &hash[..POW_DIFFICULTY] {
-        if *b != 0 {
-            return Err(IntexFactoryError::InsufficientProofOfWork.into());
-        }
-    }
-    Ok(())
+    outbe_common::pow::meets_difficulty(&hash).map_err(|e| IntexFactoryError::from(e).into())
 }

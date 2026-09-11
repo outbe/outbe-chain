@@ -77,6 +77,14 @@ pub enum IntexFactoryError {
     },
 }
 
+impl From<outbe_common::pow::PowError> for IntexFactoryError {
+    fn from(value: outbe_common::pow::PowError) -> Self {
+        match value {
+            outbe_common::pow::PowError::InsufficientProofOfWork => Self::InsufficientProofOfWork,
+        }
+    }
+}
+
 impl From<IntexFactoryError> for PrecompileError {
     fn from(err: IntexFactoryError) -> Self {
         PrecompileError::Revert(err.to_string())

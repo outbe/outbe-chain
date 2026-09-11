@@ -183,7 +183,7 @@ pub fn dispatch(
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
-                // has POW_DIFFICULTY leading zero bytes; `seq` is the on-chain
+                // has the protocol's leading zero bytes; `seq` is the on-chain
                 // per-(series, holder) counter.
                 minePromis(c) => mutate(c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {

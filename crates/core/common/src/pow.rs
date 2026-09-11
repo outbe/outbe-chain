@@ -31,16 +31,19 @@ pub fn compute_pow_hash(id: U256, nonce: u64) -> [u8; 32] {
     out
 }
 
+/// The protocol's single verdict on a work hash, whatever preimage produced it:
+/// a right whose own scheme differs still weighs its work here.
+pub fn meets_difficulty(hash: &[u8; 32]) -> Result<(), PowError> {
+    if hash[..POW_DIFFICULTY].iter().any(|byte| *byte != 0) {
+        return Err(PowError::InsufficientProofOfWork);
+    }
+    Ok(())
+}
+
 /// Validates that [`compute_pow_hash`] has [`POW_DIFFICULTY`] leading zero
 /// bytes.
 pub fn validate_pow(id: U256, nonce: u64) -> Result<(), PowError> {
-    let hash = compute_pow_hash(id, nonce);
-    for byte in &hash[..POW_DIFFICULTY] {
-        if *byte != 0 {
-            return Err(PowError::InsufficientProofOfWork);
-        }
-    }
-    Ok(())
+    meets_difficulty(&compute_pow_hash(id, nonce))
 }
 
 #[cfg(test)]
@@ -76,6 +79,18 @@ mod tests {
         let id = U256::from(0xABCDu64);
         let nonce = find_valid_nonce(id);
         assert!(validate_pow(id, nonce).is_ok());
+    }
+
+    #[test]
+    fn the_verdict_reads_only_the_leading_bytes() {
+        let mut hash = [0u8; 32];
+        hash[31] = 0xFF;
+        assert!(meets_difficulty(&hash).is_ok());
+        hash[0] = 1;
+        assert_eq!(
+            meets_difficulty(&hash),
+            Err(PowError::InsufficientProofOfWork)
+        );
     }
 
     #[test]
