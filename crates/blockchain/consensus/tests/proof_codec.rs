@@ -18,17 +18,18 @@ use commonware_cryptography::{
 };
 use commonware_utils::Participant;
 use outbe_consensus::proof::{HybridCertificate, VrfProof};
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 /// Build a non-trivial `HybridCertificate<MinSig>` from real BLS keys so the
 /// codec exercises actual group elements (not the point at infinity).
 fn sample_certificate(participants: usize, signer_indices: &[u32]) -> HybridCertificate<MinSig> {
     assert!(participants >= signer_indices.len());
-    let signers_bitmap = Signers::from(
-        participants,
+    let signers_bitmap = Signers::new(
+        participants as u32,
         signer_indices.iter().copied().map(Participant::new),
-    );
+    )
+    .unwrap();
 
     // Aggregate a real BLS MinPk signature so the encoder sees a valid G1 point.
     let mut signatures = Vec::with_capacity(signer_indices.len().max(1));
@@ -41,8 +42,9 @@ fn sample_certificate(participants: usize, signer_indices: &[u32]) -> HybridCert
         let sk = PrivateKey::from_seed(99);
         signatures.push(sk.sign(b"hybrid_certificate_codec_test", b"vote"));
     }
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(signatures.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(signatures.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     // Real threshold VRF signature via a one-shot MinSig key.
     let mut rng = ChaCha20Rng::seed_from_u64(7);
@@ -124,7 +126,7 @@ fn certificate_wire_has_no_optional_vrf_discriminator() {
 fn empty_signers_decode_rejected() {
     // Build an empty-signers certificate by manually encoding a zero-count
     // signers bitmap of size 8 followed by zero bytes; the decoder rejects this.
-    let zero_signers = Signers::from(8, std::iter::empty::<Participant>());
+    let zero_signers = Signers::new(8, std::iter::empty::<Participant>()).unwrap();
     let mut cert = sample_certificate(8, &[0, 1]);
     cert.signers = zero_signers;
     let bytes = cert.encode();

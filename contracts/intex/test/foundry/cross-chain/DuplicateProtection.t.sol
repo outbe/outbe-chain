@@ -12,11 +12,10 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
-/// @dev Under ERC-7786 the routers have NO message-level dedup - the hub deduplicates and rolls back, so the old
-///      ERC-7786 ORDERED `nextNonce` premise no longer exists at the router. The NFT batch adapter, which
-///      carries independent transfers, keeps its OWN defence-in-depth dedup keyed by the bridge `receiveId`
-///      (`processed[receiveId]`), rejecting a replay of the same message with `AlreadyProcessed(receiveId)`. A
-///      `deliverLast()` replay reuses the same `receiveId`, so it exercises exactly this guard.
+/// @dev Message-level dedup belongs to the hub: it marks every delivery before handing it on and rolls the mark
+///      back with the transaction, so an exact replay never reaches a client (covered by
+///      `ERC7786Bridge.t.sol:test_RevertWhen_ReceiveAlreadyExecuted`). Clients therefore keep no copy of it. What
+///      stays worth pinning here is the other direction: distinct payloads carry distinct ids and must both land.
 contract DuplicateProtectionTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
@@ -74,21 +73,6 @@ contract DuplicateProtectionTest is CrossChainTest {
         return BatchSendParam({
             dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenIds: tokenIds, amounts: amounts
         });
-    }
-
-    /// @notice A genuine batch send burns on the source and mints on the destination on first delivery. Replaying
-    ///         the same message (`deliverLast`, same `receiveId`) is rejected with `AlreadyProcessed(receiveId)`.
-    function test_NFTBatch_ReplayedMessage_RevertsAlreadyProcessed() public {
-        // First delivery: auto-delivered by the send, mints on the destination.
-        vm.prank(sender);
-        batchSrc.batchSend(_batchSendParam(recipient));
-        assertEq(intexDst.balanceOf(recipient, TOKEN_ID), 1, "first delivery minted");
-
-        // The mock's receiveId binds (sender, payload); a `deliverLast()` replay reuses it.
-        bytes32 receiveId = keccak256(abi.encode(bridge.lastSender(), bridge.lastPayload()));
-
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.AlreadyProcessed.selector, receiveId));
-        bridge.deliverLast();
     }
 
     /// @notice Two sends carrying distinct payloads -> distinct receiveIds, so both land. Proves the guard keys on

@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, B256, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;

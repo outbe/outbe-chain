@@ -20,10 +20,7 @@ use commonware_consensus::{
     simplex::{elector::Config as _, types::Finalization},
     types::{Epoch, Height},
 };
-use commonware_cryptography::{
-    bls12381::primitives::variant::MinSig,
-    certificate::{Provider as _, Scheme as _},
-};
+use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
 use commonware_parallel::Sequential;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 

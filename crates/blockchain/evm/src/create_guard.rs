@@ -50,21 +50,22 @@ where
     fn first_frame_input(
         &mut self,
         evm: &mut Self::Evm,
-        gas_limit: u64,
-        reservoir: u64,
-    ) -> Result<FrameInit, Self::Error> {
+        gas: &mut revm::interpreter::GasTracker,
+    ) -> Result<Option<FrameInit>, Self::Error> {
         let ctx = evm.ctx_mut();
         let mut memory = SharedMemory::new_with_buffer(ctx.local().shared_memory_buffer().clone());
         memory.set_memory_limit(ctx.cfg().memory_limit());
 
-        let mut frame_input = execution::create_init_frame(ctx, gas_limit, reservoir)?;
+        let Some(mut frame_input) = execution::create_init_frame(ctx, gas)? else {
+            return Ok(None);
+        };
         guard_top_level_create(ctx, &mut frame_input)?;
 
-        Ok(FrameInit {
+        Ok(Some(FrameInit {
             depth: 0,
             memory,
             frame_input,
-        })
+        }))
     }
 }
 
@@ -86,15 +87,17 @@ where
     WIRE: InterpreterTypes,
     HOST: Host,
 {
-    let create_gas = instructions.instruction_table[CREATE_OPCODE as usize].static_gas();
-    let create2_gas = instructions.instruction_table[CREATE2_OPCODE as usize].static_gas();
+    let create_gas = instructions.gas_table()[CREATE_OPCODE as usize];
+    let create2_gas = instructions.gas_table()[CREATE2_OPCODE as usize];
     instructions.insert_instruction(
         CREATE_OPCODE,
-        Instruction::new(guarded_create::<WIRE, HOST, false>, create_gas),
+        Instruction::new(guarded_create::<WIRE, HOST, false>),
+        create_gas,
     );
     instructions.insert_instruction(
         CREATE2_OPCODE,
-        Instruction::new(guarded_create::<WIRE, HOST, true>, create2_gas),
+        Instruction::new(guarded_create::<WIRE, HOST, true>),
+        create2_gas,
     );
 }
 
@@ -123,12 +126,14 @@ where
     Ok(())
 }
 
-fn guarded_create<WIRE, HOST, const IS_CREATE2: bool>(context: InstructionContext<'_, HOST, WIRE>)
+fn guarded_create<WIRE, HOST, const IS_CREATE2: bool>(
+    context: InstructionContext<'_, HOST, WIRE>,
+) -> revm::interpreter::InstructionExecResult
 where
     WIRE: InterpreterTypes,
     HOST: Host + ?Sized,
 {
-    create::<WIRE, IS_CREATE2, HOST>(InstructionContext {
+    let result = create::<IS_CREATE2, WIRE, HOST>(InstructionContext {
         interpreter: &mut *context.interpreter,
         host: &mut *context.host,
     });
@@ -136,7 +141,7 @@ where
     let action = context.interpreter.take_next_action();
     let InterpreterAction::NewFrame(FrameInput::Create(mut inputs)) = action else {
         context.interpreter.bytecode.set_action(action);
-        return;
+        return result;
     };
 
     let Some(caller_info) = context
@@ -148,7 +153,7 @@ where
             .interpreter
             .bytecode
             .set_action(InterpreterAction::NewFrame(FrameInput::Create(inputs)));
-        return;
+        return result;
     };
     let destination = inputs.created_address(caller_info.account.nonce);
     if is_stablecoin_address(destination) {
@@ -166,4 +171,5 @@ where
         .interpreter
         .bytecode
         .set_action(InterpreterAction::NewFrame(FrameInput::Create(inputs)));
+    result
 }

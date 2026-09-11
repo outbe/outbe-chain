@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
@@ -13,10 +13,15 @@ use crate::{
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IMetadosis.sol"
-);
+// Alloy 1.6 generates event constructors with the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IMetadosis.sol"
+    );
+}
+pub use abi::IMetadosis;
 
 /// Dispatches an ABI-encoded call to the Metadosis precompile (view-only).
 pub fn dispatch(

@@ -132,7 +132,9 @@ mod tests {
 
     /// Helper: create a dummy SimplexContext.
     fn dummy_context() -> SimplexContext {
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         SimplexContext {
             round: Default::default(),
             leader: key.public_key(),

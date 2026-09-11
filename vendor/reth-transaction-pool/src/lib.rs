@@ -20,26 +20,26 @@
 //!
 //! ```text
 //! Network Peer
-//!     v
+//!     ↓
 //! Transactions or NewPooledTransactionHashes message
-//!     v
+//!     ↓
 //! TransactionsManager (crates/net/network/src/transactions/mod.rs)
-//!     |
-//!     +--> For Transactions message:
-//!     |   +--> Validates message format
-//!     |   +--> Checks if transaction already known
-//!     |   +--> Marks peer as having seen the transaction
-//!     |   +--> Queues for import
-//!     |
-//!     +--> For NewPooledTransactionHashes message:
-//!         +--> Filters out already known transactions
-//!         +--> Queues unknown hashes for fetching
-//!         +--> Sends GetPooledTransactions request
-//!         +--> Receives PooledTransactions response
-//!         +--> Queues fetched transactions for import
-//!             v
+//!     │
+//!     ├─→ For Transactions message:
+//!     │   ├─→ Validates message format
+//!     │   ├─→ Checks if transaction already known
+//!     │   ├─→ Marks peer as having seen the transaction
+//!     │   └─→ Queues for import
+//!     │
+//!     └─→ For NewPooledTransactionHashes message:
+//!         ├─→ Filters out already known transactions
+//!         ├─→ Queues unknown hashes for fetching
+//!         ├─→ Sends GetPooledTransactions request
+//!         ├─→ Receives PooledTransactions response
+//!         └─→ Queues fetched transactions for import
+//!             ↓
 //! pool.add_external_transactions() [Origin: External]
-//!     v
+//!     ↓
 //! Transaction Validation & Pool Addition
 //! ```
 //!
@@ -47,11 +47,11 @@
 //!
 //! ```text
 //! eth_sendRawTransaction RPC call
-//!     +--> Decodes raw bytes
-//!     +--> Recovers sender
-//!         v
+//!     ├─→ Decodes raw bytes
+//!     └─→ Recovers sender
+//!         ↓
 //! pool.add_transaction() [Origin: Local]
-//!     v
+//!     ↓
 //! Transaction Validation & Pool Addition
 //! ```
 //!
@@ -69,9 +69,9 @@
 //!
 //! - **Transaction Type**: Fork-dependent support (Legacy always, EIP-2930/1559/4844/7702 need
 //!   activation)
-//! - **Size**: Input data <= 128KB (default)
-//! - **Gas**: Limit <= block gas limit
-//! - **Fees**: Priority fee <= max fee; local tx fee cap; external minimum priority fee
+//! - **Size**: Input data ≤ 128KB (default)
+//! - **Gas**: Limit ≤ block gas limit
+//! - **Fees**: Priority fee ≤ max fee; local tx fee cap; external minimum priority fee
 //! - **Chain ID**: Must match current chain
 //! - **Intrinsic Gas**: Sufficient for data and access lists
 //! - **Blobs** (EIP-4844): Valid count, KZG proofs
@@ -79,8 +79,8 @@
 //! ### Stateful Checks
 //!
 //! 1. **Sender**: No bytecode (unless EIP-7702 delegated in Prague)
-//! 2. **Nonce**: >= account nonce
-//! 3. **Balance**: Covers value + (`gas_limit` x `max_fee_per_gas`)
+//! 2. **Nonce**: ≥ account nonce
+//! 3. **Balance**: Covers value + (`gas_limit` × `max_fee_per_gas`)
 //!
 //! ### Common Errors
 //!
@@ -117,10 +117,10 @@
 //! Transactions move between subpools based on state changes:
 //!
 //! ```text
-//! Queued ----------> BaseFee/Blob ---------> Pending
-//!   ^                      ^                       |
-//!   |                      |                       |
-//!   +--------------------+---------------------+
+//! Queued ─────────→ BaseFee/Blob ────────→ Pending
+//!   ↑                      ↑                       │
+//!   │                      │                       │
+//!   └────────────────────┴─────────────────────┘
 //!         (demotions due to state changes)
 //! ```
 //!
@@ -288,7 +288,7 @@ pub use crate::{
         REPLACE_BLOB_PRICE_BUMP, TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER,
         TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT, TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
     },
-    error::PoolResult,
+    error::{PoolResult, RawPoolTransactionError},
     ordering::{CoinbaseTipOrdering, Priority, TransactionOrdering},
     pool::{
         blob_tx_priority, fee_delta, state::SubPool, AddedTransactionOutcome,
@@ -297,8 +297,9 @@ pub use crate::{
     },
     traits::*,
     validate::{
-        EthTransactionValidator, TransactionValidationOutcome, TransactionValidationTaskExecutor,
-        TransactionValidator, ValidPoolTransaction,
+        EthTransactionValidator, StatefulValidationFn, StatelessValidationFn,
+        TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
+        ValidPoolTransaction,
     },
 };
 use crate::{identifier::TransactionId, pool::PoolInner};
@@ -470,7 +471,7 @@ where
     V: TransactionValidator,
     <V as TransactionValidator>::Transaction: EthPoolTransaction,
     T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     type Transaction = T::Transaction;
 
@@ -509,11 +510,8 @@ where
         if transactions.is_empty() {
             return Vec::new()
         }
-        let validated = self
-            .pool
-            .validator()
-            .validate_transactions(transactions.into_iter().map(|tx| (origin, tx)))
-            .await;
+        let validated =
+            self.pool.validator().validate_transactions_with_origin(origin, transactions).await;
         self.pool.add_transactions(origin, validated)
     }
 
@@ -682,6 +680,13 @@ where
         self.pool.retain_unknown(announcement)
     }
 
+    fn retain_contains<A>(&self, announcement: &mut A)
+    where
+        A: HandleMempoolData,
+    {
+        self.pool.retain_contains(announcement)
+    }
+
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
         self.inner().get(tx_hash)
     }
@@ -816,6 +821,17 @@ where
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
         self.pool.blob_store().get_by_versioned_hashes_v4(versioned_hashes, indices_bitarray)
     }
+
+    fn has_blobs_for_versioned_hashes(
+        &self,
+        versioned_hashes: &[B256],
+    ) -> Result<Vec<bool>, BlobStoreError> {
+        self.pool.blob_store().has_versioned_hashes(versioned_hashes)
+    }
+
+    fn blob_store(&self) -> Box<dyn BlobStore> {
+        Box::new(self.pool.blob_store().clone())
+    }
 }
 
 impl<V, T, S> TransactionPoolExt for Pool<V, T, S>
@@ -823,7 +839,7 @@ where
     V: TransactionValidator,
     <V as TransactionValidator>::Transaction: EthPoolTransaction,
     T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     type Block = V::Block;
 
@@ -851,6 +867,20 @@ where
 
     fn cleanup_blobs(&self) {
         self.pool.cleanup_blobs()
+    }
+}
+
+impl<V, T, S> ValidatingPool for Pool<V, T, S>
+where
+    V: TransactionValidator,
+    <V as TransactionValidator>::Transaction: EthPoolTransaction,
+    T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
+    S: BlobStore + Clone,
+{
+    type Validator = V;
+
+    fn validator(&self) -> &Self::Validator {
+        self.inner().validator()
     }
 }
 

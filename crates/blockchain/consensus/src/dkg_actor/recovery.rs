@@ -172,8 +172,13 @@ pub(super) fn restore_player(
                 accepted.pub_msg.clone(),
                 accepted.priv_msg.clone(),
             )
+            .map_err(|error| {
+                eyre::eyre!(
+                    "persisted DKG player dealing is invalid during restart replay: {error:?}"
+                )
+            })?
             .ok_or_else(|| {
-                eyre::eyre!("persisted DKG player dealing is invalid during restart replay")
+                eyre::eyre!("persisted DKG player dealing produced no ACK during restart replay")
             })?;
         if replayed_ack.encode() != accepted.ack.encode() {
             return Err(eyre::eyre!(
@@ -205,7 +210,7 @@ pub(super) fn handle_player_bundle(
         return Ok(PlayerBundleAction::Equivocation { previous, received });
     }
 
-    let Some(ack) =
+    let Ok(Some(ack)) =
         player.dealer_message::<N3f1>(dealer.clone(), pub_msg.clone(), priv_msg.clone())
     else {
         return Ok(PlayerBundleAction::Invalid);
@@ -490,6 +495,7 @@ mod tests {
             0,
             None,
             commonware_cryptography::bls12381::primitives::sharing::Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants.clone(),
         )
@@ -502,7 +508,12 @@ mod tests {
             commonware_cryptography::bls12381::dkg::feldman_desmedt::Dealer::<
                 MinSig,
                 bls12381::PrivateKey,
-            >::start::<N3f1>(rand_core::OsRng, info.clone(), dealer_key, None)
+            >::start::<N3f1>(
+                rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+                info.clone(),
+                dealer_key,
+                None,
+            )
             .unwrap();
         let priv_msg = priv_msgs
             .into_iter()
@@ -691,6 +702,7 @@ mod tests {
             0,
             None,
             commonware_cryptography::bls12381::primitives::sharing::Mode::NonZeroCounter,
+            commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
             participants.clone(),
             participants.clone(),
         )
@@ -720,7 +732,7 @@ mod tests {
             let dealer_pk = dealer_key.public_key();
             let (mut dealer, pub_msg, priv_msgs) =
                 Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                    rand_core::OsRng,
+                    rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                     info.clone(),
                     dealer_key.clone(),
                     None,
@@ -753,6 +765,7 @@ mod tests {
                     .unwrap();
                     player
                         .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg)
+                        .expect("fixture dealing must be valid")
                         .unwrap()
                 };
                 dealer.receive_player_ack(player_pk, ack).unwrap();
@@ -779,7 +792,7 @@ mod tests {
         }
         let (output, _private_share) = restarted_player
             .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-                &mut rand_core::OsRng,
+                &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 logs,
                 &Sequential,
             )
@@ -830,6 +843,7 @@ mod tests {
             Player::<MinSig, bls12381::PrivateKey>::new(info.clone(), player_key.clone()).unwrap();
         let different_ack = other_player
             .dealer_message::<N3f1>(dealer.clone(), other_pub_msg, other_priv_msg)
+            .expect("fixture dealing must be valid")
             .unwrap();
         snapshot.accepted_dealings.get_mut(&dealer).unwrap().ack = different_ack;
         store.save_player(&snapshot).unwrap();

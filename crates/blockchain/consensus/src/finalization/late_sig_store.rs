@@ -263,7 +263,10 @@ impl LateFinalizeSigStore {
                 continue;
             }
             let sigs: Vec<&MinPkSig> = target.votes.values().collect();
-            let agg = aggregate::combine_signatures::<MinPk, _>(sigs);
+            let agg = aggregate::combine_signatures::<MinPk, _>(
+                commonware_utils::iter::NonEmpty::try_new(sigs.into_iter())
+                    .expect("empty vote sets were skipped"),
+            );
             let mut aggregate_signature = [0u8; 96];
             aggregate_signature.copy_from_slice(&agg.encode());
 
@@ -319,7 +322,11 @@ mod tests {
 
     fn keys(n: usize) -> Vec<bls12381::PrivateKey> {
         (0..n)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+            })
             .collect()
     }
 

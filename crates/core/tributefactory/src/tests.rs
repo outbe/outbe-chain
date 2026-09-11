@@ -114,7 +114,9 @@ mod l2_zk_gate {
             variant::MinSig,
         };
 
-        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let public = public.encode().to_vec();
         let root = [0x04; 32];
 
@@ -163,7 +165,9 @@ mod l2_zk_gate {
             variant::MinSig,
         };
 
-        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let public = public.encode().to_vec();
         let root = [0x04; 32];
         let signature = sign_message::<MinSig>(
@@ -207,7 +211,9 @@ mod l2_zk_gate {
             variant::MinSig,
         };
 
-        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let public = public.encode().to_vec();
 
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);

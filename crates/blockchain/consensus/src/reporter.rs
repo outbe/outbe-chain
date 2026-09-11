@@ -424,7 +424,7 @@ impl OutbeReporter {
             &Sequential,
         );
         let vrf_seed = seed_bytes.as_ref().map(|seed_bytes| {
-            let hash = Sha256::hash(seed_bytes);
+            let hash = Sha256::hash(&[seed_bytes]);
             B256::from_slice(hash.as_ref())
         });
 
@@ -798,7 +798,7 @@ mod tests {
     use commonware_parallel::Sequential;
     use commonware_utils::{
         ordered::{Quorum as _, Set},
-        N3f1, TryCollect as _,
+        TryCollect as _,
     };
     use futures::channel::mpsc;
 
@@ -848,7 +848,7 @@ mod tests {
         let proposal = commonware_consensus::simplex::types::Proposal::new(
             Round::new(Epoch::new(0), View::new(2)),
             View::new(1),
-            Sha256::hash(b"reporter-test"),
+            Sha256::hash(&[b"reporter-test"]),
         );
         let subject = Subject::Notarize {
             proposal: &proposal,
@@ -858,7 +858,10 @@ mod tests {
             .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap())
             .collect();
         verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
             .unwrap()
     }
 

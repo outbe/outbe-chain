@@ -20,8 +20,8 @@ use commonware_cryptography::{
 use commonware_utils::Participant;
 use outbe_consensus::proof::{HybridCertificate, VrfProof};
 use proptest::prelude::*;
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 /// Strategy: 1..=128 participants, between 1 and N signer indices (unique,
 /// sorted), plus a deterministic VRF seed.
@@ -41,10 +41,10 @@ proptest! {
 
     #[test]
     fn phase1_metadata_roundtrip_proptest((participants, signer_indices, vrf_seed) in cert_strategy()) {
-        let signers = Signers::from(
-            participants,
+        let signers = Signers::new(
+            participants as u32,
             signer_indices.iter().copied().map(Participant::new),
-        );
+        ).unwrap();
 
         let mut sigs = Vec::with_capacity(signer_indices.len());
         for &i in &signer_indices {
@@ -52,7 +52,7 @@ proptest! {
             sigs.push(sk.sign(b"hybrid_codec_proptest", b"vote"));
         }
         let bls_aggregated_vote =
-            aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+            aggregate::combine_signatures::<MinPk, _>(commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap());
 
         let mut rng = ChaCha20Rng::seed_from_u64(vrf_seed);
         let (private, _public) = keypair::<_, MinSig>(&mut rng);

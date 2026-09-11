@@ -34,9 +34,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @notice Gem factory role; allowed to call `parkIntex`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
 
-    /// @dev Domain prefix for `settledTokenId` derivation; isolates Settled ids from the
-    ///      issued token-id space.
-    bytes constant _SETTLED_DOMAIN = bytes("SETTLED");
+    /// @dev Bit that marks a Settled token id. A series id is 14 bytes, so the issued space ends at
+    ///      2**112; setting the bit directly above it separates the two classes by construction rather
+    ///      than by hash luck, and clearing it recovers the series a Settled id belongs to.
+    uint256 constant _SETTLED_TAG = 1 << 112;
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
@@ -45,18 +46,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         /// @dev Series-level data, stored per token id. One entry per class: both carry the
         ///      immutable series identity; mutable lifecycle fields live on the Issued entry only.
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
-        /// @dev Amount won at auction per address per token id (recorded at mint, never changes).
-        mapping(uint256 tokenId => mapping(address account => uint16 count)) auctionWonCount;
+        /// @dev Settled-class supply per token id. The Settled class carries no identity record of its
+        ///      own - it resolves to the Issued entry - so only its supply is stored.
+        mapping(uint256 tokenId => uint32 supply) settledSupply;
         /// @dev Array of all token IDs (series) that have been created.
         uint256[] allSeries;
-        /// @dev Per-owner array of owned token IDs (series with balance > 0).
-        mapping(address owner => uint256[]) ownedSeries;
-        /// @dev Index of token ID in ownedSeries[owner] array (for efficient removal).
-        mapping(address owner => mapping(uint256 tokenId => uint256 index)) ownedSeriesIndex;
-        /// @dev Whether owner has a specific token ID in their ownedSeries.
-        mapping(address owner => mapping(uint256 tokenId => bool owns)) ownsToken;
-        /// @dev Total balance across all series for each owner.
-        mapping(address owner => uint256 balance) totalBalance;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
     }
@@ -130,14 +124,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         state = _effectiveState(d);
     }
 
-    /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
-    /// @param tokenId Issued token id.
-    /// @param account Auction winner address.
-    /// @return The recorded won amount.
-    function auctionWonCount(uint256 tokenId, address account) external view returns (uint16) {
-        return _s().auctionWonCount[tokenId][account];
-    }
-
     /// @inheritdoc IIntexNFT1155
     function worldwideDayOf(bytes14 seriesId) external view returns (uint32) {
         return _s().seriesData[_issuedTokenId(seriesId)].worldwideDay;
@@ -190,12 +176,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         });
         $.seriesData[iTok] = seed;
 
-        // The Settled record shares the series's immutable identity so lookups and metadata work
-        // for either class; mutable lifecycle fields (state, calledAt) are never written on it.
-        uint256 sTok = _settledTokenId(params.seriesId);
-        seed.status = IIntexNFT1155.IntexStatus.Settled;
-        $.seriesData[sTok] = seed;
-
         // Series remain in allSeries permanently even after supply reaches 0 -
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
@@ -219,7 +199,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // A per-recipient mint quantity is one bidder's auction win, bounded by their bid's
-        // `intexQuantity` (uint16); keeps the ERC1155 balance, `totalSupply` and `auctionWonCount` consistent.
+        // `intexQuantity` (uint16); keeps the ERC1155 balance and `totalSupply` consistent.
         if (quantity > type(uint16).max) revert QuantityTooLarge(quantity);
 
         // Cap is enforced against live `totalSupply`; a burn frees cap room. The intermediate
@@ -236,11 +216,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, quantity, "");
-
-        if ($.auctionWonCount[tokenId][to] == 0) {
-            // forge-lint: disable-next-line(unsafe-typecast) -- quantity bounded to uint16 above
-            $.auctionWonCount[tokenId][to] = uint16(quantity);
-        }
 
         emit IntexIssued(msg.sender, tokenId, to, quantity);
     }
@@ -300,10 +275,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Series state `Called`: allowed only when the destination holder is the source holder -
     ///        ownership is frozen once a series is Called - and only inside the call window.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
-        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.status == IIntexNFT1155.IntexStatus.Settled) {
+        if (_isSettledTokenId(tokenId)) {
             revert BridgeOnSettledForbidden(tokenId);
         }
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
 
@@ -330,10 +305,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      call window a Called series may still be minted into so a bridged balance lands.
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
-        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.status == IIntexNFT1155.IntexStatus.Settled) {
+        if (_isSettledTokenId(tokenId)) {
             revert BridgeOnSettledForbidden(tokenId);
         }
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
@@ -397,7 +372,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         _burn(from, iTok, amount);
 
         // forge-lint: disable-next-line(unsafe-typecast) -- amount mirrors the issued amount burned above
-        $.seriesData[sTok].totalSupply += uint32(amount);
+        $.settledSupply[sTok] += uint32(amount);
         _mint(to, sTok, amount, "");
 
         emit IntexSettled(seriesId, to, amount);
@@ -427,7 +402,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // CEI ok: write before _burn for symmetry with mint; _burn fires no acceptance callback
         // (to == address(0)), so no read-only-reentrancy surface here.
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= settled balance <= totalSupply (uint32); _burn reverts otherwise
-        $.seriesData[sTok].totalSupply -= uint32(amount);
+        $.settledSupply[sTok] -= uint32(amount);
         _burn(holder, sTok, amount);
 
         emit IntexCompleted(seriesId, holder, amount);
@@ -481,11 +456,24 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @dev Pure helper used internally and exposed via `settledTokenId`.
     function _settledTokenId(bytes14 seriesId) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(_SETTLED_DOMAIN, seriesId)));
+        return uint256(uint112(seriesId)) | _SETTLED_TAG;
+    }
+
+    /// @dev Whether the id belongs to the Settled class. Derived from the id, so it holds for a
+    ///      series whose record was never written.
+    function _isSettledTokenId(uint256 tokenId) private pure returns (bool) {
+        return tokenId & _SETTLED_TAG != 0;
+    }
+
+    /// @dev The record carrying a token's series identity. Both classes share one entry: clearing the
+    ///      Settled tag lands on the Issued id the series was created under.
+    function _identity(uint256 tokenId) private view returns (IIntexNFT1155.SeriesData memory) {
+        return _s().seriesData[tokenId & ~_SETTLED_TAG];
     }
 
     /// @inheritdoc IIntexNFT1155
     function statusOf(uint256 tokenId) external view returns (IIntexNFT1155.IntexStatus) {
+        if (_isSettledTokenId(tokenId)) return IIntexNFT1155.IntexStatus.Settled;
         return _s().seriesData[tokenId].status;
     }
 
@@ -529,18 +517,23 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function totalSupply(uint256 tokenId) external view returns (uint256) {
+        if (_isSettledTokenId(tokenId)) return _s().settledSupply[tokenId];
         return _s().seriesData[tokenId].totalSupply;
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getAuctionWonCount(bytes14 seriesId, address account) external view returns (uint16) {
-        return _s().auctionWonCount[_issuedTokenId(seriesId)][account];
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
-        IIntexNFT1155.SeriesData memory data = _s().seriesData[tokenId];
-        data.state = _effectiveState(data);
+        IIntexNFT1155.SeriesData memory data = _identity(tokenId);
+        if (_isSettledTokenId(tokenId)) {
+            // A settled position is closed: it wears the series identity with the Settled badge and its
+            // own supply, and the series' later lifecycle no longer moves it.
+            data.status = IIntexNFT1155.IntexStatus.Settled;
+            data.state = IIntexNFT1155.IntexState.Issued;
+            data.calledAt = 0;
+            data.totalSupply = _s().settledSupply[tokenId];
+        } else {
+            data.state = _effectiveState(data);
+        }
         return IntexMetadata.tokenURI(data);
     }
 
@@ -549,8 +542,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return IntexMetadata.contractURI();
     }
 
-    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called
-    ///         series, and maintains the owned-series enumeration index.
+    /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens and freezes Called series.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
@@ -565,85 +557,23 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param ids Array of token IDs.
     /// @param values Array of amounts.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
-        IntexNFT1155Storage storage $ = _s();
         if (from != address(0) && to != address(0)) {
+            IntexNFT1155Storage storage $ = _s();
             for (uint256 i = 0; i < ids.length; i++) {
-                IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
-                if (data.status == IIntexNFT1155.IntexStatus.Settled) {
+                if (_isSettledTokenId(ids[i])) {
                     revert SoulboundSettled(ids[i]);
                 }
+                IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
                 if (data.state == IIntexNFT1155.IntexState.Called) {
                     revert TransferOnCalledForbidden(ids[i]);
                 }
             }
         }
 
-        // Snapshot pre-transfer balances - checked BEFORE super._update, verified AFTER
-        // to handle duplicate tokenIds in batch correctly.
-        bool[] memory fromHadTokens = new bool[](ids.length);
-        bool[] memory toHadTokens = new bool[](ids.length);
-
-        for (uint256 i = 0; i < ids.length; i++) {
-            if (values[i] == 0) continue;
-            if (from != address(0)) {
-                fromHadTokens[i] = balanceOf(from, ids[i]) > 0;
-                $.totalBalance[from] -= values[i];
-            }
-            if (to != address(0)) {
-                toHadTokens[i] = balanceOf(to, ids[i]) > 0;
-                $.totalBalance[to] += values[i];
-            }
-        }
-
         super._update(from, to, ids, values);
-
-        // Post-transfer: add/remove are idempotent, safe for duplicate tokenIds in batch.
-        for (uint256 i = 0; i < ids.length; i++) {
-            if (values[i] == 0) continue;
-
-            if (from != address(0) && fromHadTokens[i] && balanceOf(from, ids[i]) == 0) {
-                _removeOwnedSeries(from, ids[i]);
-            }
-            if (to != address(0) && !toHadTokens[i] && balanceOf(to, ids[i]) > 0) {
-                _addOwnedSeries(to, ids[i]);
-            }
-        }
     }
 
-    /// @dev Add `tokenId` to `owner`'s owned-series enumeration (idempotent).
-    /// @param owner Owner address.
-    /// @param tokenId Token ID to add.
-    function _addOwnedSeries(address owner, uint256 tokenId) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if (!$.ownsToken[owner][tokenId]) {
-            $.ownedSeriesIndex[owner][tokenId] = $.ownedSeries[owner].length;
-            $.ownedSeries[owner].push(tokenId);
-            $.ownsToken[owner][tokenId] = true;
-        }
-    }
-
-    /// @dev Remove `tokenId` from `owner`'s owned-series enumeration (swap-and-pop, idempotent).
-    /// @param owner Owner address.
-    /// @param tokenId Token ID to remove.
-    function _removeOwnedSeries(address owner, uint256 tokenId) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if ($.ownsToken[owner][tokenId]) {
-            uint256 lastIndex = $.ownedSeries[owner].length - 1;
-            uint256 tokenIndex = $.ownedSeriesIndex[owner][tokenId];
-
-            if (tokenIndex != lastIndex) {
-                uint256 lastTokenId = $.ownedSeries[owner][lastIndex];
-                $.ownedSeries[owner][tokenIndex] = lastTokenId;
-                $.ownedSeriesIndex[owner][lastTokenId] = tokenIndex;
-            }
-
-            $.ownedSeries[owner].pop();
-            delete $.ownedSeriesIndex[owner][tokenId];
-            $.ownsToken[owner][tokenId] = false;
-        }
-    }
-
-    // --- Enumerable view functions ---
+    // --- Series view functions ---
 
     /// @inheritdoc IIntexNFT1155
     function getAllSeries() external view returns (uint256[] memory) {
@@ -672,79 +602,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IIntexNFT1155
     function totalSeries() external view returns (uint256) {
         return _s().allSeries.length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeries(address owner) external view returns (uint256[] memory) {
-        return _s().ownedSeries[owner];
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total)
-    {
-        uint256[] storage owned = _s().ownedSeries[owner];
-        total = owned.length;
-        if (offset >= total) return (new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        series = new uint256[](end - offset);
-        for (uint256 i = offset; i < end; i++) {
-            series[i - offset] = owned[i];
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function ownedSeriesCount(address owner) external view returns (uint256) {
-        return _s().ownedSeries[owner].length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function totalBalance(address owner) external view returns (uint256) {
-        return _s().totalBalance[owner];
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesWithBalances(address owner)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances)
-    {
-        ownedTokenIds = _s().ownedSeries[owner];
-        balances = new uint256[](ownedTokenIds.length);
-
-        for (uint256 i = 0; i < ownedTokenIds.length; i++) {
-            balances[i] = balanceOf(owner, ownedTokenIds[i]);
-        }
-
-        return (ownedTokenIds, balances);
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getOwnedSeriesWithBalancesPaginated(address owner, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total)
-    {
-        uint256[] storage owned = _s().ownedSeries[owner];
-        total = owned.length;
-        if (offset >= total) return (new uint256[](0), new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        uint256 n = end - offset;
-        ownedTokenIds = new uint256[](n);
-        balances = new uint256[](n);
-        for (uint256 i = 0; i < n; i++) {
-            uint256 tokenId = owned[offset + i];
-            ownedTokenIds[i] = tokenId;
-            balances[i] = balanceOf(owner, tokenId);
-        }
     }
 
     /// @notice ERC-165 interface detection.

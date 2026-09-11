@@ -297,6 +297,33 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.encodeMarkQualified(day, ids);
     }
 
+    /// @dev The arrival set a receiver keeps for a day is one word wide, so a claimed count past
+    ///      `MAX_CHUNKS` has no slot to land in. Refunds bound this on both sides of the wire; issuance
+    ///      has to bound it the same way.
+    function test_Issuance_TotalChunksBeyondTheCeiling_Reverts() public {
+        uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
+
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
+        this.exposedEncodeIssuanceChunk(0, tooMany);
+    }
+
+    /// @dev A peer that hand-rolls the body bypasses the encoder, so the decoder must reject it too.
+    function test_Issuance_TotalChunksBeyondTheCeiling_RejectedOnDecode() public {
+        uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        payload.seriesId = "20260212-TRY-U";
+        payload.recipients = new address[](1);
+        payload.quantities = new uint256[](1);
+        bytes memory packet = abi.encodePacked(
+            BridgeMsgCodec.BODY_VERSION_V1,
+            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+            abi.encode(uint32(0), uint16(0), tooMany, IssuanceBatchLib.one(payload))
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidIssuanceChunk.selector, uint16(0), tooMany));
+        this.exposedDecodeIssuance(packet);
+    }
+
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
         return seriesIds[0];
@@ -321,6 +348,18 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
+    }
+
+    function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks) external pure returns (bytes memory) {
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        payload.seriesId = "20260212-TRY-U";
+        payload.recipients = new address[](1);
+        payload.quantities = new uint256[](1);
+        return BridgeMsgCodec.encodeIssuanceInstructions(0, chunkIndex, totalChunks, IssuanceBatchLib.one(payload));
+    }
+
+    function exposedDecodeIssuance(bytes calldata p) external pure {
+        BridgeMsgCodec.decodeIssuanceInstructions(p);
     }
 
     function exposedEncodeIssuance(uint16 n) external pure returns (bytes memory) {

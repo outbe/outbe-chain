@@ -46,10 +46,12 @@ use commonware_cryptography::{
 };
 use commonware_parallel::Strategy;
 use commonware_utils::{
+    iter::NonEmpty,
     ordered::{Quorum, Set},
-    Faults, Participant,
+    N3f1, Participant,
 };
-use rand_core::{CryptoRngCore, OsRng};
+use rand_commonware::rngs::SysRng;
+use rand_core_commonware::{CryptoRng, UnwrapErr};
 use std::sync::Arc;
 
 /// VRF-based leader election for the hybrid scheme (lifted out of this file).
@@ -67,8 +69,8 @@ use vrf_material::VrfPartialVerification;
 /// invalid signatures from cancelling out in aggregate. This RNG must not feed
 /// VRF seed derivation, leader election, header fields, metadata encoding, or
 /// any consensus state transition.
-pub(crate) fn bls_batch_verification_rng() -> OsRng {
-    OsRng
+pub(crate) fn bls_batch_verification_rng() -> UnwrapErr<SysRng> {
+    UnwrapErr(SysRng)
 }
 
 /// Combined BLS individual vote + BLS threshold seed partial emitted by each validator.
@@ -392,7 +394,7 @@ impl<V: Variant> HybridScheme<V> {
         _strategy: &impl Strategy,
     ) -> Option<Vec<u8>>
     where
-        R: CryptoRngCore,
+        R: CryptoRng,
     {
         let proof = &certificate.vrf_proof;
         if proof.material_version != self.expected_vrf_material_version() {
@@ -423,7 +425,7 @@ impl<V: Variant> HybridScheme<V> {
         _strategy: &impl Strategy,
     ) -> bool
     where
-        R: CryptoRngCore,
+        R: CryptoRng,
         D: Digest,
     {
         let Some(signature) = attestation.signature.get() else {
@@ -551,7 +553,7 @@ impl<V: Variant> HybridScheme<V> {
         strategy: &impl Strategy,
     ) -> SeedPartialVerdict
     where
-        R: CryptoRngCore,
+        R: CryptoRng,
         D: Digest,
     {
         let Some(signature) = attestation.signature.get() else {
@@ -618,11 +620,88 @@ fn seed_message_from_subject<D: Digest>(subject: &Subject<'_, D>) -> bytes::Byte
     round_from_subject(subject).encode()
 }
 
-impl<V: Variant> certificate::Scheme for HybridScheme<V> {
+impl<V: Variant> certificate::Verifier for HybridScheme<V> {
     type Subject<'a, D: Digest> = Subject<'a, D>;
+    type Faults = N3f1;
     type PublicKey = bls12381::PublicKey;
-    type Signature = HybridSignature<V>;
     type Certificate = HybridCertificate<V>;
+
+    fn verify_certificate<R, D>(
+        &self,
+        _rng: &mut R,
+        subject: Subject<'_, D>,
+        certificate: &Self::Certificate,
+        _strategy: &impl Strategy,
+    ) -> bool
+    where
+        R: CryptoRng,
+        D: Digest,
+    {
+        let participants = self.participants_ref();
+        let namespace = self.namespace_ref();
+
+        // Structural checks
+        if certificate.signers.len() != participants.len() {
+            return false;
+        }
+        if certificate.signers.count() < participants.quorum::<N3f1>() as usize {
+            return false;
+        }
+
+        // 1. Verify aggregated BLS MinPk vote signature.
+        //    Collect signer public keys, aggregate them, and verify.
+        let vote_namespace = subject.namespace(namespace);
+        let message = subject.message();
+
+        let signer_pubkeys: Vec<&<MinPk as Variant>::Public> = certificate
+            .signers
+            .iter()
+            .filter_map(|signer| participants.key(signer).map(|pk| pk.as_ref()))
+            .collect();
+
+        if signer_pubkeys.len() != certificate.signers.count() {
+            return false;
+        }
+
+        let Some(signer_pubkeys) = NonEmpty::try_new(signer_pubkeys.into_iter()) else {
+            return false;
+        };
+        let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
+        if aggregate::verify_same_message::<MinPk>(
+            &aggregate_pk,
+            vote_namespace,
+            &message,
+            &certificate.bls_aggregated_vote,
+        )
+        .is_err()
+        {
+            return false;
+        }
+
+        let proof = &certificate.vrf_proof;
+        if proof.material_version != self.expected_vrf_material_version() {
+            return false;
+        }
+        let seed_message = seed_message_from_subject(&subject);
+        self.vrf_materials()
+            .verify_proof(proof, &namespace.seed, seed_message.as_ref())
+    }
+
+    fn is_batchable() -> bool {
+        false
+    }
+
+    fn certificate_codec_config(&self) -> <Self::Certificate as Read>::Cfg {
+        self.participants_ref().len()
+    }
+
+    fn certificate_codec_config_unbounded() -> <Self::Certificate as Read>::Cfg {
+        u32::MAX as usize
+    }
+}
+
+impl<V: Variant> certificate::Scheme for HybridScheme<V> {
+    type Signature = HybridSignature<V>;
 
     fn me(&self) -> Option<Participant> {
         match &self.role {
@@ -704,7 +783,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         _strategy: &impl Strategy,
     ) -> bool
     where
-        R: CryptoRngCore,
+        R: CryptoRng,
         D: Digest,
     {
         let participants = self.participants_ref();
@@ -731,7 +810,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         strategy: &impl Strategy,
     ) -> Verification<Self>
     where
-        R: CryptoRngCore,
+        R: CryptoRng,
         D: Digest,
         I: IntoIterator<Item = Attestation<Self>>,
         I::IntoIter: Send,
@@ -755,11 +834,13 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         Verification::new(verified, invalid)
     }
 
-    fn assemble<I, M>(&self, attestations: I, strategy: &impl Strategy) -> Option<Self::Certificate>
+    fn assemble<I>(
+        &self,
+        attestations: NonEmpty<I>,
+        strategy: &impl Strategy,
+    ) -> Result<Self::Certificate, certificate::AssemblyError>
     where
-        I: IntoIterator<Item = Attestation<Self>>,
-        I::IntoIter: Send,
-        M: Faults,
+        I: Iterator<Item = Attestation<Self>> + Send,
     {
         let participants = self.participants_ref();
 
@@ -767,20 +848,26 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         let mut entries = Vec::new();
         for Attestation { signer, signature } in attestations {
             if usize::from(signer) >= participants.len() {
-                return None;
+                return Err(certificate::AssemblyError::UnknownSigner(signer));
             }
-            let sig = signature.get().cloned()?;
+            let sig = signature
+                .get()
+                .cloned()
+                .ok_or(certificate::AssemblyError::MalformedSignature(signer))?;
             entries.push((signer, sig));
         }
 
-        if entries.len() < participants.quorum::<M>() as usize {
-            return None;
+        if entries.len() < participants.quorum::<N3f1>() as usize {
+            return Err(certificate::AssemblyError::InsufficientAttestations(
+                participants.quorum::<N3f1>(),
+                entries.len() as u32,
+            ));
         }
 
         // Sort by signer index
         entries.sort_by_key(|(signer, _)| *signer);
-        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return None;
+        if let Some(pair) = entries.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(certificate::AssemblyError::DuplicateSigner(pair[0].0));
         }
 
         let signers_vec: Vec<Participant> = entries.iter().map(|(s, _)| *s).collect();
@@ -790,7 +877,9 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
             .iter()
             .map(|(_, sig)| sig.bls_individual_vote.as_ref())
             .collect();
-        let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(vote_sigs);
+        let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+            NonEmpty::try_new(vote_sigs.into_iter()).expect("verified quorum is non-empty"),
+        );
 
         // Every attestation reaching assembly is either locally produced by
         // this pinned scheme or was admitted by `verify_attestations` for the
@@ -806,7 +895,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
                 })
             })
             .collect();
-        let quorum = participants.quorum::<M>() as usize;
+        let quorum = participants.quorum::<N3f1>() as usize;
         if seed_partials.len() < quorum {
             crate::metrics::record_vrf_recover_failed_under_quorum();
             tracing::warn!(
@@ -816,11 +905,11 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
                 seed_partials = seed_partials.len(),
                 "refusing to assemble a certificate without a VRF quorum"
             );
-            return None;
+            return Err(certificate::AssemblyError::RecoveryFailed);
         }
         let Some(vrf_proof) =
             self.vrf_materials()
-                .recover_proof::<M>(expected_vrf_version, &seed_partials, strategy)
+                .recover_proof(expected_vrf_version, &seed_partials, strategy)
         else {
             crate::metrics::record_vrf_recover_failed_under_quorum();
             tracing::warn!(
@@ -830,91 +919,20 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
                 seed_partials = seed_partials.len(),
                 "refusing to assemble a certificate after VRF recovery failed"
             );
-            return None;
+            return Err(certificate::AssemblyError::RecoveryFailed);
         };
 
-        let signers = Signers::from(participants.len(), signers_vec);
+        let signers = Signers::new(participants.len() as u32, signers_vec)?;
 
-        Some(HybridCertificate {
+        Ok(HybridCertificate {
             signers,
             bls_aggregated_vote,
             vrf_proof,
         })
     }
 
-    fn verify_certificate<R, D, M>(
-        &self,
-        _rng: &mut R,
-        subject: Subject<'_, D>,
-        certificate: &Self::Certificate,
-        _strategy: &impl Strategy,
-    ) -> bool
-    where
-        R: CryptoRngCore,
-        D: Digest,
-        M: Faults,
-    {
-        let participants = self.participants_ref();
-        let namespace = self.namespace_ref();
-
-        // Structural checks
-        if certificate.signers.len() != participants.len() {
-            return false;
-        }
-        if certificate.signers.count() < participants.quorum::<M>() as usize {
-            return false;
-        }
-
-        // 1. Verify aggregated BLS MinPk vote signature.
-        //    Collect signer public keys, aggregate them, and verify.
-        let vote_namespace = subject.namespace(namespace);
-        let message = subject.message();
-
-        let signer_pubkeys: Vec<&<MinPk as Variant>::Public> = certificate
-            .signers
-            .iter()
-            .filter_map(|signer| participants.key(signer).map(|pk| pk.as_ref()))
-            .collect();
-
-        if signer_pubkeys.len() != certificate.signers.count() {
-            return false;
-        }
-
-        let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
-        if aggregate::verify_same_message::<MinPk>(
-            &aggregate_pk,
-            vote_namespace,
-            &message,
-            &certificate.bls_aggregated_vote,
-        )
-        .is_err()
-        {
-            return false;
-        }
-
-        let proof = &certificate.vrf_proof;
-        if proof.material_version != self.expected_vrf_material_version() {
-            return false;
-        }
-        let seed_message = seed_message_from_subject(&subject);
-        self.vrf_materials()
-            .verify_proof(proof, &namespace.seed, seed_message.as_ref())
-    }
-
     fn is_attributable() -> bool {
         true
-    }
-
-    fn is_batchable() -> bool {
-        false
-    }
-
-    fn certificate_codec_config(&self) -> <Self::Certificate as Read>::Cfg {
-        self.participants_ref().len()
-    }
-
-    fn certificate_codec_config_unbounded() -> <Self::Certificate as Read>::Cfg {
-        u32::MAX as usize
     }
 }
 
@@ -946,6 +964,11 @@ impl<V: Variant> HybridSchemeProvider<V> {
         self.inner.register(epoch, scheme)
     }
 
+    /// Returns the pinned scheme for an epoch, preserving the application-facing API.
+    pub fn scoped(&self, epoch: Epoch) -> Option<Arc<HybridScheme<V>>> {
+        self.inner.get(&epoch)
+    }
+
     /// Remove the scheme for the given epoch.
     pub fn remove(&self, epoch: &Epoch) -> bool {
         self.inner.remove(epoch)
@@ -962,8 +985,11 @@ impl<V: Variant> certificate::Provider for HybridSchemeProvider<V> {
     type Scope = Epoch;
     type Scheme = HybridScheme<V>;
 
-    fn scoped(&self, scope: Self::Scope) -> Option<Arc<Self::Scheme>> {
-        self.inner.get(&scope)
+    fn scoped(&self, scope: Self::Scope) -> Option<certificate::Scoped<Self::Scheme>> {
+        // Every registered HybridScheme retains its epoch's participant material,
+        // including verifier-only instances. Marshal needs that full scheme for
+        // notarized payload checks; me()/sign() still enforce local signing ability.
+        self.inner.get(&scope).map(certificate::Scoped::scheme)
     }
 }
 
@@ -975,13 +1001,13 @@ mod tests {
         simplex::types::{Proposal, Subject},
         types::{Epoch, View},
     };
+    use commonware_cryptography::certificate::Verifier as _;
     use commonware_cryptography::{
         bls12381::primitives::variant::MinSig, certificate::Scheme as _,
         sha256::Digest as Sha256Digest, Hasher, Sha256,
     };
     use commonware_parallel::Sequential;
-    use commonware_utils::N3f1;
-    use rand_core::{CryptoRng, Error as RngError, RngCore};
+    use rand_core_commonware::{TryCryptoRng, TryRng};
 
     use super::test_support::{test_participants, TestScheme, NAMESPACE};
 
@@ -989,32 +1015,28 @@ mod tests {
         Proposal::new(
             Round::new(epoch, view),
             view.previous().unwrap(),
-            Sha256::hash(&[tag]),
+            Sha256::hash(&[&[tag]]),
         )
     }
 
     struct ZeroRng;
 
-    impl RngCore for ZeroRng {
-        fn next_u32(&mut self) -> u32 {
-            0
-        }
+    impl TryRng for ZeroRng {
+        type Error = core::convert::Infallible;
 
-        fn next_u64(&mut self) -> u64 {
-            0
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(0)
         }
-
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(0)
+        }
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             dest.fill(0);
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RngError> {
-            self.fill_bytes(dest);
             Ok(())
         }
     }
 
-    impl CryptoRng for ZeroRng {}
+    impl TryCryptoRng for ZeroRng {}
 
     #[test]
     fn test_hybrid_sign_and_verify_attestation() {
@@ -1055,7 +1077,7 @@ mod tests {
         let attestation = attestation.unwrap();
 
         // Verify
-        let mut rng = rand_core::OsRng;
+        let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
         assert!(verifier.verify_attestation(&mut rng, subject, &attestation, &Sequential));
     }
 
@@ -1102,7 +1124,13 @@ mod tests {
             .collect();
 
         // Assemble certificate
-        let certificate = verifier.assemble::<_, N3f1>(attestations, &Sequential);
+        let certificate = verifier
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
+            .ok();
         assert!(certificate.is_some(), "certificate assembly should succeed");
         let certificate = certificate.unwrap();
 
@@ -1110,8 +1138,8 @@ mod tests {
         assert_eq!(certificate.signers.count(), 3);
 
         // Verify certificate
-        let mut rng = rand_core::OsRng;
-        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
+        assert!(verifier.verify_certificate::<_, Sha256Digest>(
             &mut rng,
             subject,
             &certificate,
@@ -1170,7 +1198,12 @@ mod tests {
 
         assert!(
             verifier
-                .assemble::<_, N3f1>(duplicated, &Sequential)
+                .assemble(
+                    NonEmpty::try_new(duplicated.into_iter())
+                        .expect("test attestations are non-empty"),
+                    &Sequential
+                )
+                .ok()
                 .is_none(),
             "duplicate signer attestations must be rejected"
         );
@@ -1218,7 +1251,7 @@ mod tests {
             signature: commonware_codec::types::lazy::Lazy::from(tampered_sig),
         };
 
-        let mut rng = rand_core::OsRng;
+        let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
         assert!(!verifier.verify_attestation(&mut rng, subject, &tampered, &Sequential));
     }
 
@@ -1266,7 +1299,7 @@ mod tests {
             })
             .collect();
 
-        let mut rng = rand_core::OsRng;
+        let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
         assert!(attestations
             .iter()
             .all(|attestation| verifier.verify_attestation(
@@ -1277,7 +1310,12 @@ mod tests {
             )));
 
         assert!(verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential
+            )
+            .ok()
             .is_none());
     }
 
@@ -1318,12 +1356,16 @@ mod tests {
             .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap())
             .collect();
         let mut certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
         certificate.vrf_proof.material_version = 999;
 
-        let mut rng = rand_core::OsRng;
-        assert!(!verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
+        assert!(!verifier.verify_certificate::<_, Sha256Digest>(
             &mut rng,
             subject,
             &certificate,
@@ -1347,10 +1389,13 @@ mod tests {
             proposal: &proposal,
         };
         let mut certificate = verifier
-            .assemble::<_, N3f1>(
-                schemes
-                    .iter()
-                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+            .assemble(
+                NonEmpty::try_new(
+                    schemes
+                        .iter()
+                        .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                )
+                .expect("test attestations are non-empty"),
                 &Sequential,
             )
             .unwrap();
@@ -1360,16 +1405,19 @@ mod tests {
             proposal: &other_proposal,
         };
         certificate.vrf_proof = verifier
-            .assemble::<_, N3f1>(
-                schemes
-                    .iter()
-                    .map(|scheme| scheme.sign::<Sha256Digest>(other_subject).unwrap()),
+            .assemble(
+                NonEmpty::try_new(
+                    schemes
+                        .iter()
+                        .map(|scheme| scheme.sign::<Sha256Digest>(other_subject).unwrap()),
+                )
+                .expect("test attestations are non-empty"),
                 &Sequential,
             )
             .unwrap()
             .vrf_proof;
 
-        assert!(!verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        assert!(!verifier.verify_certificate::<_, Sha256Digest>(
             &mut bls_batch_verification_rng(),
             subject,
             &certificate,
@@ -1481,10 +1529,13 @@ mod tests {
             proposal: &proposal,
         };
         let certificate = replacement_signers[0]
-            .assemble::<_, N3f1>(
-                replacement_signers
-                    .iter()
-                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+            .assemble(
+                NonEmpty::try_new(
+                    replacement_signers
+                        .iter()
+                        .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                )
+                .expect("test attestations are non-empty"),
                 &Sequential,
             )
             .unwrap();
@@ -1586,7 +1637,11 @@ mod tests {
         // admission verification) yields a certificate whose proof does NOT verify - the
         // poison the attack relied on.
         let poisoned = verifier
-            .assemble::<_, N3f1>(corrupted.clone(), &Sequential)
+            .assemble(
+                NonEmpty::try_new(corrupted.clone().into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
         assert_eq!(poisoned.vrf_proof.material_version, 0);
         assert!(
@@ -1614,7 +1669,11 @@ mod tests {
         );
 
         let certificate = verifier
-            .assemble::<_, N3f1>(verification.verified, &Sequential)
+            .assemble(
+                NonEmpty::try_new(verification.verified.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
         assert_eq!(certificate.signers.count(), 3, "the bad pair is excluded");
         assert_eq!(certificate.vrf_proof.material_version, 0);
@@ -1624,7 +1683,7 @@ mod tests {
                 .is_some(),
             "the recovered proof must verify against the group key - no halt at N+1"
         );
-        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        assert!(verifier.verify_certificate::<_, Sha256Digest>(
             &mut rng,
             subject,
             &certificate,
@@ -1667,7 +1726,12 @@ mod tests {
         assert_eq!(verification.verified.len(), 2);
         assert!(
             verifier
-                .assemble::<_, N3f1>(verification.verified, &Sequential)
+                .assemble(
+                    NonEmpty::try_new(verification.verified.into_iter())
+                        .expect("test attestations are non-empty"),
+                    &Sequential
+                )
+                .ok()
                 .is_none(),
             "too few complete attestations must never produce a certificate"
         );
@@ -1698,7 +1762,11 @@ mod tests {
         );
         assert_eq!(verification.verified.len(), 4);
         let certificate = verifier
-            .assemble::<_, N3f1>(verification.verified, &Sequential)
+            .assemble(
+                NonEmpty::try_new(verification.verified.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
         assert_eq!(certificate.vrf_proof.material_version, 0);
         assert!(
@@ -1974,7 +2042,11 @@ mod tests {
             .collect();
 
         let certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
 
         // Encode and decode
@@ -2007,6 +2079,14 @@ mod tests {
 
         // Lookup
         assert!(certificate::Provider::scoped(&provider, epoch).is_some());
+        let scheme = certificate::Provider::scheme(&provider, epoch)
+            .expect("epoch participant material remains available to marshal");
+        assert_eq!(scheme.participants(), &participants);
+        assert!(scheme.me().is_none());
+        let round = Round::new(epoch, View::new(1));
+        assert!(scheme
+            .sign::<Sha256Digest>(Subject::Nullify { round })
+            .is_none());
         assert!(certificate::Provider::scoped(&provider, Epoch::new(2)).is_none());
 
         // Remove
@@ -2048,7 +2128,11 @@ mod tests {
             .collect();
 
         let certificate = schemes[0]
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter())
+                    .expect("test attestations are non-empty"),
+                &Sequential,
+            )
             .unwrap();
 
         let encoded = certificate.encode();

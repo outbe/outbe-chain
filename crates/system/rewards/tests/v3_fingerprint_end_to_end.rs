@@ -48,8 +48,8 @@ use outbe_primitives::consensus_metadata::{
 };
 use outbe_rewards::runtime::compute_metadata_fingerprint;
 use outbe_validatorset::state::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 // Fixture constants - same shape as the verifier_cluster.rs fixture so
 // the cert format and metadata field layout are byte-compatible with the
@@ -122,10 +122,11 @@ fn build_cert_with_vrf_proof(
     parent_hash: B256,
 ) -> (HybridCertificate<MinSig>, VrfProof<MinSig>) {
     let participants = dkg.keys.len();
-    let signers = Signers::from(
-        participants,
+    let signers = Signers::new(
+        participants as u32,
         signer_indices.iter().copied().map(Participant::new),
-    );
+    )
+    .unwrap();
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
     // finalize votes bind the ordered committee; build the canonical `Set`
@@ -136,8 +137,9 @@ fn build_cert_with_vrf_proof(
         .iter()
         .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     let threshold_signature = sign_message::<MinSig>(
         &dkg.vrf_threshold_private,

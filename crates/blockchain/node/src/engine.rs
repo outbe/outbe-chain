@@ -298,6 +298,7 @@ mod tests {
             }]),
             parent_beacon_block_root: None,
             slot_number: None,
+            target_gas_limit: None,
         });
 
         assert!(matches!(
@@ -323,6 +324,7 @@ mod tests {
             }]),
             parent_beacon_block_root: Some(B256::ZERO),
             slot_number: None,
+            target_gas_limit: None,
         });
 
         assert!(matches!(
@@ -348,6 +350,7 @@ mod tests {
             }]),
             parent_beacon_block_root: Some(B256::ZERO),
             slot_number: None,
+            target_gas_limit: None,
         });
 
         assert!(matches!(

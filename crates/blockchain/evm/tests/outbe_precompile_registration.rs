@@ -96,6 +96,8 @@ fn warm_and_contains_behavior_remains_ethereum_only() {
         <PrecompilesMap as PrecompileProvider<EthEvmContext<EmptyDB>>>::warm_addresses(
             &precompiles,
         )
+        .iter()
+        .copied()
         .collect();
 
     for suffix in 1u8..=10 {

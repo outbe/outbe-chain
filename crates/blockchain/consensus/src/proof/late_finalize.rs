@@ -112,7 +112,10 @@ pub fn verify_late_finalize_proof(
     // the committee-bound finalize namespace, built from the same snapshot
     // committee the signers used.
     let committee_set = committee_ordered_set(&participants);
-    let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
+    let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(signer_pubkeys.into_iter())
+            .expect("quorum signers are non-empty"),
+    );
     aggregate::verify_same_message::<MinPk>(
         &aggregate_pk,
         &finalize_namespace(&committee_set),
@@ -134,7 +137,11 @@ mod tests {
 
     fn keys(n: usize) -> Vec<bls12381::PrivateKey> {
         (0..n)
-            .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+            })
             .collect()
     }
 
@@ -200,7 +207,9 @@ mod tests {
             .iter()
             .map(|&i| keys[i].sign(&finalize_namespace(&committee_set), &message))
             .collect();
-        let agg = aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+        let agg = aggregate::combine_signatures::<MinPk, _>(
+            commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+        );
         let mut aggregate_signature = [0u8; 96];
         aggregate_signature.copy_from_slice(&agg.encode());
 

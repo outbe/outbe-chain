@@ -17,7 +17,15 @@ import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
-import {TargetRouterStorage, PendingBidsRelay, PendingIssuance, PendingProceedsRoute} from "./TargetRouterStorage.sol";
+import {
+    ChunkProgress,
+    PendingMark,
+    PendingBidsRelay,
+    PendingIssuance,
+    PendingProceedsRoute,
+    RefundProgress,
+    TargetRouterStorage
+} from "./TargetRouterStorage.sol";
 
 /// @title TargetRouter
 /// @author Outbe
@@ -140,24 +148,26 @@ contract TargetRouter is
     ///         (0 until the first chunk lands).
     function issuanceChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
         TargetRouterStorage storage $ = _ts();
-        return ($.issuanceChunksSeen[worldwideDay], $.issuanceTotalChunks[worldwideDay]);
+        ChunkProgress memory progress = $.issuanceProgress[worldwideDay];
+        return (progress.chunksSeen, progress.totalChunks);
     }
 
     /// @notice Refund chunk progress of `worldwideDay` on this chain: applied so far and the declared total
     ///         (0 until the first chunk lands).
     function refundChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
         TargetRouterStorage storage $ = _ts();
-        return ($.refundChunksSeen[worldwideDay], $.refundTotalChunks[worldwideDay]);
+        RefundProgress memory progress = $.refundProgress[worldwideDay];
+        return (progress.chunksSeen, progress.totalChunks);
     }
 
     /// @notice Whether issuance chunk `chunkIndex` of `worldwideDay` has been applied here.
     function issuanceChunkApplied(uint32 worldwideDay, uint16 chunkIndex) external view returns (bool) {
-        return _ts().issuanceChunkApplied[worldwideDay][chunkIndex];
+        return _ts().issuanceChunksApplied[worldwideDay] & (1 << chunkIndex) != 0;
     }
 
     /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
     function pendingMark(bytes14 seriesId) external view returns (uint8) {
-        return _ts().pendingMark[seriesId];
+        return _ts().pendingMarks[seriesId].msgType;
     }
 
     // --- Admin ---
@@ -364,11 +374,11 @@ contract TargetRouter is
     /// @param seriesId Series whose slotted mark to apply.
     function applyPendingMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        uint8 msgType = $.pendingMark[seriesId];
+        PendingMark memory waiting = $.pendingMarks[seriesId];
+        uint8 msgType = waiting.msgType;
         if (msgType == 0) revert NoPendingMark(seriesId);
-        uint32 calledAt = $.pendingMarkCalledAt[seriesId];
-        delete $.pendingMark[seriesId];
-        delete $.pendingMarkCalledAt[seriesId];
+        uint32 calledAt = waiting.calledAt;
+        delete $.pendingMarks[seriesId];
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             $.intex.markQualified(seriesId);
         } else {
