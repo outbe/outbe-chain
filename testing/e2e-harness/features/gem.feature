@@ -10,9 +10,8 @@ Feature: Gem from a parked Intex to Promis
   # second venue, nor a relay, nor a day settled out of Tributes.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
-  # The call decision is day-granular, and a gem counts breach days from its own
-  # issuance forward, so the gem that is called is stamped behind the seeded
-  # days. The two waits that remain are real: a Call Notice has to lapse before
+  # Qualification and the call are day-granular and count only days a gem held
+  # in full, so the gems are stamped behind the seeded days. The two waits that remain are real: a Call Notice has to lapse before
   # a forfeit, and a position has to outlive its validity, both shortened by the
   # DEV parameter profile this scenario runs against.
   @gem-lifecycle
