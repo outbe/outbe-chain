@@ -24,6 +24,25 @@ struct PendingIssuance {
     bool done;
 }
 
+/// @notice A lifecycle mark waiting for its series, with the origin's call time for a Called one.
+struct PendingMark {
+    uint8 msgType;
+    uint32 calledAt;
+}
+
+/// @notice How far a day's chunk run has got: the declared span and how many chunks landed.
+struct ChunkProgress {
+    uint16 totalChunks;
+    uint16 chunksSeen;
+}
+
+/// @notice As {ChunkProgress}, plus the proceeds a refund run has accrued so far.
+struct RefundProgress {
+    uint16 totalChunks;
+    uint16 chunksSeen;
+    uint128 proceedsAccrued;
+}
+
 /// @custom:storage-location erc7201:outbe.intex.TargetRouter
 struct TargetRouterStorage {
     /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
@@ -58,29 +77,25 @@ struct TargetRouterStorage {
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
-    /// @dev Proceeds accrued so far, routed as one transfer once every chunk has arrived:
-    ///      the origin marks a chain paid on first delivery, so a partial sum closes the
-    ///      creator-reward fan-in early.
-    mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
-    /// @dev How many of the day's refund chunks have been applied.
-    mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
-    /// @dev How many refund chunks the day's run spans, as the first applied chunk declared; a chunk
-    ///      claiming another total is a conflict, so an under-totaled header cannot close the day early.
-    mapping(uint32 worldwideDay => uint16 total) refundTotalChunks;
+    /// @dev Refund-run progress for a day: the span the first applied chunk declared (a chunk claiming
+    ///      another total is a conflict, so an under-totaled header cannot close the day early), how many
+    ///      landed, and the proceeds accrued so far - routed as one transfer once every chunk has arrived,
+    ///      because the origin marks a chain paid on first delivery and a partial sum would close the
+    ///      creator-reward fan-in early. Twenty bytes, so one slot rather than three.
+    mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
-    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`.
-    mapping(bytes14 seriesId => uint8 msgType) pendingMark;
-    /// @dev The origin's call time for a waiting Called mark, so a slot applied later still derives the
-    ///      deadline settlement honours rather than one from its own arrival.
-    mapping(bytes14 seriesId => uint32 calledAt) pendingMarkCalledAt;
+    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`. Carries the
+    ///      origin's call time so a slot applied later still derives the deadline settlement honours rather
+    ///      than one from its own arrival. Five bytes, so the pair shares a slot and is cleared in one write.
+    mapping(bytes14 seriesId => PendingMark) pendingMarks;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
-    /// @dev How many issuance chunks the day's run spans on this chain, as the first applied chunk declared.
-    mapping(uint32 worldwideDay => uint16 total) issuanceTotalChunks;
-    /// @dev How many of the day's issuance chunks have been applied.
-    mapping(uint32 worldwideDay => uint16 seen) issuanceChunksSeen;
-    /// @dev Issuance chunks already applied, so a repeat neither issues nor counts.
-    mapping(uint32 worldwideDay => mapping(uint16 chunkIndex => bool applied)) issuanceChunkApplied;
+    /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
+    ///      how many landed. Four bytes, so one slot rather than two.
+    mapping(uint32 worldwideDay => ChunkProgress) issuanceProgress;
+    /// @dev Bit per applied issuance chunk, so a repeat neither issues nor counts. Mirrors
+    ///      `refundChunksApplied`; one word covers `MAX_CHUNKS`.
+    mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried

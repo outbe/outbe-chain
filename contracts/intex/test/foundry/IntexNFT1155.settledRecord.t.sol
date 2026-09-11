@@ -7,8 +7,11 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
-/// @dev `createSeries` must copy the full immutable series identity into the Settled record;
-///      the record has no public reader, so slots are compared raw via `vm.load`.
+/// @dev The Settled class carries no identity record of its own: its id is the series id with the
+///      Settled tag set, so identity resolves to the Issued entry and only the settled supply is
+///      stored. These pin that nothing is written under the Settled id, that the class is still
+///      recognised without a record, and that a settled position's card does not move with the
+///      series' lifecycle. Slots are read raw via `vm.load` - there is no public reader.
 contract IntexNFT1155SettledRecordTest is Test {
     uint32 internal constant SERIES_ID_DAY = 20260622;
     bytes14 internal constant SERIES_ID = "20260622-USD-U";
@@ -43,36 +46,27 @@ contract IntexNFT1155SettledRecordTest is Test {
         return vm.load(address(nft), bytes32(base + i));
     }
 
-    function test_CreateSeries_CopiesIdentityIntoSettledRecord() public view {
+    function test_CreateSeries_WritesNoRecordForTheSettledId() public view {
         for (uint256 i = 0; i < _SERIES_DATA_SLOTS; i++) {
-            bytes32 issued = _recordSlot(iTok, i);
-            bytes32 settled = _recordSlot(sTok, i);
-            if (i < _SERIES_DATA_SLOTS - 1) {
-                assertEq(settled, issued, "identity slot must match the Issued record");
-            } else {
-                // Last slot: identical except the status byte flipped Issued -> Settled.
-                assertEq(settled, issued | bytes32(uint256(1) << _STATUS_BIT), "only status may differ");
-            }
+            assertEq(_recordSlot(sTok, i), bytes32(0), "the Settled id must own no identity slot");
+            assertTrue(_recordSlot(iTok, i) != bytes32(0), "the Issued record carries the identity");
         }
-        // issuedAt (low 4 bytes of slot 3) doubles as the existence sentinel for both classes.
-        assertTrue(uint32(uint256(_recordSlot(sTok, 3))) != 0, "settled record must carry issuedAt");
+
+        // The class is read off the id, so it holds even though no record was written for it.
         assertEq(uint8(nft.statusOf(sTok)), uint8(IIntexNFT1155.IntexStatus.Settled));
+        // And metadata still resolves: both ids render the same series.
+        assertTrue(bytes(nft.uri(sTok)).length > 0, "settled metadata resolves to the series identity");
     }
 
-    function test_MarkCalled_DoesNotTouchSettledRecord() public {
-        bytes32[_SERIES_DATA_SLOTS] memory before;
-        for (uint256 i = 0; i < _SERIES_DATA_SLOTS; i++) {
-            before[i] = _recordSlot(sTok, i);
-        }
+    function test_SettledCard_DoesNotMoveWithTheSeriesLifecycle() public {
+        string memory before = nft.uri(sTok);
 
         vm.prank(bridger);
         nft.markQualified(SERIES_ID);
         vm.prank(bridger);
         nft.markCalled(SERIES_ID, uint32(block.timestamp));
 
-        for (uint256 i = 0; i < _SERIES_DATA_SLOTS; i++) {
-            assertEq(_recordSlot(sTok, i), before[i], "lifecycle transitions must not write the Settled record");
-        }
+        assertEq(nft.uri(sTok), before, "a closed position is not moved by later transitions");
         assertEq(uint8(nft.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
     }
 

@@ -1,6 +1,6 @@
 //! IntexFactory runtime use-cases: issuance, settlement, Promis mining.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
@@ -18,6 +18,7 @@ use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
     ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -1043,12 +1044,11 @@ pub fn mine_promis(
     Ok(promis_amount)
 }
 
-/// Settled token id = `uint256(keccak256("SETTLED" ++ seriesId))`.
+/// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
+/// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
+/// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    let mut buf = Vec::with_capacity(7 + SERIES_ID_LEN);
-    buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(series_id.as_bytes());
-    U256::from_be_bytes(keccak256(&buf).0)
+    U256::from_be_slice(series_id.as_bytes()) | SETTLED_TAG
 }
 
 /// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.

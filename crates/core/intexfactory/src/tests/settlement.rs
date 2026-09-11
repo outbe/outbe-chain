@@ -216,16 +216,17 @@ fn set_authorized_settler_round_trip() {
 }
 
 #[test]
-fn settled_token_id_derivation() {
-    // uint256(keccak256("SETTLED" ++ seriesId_be64))
+fn settled_token_id_tags_the_series_id() {
     let series_id = sid(7);
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(series_id.as_bytes());
-    assert_eq!(
-        runtime::settled_token_id(series_id),
-        U256::from_be_bytes(keccak256(&buf).0)
-    );
+    let issued = U256::from_be_slice(series_id.as_bytes());
+    let settled = runtime::settled_token_id(series_id);
+    let tag: U256 = U256::from(1u8) << 112;
+
+    // Solidity derives the same value; the tag sits above the 14-byte series-id space, so the two
+    // id classes cannot collide and clearing it recovers the series.
+    assert!(issued < tag);
+    assert_eq!(settled, issued | tag);
+    assert_eq!(settled & !tag, issued);
 }
 
 #[test]
