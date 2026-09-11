@@ -1,9 +1,9 @@
 //! Module-local constants: external contract addresses called via
 //! `storage.call`, plus protocol constants.
 
+use alloy_primitives::U256;
 #[cfg(feature = "e2e-test")]
 use alloy_primitives::{address, Address};
-use alloy_primitives::U256;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
