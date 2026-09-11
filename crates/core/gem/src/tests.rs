@@ -1650,3 +1650,32 @@ fn a_qualify_sweep_over_several_currencies_always_ends() {
         );
     });
 }
+
+/// A day price the bin ladder cannot hold settles its currency for the day and says so
+/// once, instead of halting the block.
+#[test]
+fn an_unindexable_day_price_skips_qualification_for_the_day_and_says_so() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let day = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = api::add_gem(&storage, sample_params(ALICE)).unwrap();
+        seed_day_price(&storage, 840, Some(U256::MAX));
+
+        let ctx = block_ctx_at(&storage, QUALIFY_TS);
+        crate::hooks::scan_and_qualify(&ctx).unwrap();
+        crate::hooks::run_qualify_slice(&ctx).unwrap();
+        assert_eq!(gem_state(&storage, gem_id), GemState::Issued as u8);
+        previous_date_key(timestamp_to_date_key(QUALIFY_TS))
+    });
+
+    let skipped: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::QualifyScanSkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].referenceCurrency, 840);
+    assert_eq!(skipped[0].utcDay, day);
+}

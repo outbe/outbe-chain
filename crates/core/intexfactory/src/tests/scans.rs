@@ -1148,3 +1148,35 @@ fn a_firing_sends_a_full_budget_of_qualified_groups() {
         assert_eq!(factory.notify_head.read().unwrap(), budget);
     });
 }
+
+/// A day price the bin ladder cannot hold settles its currency for the day and says so
+/// once, instead of halting the block.
+#[test]
+fn an_unindexable_day_price_is_reported_once() {
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    let day = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        seed_issued(&s, 7);
+        let oracle = OracleContract::new(s.clone());
+        list_reference(&oracle);
+        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, U256::MAX);
+
+        let ctx = block_at(&s, 1, MATURE_TS);
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
+        qualified::run_qualify_slice(&ctx).unwrap();
+        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
+        previous_date_key(timestamp_to_date_key(MATURE_TS))
+    });
+
+    let events: Vec<_> = storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::QualifyScanSkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
+    assert_eq!(events[0].utcDay, day);
+}
