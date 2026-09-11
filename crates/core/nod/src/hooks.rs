@@ -5,7 +5,7 @@
 //! promotes any unqualified bucket whose `floor_price_minor < rate`. The
 //! comparison is strict - a bucket priced exactly at the rate stays
 //! unqualified until the rate moves strictly above its floor.
-//! Qualification is a monotonic latch - once a bucket is qualified it stays
+//! Qualification is a monotonic latch - once a bucket is qualified, it stays
 //! that way, so `mine_gratis` only has to read the cached `is_qualified` bit.
 //!
 //! Implementation (PancakeSwap-Liquidity-Book bin index):
@@ -48,7 +48,7 @@ use crate::{
     api, constants::MAX_BUCKET_QUALIFICATIONS_PER_RUN, schema::NodContract, state::CurrencyBins,
 };
 
-/// Cycle daily-trigger entry. Qualification arms buckets before the call scan.
+/// Daily cycle-trigger entry. Qualification arms buckets before the call scan.
 /// The Cycle dispatcher owns scheduling and the checkpoint for both scans.
 pub fn run_daily(
     ctx: &BlockRuntimeContext,
@@ -63,9 +63,9 @@ pub fn run_daily(
 /// Qualifies Nod buckets using the same block scope and parent source as transactions.
 ///
 /// Reads every reference currency the oracle knows about and qualifies each
-/// one's buckets against its own previous completed UTC-day VWAP. Waits for
+/// one's buckets against its own previously completed UTC-day VWAP. Waits for
 /// Oracle finalization and skips currencies with no registered pair or daily
-/// price. An uninitialized registry does no work.
+/// price. An uninitialized registry does not work.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
