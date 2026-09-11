@@ -174,6 +174,10 @@ pub struct IntexFactoryContract {
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 42)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 43)]
+    pub qualify_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 44)]
+    pub qualify_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {

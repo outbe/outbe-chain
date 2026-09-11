@@ -32,21 +32,9 @@ use crate::state::{Group, QualifiedBinTree};
 /// Schedule the day the Oracle has just finalized: open a Called sweep over it and
 /// run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-
-    // Most recent fully-closed UTC day (finalized VWAP).
-    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same
-    // block; a lagging watermark means the ordering broke - skip loudly
-    // instead of misreading an unfinalized day as empty.
-    // todo use api.rs
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
-    if finalized < last_closed_day {
-        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
+    let Some(last_closed_day) = closed_day(ctx)? else {
         return Ok(0);
-    }
-
+    };
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let days = SweepDays {
         current: factory.call_sweep_day.read()?,
@@ -75,6 +63,24 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         (_, Scheduled::Ignored) => Ok(0),
     }
+}
+
+/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
+pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
+    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+
+    // The Oracle begin-block hook finalizes that day earlier in this same
+    // block; a lagging watermark means the ordering broke - skip loudly
+    // instead of misreading an unfinalized day as empty.
+    // todo use api.rs
+    let finalized = OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
+    if finalized < last_closed_day {
+        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "utc-day VWAP not finalized yet, skipping the day's sweeps");
+        return Ok(None);
+    }
+    Ok(Some(last_closed_day))
 }
 
 /// Pin the sweep's current day and walk it from the first currency's lowest bin.
@@ -251,8 +257,10 @@ fn call_currency(
     Ok((called, finished))
 }
 
-/// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
+/// Cycle daily-trigger entry: opens the day's qualification and Called sweeps,
+/// discarding the counts.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::qualified::scan_and_qualify(ctx)?;
     scan_and_call(ctx)?;
     Ok(())
 }

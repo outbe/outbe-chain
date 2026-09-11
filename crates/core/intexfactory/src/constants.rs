@@ -35,6 +35,7 @@ pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
 /// `SweepDaySkipped.sweep` of each daily sweep.
+pub const QUALIFY_SWEEP: u8 = 0;
 pub const CALL_SWEEP: u8 = 1;
 
 /// Router calls one `intex_notify` firing may make; an entry costing none still

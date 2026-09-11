@@ -109,6 +109,10 @@ interface IIntexFactory {
     /// @notice The series qualified (Issued -> Qualified).
     event SeriesQualified(bytes14 indexed seriesId);
 
+    /// @notice A reference currency was left out of one day's qualification because its
+    ///         day price could not be indexed. The next day's pass tries it again.
+    event QualifyScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
     /// @notice The series was force-called (Qualified -> Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
