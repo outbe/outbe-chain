@@ -47,9 +47,8 @@ env:
 jobs:
   build:
     name: build and publish
-    # The same self-hosted pool as every other job. This is a plain docker build
-    # and push, so it has no dependency on the image it produces - there is no
-    # bootstrap cycle.
+    # Keep the toolchain image build on the on-premise pool. It has no
+    # dependency on the image it produces, so there is no bootstrap cycle.
     runs-on: testnet-release-sgx
     timeout-minutes: 90
     permissions:
