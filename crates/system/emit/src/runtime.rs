@@ -16,7 +16,9 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
-use outbe_zk_canonical::emit_mint::decode_public_inputs as decode_emit_mint_public_inputs;
+use outbe_zk_canonical::emit_mint::{
+    alloy::PublicInputs as EmitPublicInputs, decode_public_inputs as decode_emit_mint_public_inputs,
+};
 use outbe_zk_canonical::noir::emit_mint::EmitMint;
 
 use crate::errors::EmitError;
@@ -170,7 +172,8 @@ pub(crate) fn mint(
     // pristine chain it is the only check allowed before the initialization
     // gate (frozen matrix: "ABI/proof framing may decode, then
     // `Emit is not initialized`").
-    let embedded = decode_emit_mint_public_inputs(proof)
+    let embedded: EmitPublicInputs = decode_emit_mint_public_inputs(proof)
+        .and_then(TryInto::try_into)
         .map_err(|error| PrecompileError::from(EmitError::MalformedProof(error.to_string())))?;
 
     let (runtime_chain_id, zeros) = chain_state(&storage)?;

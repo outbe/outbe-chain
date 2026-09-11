@@ -17,7 +17,8 @@ use outbe_protocol::Codec as _;
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::noir::paynote::Paynote;
 use outbe_zk_canonical::paynote::{
-    decode_public_inputs as decode_paynote_public_inputs, PublicInputs as PayNotePublicInputs,
+    alloy::PublicInputs as PayNotePublicInputs,
+    decode_public_inputs as decode_paynote_public_inputs,
 };
 
 use crate::errors::PayNoteError;
@@ -210,6 +211,7 @@ pub(crate) fn deposit(
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     // Framing must decode before any state is touched.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
+        .and_then(TryInto::try_into)
         .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;

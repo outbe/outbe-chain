@@ -449,7 +449,9 @@ fn offer_rejected_supply_zero(world: &mut World) {
 mod tests {
     use super::*;
     use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::full_proof::decode_public_inputs as decode_full_proof_public_inputs;
+    use outbe_zk_canonical::full_proof::{
+        alloy::PublicInputs, decode_public_inputs as decode_full_proof_public_inputs,
+    };
 
     #[test]
     #[ignore = "generates and verifies a real Barretenberg FullProof"]
@@ -463,7 +465,10 @@ mod tests {
         )
         .expect("fixture proof is hex");
 
-        let public = decode_full_proof_public_inputs(&proof).expect("public inputs decode");
+        let public: PublicInputs = decode_full_proof_public_inputs(&proof)
+            .expect("public inputs decode")
+            .try_into()
+            .expect("Alloy public inputs");
         assert!(verify_circuit::<FullProof>(&proof).expect("proof verifier succeeds"));
         assert_eq!(public.merkle_root, fixture.merkle_root);
         let donor = generate_zk_offer_fixture(Address::repeat_byte(0x44), 19_280_502, 20_260_729);
