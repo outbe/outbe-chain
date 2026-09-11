@@ -939,8 +939,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
         assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
         assert_eq!(f.called_group_count.read(&key).unwrap(), 2);
 
-        // The phantom goes away; the retry finishes the group without crediting
-        // the member the first pass already returned.
+        // The phantom goes away and the retry finishes the group.
         f.called_group_count.write(&key, 1).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
