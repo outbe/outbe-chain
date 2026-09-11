@@ -60,7 +60,7 @@ fn pledge_stables() -> U256 {
 }
 
 /// Gratis [`pledge_stables`] costs at [`oracle_rate`]:
-/// `ceil(2e6 * 1e6 / 2e6) = 1e6`.
+/// `floor(2e6 * 1e6 / 2e6) = 1e6`.
 fn pledge_cost() -> U256 {
     one_six_decimal_unit()
 }
@@ -245,9 +245,9 @@ fn pledge_rejects_a_stale_oracle_rate_without_debiting_gratis() {
 }
 
 #[test]
-fn pledge_rounds_positive_subunit_collateral_up_to_one_gratis_unit() {
+fn pledge_rounds_collateral_down_before_checking_the_cap() {
     with_env(|storage| {
-        let stable_raw = U256::ONE;
+        let stable_raw = U256::from(3u64);
         let gratis_raw = U256::ONE;
         outbe_gratis::api::mint(
             storage.clone(),
@@ -258,8 +258,8 @@ fn pledge_rounds_positive_subunit_collateral_up_to_one_gratis_unit() {
         .unwrap();
         seed_fidelity(storage.clone(), alice());
 
-        let (_, charged) = runtime::pledge_gratis(
-            storage,
+        let (handle, charged) = runtime::pledge_gratis(
+            storage.clone(),
             alice(),
             stable_raw,
             asset(),
@@ -267,7 +267,25 @@ fn pledge_rounds_positive_subunit_collateral_up_to_one_gratis_unit() {
             auth(GratisOp::Pledge, alice(), stable_raw, 1),
         )
         .unwrap();
+        // 3 / 2 = 1.5 Gratis minor units: floor to 1, which fits the cap.
         assert_eq!(charged, gratis_raw);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            gratis_raw
+        );
+        assert_eq!(
+            runtime::unpledge_gratis(
+                storage.clone(),
+                alice(),
+                stable_raw,
+                handle,
+                auth(GratisOp::Unpledge, alice(), stable_raw, 2),
+            )
+            .unwrap(),
+            gratis_raw
+        );
+        assert_eq!(view_balance(&storage, alice()), gratis_raw);
     });
 }
 
@@ -306,6 +324,36 @@ fn pledge_rejects_when_derived_gratis_exceeds_max() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
+    });
+}
+
+#[test]
+fn pledge_rejects_a_quote_that_rounds_to_zero_without_changing_balances() {
+    with_env(|storage| {
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            U256::ONE,
+            auth(GratisOp::Mint, alice(), U256::ONE, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+        let error = runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            U256::ONE,
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), U256::ONE, 1),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("amount"), "{error}");
+        assert_eq!(view_balance(&storage, alice()), U256::ONE);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(outbe_gratis::api::total_supply(storage).unwrap(), U256::ONE);
     });
 }
 

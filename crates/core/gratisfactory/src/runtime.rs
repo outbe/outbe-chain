@@ -24,7 +24,7 @@ use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
 use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::math::scaled_math::checked_mul_div_ceil;
+use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 
@@ -43,7 +43,7 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 }
 
 /// Convert canonical six-decimal stablecoin raw units to six-decimal GRATIS,
-/// rounded **up** so the pledged collateral always covers the requested credit.
+/// rounded down in the user's favor (C34).
 /// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
 /// Returns `(gratis_cost, rate)`.
 fn convert_stables_to_gratis(
@@ -53,7 +53,7 @@ fn convert_stables_to_gratis(
 ) -> Result<(U256, U256)> {
     let iso_code = read_iso_code(&storage, asset)?;
     let rate = fresh_coen_rate_for(storage, iso_code)?;
-    let gratis = checked_mul_div_ceil(amount_stables, SCALE_1E6_U256, rate).map_err(|_| {
+    let gratis = checked_mul_div_floor(amount_stables, SCALE_1E6_U256, rate).map_err(|_| {
         let error: PrecompileError = GratisFactoryError::OracleConversionOverflow.into();
         error
     })?;
@@ -86,6 +86,9 @@ pub fn pledge_gratis(
 
     let (gratis_amount, entry_rate) =
         convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
+    if gratis_amount.is_zero() {
+        return Err(GratisFactoryError::InvalidAmount.into());
+    }
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }
