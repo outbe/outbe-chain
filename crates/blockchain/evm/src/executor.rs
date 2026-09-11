@@ -4973,7 +4973,7 @@ mod tests {
                 outbe_oracle::api::DAY_TYPE_PAIR,
                 U256::from(1_000_000u64),
                 0,
-                0,
+                TEST_BLOCK_TIMESTAMP_BASE,
             )
             .unwrap();
         });
@@ -5089,7 +5089,7 @@ mod tests {
                 outbe_oracle::api::DAY_TYPE_PAIR,
                 U256::from(1_000_000u64),
                 0,
-                0,
+                TEST_BLOCK_TIMESTAMP_BASE,
             )
             .unwrap();
             seed_extra(storage);
@@ -8327,12 +8327,14 @@ mod tests {
                         )
                         .unwrap();
 
-                    // The shared state fixture seeds COEN/840 at timestamp zero.
-                    // That is intentionally stale under the live six-hour policy.
+                    // Override the shared fixture's live rate with an unpublished timestamp.
                     let (.., pair_index) =
                         outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
                     let oracle = outbe_oracle::schema::OracleContract::new(storage);
-                    assert_eq!(oracle.exchange_rate_timestamp.read(&pair_index).unwrap(), 0);
+                    oracle
+                        .exchange_rate_timestamp
+                        .write(&pair_index, 0)
+                        .unwrap();
                 },
             );
 
