@@ -8606,7 +8606,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "ark-bn254",
  "ark-ff 0.6.0",
  "outbe-macros",
  "outbe-primitives",
@@ -9358,7 +9357,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "ark-bn254",
  "ark-ff 0.6.0",
  "outbe-macros",
  "outbe-paynote",
