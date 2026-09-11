@@ -11,9 +11,9 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/nod/image/";
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Maximum number of off-chain bucket bodies inspected by the consensus
-/// begin-block qualifier. Remaining work stays in the compact EVM worklist
-/// and is resumed deterministically in the next block.
-pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
+/// daily qualifier. Remaining work stays in the compact EVM worklist
+/// and is resumed deterministically on the next daily run.
+pub const MAX_BUCKET_QUALIFICATIONS_PER_RUN: u32 = 256;
 
 /// The four call terms below are snapshotted onto a bucket when it qualifies,
 /// and every later check reads the bucket's copy. Retuning one of them re-terms

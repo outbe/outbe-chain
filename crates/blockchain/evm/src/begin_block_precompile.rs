@@ -625,11 +625,6 @@ fn run_cycle_tick_with_readers_at_activation(
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     enforce_tee_lease_deadlines(ctx)?;
-    // This body mutation must consume system-transaction gas and appear in its
-    // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
-    // buckets are not qualified until the following block.
-    let nod_lifecycle = outbe_nod::hooks::NodLifecycleContext::new(ctx.clone(), scope, parent);
-    <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(&nod_lifecycle)?;
     let cycle_lifecycle =
         outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
             .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);

@@ -76,7 +76,7 @@ pub enum TriggerHandler {
     AuctionClearing,
     IntexNotify,
     CredisCallDaily,
-    NodCallDaily,
+    NodDaily,
     GemPositionDaily,
 }
 
@@ -95,7 +95,7 @@ impl TriggerHandler {
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodCallDaily => outbe_nod::called::run_call_daily(ctx, scope, parent),
+            Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
         }
     }
@@ -237,15 +237,14 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         },
         TriggerSpec {
             id: TriggerId::NodCallDaily.as_u32(),
-            label: "nod_call_daily",
+            label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to force-call Nod buckets and
-            // forfeit-burn their Nods; no dependency on the parent block's
-            // settlement accounting.
+            // Qualifies, calls and forfeits using the latest completed UTC day.
+            // Missed slots would repeat the same scan against the current clock.
             requires_accounting_window: false,
-            coalesces_backlog: false,
-            handler: TriggerHandler::NodCallDaily,
+            coalesces_backlog: true,
+            handler: TriggerHandler::NodDaily,
         },
         TriggerSpec {
             id: TriggerId::GemPositionDaily.as_u32(),
@@ -331,10 +330,7 @@ mod protocol_parameter_tests {
         ));
         assert_eq!(configured[7].period_seconds, 86_400);
         assert_eq!(configured[7].start_offset_seconds, 0);
-        assert!(matches!(
-            configured[7].handler,
-            TriggerHandler::NodCallDaily
-        ));
+        assert!(matches!(configured[7].handler, TriggerHandler::NodDaily));
         assert_eq!(configured[8].period_seconds, GEM_POSITION_PERIOD_SECONDS);
         assert_eq!(configured[8].start_offset_seconds, 0);
         assert!(matches!(

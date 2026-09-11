@@ -5,13 +5,12 @@
 //! is the Rust-only [`crate::api::consume`], so no proof verification cost ever
 //! arrives through this path.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::hash::field_from_be_bytes;
 use crate::runtime;
 use crate::schema::PayNoteContract;
 
@@ -62,25 +61,14 @@ pub fn dispatch(
             }),
             isSpent(c) => view(c, |c| {
                 let paynote: PayNoteContract<'_> = storage.contract();
-                paynote.spent_nullifiers.read(&normalize(c.nullifier))
+                paynote.spent_nullifiers.read(&c.nullifier)
             }),
             hasCommitment(c) => view(c, |c| {
                 let paynote: PayNoteContract<'_> = storage.contract();
-                paynote.commitments.read(&normalize(c.commitment))
+                paynote.commitments.read(&c.commitment)
             }),
         }
     })
-}
-
-/// Membership keys are stored as canonical field words. A non-canonical query
-/// argument can never be a stored key, so it answers `false` rather than
-/// reverting — and normalizing keeps a reducible encoding of a stored word
-/// from reading as absent.
-fn normalize(word: B256) -> B256 {
-    match field_from_be_bytes(&word.0) {
-        Some(_) => word,
-        None => B256::ZERO,
-    }
 }
 
 /// Base gas charged by the registry before invoking [`dispatch`]:

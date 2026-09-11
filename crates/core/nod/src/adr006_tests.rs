@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     error::{PrecompileError, Result},
@@ -303,19 +303,22 @@ fn seed_bucket(
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 
-/// Block timestamp every qualification-hook test runs at.
+/// Default block timestamp for qualification-hook tests.
 const NOW: u64 = 1_752_534_000;
 
-/// Publishes `rate` at `published_at` on pair `index` and moves the block clock
-/// to [`NOW`], which is what the hook measures the rate's age against.
-fn publish_rate(storage: &StorageHandle<'_>, index: u32, rate: U256, published_at: u64) {
+/// Stores the previous completed UTC-day price and finalization watermark.
+fn publish_day_vwap(storage: &StorageHandle<'_>, index: u32, rate: U256) {
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle.exchange_rate.write(&index, rate).unwrap();
+    let previous_day = previous_date_key(timestamp_to_date_key(NOW));
     oracle
-        .exchange_rate_timestamp
-        .write(&index, published_at)
+        .utc_day_vwap_value
+        .get_nested(&previous_day)
+        .write(&index, rate)
         .unwrap();
-    storage.set_block_timestamp(U256::from(NOW)).unwrap();
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(previous_day)
+        .unwrap();
 }
 
 fn is_qualified(
@@ -344,6 +347,7 @@ fn an_unregistered_reference_pair_is_skipped_without_halting_the_block() {
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
+        publish_day_vwap(&storage, 2, U256::from(14));
         let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
@@ -355,10 +359,9 @@ fn an_unregistered_reference_pair_is_skipped_without_halting_the_block() {
     });
 }
 
-/// A registered pair carrying no published rate must also skip, rather than
-/// qualify every bucket against a zero rate.
+/// A registered pair without a daily VWAP must also skip.
 #[test]
-fn a_registered_reference_pair_with_no_published_rate_is_skipped() {
+fn a_registered_reference_pair_with_no_daily_vwap_is_skipped() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
@@ -367,11 +370,12 @@ fn a_registered_reference_pair_with_no_published_rate_is_skipped() {
         begin_block(storage.clone(), &scope).unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(978).unwrap();
-        // Registered, but `exchange_rate` is left at zero.
+        // Registered, but the finalized day has no VWAP for this pair.
         oracle
             .pair_to_index
             .write(&AddressPair::new_coen_to(978), 1)
             .unwrap();
+        publish_day_vwap(&storage, 2, U256::from(14));
         let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
@@ -402,7 +406,7 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
             .pair_to_index
             .write(&AddressPair::new_coen_to(840), 1)
             .unwrap();
-        publish_rate(&storage, 1, U256::from(14), NOW);
+        publish_day_vwap(&storage, 1, U256::from(14));
 
         let unpriced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
         let priced = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x77), 840);
@@ -417,43 +421,110 @@ fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
     });
 }
 
-/// Qualification is a one-way latch that snapshots the call price and arms the
-/// call clock, so it must read a live rate, on the same freshness bound Gem and
-/// Intex qualify under. A rate that went stale above the floor must leave the
-/// bucket waiting rather than qualify it permanently.
 #[test]
-fn a_stale_rate_does_not_qualify_a_bucket() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(978).unwrap();
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(978), 1)
-            .unwrap();
-        let bucket_id = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+fn qualification_requires_the_previous_finalized_utc_day_and_stays_latched() {
+    // At UTC midnight (including a year boundary) and late enough in the day
+    // that the UTC+14 WorldwideDay differs, only the previous UTC day counts.
+    for now in [1_767_225_600, NOW] {
+        for (daily_rate, finalized, live_rate, qualifies) in [
+            (0, true, 14, false),   // Missing day; no fallback to older/live prices.
+            (12, true, 14, false),  // A live crossing cannot qualify.
+            (13, true, 14, false),  // Equality is not enough.
+            (14, false, 14, false), // Wait for Oracle finalization.
+            (14, true, 1, true),    // A low live rate cannot prevent qualification.
+        ] {
+            let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+            let mut provider = HashMapStorageProvider::new(1);
+            let scope = ExecutionScope::new();
+            StorageHandle::enter(&mut provider, |storage| {
+                seed_compressed_entities_genesis(&storage);
+                begin_block(storage.clone(), &scope).unwrap();
+                storage.set_block_timestamp(U256::from(now)).unwrap();
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+                oracle.reference_currencies.push(978).unwrap();
+                oracle
+                    .pair_to_index
+                    .write(&AddressPair::new_coen_to(978), 1)
+                    .unwrap();
+                oracle
+                    .exchange_rate
+                    .write(&1, U256::from(live_rate))
+                    .unwrap();
+                oracle.exchange_rate_timestamp.write(&1, now).unwrap();
+                let current_day = timestamp_to_date_key(now);
+                let previous_day = previous_date_key(current_day);
+                // Adjacent days and another currency must not substitute for
+                // the requested day's price, even when all exceed the floor.
+                for day in [previous_date_key(previous_day), current_day] {
+                    oracle
+                        .utc_day_vwap_value
+                        .get_nested(&day)
+                        .write(&1, U256::from(14))
+                        .unwrap();
+                }
+                oracle
+                    .utc_day_vwap_value
+                    .get_nested(&previous_day)
+                    .write(&2, U256::from(14))
+                    .unwrap();
+                oracle
+                    .utc_day_vwap_value
+                    .get_nested(&previous_day)
+                    .write(&1, U256::from(daily_rate))
+                    .unwrap();
+                oracle
+                    .utc_day_vwap_last_finalized
+                    .write(if finalized {
+                        previous_day
+                    } else {
+                        previous_date_key(previous_day)
+                    })
+                    .unwrap();
+                let bucket_id =
+                    seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
+                let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                    outbe_primitives::block::BlockContext::empty_for_tests(1, now, 1),
+                    storage.clone(),
+                );
+                crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+                assert_eq!(
+                    is_qualified(&storage, &scope, &parent, bucket_id),
+                    qualifies
+                );
+                let nod = NodContract::new(storage.clone());
+                let bin = NodContract::price_to_bin(U256::from(13)).unwrap();
+                assert_eq!(
+                    nod.unqualified_bin_count
+                        .read(&NodContract::scoped(978, bin))
+                        .unwrap(),
+                    u32::from(!qualifies)
+                );
+                assert_eq!(nod.callable_buckets.len().unwrap(), u32::from(qualifies));
 
-        // The rate clears the bucket's floor of 13; it is only its age that
-        // disqualifies it.
-        let stale_at = NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1;
-        publish_rate(&storage, 1, U256::from(14), stale_at);
-
-        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, NOW, 1),
-            storage.clone(),
-        );
-        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
-        assert!(!is_qualified(&storage, &scope, &parent, bucket_id));
-
-        // The same rate republished now qualifies it.
-        publish_rate(&storage, 1, U256::from(14), NOW);
-        crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
-        assert!(is_qualified(&storage, &scope, &parent, bucket_id));
-    });
+                // The next completed day declines below the floor. A latched
+                // bucket stays qualified, while all others keep waiting.
+                oracle
+                    .utc_day_vwap_value
+                    .get_nested(&current_day)
+                    .write(&1, U256::from(1))
+                    .unwrap();
+                oracle
+                    .utc_day_vwap_last_finalized
+                    .write(current_day)
+                    .unwrap();
+                let next = outbe_primitives::block::BlockRuntimeContext::new(
+                    outbe_primitives::block::BlockContext::empty_for_tests(2, now + 86_400, 1),
+                    storage.clone(),
+                );
+                crate::hooks::qualify_nods(&next, &scope, &parent).unwrap();
+                assert_eq!(
+                    is_qualified(&storage, &scope, &parent, bucket_id),
+                    qualifies
+                );
+                assert_eq!(nod.callable_buckets.len().unwrap(), u32::from(qualifies));
+            });
+        }
+    }
 }
 
 /// A bucket denominated in a currency absent from the oracle registry is never
@@ -475,7 +546,7 @@ fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
             .pair_to_index
             .write(&AddressPair::new_coen_to(840), 1)
             .unwrap();
-        publish_rate(&storage, 1, U256::from(14), NOW);
+        publish_day_vwap(&storage, 1, U256::from(14));
 
         let unlisted = seed_bucket(&storage, &scope, &parent, Address::repeat_byte(0x66), 978);
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(

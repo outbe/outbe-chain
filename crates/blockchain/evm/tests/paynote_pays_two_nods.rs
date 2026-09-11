@@ -20,6 +20,8 @@
 //! Only the two ERC20/ERC4626 counterparties are stubbed; VaultRouter, PayNote,
 //! NodFactory, Nod, GratisFactory and Gratis all run for real.
 
+use outbe_paynote::PayNoteSuit;
+use outbe_protocol::Codec as _;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -32,9 +34,10 @@ use outbe_nod::{NodContract, NodIssueParams, NodRepositoryReader};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
-use outbe_paynote::hash::field_to_be_bytes;
+use outbe_paynote::client::new_tree;
+
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{change_note, note, spend_proof, Note, ReferenceTree};
+use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, GRATIS_ADDRESS, NOD_FACTORY_ADDRESS, PAYNOTE_ADDRESS,
 };
@@ -76,8 +79,8 @@ const GRATIS_LOAD: u128 = 1_000;
 const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
-/// have to share an owner: the note names its spender, and `mineGratis` demands
-/// the spender be the Nod's owner. That spender is `ALICE1`, not the depositor.
+/// share `ALICE1` as their owner: each proof names that address as its owner,
+/// matching the Nod owner as `mineGratis` requires. The depositor can be different.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -290,8 +293,8 @@ fn is_spent(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, nullifier: B256) -> b
     )
 }
 
-fn word(field: outbe_paynote::hash::Field) -> B256 {
-    B256::new(field_to_be_bytes(field))
+fn word(field: outbe_paynote::Field) -> B256 {
+    PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
 /// Calls `mineGratis` for `nod_id`, authorizing the gratis mint against the
@@ -389,8 +392,8 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
-    let mut tree = ReferenceTree::new(CHAIN_ID);
-    let leaf = tree.append(funding.commitment);
+    let mut tree = new_tree(CHAIN_ID).unwrap();
+    let leaf = u32::try_from(tree.append(funding.commitment).unwrap().0).unwrap();
 
     // First Nod: spend half the note.
     let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
@@ -404,7 +407,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         "paying a Nod must burn the note it was paid with"
     );
 
-    // The unspent half came back as a change leaf, derivable by the spender
+    // The unspent half came back as a change leaf, derivable by the owner
     // alone from the key and nullifier they already hold.
     let change =
         change_note(CHAIN_ID, &funding, U256::from(COST)).expect("a half-spent note leaves change");
@@ -422,9 +425,9 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
                 commitment: word(change.commitment)
             }
         ),
-        "the appended leaf must be the change commitment the spender can derive"
+        "the appended leaf must be the change commitment the owner can derive"
     );
-    let change_leaf = tree.append(change.commitment);
+    let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
 
     // One note is one payment: the first proof cannot pay the second Nod.
     let replay = mine_gratis(&mut ctx, &scope, &readers, nods[1], &first_proof);

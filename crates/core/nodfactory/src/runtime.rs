@@ -113,7 +113,7 @@ pub struct MineGratisRequest<'proof> {
 /// This path moves no value. The cost's underlying assets already reached the
 /// reserve vault when the note was deposited through `IPayNote.deposit`, which
 /// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
-/// proof obligation: `paynote_proof` must name `caller` as its spender, carry
+/// proof obligation: `paynote_proof` must name `caller` as its owner, carry
 /// the asset registered for the Nod's `reference_currency`, and cover the Nod's
 /// cost.
 pub fn mine_gratis(
@@ -263,13 +263,13 @@ fn discharge_cost(
 ) -> Result<PaidCost> {
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // PayNote notes are bearer instruments: the proof names its own spender and
-    // anyone can relay it. Binding that spender to the caller is what stops an
+    // PayNote notes are bearer instruments: the proof names its own owner and
+    // anyone can relay it. Binding that owner to the caller is what stops an
     // observer from lifting a broadcast proof to pay for their own Nod.
-    if claim.spender != caller {
-        return Err(NodFactoryError::PayNoteSpenderMismatch {
+    if claim.owner != caller {
+        return Err(NodFactoryError::PayNoteOwnerMismatch {
             expected: caller,
-            actual: claim.spender,
+            actual: claim.owner,
         }
         .into());
     }

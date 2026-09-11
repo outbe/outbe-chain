@@ -14,7 +14,7 @@ interface IGemFactory {
     /// @dev Moves no tokens: the underlying assets reached the Reserve when the
     ///      note was deposited.
     /// @param payNoteProof `outbe.paynote` spend proof. Must name the caller as its
-    ///        spender, carry a settlement asset the gem accepts, and cover the cost.
+    ///        owner, carry a settlement asset the gem accepts, and cover the cost.
     function settleGem(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to the caller,
     ///         gated by off-chain proof of work. Authorized by the caller's Promis

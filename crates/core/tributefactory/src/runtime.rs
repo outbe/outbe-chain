@@ -13,7 +13,8 @@ use outbe_tee::protocol::{
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_zk_backend::barretenberg::verify_circuit;
 use outbe_zk_canonical::full_proof::{
-    decode_public_inputs as decode_full_proof_public_inputs, PublicInputs as FullProofPublicInputs,
+    alloy::PublicInputs as FullProofPublicInputs,
+    decode_public_inputs as decode_full_proof_public_inputs,
 };
 use outbe_zk_canonical::noir::full_proof::FullProof;
 
@@ -113,7 +114,8 @@ impl TributeFactoryContract<'_> {
                 if zk_proof.is_empty() {
                     return Err(TributeFactoryError::ZkProofRequired.into());
                 }
-                let public = decode_full_proof_public_inputs(&zk_proof)
+                let public: FullProofPublicInputs = decode_full_proof_public_inputs(&zk_proof)
+                    .and_then(TryInto::try_into)
                     .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
                 if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
                     return Err(TributeFactoryError::ZkPublicInputMismatch {
@@ -287,10 +289,10 @@ fn validate_zk_result(
     let expected = expected.ok_or(TributeFactoryError::ZkPublicInputMismatch {
         field: "tee_expected_hashes",
     })?;
-    if public.nft_hash != expected.nft_hash.0 {
+    if public.nft_hash != expected.nft_hash {
         return Err(TributeFactoryError::ZkPublicInputMismatch { field: "nft_hash" }.into());
     }
-    if public.binding_hash != expected.binding_hash.0 {
+    if public.binding_hash != expected.binding_hash {
         return Err(TributeFactoryError::ZkPublicInputMismatch {
             field: "binding_hash",
         }
@@ -384,10 +386,10 @@ mod zk_result_tests {
 
     fn public_inputs() -> FullProofPublicInputs {
         FullProofPublicInputs {
-            derived_owner: [1; 32],
-            nft_hash: [2; 32],
-            binding_hash: [3; 32],
-            merkle_root: [4; 32],
+            derived_owner: B256::repeat_byte(1),
+            nft_hash: B256::repeat_byte(2),
+            binding_hash: B256::repeat_byte(3),
+            merkle_root: B256::repeat_byte(4),
         }
     }
 
@@ -400,7 +402,7 @@ mod zk_result_tests {
             public.binding_hash,
             public.merkle_root,
         ] {
-            proof.extend_from_slice(&word);
+            proof.extend_from_slice(word.as_slice());
         }
         proof.resize(FULL_PROOF_COMBINED_LEN, 0);
         proof
@@ -411,7 +413,7 @@ mod zk_result_tests {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
             nft_hash: B256::from([9; 32]),
-            binding_hash: B256::from(public.binding_hash),
+            binding_hash: public.binding_hash,
         };
 
         let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
@@ -422,7 +424,7 @@ mod zk_result_tests {
     fn rejects_binding_hash_mismatch_before_proof_verification() {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
-            nft_hash: B256::from(public.nft_hash),
+            nft_hash: public.nft_hash,
             binding_hash: B256::from([9; 32]),
         };
 
@@ -434,8 +436,8 @@ mod zk_result_tests {
     fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
-            nft_hash: B256::from(public.nft_hash),
-            binding_hash: B256::from(public.binding_hash),
+            nft_hash: public.nft_hash,
+            binding_hash: public.binding_hash,
         };
 
         let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
