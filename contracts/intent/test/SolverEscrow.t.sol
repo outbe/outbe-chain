@@ -521,6 +521,31 @@ contract SolverEscrowTest is Test {
         assertEq(token.balanceOf(receiver), 150, "receiver got reward");
     }
 
+    function test_distributeReward_zeroRewardSkipsCompact() public {
+        // 66 * 150 / 10_000 = 0: a dust order rounds the reward to zero. The Compact rejects a
+        // zero-amount allocatedTransfer, which used to revert the whole settle on mainnet.
+        _slashSolver(5000, 1000);
+        deal(address(token), address(compact), 10_000);
+
+        address receiver = makeAddr("receiver");
+        uint256 id = escrow.lockId(address(token));
+        uint256 poolBefore = escrow.slashedPool(id);
+
+        vm.expectCall(
+            address(compact),
+            abi.encodeWithSelector(
+                bytes4(keccak256("allocatedTransfer((bytes,uint256,uint256,uint256,(uint256,uint256)[]))"))
+            ),
+            0
+        );
+        vm.prank(authorizedCaller);
+        uint256 reward = escrow.distributeReward(address(token), 66, receiver);
+
+        assertEq(reward, 0, "dust order earns no reward");
+        assertEq(escrow.slashedPool(id), poolBefore, "slashed pool untouched");
+        assertEq(token.balanceOf(receiver), 0, "nothing paid out");
+    }
+
     // ============ custody ============
 
     function test_lockCollateral_movesCustodyToEscrow() public {
