@@ -496,7 +496,6 @@ impl Rpc {
             nonce: 0,
             mac: B256::ZERO,
             opNonce: 0,
-            payNoteProof: Bytes::new(),
         };
         // This is an intentional negative transaction. Supplying an explicit
         // bounded gas limit prevents the RPC client from replacing the actual
@@ -642,6 +641,19 @@ impl Rpc {
         let body = self
             .nod_data_on(port, &nod_id)
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
+        let settlement_hash = eth::send_call(
+            &self.url(port),
+            addresses::NOD_FACTORY_ADDR,
+            private_key,
+            &INodFactory::settleNodCall {
+                nodId: U256::from_be_slice(&nod_id),
+                payNoteProof: Bytes::copy_from_slice(pay_note_proof),
+            },
+            None,
+        )?;
+        if eth::receipt_success(&self.url(port), &settlement_hash) != Some(true) {
+            return Err(eyre!("post-completion settleNod transaction failed"));
+        }
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
@@ -674,7 +686,6 @@ impl Rpc {
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
-                payNoteProof: Bytes::copy_from_slice(pay_note_proof),
             },
             None,
         )?;

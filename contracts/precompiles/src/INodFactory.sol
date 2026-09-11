@@ -13,6 +13,8 @@ interface INodFactory {
         uint256 costAmountMinor
     );
 
+    event NodExercised(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+
     event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
     event NodMaterializationProgress(
@@ -51,28 +53,17 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
-    ///
-    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
-    /// and so can always supply the mint authorization.
-    ///
-    /// The Nod's cost is discharged here, by spending a PayNote.
-    /// The underlying value already reached the reserve vault when the note
-    /// was deposited, so this call moves no tokens: it books the note's nullifier,
-    /// appends any change note to the pool, and logs `NodPaid` event.
-    ///
-    /// @param nodId        Identifier of a Nod owned by the caller.
-    /// @param nonce Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
-    /// MUST have the protocol's required leading zero bytes.
-    /// @param mac Gratis mint authorization, `HMAC(modifyKey, op-preimage)`
-    /// under the caller's Gratis modify key.
-    /// @param opNonce MUST equal the caller's current on-chain gratis op-nonce;
-    /// binds `mac` to exactly this mint.
-    /// @param payNoteProof `outbe.paynote` spend proof.
-    /// @return Gratis minor units minted to the caller.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
-        external
-        returns (uint256);
+    /// @notice Pay the caller-owned qualified Nod at or before its settlement deadline.
+    /// Preserves the Nod as a paid entitlement. No PoW or mint authorization is needed.
+    function settleNod(uint256 nodId, bytes calldata payNoteProof) external;
+
+    /// @notice Exercise a caller-owned paid Nod and mint its Gratis load.
+    /// Requires valid PoW and the owner's current Gratis mint authorization.
+    /// Paid entitlements have no mining deadline and require no further payment.
+    /// @param nonce PoW over `sha256(nodId_be32 || nonce_be8)` with the required leading zero bytes.
+    /// @param mac Gratis mint authorization under the owner's modify key.
+    /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     /// proof-backed OCOMP batch.

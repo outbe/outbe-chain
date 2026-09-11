@@ -9,7 +9,7 @@
 //!   call price on at least its `call_threshold` of the trailing
 //!   `call_window`.
 //! - *called* -> *forfeited* when the bucket's `call_notice_period` has lapsed
-//!   with Nods still unmined. The two can never fire in one pass, since a
+//!   with Nods still unpaid. The two can never fire in one pass, since a
 //!   bucket called now cannot also be a notice period past its call.
 //!
 //! All four terms are sealed onto the bucket when it qualifies and read back
@@ -109,7 +109,9 @@ pub fn scan_and_call(
         if let Some(bucket_key) = nod.callable_buckets.get(cursor)? {
             visited = visited.saturating_add(1);
             let called_at = nod.bucket_called_at.read(&bucket_key)?;
-            if called_at == 0 {
+            // Paid entitlements retain their bucket terms, but cannot be called or forfeited.
+            let has_unpaid = nod.bucket_nod_count.read(&bucket_key)? != 0;
+            if has_unpaid && called_at == 0 {
                 // Structural reads stay on `?` so infra errors still propagate.
                 let terms = nod.read_call_terms(bucket_key)?;
                 let start_day = nod.bucket_worldwide_day.read(&bucket_key)?.value();
@@ -132,7 +134,8 @@ pub fn scan_and_call(
                         mutated = mutated.saturating_add(1);
                     }
                 }
-            } else if now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
+            } else if has_unpaid
+                && now > api::settlement_deadline_of(called_at, notice_period(&nod, bucket_key)?)
             {
                 let budget = MAX_NOD_FORFEITS_PER_RUN.saturating_sub(forfeited);
                 if budget > 0 {
@@ -220,11 +223,11 @@ fn mark_called(
     })
 }
 
-/// Forfeit-burns up to `budget` of a lapsed bucket's remaining Nods, newest
+/// Forfeit-burns up to `budget` of a lapsed bucket's remaining unpaid Nods, newest
 /// first. Returns how many were burned.
 ///
 /// A bucket holding more members than the budget resumes on the next run, which
-/// cannot change an outcome: the deadline has already passed and mining is
+/// cannot change an outcome: the deadline has already passed and settlement is
 /// closed, so nothing can rescue the remainder. Removing the last member deletes
 /// the bucket body and drops it from the callable index.
 ///
@@ -264,6 +267,13 @@ fn forfeit_members(
                 "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
             ))
         })?;
+        if item.body().is_settled || item.body().bucket_key != bucket_key {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
+                )),
+            );
+        }
         let owner = item.body().owner;
         let gratis_load_minor = item.body().gratis_load_minor;
         let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);

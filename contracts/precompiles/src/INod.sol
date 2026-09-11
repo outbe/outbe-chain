@@ -30,12 +30,12 @@ interface INod {
 
     /// Qualified bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
-    /// Nod in the bucket must be settled and mined by `settlementDeadline` or it
+    /// Nod in the bucket must be settled by `settlementDeadline` or it
     /// is forfeit-burned.
     event NodBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
 
     /// Nod burned by the Call scan because its bucket's settlement deadline
-    /// lapsed while the Nod was still unmined. No Gratis is minted.
+    /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
     struct NodData {
@@ -54,6 +54,7 @@ interface INod {
         /// Block timestamp the Nod's bucket was force-called; `0` while not
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
+        bool isSettled;
     }
 
     /// Finalized on-chain commitment to one activated OCOMP Nod generation.

@@ -22,6 +22,12 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
+    #[error("nod is already settled")]
+    NodAlreadySettled,
+
+    #[error("nod is not settled")]
+    NodNotSettled,
+
     #[error("PayNote proof names owner {actual}, expected {expected}")]
     PayNoteOwnerMismatch { expected: Address, actual: Address },
 

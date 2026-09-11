@@ -864,6 +864,19 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         "reserve vault did not receive exact Nod cost at deposit time"
     );
 
+    let settlement = eth::send_call_outcome(
+        &url,
+        addresses::NOD_FACTORY_ADDR,
+        &key,
+        &eth::INodFactory::settleNodCall {
+            nodId: U256::from_be_slice(&nod_id),
+            payNoteProof: paynote_proof.into(),
+        },
+        None,
+    )
+    .expect("settle Nod with deposited PayNote");
+    assert_mined_success(&settlement, "settle Nod with deposited PayNote");
+
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
     let gratis_before = gratis_balance(&url, owner, &keys.view);
@@ -892,15 +905,11 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
-            payNoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis by spending the deposited PayNote");
-    assert_mined_success(
-        &mine_gratis,
-        "mine Gratis by spending the deposited PayNote",
-    );
+    .expect("exercise the paid Nod");
+    assert_mined_success(&mine_gratis, "exercise the paid Nod");
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + body.gratisLoadMinor,

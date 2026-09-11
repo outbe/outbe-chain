@@ -66,7 +66,7 @@ impl Note {
 }
 
 /// Deposits a note covering `cost_minor` of `asset` for `payer`, then proves a
-/// spend of it — the proof `mineGratis` takes.
+/// spend of it — the proof `settleNod` takes.
 ///
 /// Every Nod is paid for by burning a note, so a Nod that costs nothing still
 /// has to present one. The pool refuses a zero deposit, so a free Nod is paid

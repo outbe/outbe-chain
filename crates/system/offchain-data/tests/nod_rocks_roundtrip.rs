@@ -12,6 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
     let day = WorldwideDay::new(20260906);
     let nod = NodItemBodyV1 {
+        is_settled: false,
         nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xa5)),
         owner: Address::repeat_byte(0x73),
         gratis_load_minor: U256::from_be_bytes([0xa7; 32]),

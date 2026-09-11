@@ -1,4 +1,4 @@
-//! NodFactory runtime: issuance, PoW-gated mining, event emission.
+//! NodFactory runtime: issuance, settlement, PoW-gated exercise, event emission.
 //!
 //! All persistent Nod state lives in the entity store at
 //! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory mutates that
@@ -59,6 +59,7 @@ fn issue_nod_inner(
     let issued_at = storage.timestamp()?.to::<u64>();
 
     let item = NodItemState {
+        is_settled: false,
         nod_id,
         owner: params.owner,
         gratis_load_minor: params.gratis_load_minor,
@@ -92,45 +93,111 @@ fn issue_nod_inner(
     Ok(nod_id)
 }
 
-/// One `mineGratis` command. Grouped rather than passed positionally because
-/// `caller`, `nod_id`, and `nonce` are otherwise three adjacent opaque scalars.
-pub struct MineGratisRequest<'proof> {
+/// Owner-authorized exercise of one paid Nod.
+pub struct MineGratisRequest {
     pub caller: Address,
     pub nod_id: WwdEntityId,
     pub nonce: u64,
     pub auth: outbe_gratisfactory::api::ModifyAuth,
-    /// Spend proof for the note discharging the Nod's cost.
-    pub paynote_proof: &'proof [u8],
 }
 
-/// Atomic mine-gratis path: validate ownership + PoW + bucket qualification,
-/// discharge the Nod's cost by spending a PayNote, burn the Nod (emitting
-/// `NodBurned`), then delegate the matching gratis mint to `gratisfactory`
-/// (which mints to the owner and records the Fidelity cohort; the
-/// `GratisMinted` event is emitted by the Gratis token). Returns the minted
-/// amount.
-///
-/// This path moves no value. The cost's underlying assets already reached the
-/// reserve vault when the note was deposited through `IPayNote.deposit`, which
-/// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
-/// proof obligation: `paynote_proof` must name `caller` as its owner, carry
-/// the asset registered for the Nod's `reference_currency`, and cover the Nod's
-/// cost.
+/// Pays a qualified Nod's exact cost and preserves it for later exercise.
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: WwdEntityId,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    if item.body().is_settled {
+        return Err(NodFactoryError::NodAlreadySettled.into());
+    }
+    if !bucket.body().is_qualified {
+        return Err(NodFactoryError::NodNotQualified.into());
+    }
+    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
+    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
+        return Err(NodFactoryError::CallDeadlineExpired.into());
+    }
+    storage.clone().with_checkpoint(|| {
+        let paid = discharge_cost(
+            storage,
+            item.body(),
+            bucket.body().entry_price_minor,
+            caller,
+            paynote_proof,
+        )?;
+        nod_api::settle_nod(storage, scope, item, bucket)?;
+        emit_event(
+            storage,
+            INodFactory::NodPaid {
+                owner: caller,
+                nodId: nod_id.to_u256(),
+                asset: paid.asset,
+                nullifier: paid.nullifier,
+                amountCovered: paid.spend_amount,
+            },
+        )
+    })
+}
+
+/// Exercises a paid entitlement without payment or a deadline. Mint failure
+/// rolls back the removal, preserving the paid Nod for retry.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    request: MineGratisRequest<'_>,
+    request: MineGratisRequest,
 ) -> Result<U256> {
     let MineGratisRequest {
         caller,
         nod_id,
         nonce,
         auth,
-        paynote_proof,
     } = request;
+    let (item, bucket) = load_owned_nod(storage, scope, parent, caller, nod_id)?;
+    if !item.body().is_settled {
+        return Err(NodFactoryError::NodNotSettled.into());
+    }
+    validate_pow(nod_id, nonce)?;
+    let gratis_load_minor = item.body().gratis_load_minor;
+    storage.clone().with_checkpoint(|| {
+        nod_api::remove_nod(storage, scope, item, bucket)?;
+        emit_event(
+            storage,
+            INodFactory::NodExercised {
+                owner: caller,
+                nodId: nod_id.to_u256(),
+                gratisLoadMinor: gratis_load_minor,
+            },
+        )?;
+        emit_event(
+            storage,
+            INodFactory::NodBurned {
+                owner: caller,
+                nodId: nod_id.to_u256(),
+                gratisLoadMinor: gratis_load_minor,
+            },
+        )?;
+        outbe_gratisfactory::api::mint(storage.clone(), caller, gratis_load_minor, auth)?;
+        Ok(gratis_load_minor)
+    })
+}
+
+fn load_owned_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: WwdEntityId,
+) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    if caller != item.body().owner {
+        return Err(NodFactoryError::NotOwner.into());
+    }
     if NodContract::new(storage.clone())
         .ocomp_certified_generation(item.body().worldwide_day)?
         .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
@@ -141,103 +208,7 @@ pub fn mine_gratis(
         WwdEntityId::from_day_and_digest(item.body().worldwide_day, item.body().bucket_key.0);
     let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
         .ok_or(NodFactoryError::NodNotQualified)?;
-    storage.clone().with_checkpoint(|| {
-        mine_gratis_inner(
-            storage,
-            MineGratisInput {
-                caller,
-                nod_id,
-                nonce,
-                item,
-                bucket,
-                auth,
-                paynote_proof,
-            },
-            scope,
-        )
-    })
-}
-
-struct MineGratisInput<'proof> {
-    caller: Address,
-    nod_id: WwdEntityId,
-    nonce: u64,
-    item: LoadedNodItem,
-    bucket: LoadedNodBucket,
-    auth: outbe_gratisfactory::api::ModifyAuth,
-    paynote_proof: &'proof [u8],
-}
-
-fn mine_gratis_inner(
-    storage: &StorageHandle<'_>,
-    input: MineGratisInput<'_>,
-    scope: &ExecutionScope,
-) -> Result<U256> {
-    let MineGratisInput {
-        caller,
-        nod_id,
-        nonce,
-        item,
-        bucket,
-        auth,
-        paynote_proof,
-    } = input;
-    if caller != item.body().owner {
-        return Err(NodFactoryError::NotOwner.into());
-    }
-
-    validate_pow(nod_id, nonce)?;
-
-    if !bucket.body().is_qualified {
-        return Err(NodFactoryError::NodNotQualified.into());
-    }
-
-    // Mining stays open during the notice period - that is what the notice is
-    // for. Past it the Nod is forfeit, and this check closes the gap before the
-    // daily sweep reaches it. The deadline comes off the bucket's own sealed
-    // notice period, so a retuned constant cannot shorten it under a Nod that is
-    // already called.
-    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
-    let now = storage.timestamp()?.to::<u64>();
-    if deadline != 0 && now > deadline {
-        return Err(NodFactoryError::CallDeadlineExpired.into());
-    }
-
-    let paid = discharge_cost(
-        storage,
-        item.body(),
-        bucket.body().entry_price_minor,
-        caller,
-        paynote_proof,
-    )?;
-
-    let owner = item.body().owner;
-    let gratis_load_minor = item.body().gratis_load_minor;
-    nod_api::remove_nod(storage, scope, item, bucket)?;
-
-    emit_event(
-        storage,
-        INodFactory::NodPaid {
-            owner,
-            nodId: nod_id.to_u256(),
-            asset: paid.asset,
-            nullifier: paid.nullifier,
-            amountCovered: paid.spend_amount,
-        },
-    )?;
-
-    emit_event(
-        storage,
-        INodFactory::NodBurned {
-            owner: caller,
-            nodId: nod_id.to_u256(),
-            gratisLoadMinor: gratis_load_minor,
-        },
-    )?;
-
-    outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
-
-    Ok(gratis_load_minor)
+    Ok((item, bucket))
 }
 
 /// One discharged Nod cost, as it is reported by `NodPaid`.
@@ -252,7 +223,7 @@ struct PaidCost {
 /// The proof is the payment. `consume` books its nullifier before returning, so
 /// the note cannot be spent twice; running inside the caller's checkpoint means
 /// a later failure un-books it. It is called last, after the cheap
-/// owner/PoW/qualification guards, so a doomed mine never pays for
+/// owner/qualification/deadline guards, so rejected settlement never pays for
 /// verification.
 fn discharge_cost(
     storage: &StorageHandle<'_>,

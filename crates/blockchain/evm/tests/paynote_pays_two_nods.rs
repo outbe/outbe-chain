@@ -1,14 +1,14 @@
 //! End-to-end: one deposited PayNote pays two Nods, the second from its change.
 //!
 //! A Nod's cost is no longer settled by a transfer — the value reaches the
-//! reserve vault when a note is deposited, and `mineGratis` only has to be shown
+//! reserve vault when a note is deposited, and `settleNod` only has to be shown
 //! a spend proof. This test drives that whole chain through the real EVM:
 //! `IPayNote.deposit` routes an ERC20 into the vault via VaultRouter and appends
-//! a leaf, then two `INodFactory.mineGratis` calls spend against that leaf.
+//! a leaf, then two `INodFactory.settleNod` calls spend against that leaf.
 //!
 //! What it pins that the module tests cannot:
 //!   * a note deposited by the real `deposit` path — commitment derived by the
-//!     runtime, not handed to it — is spendable by `mineGratis`;
+//!     runtime, not handed to it — is spendable by `settleNod`;
 //!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
 //!     spends it. Spend authority is knowledge of the note spend key, and
 //!     nothing on chain ties the depositor to the Nods the note pays for;
@@ -58,7 +58,7 @@ use revm::{
     Context,
 };
 
-/// Owns both Nods, holds the note spend key, and calls `mineGratis`.
+/// Owns both Nods, holds the note spend key, and calls settlement and mining.
 const ALICE1: Address = Address::new([0x11; 20]);
 /// Funds the pool. Never appears again: the note it deposits is spent by
 /// `ALICE1`, and the chain never learns the two are related.
@@ -80,7 +80,7 @@ const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// share `ALICE1` as their owner: each proof names that address as its owner,
-/// matching the Nod owner as `mineGratis` requires. The depositor can be different.
+/// matching the Nod owner as `settleNod` requires. The depositor can be different.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -248,7 +248,7 @@ fn call(
             target,
             value: U256::ZERO,
             calldata,
-            // `mineGratis` charges `ZK_VERIFY_GAS` (3M) before it reads a byte
+            // `settleNod` charges `ZK_VERIFY_GAS` (3M) before it reads a byte
             // of storage, so the limit has to clear that with room to spare.
             gas_limit: 20_000_000,
             is_static,
@@ -297,15 +297,33 @@ fn word(field: outbe_paynote::Field) -> B256 {
     PayNoteSuit::field_to_b256(&field).unwrap()
 }
 
-/// Calls `mineGratis` for `nod_id`, authorizing the gratis mint against the
+/// Settles `nod_id`, then mines it with gratis mint authorization against the
 /// account's live op-nonce.
-fn mine_gratis(
+fn settle_and_mine(
     ctx: &mut EvmCtx,
     scope: &Arc<ExecutionScope>,
     readers: &RuntimeBodyReaders,
     nod_id: WwdEntityId,
     proof: &[u8],
 ) -> outbe_primitives::storage::SubCallOutput {
+    let settled = call(
+        ctx,
+        scope.clone(),
+        Some(readers.clone()),
+        ALICE1,
+        NOD_FACTORY_ADDRESS,
+        Bytes::from(
+            INodFactory::settleNodCall {
+                nodId: nod_id.to_u256(),
+                payNoteProof: proof.to_vec().into(),
+            }
+            .abi_encode(),
+        ),
+        false,
+    );
+    if !matches!(settled.status, SubCallStatus::Success) {
+        return settled;
+    }
     let op_nonce = view(
         ctx,
         scope,
@@ -336,7 +354,6 @@ fn mine_gratis(
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
-                payNoteProof: proof.to_vec().into(),
             }
             .abi_encode(),
         ),
@@ -398,7 +415,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     // First Nod: spend half the note.
     let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, U256::from(COST));
     let minted = assert_mined(
-        &mine_gratis(&mut ctx, &scope, &readers, nods[0], &first_proof),
+        &settle_and_mine(&mut ctx, &scope, &readers, nods[0], &first_proof),
         "mine the first Nod with the deposited note",
     );
     assert_eq!(minted, U256::from(GRATIS_LOAD));
@@ -430,7 +447,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     let change_leaf = u32::try_from(tree.append(change.commitment).unwrap().0).unwrap();
 
     // One note is one payment: the first proof cannot pay the second Nod.
-    let replay = mine_gratis(&mut ctx, &scope, &readers, nods[1], &first_proof);
+    let replay = settle_and_mine(&mut ctx, &scope, &readers, nods[1], &first_proof);
     let SubCallStatus::Revert(reason) = replay.status else {
         panic!(
             "a spent note must not pay a second Nod, got {:?}",
@@ -453,7 +470,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
         U256::from(COST),
     );
     let minted = assert_mined(
-        &mine_gratis(&mut ctx, &scope, &readers, nods[1], &change_proof),
+        &settle_and_mine(&mut ctx, &scope, &readers, nods[1], &change_proof),
         "mine the second Nod with the change note",
     );
     assert_eq!(minted, U256::from(GRATIS_LOAD));
