@@ -827,10 +827,7 @@ mod tests {
         });
     }
 
-    /// The reward batch mints one Gem per entry, and a Gem's id is derived from
-    /// its owner, its load and the block. Two entries for one validator would
-    /// therefore collide on that id and wedge the batch, so the day's list has to
-    /// carry each voter once, with their participation counted on that one entry.
+    /// Two entries for one validator would collide on the reward Gem's id.
     #[test]
     fn a_voter_is_listed_once_however_often_they_vote() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);

@@ -46,8 +46,6 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
-    /// Zero is how this contract reads "no such series" and a future stamp would
-    /// postpone the call window past what the origin agreed, so neither is written.
     function test_CreateSeries_RejectsAnIssuedAtItCannotHonour() public {
         vm.warp(1_700_000_000);
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
@@ -63,8 +61,6 @@ contract IntexNFT1155SupplyTest is Test {
         nft.createSeries(params);
     }
 
-    /// The origin's stamp is what the destination stores, so the call window opens
-    /// on the same moment on every chain the series reached.
     function test_CreateSeries_KeepsTheOriginsIssuedAt() public {
         vm.warp(1_700_000_000);
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
