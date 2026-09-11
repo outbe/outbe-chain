@@ -1030,6 +1030,10 @@ pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
 }
 
 /// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
+///
+/// `holder` and `seq` earn their place here, unlike in the shared scheme: the
+/// holder arrives as a call argument, and the sequence rises with every
+/// successful partial mining, so one solved nonce cannot serve the next.
 pub(crate) fn compute_pow_hash(
     holder: Address,
     promis_amount: U256,

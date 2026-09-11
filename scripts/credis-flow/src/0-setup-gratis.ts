@@ -126,7 +126,7 @@ async function main() {
   // Step 1 - Gem -> Promis: burn the gem, minting `promisLoad` confidential Promis to
   // the owner. The Promis mint MAC binds the minted amount (= promisLoad) and the
   // caller's current Promis op-nonce. PoW gates the burn (difficulty 1).
-  const powNonce = findPowNonce(gemId, userAddress);
+  const powNonce = findPowNonce(gemId);
   const promisMintNonce = await promis.opNonceOf(userAddress);
   const promisMintMac = modifyMac(
     promisKeys.modifyKey,

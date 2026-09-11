@@ -417,7 +417,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         promis_nonce,
         chain_id,
     );
-    let pow = find_pow_nonce(gem_id, owner);
+    let pow = find_pow_nonce(gem_id);
     let mine_promis = eth::send_sponsored_call(
         &url,
         &key,
@@ -647,7 +647,7 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &key,
             &eth::IGemFactory::minePromisCall {
                 gemId: gem_id,
-                nonce: find_pow_nonce(gem_id, owner),
+                nonce: find_pow_nonce(gem_id),
                 mac: B256::from(mac),
                 opNonce: nonce,
             },
@@ -882,7 +882,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_pow_nonce(U256::from_be_slice(&nod_id), owner);
+    let pow = find_pow_nonce(U256::from_be_slice(&nod_id));
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -1400,9 +1400,9 @@ pub(crate) fn chain_id_b256(world: &World) -> B256 {
     ))
 }
 
-pub(crate) fn find_pow_nonce(id: U256, owner: Address) -> u64 {
+pub(crate) fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
-        .find(|nonce| outbe_common::pow::validate_pow(id, owner, *nonce).is_ok())
+        .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
 }
 

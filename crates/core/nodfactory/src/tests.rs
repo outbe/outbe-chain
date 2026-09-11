@@ -87,9 +87,9 @@ fn cost_of(input: &NodIssueParams) -> u128 {
     u128::try_from(cost).expect("test Nod cost fits a PayNote spend amount")
 }
 
-fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
+fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
     (0_u64..100_000)
-        .find(|nonce| runtime::validate_pow(nod_id, owner, *nonce).is_ok())
+        .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
 }
 
@@ -344,7 +344,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
     let input = params(Address::repeat_byte(0x33));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
     let error = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -376,7 +376,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     let proof = world.covering_proof(&input);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     world
         .enter(|storage, scope, parent| {
@@ -409,7 +409,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     let proof = world.covering_proof(&input);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -471,7 +471,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
     world.qualify(nod_id);
 
     let proof = world.covering_proof(&input);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -514,7 +514,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let minted = world
         .try_mine(
@@ -562,7 +562,7 @@ fn a_paynote_over_the_cost_leaves_the_nod_and_the_note_intact() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost + 1, cost + 1);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let error = world
         .try_mine(
@@ -600,7 +600,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let error = world
         .try_mine(
@@ -638,7 +638,7 @@ fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
     world.register_reference_currency_asset(NOTE_ASSET);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     world
         .try_mine(
@@ -665,7 +665,7 @@ fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
     let cost = cost_of(&input);
     let stranger = Address::repeat_byte(0x65);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let error = world
         .try_mine(
@@ -697,7 +697,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     let other_asset = Address::repeat_byte(0x67);
     let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(other_asset, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let error = world
         .try_mine(
@@ -731,7 +731,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     world.register_reference_currency_assets(vec![NOTE_ASSET, second_asset]);
     let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(second_asset, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let minted = world
         .try_mine(
@@ -760,7 +760,7 @@ fn one_note_cannot_pay_two_nods() {
         .try_mine(
             first_id,
             first.owner,
-            find_valid_nonce(first_id, first.owner),
+            find_valid_nonce(first_id),
             mine_auth(first.owner, first.gratis_load_minor),
             &proof,
         )
@@ -776,7 +776,7 @@ fn one_note_cannot_pay_two_nods() {
         .try_mine(
             second_id,
             second.owner,
-            find_valid_nonce(second_id, second.owner),
+            find_valid_nonce(second_id),
             mine_auth(second.owner, second.gratis_load_minor),
             &proof,
         )
@@ -800,7 +800,7 @@ fn a_paynote_can_cover_a_nod_cost_above_u128() {
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
     let (proof, nullifier) = world.fund_note_u256(NOTE_ASSET, input.owner, cost, cost);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
 
     let minted = world
         .try_mine(
@@ -879,7 +879,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
 
     let proof = world.covering_proof(&input);
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(
@@ -912,7 +912,7 @@ fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 1);
 
-    let nonce = find_valid_nonce(nod_id, input.owner);
+    let nonce = find_valid_nonce(nod_id);
     let error = world
         .enter(|storage, scope, parent| {
             api::mine_gratis(

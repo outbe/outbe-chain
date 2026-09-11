@@ -521,7 +521,7 @@ pub fn mine_promis(
         return Err(GemFactoryError::InvalidState.into());
     }
 
-    validate_pow(gem_id, item.owner, nonce)?;
+    validate_pow(gem_id, nonce)?;
 
     gem_api::burn(storage, gem_id)?;
 
@@ -642,6 +642,6 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 
 /// PoW gate for `mine_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
-    pow::validate_pow(gem_id, owner, nonce).map_err(|e| GemFactoryError::from(e).into())
+pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
+    pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
 }

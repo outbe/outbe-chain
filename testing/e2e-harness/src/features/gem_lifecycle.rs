@@ -358,7 +358,7 @@ fn settle_and_mine(world: &mut World) {
         DEPLOYER_KEY,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
-            nonce: find_pow_nonce(gem_id, merchant),
+            nonce: find_pow_nonce(gem_id),
             mac: B256::from(mac),
             opNonce: op_nonce,
         },
