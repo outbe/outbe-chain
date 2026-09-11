@@ -40,6 +40,7 @@ pub mod ocomp;
 #[cfg(feature = "ocomp-integration")]
 mod oracle_expectations;
 pub mod origin_venue;
+mod p2p_admission;
 #[cfg(feature = "ocomp-integration")]
 pub mod paynote;
 pub mod price_oracle;
@@ -50,7 +51,6 @@ pub mod restart;
 pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
-mod p2p_admission;
 pub mod target_chain;
 pub mod tee_lease;
 pub mod tee_observability;
