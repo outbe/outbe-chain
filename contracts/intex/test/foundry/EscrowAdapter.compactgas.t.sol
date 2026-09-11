@@ -2,6 +2,10 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {CrossChainTest} from "./cross-chain/../helpers/CrossChainTest.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -104,5 +108,74 @@ contract EscrowFinalizeGasMockCompactTest is EscrowFinalizeGasBase {
 
     function test_FinalizeAgainstTheMockTwoBidders() public {
         emit log_named_uint("refund_2_mock_compact", _measure(2));
+    }
+}
+
+/// @dev The escrow-level measurements above isolate `finalizeAuction`. `IntexGas.refund` has to cover the
+///      whole inbound REFUND delivery, so this pins that end to end against the canonical Compact: the
+///      budget is cut from this number rather than from a stand-in plus an estimated premium.
+contract RefundMessageGasRealCompactTest is CrossChainTest {
+    address internal constant REAL_COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
+    address internal constant REAL_TOKEN = 0x5Dd5245b8D00341Bb6aaA222107999d788faaF61;
+
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
+    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    uint128 internal constant LOCK = 1000e18;
+
+    TargetRouter internal router;
+    EscrowAdapter internal escrow;
+    IERC20 internal token;
+    address internal admin = address(this);
+    address internal originPeer = address(0x0B1);
+
+    function setUp() public {
+        string memory rpc = vm.envOr("ETH_MAINNET_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+
+        _setUpBridge();
+        escrow = DeployProxy.escrowAdapter(admin, admin);
+        escrow.wire(admin, REAL_COMPACT, REAL_TOKEN);
+        escrow.grantRole(escrow.AUCTION_ROLE(), admin);
+
+        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
+
+        token = IERC20(REAL_TOKEN);
+    }
+
+    function test_TheRefundQuoteCoversAWidestChunkAgainstTheRealCompact() public {
+        uint256 bidders = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        address[] memory who = new address[](bidders);
+        uint128[] memory refunded = new uint128[](bidders);
+        uint128[] memory paid = new uint128[](bidders);
+        for (uint256 i = 0; i < bidders; ++i) {
+            who[i] = address(uint160(0x5000 + i));
+            deal(address(token), who[i], LOCK);
+            vm.prank(who[i]);
+            token.approve(address(escrow), type(uint256).max);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], LOCK);
+            refunded[i] = LOCK;
+            paid[i] = 0;
+        }
+
+        // ResetPeriod.OneMinute: the forced withdrawal the escrow uses only clears once it has elapsed.
+        vm.warp(block.timestamp + 5 minutes);
+
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid);
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        uint256 spent = before - gasleft();
+
+        for (uint256 i = 0; i < bidders; ++i) {
+            assertEq(token.balanceOf(who[i]), LOCK, "every bidder refunded in full");
+        }
+        emit log_named_uint("refund_message_64_real_compact", spent);
+        assertLt(spent, IntexGas.refund(bidders), "the widest refund chunk must fit its quote");
     }
 }

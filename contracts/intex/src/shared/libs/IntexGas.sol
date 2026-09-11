@@ -63,10 +63,10 @@ library IntexGas {
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
     /// @dev The chunk completing a day also routes the paid wCOEN home at a fixed cost, which lands on the
-    ///      base. `LocalLoopback.t.sol` walks the narrow case. Measured at ~3.29M for a full 64-bidder chunk
-    ///      against `MockTheCompact`; the canonical Compact costs ~5.9k more per bidder
-    ///      (`EscrowAdapter.compactgas.t.sol`), and the budget is cut from that heavier real cost rather
-    ///      than from the stand-in.
+    ///      base. `LocalLoopback.t.sol` walks the narrow case. Measured end to end at ~3.68M for a full
+    ///      64-bidder chunk against the canonical Compact over a mainnet fork
+    ///      (`EscrowAdapter.compactgas.t.sol`), which is ~5.9k per bidder dearer than the `MockTheCompact`
+    ///      the rest of the suite runs on - so the budget is cut from the real custody, not the stand-in.
     uint256 internal constant REFUND_BASE = 560_000;
     uint256 internal constant REFUND_PER_ITEM = 78_500;
     /// @dev Sized on the failure path: a rejected item is recorded while the tokens are already burned on
