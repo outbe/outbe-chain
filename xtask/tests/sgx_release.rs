@@ -611,7 +611,17 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         "test \"$(jq -er '.config.chainId' \\\n",
         "            \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\")\" = '676'"
     )));
-    assert!(!workflow.contains("testnet"));
+    // The unsigned build uses the shared SGX runner. Keep the exception scoped
+    // to that job; testnet settings elsewhere in the mainnet workflow still fail.
+    let unsigned_build_runner = concat!(
+        "  build-and-compare:\n",
+        "    name: two independent ELF and unsigned SGX builds\n",
+        "    runs-on: testnet-release-sgx\n",
+    );
+    assert!(workflow.contains(unsigned_build_runner));
+    assert!(!workflow
+        .replacen(unsigned_build_runner, "", 1)
+        .contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
     assert!(workflow.contains("--draft --prerelease"));
