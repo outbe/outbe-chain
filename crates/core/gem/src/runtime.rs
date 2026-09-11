@@ -7,15 +7,16 @@ use crate::precompile::IGem::{GemCalled, GemExpired, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
-    /// `rate` is COEN/`iso_code`. Each currency walks its own bin trie, so the
-    /// currency check below only ever fires on a corrupt index; it skips rather
-    /// than promoting against an unrelated rate.
+    /// `rate` is COEN/`iso_code` on `day`, which the gem must have held in full. Each
+    /// currency walks its own bin trie, so the currency check below only ever fires
+    /// on a corrupt index; it skips rather than promoting against an unrelated rate.
     pub(crate) fn qualify(
         &mut self,
         gem_id: U256,
         now: u64,
         iso_code: u16,
         rate: U256,
+        day: u32,
     ) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Issued as u8 {
@@ -24,7 +25,7 @@ impl GemContract<'_> {
         if item.reference_currency != iso_code {
             return Ok(false);
         }
-        if rate <= item.floor_price_minor {
+        if day < first_full_day(item.issued_at) || rate <= item.floor_price_minor {
             return Ok(false);
         }
         self.set_state(gem_id, GemState::Qualified)?;

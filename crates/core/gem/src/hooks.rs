@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_oracle::{
-    api::{fresh_coen_rate_for_opt, get_all_reference_currencies},
+    api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap},
     schema::OracleContract,
 };
 use outbe_primitives::{
@@ -14,9 +14,9 @@ use outbe_primitives::{
 
 use crate::constants::{
     CALL_SWEEP, MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
-    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    MAX_GEM_QUALIFICATIONS_PER_BLOCK, QUALIFY_SWEEP,
 };
-use crate::precompile::IGem::{CallScanSkipped, SweepDaySkipped};
+use crate::precompile::IGem::{CallScanSkipped, QualifyScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
 
@@ -27,7 +27,7 @@ impl BlockLifecycle for GemLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        scan_and_qualify(ctx)?;
+        run_qualify_slice(ctx)?;
         // A call sweep the daily trigger could not finish in one go carries on
         // here, block by block, rather than waiting a day for the next trigger.
         run_call_slice(ctx)?;
@@ -40,38 +40,119 @@ impl BlockLifecycle for GemLifecycle {
     }
 }
 
-/// Qualifies every reference currency the oracle knows about, each against its
-/// own COEN rate, sharing one per-block budget. An uninitialized registry does
-/// no work. A currency whose COEN pair is unregistered or unpriced is skipped
-/// for this block rather than halting it. The scan resumes from a persisted
-/// currency cursor, so a spent budget defers the rest of the list to the next
-/// block instead of dropping it.
+/// Schedule the day the Oracle has just finalized: open a qualification sweep over it
+/// and run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
-    let currencies = get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
+    let Some(day) = closed_day(ctx)? else {
+        return Ok(());
+    };
+    let mut gem = GemContract::new(ctx.storage.clone());
+    let days = SweepDays {
+        current: gem.qualify_sweep_day.read()?,
+        pending: gem.qualify_pending_day.read()?,
+    };
+    match days.schedule(day) {
+        (next, Scheduled::Opened) => {
+            start_qualify_sweep(ctx, &gem, next)?;
+            run_qualify_slice(ctx)
+        }
+        (next, Scheduled::Queued) => {
+            gem.qualify_pending_day.write(next.pending)?;
+            Ok(())
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            gem.qualify_pending_day.write(next.pending)?;
+            gem.emit(SweepDaySkipped {
+                sweep: QUALIFY_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: next.current,
+            })?;
+            Ok(())
+        }
+        (_, Scheduled::Ignored) => Ok(()),
+    }
+}
+
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_qualify_sweep(
+    ctx: &BlockRuntimeContext,
+    gem: &GemContract,
+    days: SweepDays,
+) -> Result<()> {
+    gem.qualify_sweep_day.write(days.current)?;
+    gem.qualify_pending_day.write(days.pending)?;
+    gem.qualify_currency_cursor.write(0)?;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        gem.qualify_scan_cursor.write(&iso_code, 0)?;
+    }
+    Ok(())
+}
+
+/// Advance an open qualification sweep by one slice, pinned to its day.
+pub fn run_qualify_slice(ctx: &BlockRuntimeContext) -> Result<()> {
+    let gem = GemContract::new(ctx.storage.clone());
+    let pinned_day = gem.qualify_sweep_day.read()?;
+    if pinned_day == 0 {
         return Ok(());
     }
-    let gem = GemContract::new(ctx.storage.clone());
+    let currencies = get_all_reference_currencies(ctx)?;
     let start = currency_position(&currencies, gem.qualify_currency_cursor.read()?);
 
     let mut budget = MAX_GEM_QUALIFICATIONS_PER_BLOCK;
-    let mut resume_at = start;
-    for offset in 0..currencies.len() {
-        let at = (start + offset) % currencies.len();
-        if budget == 0 {
-            // Resume here, so a heavy currency cannot starve the ones behind it.
-            resume_at = at;
-            break;
-        }
-        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), currencies[at])? else {
-            continue;
+    // One pass down the list, as in the Called sweep, so every sweep ends.
+    for &iso_code in currencies.iter().skip(start) {
+        let finished = if budget == 0 {
+            false
+        } else {
+            match day_price(ctx, iso_code, pinned_day)? {
+                // No pair or no trade that day: nothing to decide by.
+                None => true,
+                Some(vwap) => {
+                    let (inspected, finished) =
+                        qualify_with_rate(ctx, iso_code, vwap, pinned_day, budget)?;
+                    budget = budget.saturating_sub(inspected);
+                    finished
+                }
+            }
         };
-        let inspected = qualify_with_rate(ctx, currencies[at], rate, budget)?;
-        budget = budget.saturating_sub(inspected);
+        if !finished {
+            gem.qualify_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(());
+        }
     }
-    gem.qualify_currency_cursor
-        .write(u32::from(currencies[resume_at]))?;
+
+    // The next day starts on the next block, so no slice mixes two days' prices.
+    let next = SweepDays {
+        current: pinned_day,
+        pending: gem.qualify_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
+        gem.qualify_sweep_day.write(0)?;
+    } else {
+        start_qualify_sweep(ctx, &gem, next)?;
+    }
     Ok(())
+}
+
+fn day_price(ctx: &BlockRuntimeContext, iso_code: u16, day: u32) -> Result<Option<U256>> {
+    match coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
+        Some(index) => get_utc_day_vwap(ctx.storage.clone(), day, index),
+        None => Ok(None),
+    }
+}
+
+/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
+fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
+    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+    let finalized = OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
+    if finalized < last_closed_day {
+        tracing::warn!(target: "outbe::gem", last_closed_day, finalized, "utc-day VWAP not finalized yet, skipping the day's sweeps");
+        return Ok(None);
+    }
+    Ok(Some(last_closed_day))
 }
 
 /// Index of the currency the cursor names, or the head when the registry dropped it.
@@ -82,9 +163,10 @@ pub(crate) fn currency_position(currencies: &[u16], cursor: u32) -> usize {
         .unwrap_or(0)
 }
 
-/// Drains the floor-bins crossed by one currency's `rate`, inspecting at most
-/// `budget` gems. Returns how many it inspected so the caller can share one
-/// per-block budget across currencies.
+/// Drains the floor-bins crossed by one currency's `rate` of `day`, inspecting at
+/// most `budget` gems. Returns how many it inspected, so the caller can share one
+/// per-block budget across currencies, and whether the eligible range was walked to
+/// the end.
 ///
 /// Only this currency's trie is walked, so no gem of another currency is ever
 /// read here. Whole bins are processed atomically, so the resumption cursor is
@@ -93,32 +175,36 @@ pub(crate) fn qualify_with_rate(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
     rate: U256,
+    day: u32,
     budget: u32,
-) -> Result<u32> {
+) -> Result<(u32, bool)> {
     let now = ctx.block.timestamp;
+    let mut gem = GemContract::new(ctx.storage.clone());
     let r_bin = match GemContract::price_to_bin(rate) {
         Ok(bin) => bin,
         Err(error) => {
-            tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "qualify scan: rate out of range, skipping currency");
-            return Ok(0);
+            tracing::warn!(target: "outbe::gem", iso_code, error = ?error, "qualify scan: day price out of range, skipping currency for the day");
+            gem.emit(QualifyScanSkipped {
+                referenceCurrency: iso_code,
+                utcDay: day,
+            })?;
+            return Ok((0, true));
         }
     };
-    let mut gem = GemContract::new(ctx.storage.clone());
 
     let mut inspected: u32 = 0;
     let mut cursor: u32 = gem.qualify_scan_cursor.read(&iso_code)?;
     loop {
         if inspected >= budget {
             gem.qualify_scan_cursor.write(&iso_code, cursor)?;
-            break;
+            return Ok((inspected, false));
         }
         let next =
             match tree_math::find_first_left_inclusive(&CurrencyBins(&gem, iso_code), cursor)? {
                 Some(b) if b <= r_bin => b,
                 _ => {
-                    // End of the eligible range: next block sweeps from the bottom.
                     gem.qualify_scan_cursor.write(&iso_code, 0)?;
-                    break;
+                    return Ok((inspected, true));
                 }
             };
 
@@ -141,7 +227,7 @@ pub(crate) fn qualify_with_rate(
             inspected = inspected.saturating_add(1);
             if let Err(error) = ctx
                 .storage
-                .with_checkpoint(|| gem.qualify(gem_id, now, iso_code, rate))
+                .with_checkpoint(|| gem.qualify(gem_id, now, iso_code, rate, day))
             {
                 tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "qualify scan: skipping gem");
             }
@@ -151,19 +237,20 @@ pub(crate) fn qualify_with_rate(
             Some(c) if c <= MAX_BIN_ID => c,
             _ => {
                 gem.qualify_scan_cursor.write(&iso_code, 0)?;
-                break;
+                return Ok((inspected, true));
             }
         };
     }
-    Ok(inspected)
 }
 
 /// Trailing finalized daily VWAPs of one pair, newest first. `None` marks a day
 /// the pair had no data for.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Cycle daily-trigger entry: run the Called scan, discarding the count.
+/// Cycle daily-trigger entry: open the day's qualification and Called sweeps,
+/// discarding the counts.
 pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    scan_and_qualify(ctx)?;
     scan_and_call(ctx)?;
     Ok(())
 }
@@ -172,15 +259,9 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// a Called sweep over it and running its first slice, or queueing it behind the
 /// sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-
-    // Most recent fully-closed UTC day (finalized VWAP).
-    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
-    if finalized < last_closed_day {
-        tracing::warn!(target: "outbe::gem", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
+    let Some(last_closed_day) = closed_day(ctx)? else {
         return Ok(0);
-    }
+    };
 
     let mut gem = GemContract::new(ctx.storage.clone());
     let days = SweepDays {

@@ -14,6 +14,7 @@ pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 pub const MAX_GEM_CALLS_PER_BLOCK: u32 = 256;
 
 /// `SweepDaySkipped.sweep` of each daily sweep.
+pub const QUALIFY_SWEEP: u8 = 0;
 pub const CALL_SWEEP: u8 = 1;
 
 /// Slots one block's expiry sweep may step through. Low because a forfeit compacts
