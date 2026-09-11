@@ -1,8 +1,7 @@
 //! NOD price-qualifier block hook.
 //!
-//! Mirrors the Cosmos reference (`x/nod/abci.go::EndBlocker` +
-//! `x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`): every
-//! block, read each reference currency's current COEN rate from the oracle and
+//! Every block, read each reference currency's COEN VWAP for the previous
+//! completed UTC day after the oracle has finalized it and
 //! promote any unqualified bucket whose `floor_price_minor < rate`. The
 //! comparison is strict - a bucket priced exactly at the rate stays
 //! unqualified until the rate moves strictly above its floor.
@@ -28,20 +27,23 @@
 //! oracle's whole reference-currency registry in order, prices each one, and
 //! shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget across them;
 //! each currency resumes from its own per-bin cursor next block. A currency
-//! whose COEN pair is unregistered, unpriced or stale is skipped for the block
-//! rather than halting it. Qualification is a one-way latch, so the rate that
-//! arms a bucket's call clock must be a live one: the read enforces the same
-//! `FX_RATE_MAX_AGE_SECONDS` bound Gem and Intex qualify under.
+//! whose COEN pair is unregistered or has no VWAP for that day is skipped.
+//! Qualification waits for finalization and never falls back to a live rate,
+//! an older day, or a WorldwideDay VWAP.
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
     ExecutionScope, ParentBodySource, ParentBodySourceRef, WwdEntityId,
 };
-use outbe_oracle::api::{fresh_coen_rate_for_opt, get_all_reference_currencies};
+use outbe_oracle::{
+    api::{coen_pair_index_opt, get_all_reference_currencies, get_utc_day_vwap},
+    schema::OracleContract,
+};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
+    time::{previous_date_key, timestamp_to_date_key},
 };
 
 use crate::{
@@ -88,23 +90,28 @@ impl BlockLifecycle for NodLifecycle {
 /// Qualifies Nod buckets using the same block scope and parent source as transactions.
 ///
 /// Reads every reference currency the oracle knows about and qualifies each
-/// one's buckets against its own COEN rate. An uninitialized registry does no
-/// work. A currency whose COEN pair is unregistered, carries no published rate
-/// or carries one older than `FX_RATE_MAX_AGE_SECONDS` is skipped for this
-/// block rather than halting it - the registry lists currencies independently
-/// of whether a pair has been priced yet, and a stale rate must not arm a
-/// latch that never reopens.
+/// one's buckets against its own previous completed UTC-day VWAP. Waits for
+/// Oracle finalization and skips currencies with no registered pair or daily
+/// price. An uninitialized registry does no work.
 pub fn qualify_nods(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
+    let previous_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+    let oracle = OracleContract::new(ctx.storage.clone());
+    if oracle.utc_day_vwap_last_finalized.read()? < previous_day {
+        return Ok(());
+    }
     let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
     for iso_code in get_all_reference_currencies(ctx)? {
         if budget == 0 {
             break;
         }
-        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        let Some(index) = coen_pair_index_opt(ctx.storage.clone(), iso_code)? else {
+            continue;
+        };
+        let Some(rate) = get_utc_day_vwap(ctx.storage.clone(), previous_day, index)? else {
             continue;
         };
         let inspected = qualify_buckets_with_rate(ctx, scope, parent, iso_code, rate, budget)?;

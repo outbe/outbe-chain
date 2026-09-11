@@ -22,8 +22,7 @@
 //! run rather than carried. Mirrors `outbe_gem::hooks::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
-//! Unlike qualification - which reads the *live* COEN rate in `hooks.rs` - the
-//! call reads the *finalized daily VWAP*. Gem splits the two feeds the same way.
+//! Qualification and calls both read finalized UTC-day VWAPs.
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};

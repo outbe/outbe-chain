@@ -17,7 +17,7 @@ use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
-    block::{BlockContext, BlockRuntimeContext},
+    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
@@ -107,21 +107,46 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
     let body = item(Address::repeat_byte(0x31), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
         let context = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
-        let inspected = hooks::qualify_buckets_with_rate(
-            &context,
-            &scope,
-            &parent,
-            body.reference_currency,
-            body.floor_price_minor + U256::from(1),
-            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
-        )
-        .unwrap();
-        assert_eq!(inspected, 1);
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(body.reference_currency);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        oracle
+            .reference_currencies
+            .push(body.reference_currency)
+            .unwrap();
+        oracle.config_is_initialized.write(true).unwrap();
+        // The completed day's weighted price is (12*1 + 15*2)/3 = 14.
+        // The new day's low sample is outside the half-open daily window.
+        for (timestamp, rate, volume) in [
+            (midnight - 200, 12, 1),
+            (midnight - 100, 15, 2),
+            (midnight, 1, 1),
+        ] {
+            oracle
+                .write_snapshot(timestamp, &[(pair, U256::from(rate), U256::from(volume))])
+                .unwrap();
+        }
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
+        hooks::qualify_nods(&context, &scope, &parent).unwrap();
+        assert!(
+            !api::get_bucket(&storage, &scope, &parent, bucket_id)
+                .unwrap()
+                .unwrap()
+                .is_qualified
+        );
+        outbe_oracle::lifecycle::OracleLifecycle::begin_block(&context).unwrap();
+        assert_eq!(
+            oracle
+                .get_utc_day_vwap_for_pair(20260715, oracle.pair_index_of(pair).unwrap())
+                .unwrap(),
+            Some(U256::from(14))
+        );
+        hooks::qualify_nods(&context, &scope, &parent).unwrap();
         assert!(
             api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
