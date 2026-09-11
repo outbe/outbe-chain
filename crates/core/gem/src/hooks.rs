@@ -6,15 +6,17 @@ use outbe_oracle::{
 use outbe_primitives::{
     address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
+    daily_sweep::{Scheduled, SweepDays},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
     time::{previous_date_key, timestamp_to_date_key},
 };
 
 use crate::constants::{
-    MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_SWEEP, MAX_EXPIRY_STEPS_PER_BLOCK, MAX_GEM_CALLS_PER_BLOCK,
+    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
-use crate::precompile::IGem::CallScanSkipped;
+use crate::precompile::IGem::{CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
 
@@ -166,8 +168,9 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Cycle daily-trigger entry: open a Called sweep over the day the Oracle has
-/// just finalized and run its first slice.
+/// Cycle daily-trigger entry: schedule the day the Oracle has just finalized, opening
+/// a Called sweep over it and running its first slice, or queueing it behind the
+/// sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
 
@@ -179,15 +182,42 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let gem = GemContract::new(ctx.storage.clone());
-    gem.call_sweep_day.write(last_closed_day)?;
-    // A sweep in flight is superseded: its mid-range cursors would let the new one
-    // call itself done over bins it never walked.
+    let mut gem = GemContract::new(ctx.storage.clone());
+    let days = SweepDays {
+        current: gem.call_sweep_day.read()?,
+        pending: gem.call_pending_day.read()?,
+    };
+    match days.schedule(last_closed_day) {
+        (next, Scheduled::Opened) => {
+            start_call_sweep(ctx, &gem, next)?;
+            run_call_slice(ctx)
+        }
+        (next, Scheduled::Queued) => {
+            gem.call_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            gem.call_pending_day.write(next.pending)?;
+            gem.emit(SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: next.current,
+            })?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
+
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_call_sweep(ctx: &BlockRuntimeContext, gem: &GemContract, days: SweepDays) -> Result<()> {
+    gem.call_sweep_day.write(days.current)?;
+    gem.call_pending_day.write(days.pending)?;
     gem.call_currency_cursor.write(0)?;
     for iso_code in get_all_reference_currencies(ctx)? {
         gem.call_scan_cursor.write(&iso_code, 0)?;
     }
-    run_call_slice(ctx)
+    Ok(())
 }
 
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
@@ -199,10 +229,6 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
-        gem.call_sweep_day.write(0)?;
-        return Ok(0);
-    }
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
     let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window;
@@ -210,21 +236,13 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut budget = MAX_GEM_CALLS_PER_BLOCK;
     let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
     let mut called: u32 = 0;
-    // The first currency left unfinished, so the next slice picks up where this
-    // one gave out rather than re-walking the ones already closed behind it.
-    let mut resume_at = start;
-    let mut resumed = false;
-    let mut swept = true;
-    for offset in 0..currencies.len() {
-        let at = (start + offset) % currencies.len();
+    // One pass down the list: a currency closed behind the cursor is never walked
+    // again, so every sweep ends however much it leaves undecided.
+    for &iso_code in currencies.iter().skip(start) {
         if budget == 0 {
-            if !resumed {
-                resume_at = at;
-            }
-            swept = false;
-            break;
+            gem.call_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(called);
         }
-        let iso_code = currencies[at];
         // A currency this day's pass could not price is settled for the day.
         if gem.call_scan_failed_day.read(&iso_code)? == pinned_day {
             continue;
@@ -263,17 +281,22 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         };
         let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, &mut budget)?;
         called = called.saturating_add(calls);
-        if !finished && !resumed {
-            resume_at = at;
-            resumed = true;
+        if !finished {
+            gem.call_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(called);
         }
-        swept &= finished;
     }
-    gem.call_currency_cursor
-        .write(u32::from(currencies[resume_at]))?;
-    if swept {
-        // Nothing left to walk: the next daily trigger opens a fresh sweep.
+
+    // The next day starts on the next block, so no slice mixes two days' prices.
+    let next = SweepDays {
+        current: pinned_day,
+        pending: gem.call_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
         gem.call_sweep_day.write(0)?;
+    } else {
+        start_call_sweep(ctx, &gem, next)?;
     }
     Ok(called)
 }

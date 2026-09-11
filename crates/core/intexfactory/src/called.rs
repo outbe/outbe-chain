@@ -11,6 +11,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
+use outbe_primitives::daily_sweep::{Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -22,14 +23,14 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
+use crate::constants::{CALL_SWEEP, MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::qualified::ScanBudget;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::{Group, QualifiedBinTree};
 
-/// Open a Called sweep over the day the Oracle has just finalized and run its
-/// first slice. Returns the number of series force-called in that slice.
+/// Schedule the day the Oracle has just finalized: open a Called sweep over it and
+/// run its first slice, or queue it behind the sweep still in flight.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
 
@@ -47,14 +48,48 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
 
     let factory = IntexFactoryContract::new(ctx.storage.clone());
-    factory.call_sweep_day.write(last_closed_day)?;
-    // A sweep in flight is superseded: its mid-range cursors would let the new one
-    // call itself done over bins it never walked.
+    let days = SweepDays {
+        current: factory.call_sweep_day.read()?,
+        pending: factory.call_pending_day.read()?,
+    };
+    match days.schedule(last_closed_day) {
+        (next, Scheduled::Opened) => {
+            start_call_sweep(ctx, &factory, next)?;
+            run_call_slice(ctx)
+        }
+        (next, Scheduled::Queued) => {
+            factory.call_pending_day.write(next.pending)?;
+            Ok(0)
+        }
+        (next, Scheduled::Replaced { skipped }) => {
+            factory.call_pending_day.write(next.pending)?;
+            crate::runtime::emit_event(
+                &ctx.storage,
+                crate::precompile::IIntexFactory::SweepDaySkipped {
+                    sweep: CALL_SWEEP,
+                    skippedDay: skipped,
+                    inFlightDay: next.current,
+                },
+            )?;
+            Ok(0)
+        }
+        (_, Scheduled::Ignored) => Ok(0),
+    }
+}
+
+/// Pin the sweep's current day and walk it from the first currency's lowest bin.
+fn start_call_sweep(
+    ctx: &BlockRuntimeContext,
+    factory: &IntexFactoryContract,
+    days: SweepDays,
+) -> Result<()> {
+    factory.call_sweep_day.write(days.current)?;
+    factory.call_pending_day.write(days.pending)?;
     factory.call_currency_cursor.write(0)?;
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
         factory.call_scan_cursor.write(&iso_code, 0)?;
     }
-    run_call_slice(ctx)
+    Ok(())
 }
 
 /// Advance an open sweep by one slice, pinned to the day it opened on so blocks
@@ -66,52 +101,45 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
-        factory.call_sweep_day.write(0)?;
-        return Ok(0);
-    }
     let oracle = OracleContract::new(ctx.storage.clone());
     let start =
         crate::qualified::currency_position(&currencies, factory.call_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
-    // The first currency left unfinished, so the next slice picks up where this one
-    // gave out rather than re-walking the ones already closed behind it.
-    let mut resume_at = start;
-    let mut resumed = false;
-    let mut swept = true;
-    for offset in 0..currencies.len() {
-        let at = (start + offset) % currencies.len();
-        if budget.is_spent() {
-            if !resumed {
-                resume_at = at;
-            }
-            swept = false;
-            break;
-        }
-        let iso_code = currencies[at];
-        // No registered pair is an answer; a failed read is not.
-        let pair_index =
+    // One pass down the list: a currency closed behind the cursor is never walked
+    // again, so every sweep ends however much it leaves undecided.
+    for &iso_code in currencies.iter().skip(start) {
+        let finished = if budget.is_spent() {
+            false
+        } else {
+            // No registered pair is an answer; a failed read is not.
             match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
-                Some(index) => index,
-                None => continue,
-            };
-        let (calls, finished) =
-            call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
-        called = called.saturating_add(calls);
-        if !finished && !resumed {
-            resume_at = at;
-            resumed = true;
+                None => true,
+                Some(pair_index) => {
+                    let (calls, finished) =
+                        call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
+                    called = called.saturating_add(calls);
+                    finished
+                }
+            }
+        };
+        if !finished {
+            factory.call_currency_cursor.write(u32::from(iso_code))?;
+            return Ok(called);
         }
-        swept &= finished;
     }
-    factory
-        .call_currency_cursor
-        .write(u32::from(currencies[resume_at]))?;
-    if swept {
-        // Nothing left to walk: the next daily trigger opens a fresh sweep.
+
+    // The next day starts on the next block, so no slice mixes two days' prices.
+    let next = SweepDays {
+        current: pinned_day,
+        pending: factory.call_pending_day.read()?,
+    }
+    .finish();
+    if next.current == 0 {
         factory.call_sweep_day.write(0)?;
+    } else {
+        start_call_sweep(ctx, &factory, next)?;
     }
     Ok(called)
 }

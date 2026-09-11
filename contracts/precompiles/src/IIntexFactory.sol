@@ -112,6 +112,10 @@ interface IIntexFactory {
     /// @notice The series was force-called (Qualified -> Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
+    /// @notice A daily sweep (0 qualification, 1 call) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
+
     /// @notice The series' settlement window closed. Both are zero when every unit
     ///         was realized in time.
     event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);

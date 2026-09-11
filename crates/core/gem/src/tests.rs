@@ -1276,3 +1276,168 @@ fn config_dev_profile_terms_a_new_gem() {
         assert!(item.call_window < GemParams::PROD.call_window);
     });
 }
+
+/// A Qualified gem of `iso` issued at `issued_at`; `nonce` keeps the ids apart.
+fn qualified_gem_of(
+    storage: &StorageHandle,
+    iso: u16,
+    nonce: u64,
+    issued_at: u64,
+    call_price: U256,
+) -> U256 {
+    let mut p = sample_params(ALICE);
+    p.promis_load_minor = U256::from(1_000_000 + u64::from(iso) * 1_000 + nonce);
+    p.reference_currency = iso;
+    p.issued_at = issued_at;
+    p.call_price_minor = call_price;
+    let id = api::add_gem(storage, p).unwrap();
+    api::set_state(storage, id, GemState::Qualified).unwrap();
+    id
+}
+
+/// Prices the call window back from `latest` at `vwap` and finalizes through it.
+fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwap: U256) {
+    let oracle = OracleContract::new(storage.clone());
+    let mut day = latest;
+    for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&day)
+            .write(&pair, vwap)
+            .unwrap();
+        day = previous_date_key(day);
+    }
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < latest {
+        oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
+    }
+}
+
+/// A trigger that finds the sweep unfinished queues its day rather than restarting
+/// the walk, so the day in flight still reaches every bin against its own prices.
+#[test]
+fn a_trigger_during_a_running_call_sweep_queues_its_day() {
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
+        gem.config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
+        let issued_at = T_NOW - 100 * 86_400;
+        // A bin that spends the whole budget, and one gem priced above it.
+        for nonce in 0..u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+            qualified_gem_of(storage, 840, nonce, issued_at, U256::from(100_000u64));
+        }
+        let above = qualified_gem_of(storage, 840, 999, issued_at, U256::from(200_000u64));
+
+        let day = previous_date_key(timestamp_to_date_key(T_NOW));
+        priced_window(storage, pair, day, U256::from(300_000u64));
+        crate::hooks::scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap();
+        let cursor = gem.call_scan_cursor.read(&840).unwrap();
+        assert_ne!(cursor, 0, "the first slice gave out inside the range");
+
+        let next_ts = T_NOW + 86_400;
+        let next_day = previous_date_key(timestamp_to_date_key(next_ts));
+        priced_window(storage, pair, next_day, U256::from(300_000u64));
+        let next = block_ctx_at(storage, next_ts);
+        assert_eq!(crate::hooks::scan_and_call(&next).unwrap(), 0);
+        assert_eq!(gem.call_sweep_day.read().unwrap(), day);
+        assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
+        assert_eq!(
+            gem.call_scan_cursor.read(&840).unwrap(),
+            cursor,
+            "the walk in flight was not restarted"
+        );
+
+        // The next slice finishes the old day and hands the sweep to the queued one.
+        crate::hooks::run_call_slice(&next).unwrap();
+        assert_eq!(
+            api::get_gem(storage, above).unwrap().unwrap().state,
+            GemState::Called as u8
+        );
+        assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
+        assert_eq!(gem.call_pending_day.read().unwrap(), 0);
+    });
+}
+
+/// With a day already waiting, a newer one takes its place, and the day that will
+/// never be walked is named.
+#[test]
+fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
+        GemContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
+        for nonce in 0..=u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+            qualified_gem_of(
+                &storage,
+                840,
+                nonce,
+                T_NOW - 100 * 86_400,
+                U256::from(100_000u64),
+            );
+        }
+        let mut closed = Vec::new();
+        for offset in 0..3u64 {
+            let ts = T_NOW + offset * 86_400;
+            let day = previous_date_key(timestamp_to_date_key(ts));
+            priced_window(&storage, pair, day, U256::from(300_000u64));
+            crate::hooks::scan_and_call(&block_ctx_at(&storage, ts)).unwrap();
+            closed.push(day);
+        }
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.call_sweep_day.read().unwrap(), closed[0]);
+        assert_eq!(gem.call_pending_day.read().unwrap(), closed[2]);
+        (closed[0], closed[1])
+    });
+
+    let events: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::SweepDaySkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].sweep, crate::constants::CALL_SWEEP);
+    assert_eq!(events[0].skippedDay, skipped);
+    assert_eq!(events[0].inFlightDay, in_flight);
+}
+
+/// Each currency is walked once a sweep. Were the ones closed behind the cursor
+/// walked again, two currencies each holding more undecided gems than a slice may
+/// visit would keep the sweep open for good.
+#[test]
+fn a_call_sweep_over_several_currencies_always_ends() {
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
+        gem.config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+        let day = previous_date_key(timestamp_to_date_key(T_NOW));
+        for iso in [840u16, 978] {
+            let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));
+            priced_window(storage, pair, day, U256::from(300_000u64));
+            // Issued five days ago: every gem is visited, decided and left where it is.
+            for nonce in 0..=u64::from(crate::constants::MAX_GEM_CALLS_PER_BLOCK) {
+                qualified_gem_of(
+                    storage,
+                    iso,
+                    nonce,
+                    T_NOW - 5 * 86_400,
+                    U256::from(100_000u64),
+                );
+            }
+        }
+
+        let ctx = block_ctx_at(storage, T_NOW);
+        crate::hooks::scan_and_call(&ctx).unwrap();
+        for _ in 0..3 {
+            crate::hooks::run_call_slice(&ctx).unwrap();
+        }
+        assert_eq!(gem.call_sweep_day.read().unwrap(), 0, "the sweep closed");
+    });
+}
