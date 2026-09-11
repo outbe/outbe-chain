@@ -45,16 +45,6 @@ use crate::{
 /// `None` marks a day the pair published no reference price.
 type VwapWindow = Vec<(u32, Option<U256>)>;
 
-/// Cycle daily-trigger entry: runs the scan, discarding the count.
-pub fn run_call_daily(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
-    scan_and_call(ctx, scope, parent)?;
-    Ok(())
-}
-
 /// Runs the daily call scan. Returns the number of buckets called plus Nods
 /// forfeited.
 ///
@@ -67,6 +57,11 @@ pub fn scan_and_call(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<u32> {
+    let mut nod = NodContract::new(ctx.storage.clone());
+    let len = nod.callable_buckets.len()?;
+    if len == 0 {
+        return Ok(0);
+    }
     let oracle = OracleContract::new(ctx.storage.clone());
 
     // Most recent fully-closed UTC day. The call counts plain UTC days, so this
@@ -87,14 +82,9 @@ pub fn scan_and_call(
         return Ok(0);
     }
 
-    let mut nod = NodContract::new(ctx.storage.clone());
-    let len = nod.callable_buckets.len()?;
-    if len == 0 {
-        return Ok(0);
-    }
-
     // Stored as `index + 1`; 0 means "start a fresh pass from the top".
-    let mut cursor = match nod.call_scan_cursor.read()? {
+    let initial_cursor = nod.call_scan_cursor.read()?;
+    let mut cursor = match initial_cursor {
         0 => len - 1,
         resume => resume.saturating_sub(1).min(len - 1),
     };
@@ -162,11 +152,14 @@ pub fn scan_and_call(
         cursor -= 1;
     };
 
-    nod.call_scan_cursor.write(if completed {
+    let next_cursor = if completed {
         0
     } else {
         cursor.saturating_add(1)
-    })?;
+    };
+    if next_cursor != initial_cursor {
+        nod.call_scan_cursor.write(next_cursor)?;
+    }
     Ok(mutated)
 }
 
@@ -188,7 +181,7 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
     // A bucket armed before the terms existed carries zeroes. Zero days is "no
     // terms", not "every day breaches"; leave it uncallable. Same guard as
     // `outbe_gem::runtime::trigger_call`.
-    if window_days == 0 || threshold_days == 0 {
+    if window_days == 0 || threshold_days == 0 || threshold_days > window_days {
         return false;
     }
     let mut breaches: u32 = 0;
@@ -197,10 +190,13 @@ fn breached_enough(window: &[(u32, Option<U256>)], terms: &CallTerms, start_day:
             break;
         }
         if vwap.is_some_and(|value| value > terms.call_price) {
-            breaches = breaches.saturating_add(1);
+            breaches += 1;
+            if breaches >= threshold_days {
+                return true;
+            }
         }
     }
-    breaches >= threshold_days
+    false
 }
 
 /// The bucket's sealed notice period. Read on its own in the forfeit arm, which

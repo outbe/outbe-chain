@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
-    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, hooks, precompile::INod, NodContract,
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_RUN, hooks, precompile::INod, NodContract,
     NodItemState, NodRepositoryReader,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
@@ -132,7 +132,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 .unwrap();
         }
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
-        hooks::qualify_nods(&context, &scope, &parent).unwrap();
+        hooks::run_daily(&context, &scope, &parent).unwrap();
         assert!(
             !api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
@@ -146,7 +146,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 .unwrap(),
             Some(U256::from(14))
         );
-        hooks::qualify_nods(&context, &scope, &parent).unwrap();
+        hooks::run_daily(&context, &scope, &parent).unwrap();
         assert!(
             api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
@@ -163,7 +163,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
                 &parent,
                 840,
                 body.floor_price_minor + U256::from(1),
-                MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+                MAX_BUCKET_QUALIFICATIONS_PER_RUN,
             )
             .unwrap(),
             0
@@ -217,7 +217,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
             &parent,
             840,
             U256::from(1299),
-            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+            MAX_BUCKET_QUALIFICATIONS_PER_RUN,
         )
         .unwrap();
 
@@ -278,4 +278,45 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
             .unwrap()
             .is_none());
     });
+}
+
+#[test]
+fn idle_daily_scans_do_not_write_storage() {
+    let (mut provider, scope, parent) = active_world();
+    let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
+    StorageHandle::enter(&mut provider, |storage| {
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
+        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        oracle.reference_currencies.push(978).unwrap();
+        oracle
+            .utc_day_vwap_value
+            .get_nested(&20260715)
+            .write(&index, U256::from(13))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
+        for (owner, floor) in [(0x51, 12), (0x52, 13)] {
+            let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
+            body.floor_price_minor = U256::from(floor);
+            body.bucket_key =
+                NodContract::bucket_key(body.worldwide_day, body.floor_price_minor, 978);
+            api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        }
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, midnight, 1),
+            storage.clone(),
+        );
+        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+        assert_eq!(NodContract::new(storage).callable_buckets.len().unwrap(), 1);
+    });
+    // One bucket is at the qualification floor; the other is qualified but
+    // below its call price. Neither unchanged scan should issue an SSTORE.
+    provider.enable_production_storage_gas_metering();
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
+        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+    });
+    let (reads, writes) = provider.metered_storage_operations();
+    assert!(reads > 0);
+    assert_eq!(writes, 0);
 }
