@@ -9354,7 +9354,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.16.0#e589b7755d7d91d7a1f18603a9eef485bc5f39a4"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.17.0#f423a460170eafc16ea4f8ac4fdd47a3bd3091ff"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
@@ -9424,7 +9424,7 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.16.0#e589b7755d7d91d7a1f18603a9eef485bc5f39a4"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.17.0#f423a460170eafc16ea4f8ac4fdd47a3bd3091ff"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9905,7 +9905,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.16.0#e589b7755d7d91d7a1f18603a9eef485bc5f39a4"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.17.0#f423a460170eafc16ea4f8ac4fdd47a3bd3091ff"
 dependencies = [
  "acir",
  "acvm",
@@ -9923,7 +9923,7 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.16.0#e589b7755d7d91d7a1f18603a9eef485bc5f39a4"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.17.0#f423a460170eafc16ea4f8ac4fdd47a3bd3091ff"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
