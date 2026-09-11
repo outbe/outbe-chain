@@ -1055,8 +1055,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
 
-    // Issued at midnight the gem gets that whole day and the run is long enough;
-    // issued a second later it loses the day and falls one breach short.
+    // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
         with_storage(|storage| {
             GemContract::new(storage.clone())

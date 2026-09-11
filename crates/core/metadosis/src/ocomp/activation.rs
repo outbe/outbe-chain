@@ -369,9 +369,8 @@ fn apply_certified_result(
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
-        // A day may allocate no more than the nominal its tributes retired. Measured
-        // against the auction's whole limit rather than what it ends up drawing:
-        // the actual draw is only known two days later, and the limit bounds it.
+        // Measured against the auction's whole limit: the actual draw is only
+        // known two days later, and the limit bounds it.
         let allocated = plan
             .nod()
             .nod_gratis_consumed()

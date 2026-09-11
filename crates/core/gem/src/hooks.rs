@@ -225,8 +225,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
             break;
         }
         let iso_code = currencies[at];
-        // A currency whose price this day's pass could not index is settled for
-        // the day; re-reading its window every slice would buy nothing.
+        // A currency this day's pass could not price is settled for the day.
         if gem.call_scan_failed_day.read(&iso_code)? == pinned_day {
             continue;
         }

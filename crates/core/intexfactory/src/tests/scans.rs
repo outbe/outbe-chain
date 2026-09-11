@@ -358,8 +358,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach) as u32;
 
-    // Issued at midnight the series gets that whole day and the run is long
-    // enough; issued a second later it loses the day and falls one breach short.
+    // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, 1), (midnight + 1, 0)] {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.set_timestamp(U256::from(ISSUED_AT as u64));
