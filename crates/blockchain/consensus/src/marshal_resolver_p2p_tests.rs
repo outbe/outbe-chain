@@ -20,7 +20,7 @@
 //! and a real `commonware_broadcast::buffered::Engine` buffer (registered on
 //! `BROADCAST_CHANNEL`), mirroring `crates/blockchain/engine/src/stack.rs`.
 //!
-//! Node A proposes + verifies a block and is told the matching notarization, so
+//! Node A durably verifies a block and is told the matching notarization, so
 //! it can serve the block when asked for the notarized proposal at that round.
 //! Node B (which has never seen the block) calls
 //! `subscribe_by_digest(digest, DigestFallback::FetchByRound { round })`. Its
@@ -44,7 +44,7 @@ use commonware_consensus::{
 };
 use commonware_cryptography::{
     bls12381::{self, primitives::variant::MinSig},
-    certificate::Scheme as _,
+    certificate::Verifier as _,
     Signer as _,
 };
 use commonware_p2p::{
@@ -144,8 +144,12 @@ fn make_notarization(
         .iter()
         .map(|signer| Notarize::sign(signer, proposal.clone()).expect("notarize vote"))
         .collect();
-    Notarization::from_notarizes(&fixture.signers[0], &notarizes, &Sequential)
-        .expect("notarization certificate should assemble")
+    Notarization::from_notarizes(
+        &fixture.signers[0],
+        commonware_utils::iter::NonEmpty::try_new(notarizes.iter()).unwrap(),
+        &Sequential,
+    )
+    .expect("notarization certificate should assemble")
 }
 
 /// Start one marshal node with the production resolver + broadcast wiring on the
@@ -241,7 +245,7 @@ async fn start_marshal_node(
             start: Start::Genesis(consensus_block_with_number(0x00, 0)),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
-            view_retention_timeout: ViewDelta::new(10_000),
+            view_retention: ViewDelta::new(10_000),
             prunable_items_per_section: items_per_section,
             page_cache,
             replay_buffer,
@@ -279,7 +283,7 @@ async fn start_marshal_node(
             blocker: control,
             mailbox_size: NonZeroUsize::new(crate::config::ENGINE_MAILBOX_SIZE)
                 .expect("non-zero engine mailbox size"),
-            initial: Duration::from_secs(1),
+
             timeout: Duration::from_secs(2),
             fetch_retry_timeout: Duration::from_millis(100),
             priority_requests: false,
@@ -340,6 +344,7 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
             SimConfig {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
+                max_peers_per_set: commonware_utils::NZUsize!(32),
                 tracked_peer_sets: NZUsize!(4),
             },
         );
@@ -361,7 +366,7 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
         let link = Link {
             latency: Duration::from_millis(0),
             jitter: Duration::from_millis(0),
-            success_rate: 1.0,
+            success_rate: commonware_utils::probability!(1.0),
         };
         for i in 0..NUM_VALIDATORS {
             for j in 0..NUM_VALIDATORS {
@@ -395,10 +400,9 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
             .mailbox
             .subscribe_by_digest(want_digest, DigestFallback::FetchByRound { round });
 
-        // Node A makes the block locally available (proposed + verified) so it
+        // Node A makes the block locally available (durably verified) so it
         // can be found by commitment, and is told the matching notarization so
         // its resolver serve-side can answer a `Notarized { round }` request.
-        let _ = node_a.mailbox.proposed(round, block.clone()).await;
         let _ = node_a.mailbox.verified(round, block.clone()).await;
 
         let proposal = Proposal::new(round, View::zero(), want_digest);
@@ -489,6 +493,7 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
             SimConfig {
                 max_size: 1024 * 1024,
                 disconnect_on_block: true,
+                max_peers_per_set: commonware_utils::NZUsize!(32),
                 tracked_peer_sets: NZUsize!(4),
             },
         );
@@ -508,7 +513,7 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
         let link = Link {
             latency: Duration::from_millis(0),
             jitter: Duration::from_millis(0),
-            success_rate: 1.0,
+            success_rate: commonware_utils::probability!(1.0),
         };
         for i in 0..NUM_VALIDATORS {
             for j in 0..NUM_VALIDATORS {
@@ -536,10 +541,6 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
             DigestFallback::FetchByRound { round: good_round },
         );
 
-        let _ = node_a
-            .mailbox
-            .proposed(good_round, good_block.clone())
-            .await;
         let _ = node_a
             .mailbox
             .verified(good_round, good_block.clone())
@@ -587,7 +588,6 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
 
         // Node A holds the real block under `bad_digest` so its serve-side can
         // find and serve it for the forged notarization's carried payload.
-        let _ = node_a.mailbox.proposed(bad_round, bad_block.clone()).await;
         let _ = node_a.mailbox.verified(bad_round, bad_block.clone()).await;
 
         let carried_proposal = Proposal::new(bad_round, View::zero(), bad_digest);

@@ -16,12 +16,13 @@ contract BridgeMsgCodecMinLengthTest is Test {
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS, "refund floor");
     }
 
-    function test_IssuanceFloorIsTheSmallestRealIssuance() public pure {
+    function test_IssuanceFloorIsTheSmallestRealIssuance() public view {
         // One series, no winners on this chain - the message a snapshot chain gets when it
         // only needs the series created.
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         series[0].seriesId = "20250101-USD-U";
         series[0].worldwideDay = 20_250_101;
+        series[0].issuedAt = uint32(block.timestamp);
 
         bytes memory smallest = BridgeMsgCodec.encodeIssuanceInstructions(20_250_101, 0, 1, series);
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS, "issuance floor");

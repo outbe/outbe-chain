@@ -208,11 +208,6 @@
           "internalType": "uint256"
         },
         {
-          "name": "reason",
-          "type": "bytes",
-          "internalType": "bytes"
-        },
-        {
           "name": "exists",
           "type": "bool",
           "internalType": "bool"
@@ -1194,17 +1189,6 @@
           "name": "target",
           "type": "address",
           "internalType": "address"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "AlreadyProcessed",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "internalType": "bytes32"
         }
       ]
     },

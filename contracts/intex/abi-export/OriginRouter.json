@@ -561,6 +561,11 @@
               "internalType": "uint32"
             },
             {
+              "name": "issuedAt",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
               "name": "issuedIntexCount",
               "type": "uint32",
               "internalType": "uint32"
@@ -1034,6 +1039,11 @@
             },
             {
               "name": "worldwideDay",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "issuedAt",
               "type": "uint32",
               "internalType": "uint32"
             },

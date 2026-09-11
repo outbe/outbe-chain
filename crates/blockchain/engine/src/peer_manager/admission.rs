@@ -152,6 +152,7 @@ mod tests {
                     PrivateKey::from_seed(1),
                     b"admission-regression",
                     "127.0.0.1:30400".parse().unwrap(),
+                    commonware_utils::NZUsize!(32),
                     1024,
                 );
                 let (network, mut oracle) = lookup::Network::new(context.child("network"), cfg);
@@ -195,6 +196,7 @@ mod tests {
                     PrivateKey::from_seed(1),
                     b"admission-removal",
                     "127.0.0.1:30400".parse().unwrap(),
+                    commonware_utils::NZUsize!(32),
                     1024,
                 );
                 let (network, mut oracle) = lookup::Network::new(context.child("network"), cfg);

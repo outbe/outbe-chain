@@ -153,9 +153,6 @@ interface IIntexNFT1155Bridge {
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
-    /// @notice Inbound message with this `receiveId` has already been minted.
-    /// @param receiveId Inbound bridge message id that was already processed.
-    error AlreadyProcessed(bytes32 receiveId);
     /// @notice `crosschainMintOne` was invoked by an external caller; only `address(this)` is allowed.
     /// @dev `crosschainMintOne` is a self-call shim used by the inbound handler to isolate per-item
     ///      `token.crosschainMint` reverts. Exposing it externally would let anyone mint tokens for arbitrary

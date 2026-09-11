@@ -91,7 +91,7 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
             .unwrap()
         })
         .collect();
-    let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(b"phase0-spike").as_ref()));
+    let digest = OutbeDigest::from(B256::from_slice(Sha256::hash(&[b"phase0-spike"]).as_ref()));
     let proposal = Proposal::new(
         Round::new(Epoch::new(5), View::new(2)),
         View::new(1),
@@ -105,9 +105,12 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         .map(|s| s.sign::<OutbeDigest>(subject).unwrap())
         .collect();
     let certificate = verifier
-        .assemble::<_, N3f1>(attestations, &Sequential)
+        .assemble(
+            commonware_utils::iter::NonEmpty::try_new(attestations.into_iter()).unwrap(),
+            &Sequential,
+        )
         .unwrap();
-    let finalization = Finalization {
+    let finalization: Finalization<HybridScheme<MinSig>, OutbeDigest> = Finalization {
         proposal,
         certificate,
     };
@@ -130,7 +133,11 @@ fn run_test_dkg_complete() -> (
     Bytes,
 ) {
     let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|a| a.public_key().encode());
 
@@ -142,6 +149,7 @@ fn run_test_dkg_complete() -> (
         7,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants.clone(),
     )
@@ -153,7 +161,7 @@ fn run_test_dkg_complete() -> (
 
     for key in &keys {
         let (dealer, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             key.clone(),
             None,
@@ -177,11 +185,10 @@ fn run_test_dkg_complete() -> (
                 .iter()
                 .position(|k| &k.public_key() == player_pk)
                 .unwrap();
-            if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[player_idx]
+                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_idx]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();
@@ -208,7 +215,7 @@ fn run_test_dkg_complete() -> (
     let (output, _share) = players
         .remove(0)
         .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core::OsRng,
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             dkg_logs,
             &Sequential,
         )
@@ -237,6 +244,7 @@ fn run_round(
         round,
         previous_output,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants,
     )
@@ -249,7 +257,7 @@ fn run_round(
     for (idx, key) in keys.iter().enumerate() {
         let previous_share = previous_shares.map(|shares| shares[idx].clone());
         let (dealer, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             info.clone(),
             key.clone(),
             previous_share,
@@ -273,11 +281,10 @@ fn run_round(
                 .iter()
                 .position(|k| &k.public_key() == player_pk)
                 .unwrap();
-            if let Some(ack) = players[player_idx].dealer_message::<N3f1>(
-                dealer_pk.clone(),
-                pub_msg.clone(),
-                priv_msg.clone(),
-            ) {
+            if let Some(ack) = players[player_idx]
+                .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg.clone())
+                .expect("fixture dealing must be valid")
+            {
                 dealers[dealer_idx]
                     .receive_player_ack(player_pk.clone(), ack)
                     .unwrap();
@@ -305,7 +312,7 @@ fn run_round(
         }
         let (player_output, share) = player
             .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
-                &mut rand_core::OsRng,
+                &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 dkg_logs,
                 &Sequential,
             )
@@ -500,7 +507,11 @@ async fn dealer_log_roundtrips_through_manager() {
 #[tokio::test]
 async fn pending_p2p_dealer_log_can_be_served_and_drained() {
     let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     let participants: Set<bls12381::PublicKey> =
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
@@ -605,7 +616,11 @@ async fn reshare_ceremony_keeps_removed_old_player_as_dealer() {
 #[tokio::test]
 async fn pending_p2p_dealer_log_rejects_wrong_ceremony() {
     let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     let participants: Set<bls12381::PublicKey> =
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
@@ -627,7 +642,11 @@ async fn pending_p2p_dealer_log_rejects_wrong_ceremony() {
 #[tokio::test]
 async fn pending_p2p_dealer_log_rejects_non_committee_dealer() {
     let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     let participants: Set<bls12381::PublicKey> =
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
@@ -653,7 +672,11 @@ async fn pending_p2p_dealer_log_rejects_non_committee_dealer() {
 #[tokio::test]
 async fn pending_p2p_dealer_log_rejects_conflicting_duplicate() {
     let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     let participants: Set<bls12381::PublicKey> =
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
@@ -683,7 +706,11 @@ async fn pending_p2p_dealer_log_rejects_conflicting_duplicate() {
 #[test]
 fn chain_finalized_replay_rejects_non_committee_dealer() {
     let keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     let participants: Set<bls12381::PublicKey> =
         keys.iter().map(|k| k.public_key()).try_collect().unwrap();
@@ -717,7 +744,11 @@ fn chain_finalized_replay_rejects_non_committee_dealer() {
 #[test]
 fn canonical_reconstruction_is_replay_deterministic_and_frozen() {
     let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|a| a.public_key().encode());
     let participants: Set<bls12381::PublicKey> =
@@ -805,6 +836,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
         7,
         None,
         Mode::NonZeroCounter,
+        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
         participants.clone(),
         participants,
     )
@@ -813,7 +845,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
     let dealer_key = keys[0].clone();
     let dealer_pk = dealer_key.public_key();
     let (mut dealer, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-        rand_core::OsRng,
+        rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
         info.clone(),
         dealer_key,
         None,
@@ -830,6 +862,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
         .unwrap();
         let ack = player
             .dealer_message::<N3f1>(dealer_pk.clone(), pub_msg.clone(), priv_msg)
+            .expect("fixture dealing must be valid")
             .unwrap();
         dealer.receive_player_ack(player_pk, ack).unwrap();
     }
@@ -1062,7 +1095,11 @@ async fn verify_boundary_succeeds_after_finalize() {
 #[test]
 fn full_output_outcome_detects_reshare_log_subset_divergence() {
     let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|a| a.public_key().encode());
     let participants: Set<bls12381::PublicKey> =
@@ -1082,13 +1119,13 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
     for (dealer, log) in reshare_logs.clone() {
         all_logs.record(dealer, log);
     }
-    let all_output = observe::<
-        MinSig,
-        bls12381::PublicKey,
-        N3f1,
-        commonware_cryptography::bls12381::Batch,
-    >(&mut rand_core::OsRng, all_logs, &Sequential)
-    .unwrap();
+    let all_output =
+        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            all_logs,
+            &Sequential,
+        )
+        .unwrap();
     let mut subset_logs = reshare_logs.clone();
     let removed = subset_logs.keys().next().cloned().unwrap();
     subset_logs.remove(&removed);
@@ -1096,13 +1133,13 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
     for (dealer, log) in subset_logs {
         subset_dkg_logs.record(dealer, log);
     }
-    let subset_output = observe::<
-        MinSig,
-        bls12381::PublicKey,
-        N3f1,
-        commonware_cryptography::bls12381::Batch,
-    >(&mut rand_core::OsRng, subset_dkg_logs, &Sequential)
-    .unwrap();
+    let subset_output =
+        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            subset_dkg_logs,
+            &Sequential,
+        )
+        .unwrap();
 
     assert_eq!(
         all_output.public().public(),
@@ -1179,7 +1216,11 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
 #[test]
 fn finalized_dealer_logs_reconstruct_canonical_output() {
     let mut keys: Vec<bls12381::PrivateKey> = (0..4)
-        .map(|_| bls12381::PrivateKey::random(rand_core::OsRng))
+        .map(|_| {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+        })
         .collect();
     keys.sort_by_key(|a| a.public_key().encode());
     let participants: Set<bls12381::PublicKey> =
@@ -1190,13 +1231,13 @@ fn finalized_dealer_logs_reconstruct_canonical_output() {
     for (dealer, log) in logs {
         observed_logs.record(dealer, log);
     }
-    let observed = observe::<
-        MinSig,
-        bls12381::PublicKey,
-        N3f1,
-        commonware_cryptography::bls12381::Batch,
-    >(&mut rand_core::OsRng, observed_logs, &Sequential)
-    .unwrap();
+    let observed =
+        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            observed_logs,
+            &Sequential,
+        )
+        .unwrap();
     assert_eq!(expected_output, observed);
 
     let finalized_order: Vec<Bytes> = signed_logs.values().rev().cloned().collect();
@@ -1215,13 +1256,13 @@ fn finalized_dealer_logs_reconstruct_canonical_output() {
     for (dealer, log) in canonical_logs {
         canonical_dkg_logs.record(dealer, log);
     }
-    let expected_canonical = observe::<
-        MinSig,
-        bls12381::PublicKey,
-        N3f1,
-        commonware_cryptography::bls12381::Batch,
-    >(&mut rand_core::OsRng, canonical_dkg_logs, &Sequential)
-    .unwrap();
+    let expected_canonical =
+        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
+            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            canonical_dkg_logs,
+            &Sequential,
+        )
+        .unwrap();
 
     let manager = Mailbox::new();
     manager

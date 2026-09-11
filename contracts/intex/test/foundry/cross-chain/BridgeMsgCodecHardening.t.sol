@@ -116,6 +116,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: "20260212-TRY-U",
             worldwideDay: 2,
+            issuedAt: uint32(block.timestamp),
             issuedIntexCount: 1,
             promisLoadMinor: 1,
             entryPriceMinor: 1,
@@ -139,6 +140,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.worldwideDay = 20_260_212;
+        payload.issuedAt = uint32(block.timestamp);
         payload.recipients = new address[](0);
         payload.quantities = new uint256[](0);
         vm.expectRevert(

@@ -87,12 +87,12 @@ impl Relay for OutbeApplication {
     /// throttled (verifiers can pull it). Dissemination is networking, not a
     /// consensus state transition, so this does not affect determinism.
     ///
-    /// The Simplex engine runs with `ForwardingPolicy::Disabled`, so `plan` is
+    /// The Simplex engine runs with `ForwardPolicy::Disabled`, so `plan` is
     /// always `Plan::Propose`; the relay forwards the proposer's own block to
     /// all peers regardless of the plan variant.
     fn broadcast(&mut self, payload: Self::Digest, plan: Self::Plan) -> commonware_actor::Feedback {
         // Honor the plan's intended recipients: `Propose` is a fresh broadcast to
-        // all peers; `Forward` targets a specific subset (under ForwardingPolicy
+        // all peers; `Forward` targets a specific subset (under ForwardPolicy
         // ::Disabled the batcher never emits `Forward`, but if a future policy
         // enables targeted forwarding we must NOT silently widen it to All).
         let (round, recipients) = match plan {

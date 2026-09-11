@@ -19,7 +19,6 @@
 use std::sync::Arc;
 
 use crate::finalization::committee_prelude::build_committee_prelude;
-use commonware_cryptography::certificate::Provider as _;
 use commonware_runtime::{Clock, Spawner};
 use futures::{channel::mpsc, StreamExt};
 use outbe_primitives::{
@@ -298,7 +297,7 @@ impl FinalizationActor {
             )
             .await
             {
-                Ok(block) => return self.process_finalization(finalized, block).await,
+                Ok(block) => return self.process_finalization(finalized, (*block).clone()).await,
                 Err(failure) => {
                     stall_cycles += 1;
                     crate::metrics::record_finalization_resolution_stalled();
@@ -734,7 +733,9 @@ mod tests {
         let fb_hash = digest.0;
 
         let store = late_sig_store::shared(WINDOW_K);
-        let key = bls12381::PrivateKey::random(rand_core::OsRng);
+        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
         let sig = key.sign(b"x", b"y");
         store.lock().expect("store").record_individual_vote(
             epoch,

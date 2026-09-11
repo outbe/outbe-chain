@@ -299,12 +299,14 @@ where
         block: &RecoveredBlock<OutbeBlock>,
         result: &BlockExecutionResult<OutbeReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<alloy_primitives::B256>,
     ) -> Result<(), ConsensusError> {
         <EthBeaconConsensus<ChainSpec> as FullConsensus<OutbePrimitives>>::validate_block_post_execution(
             &self.inner,
             block,
             result,
             receipt_root_bloom,
+            block_access_list_hash,
         )
     }
 }

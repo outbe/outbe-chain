@@ -14,7 +14,7 @@ use commonware_cryptography::{
 use commonware_parallel::Sequential;
 use commonware_utils::{
     ordered::{Quorum as _, Set},
-    N3f1, TryCollect as _,
+    TryCollect as _,
 };
 use outbe_primitives::{
     reshare_artifact::{
@@ -144,7 +144,11 @@ impl FinalityCommitteeFixture {
             .map(|signer| signer.sign::<Digest>(subject).expect("fixture vote signs"))
             .collect::<Vec<_>>();
         let certificate = verifier
-            .assemble::<_, N3f1>(attestations, &Sequential)
+            .assemble(
+                commonware_utils::iter::NonEmpty::try_new(attestations.into_iter())
+                    .expect("fixture quorum is non-empty"),
+                &Sequential,
+            )
             .expect("fixture finalization assembles");
         let finalization: Finalization = Finalization {
             proposal,

@@ -30,6 +30,9 @@ mod vote_dispatch;
 
 static EMPTY_UPGRADE_HANDLER_REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(&[]);
 
+// The fixtures install DCAP policies, so use a network that permits them.
+pub(super) const TEST_CHAIN_ID: u64 = outbe_primitives::chain::MAINNET_CHAIN_ID;
+
 /// Binary protocol version - safe to activate in tests.
 pub(super) const PV: ProtocolVersion = PROTOCOL_VERSION;
 
@@ -42,20 +45,23 @@ pub(super) const V3_1: ProtocolVersion = encode_protocol_version(3, 1);
 pub(super) const V9_8: ProtocolVersion = encode_protocol_version(9, 8);
 
 pub(super) fn with_update<F: FnOnce(StorageHandle)>(f: F) {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = HashMapStorageProvider::new(TEST_CHAIN_ID);
     let storage = StorageHandle::new(&mut provider);
     f(storage);
 }
 
 pub(super) fn with_update_provider<F: FnOnce(StorageHandle)>(f: F) -> HashMapStorageProvider {
-    let mut provider = HashMapStorageProvider::new(1);
+    let mut provider = HashMapStorageProvider::new(TEST_CHAIN_ID);
     let storage = StorageHandle::new(&mut provider);
     f(storage);
     provider
 }
 
 pub(super) fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
-    BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
+    BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(block_number, 0, TEST_CHAIN_ID),
+        storage,
+    )
 }
 
 pub(super) fn min_activation(current: u64) -> u64 {
@@ -110,7 +116,7 @@ pub(super) fn ocomp_authority(genesis_hash: B256) -> OcompProtocolAuthorityV1 {
         .unwrap();
     OcompProtocolAuthorityV1 {
         request_profile: OcompRequestProfile {
-            chain_id: 1,
+            chain_id: TEST_CHAIN_ID,
             genesis_hash,
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash,

@@ -795,7 +795,10 @@ where
                     %digest,
                     "marshal-delivered block: handle_finalize_inner start"
                 );
-                match self.handle_finalize_inner(height, digest, block).await {
+                match self
+                    .handle_finalize_inner(height, digest, (*block).clone())
+                    .await
+                {
                     Ok(()) => {
                         info!(%height, %digest, "marshal-delivered block finalized and acked");
                         // Acknowledge ONLY after the block is durably applied. The
@@ -1739,7 +1742,7 @@ mod tests {
 
             let (ack, waiter) = Exact::handle();
             actor
-                .handle_marshal_update(Update::Block(block, ack))
+                .handle_marshal_update(Update::Block(block.into(), ack))
                 .await
                 .expect("finalized Syncing delivery must process without a fatal error");
             waiter
@@ -1779,7 +1782,7 @@ mod tests {
 
             let (ack, waiter) = Exact::handle();
             actor
-                .handle_marshal_update(Update::Block(block, ack))
+                .handle_marshal_update(Update::Block(block.into(), ack))
                 .await
                 .expect("canonical genesis anchor must be accepted");
             waiter
@@ -1825,7 +1828,7 @@ mod tests {
 
             let (ack, waiter) = Exact::handle();
             actor
-                .handle_marshal_update(Update::Block(block, ack))
+                .handle_marshal_update(Update::Block(block.into(), ack))
                 .await
                 .expect("exact recovered canonical block must be idempotently accepted");
             waiter
@@ -1868,7 +1871,7 @@ mod tests {
 
             let (ack, waiter) = Exact::handle();
             let result = actor
-                .handle_marshal_update(Update::Block(conflicting, ack))
+                .handle_marshal_update(Update::Block(conflicting.into(), ack))
                 .await;
             assert!(result.is_err(), "same-height conflicting block must fail");
             assert!(
@@ -1910,7 +1913,7 @@ mod tests {
 
             let (ack, waiter) = Exact::handle();
             let result = actor
-                .handle_marshal_update(Update::Block(conflicting, ack))
+                .handle_marshal_update(Update::Block(conflicting.into(), ack))
                 .await;
 
             assert!(result.is_err(), "a conflicting genesis anchor must fail");
@@ -1983,7 +1986,9 @@ mod tests {
             let (ack, waiter) = Exact::handle();
             let mut waiter = Box::pin(waiter);
             let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
-                actor.handle_marshal_update(Update::Block(block, ack)).await
+                actor
+                    .handle_marshal_update(Update::Block(block.into(), ack))
+                    .await
             });
 
             assert_eq!(called_rx.await.expect("commit barrier call"), expected);
@@ -2043,7 +2048,9 @@ mod tests {
             });
 
             let (ack, waiter) = Exact::handle();
-            let result = actor.handle_marshal_update(Update::Block(block, ack)).await;
+            let result = actor
+                .handle_marshal_update(Update::Block(block.into(), ack))
+                .await;
 
             // Fail-fast: a fatal error propagates (node will shut down deterministically).
             assert!(
@@ -2112,7 +2119,7 @@ mod tests {
             let (ack, _waiter) = Exact::handle();
             mailbox_tx
                 .unbounded_send(crate::executor::ingress::Message::MarshalUpdate(Box::new(
-                    Update::Block(block, ack),
+                    Update::Block(block.into(), ack),
                 )))
                 .expect("mailbox send must succeed");
 
@@ -2330,18 +2337,18 @@ mod tests {
     {
         type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
-        async fn find_by_digest(&self, _digest: Digest) -> Option<ConsensusBlock> {
+        async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
             None
         }
 
-        async fn find_by_commitment(&self, _commitment: Digest) -> Option<ConsensusBlock> {
+        async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
             None
         }
 
         fn subscribe_by_digest(
             &self,
             _digest: Digest,
-        ) -> Option<commonware_utils::channel::oneshot::Receiver<ConsensusBlock>> {
+        ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
             let (_tx, rx) = commonware_utils::channel::oneshot::channel();
             Some(rx)
         }
@@ -2349,17 +2356,17 @@ mod tests {
         fn subscribe_by_commitment(
             &self,
             _commitment: Digest,
-        ) -> Option<commonware_utils::channel::oneshot::Receiver<ConsensusBlock>> {
+        ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
             let (_tx, rx) = commonware_utils::channel::oneshot::channel();
             Some(rx)
         }
 
-        fn finalized(&self, _commitment: Digest) {}
+        fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
 
         fn send(
             &self,
             _round: commonware_consensus::types::Round,
-            _block: ConsensusBlock,
+            _block: Arc<ConsensusBlock>,
             _recipients: commonware_p2p::Recipients<Self::PublicKey>,
         ) {
         }
@@ -2458,7 +2465,9 @@ mod tests {
         commonware_consensus::marshal::resolver::handler::Handler<Digest>,
         commonware_runtime::Handle<()>,
     ) {
-        use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme};
+        use commonware_cryptography::{
+            bls12381::primitives::variant::MinSig, certificate::Verifier,
+        };
         use commonware_runtime::buffer::paged::CacheRef;
         use commonware_storage::archive::immutable;
         use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
@@ -2538,7 +2547,7 @@ mod tests {
                 start: commonware_consensus::marshal::Start::Genesis(backfill_genesis_block()),
                 partition_prefix,
                 mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
-                view_retention_timeout: commonware_consensus::types::ViewDelta::new(10_000),
+                view_retention: commonware_consensus::types::ViewDelta::new(10_000),
                 prunable_items_per_section: items_per_section,
                 page_cache,
                 replay_buffer,

@@ -304,7 +304,8 @@ fn build_fixture() -> Fixture {
         "versioned benchmark proof public inputs drifted from the deterministic witness"
     );
 
-    let mut bls_rng = StdRng::from_seed([0x5a; 32]);
+    let mut bls_rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
     let (l2_private_key, l2_public_key) = ops::keypair::<_, MinSig>(&mut bls_rng);
     let signature = sign_message::<MinSig>(
         &l2_private_key,

@@ -17,7 +17,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
 
 use outbe_intex::IntexState;
@@ -357,7 +357,7 @@ pub(crate) fn try_call_group(
         return Ok(0);
     }
 
-    let issued_day = timestamp_to_date_key(u64::from(series.issued_at));
+    let issued_day = first_full_day(u64::from(series.issued_at));
     let breached = if issued_day <= window.first_day
         && group_days == window.days
         && group_threshold == window.threshold

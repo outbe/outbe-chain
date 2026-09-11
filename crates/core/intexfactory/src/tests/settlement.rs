@@ -12,46 +12,69 @@ fn product() -> U256 {
     entry_price() * load_minor()
 }
 
+fn one_unit(decimals: u8) -> U256 {
+    runtime::settlement_units(product(), U256::ONE, None, decimals).unwrap()
+}
+
 #[test]
 fn cost_amount_six_decimals() {
-    let cost = runtime::product_to_payment_units(product(), 6).unwrap();
-    assert_eq!(cost, U256::from(50_000_000_000u64));
+    assert_eq!(one_unit(6), U256::from(50_000_000_000u64));
 }
 
 #[test]
 fn cost_amount_eighteen_decimals_is_1e12_larger() {
-    let six = runtime::product_to_payment_units(product(), 6).unwrap();
-    let eighteen = runtime::product_to_payment_units(product(), 18).unwrap();
-    assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
+    assert_eq!(
+        one_unit(18),
+        one_unit(6) * U256::from(10u64).pow(U256::from(12u64))
+    );
 }
 
 #[test]
 fn cost_amount_zero_decimals() {
-    let cost = runtime::product_to_payment_units(product(), 0).unwrap();
-    assert_eq!(cost, U256::from(50_000u64));
+    assert_eq!(one_unit(0), U256::from(50_000u64));
 }
 
 #[test]
 fn cost_amount_twelve_decimals() {
-    let cost = runtime::product_to_payment_units(product(), 12).unwrap();
-    assert_eq!(cost, U256::from(50_000_000_000_000_000u64));
+    assert_eq!(one_unit(12), U256::from(50_000_000_000_000_000u64));
 }
 
 #[test]
-fn cost_amount_rounds_positive_subunit_payment_up_to_one() {
-    let cost = runtime::product_to_payment_units(U256::ONE, 0).unwrap();
-    assert_eq!(cost, U256::ONE);
+fn a_subunit_cost_is_refused_rather_than_rounded_up() {
+    let err = runtime::settlement_units(U256::ONE, U256::ONE, None, 0).unwrap_err();
+    assert!(err.to_string().contains("rounds to zero"), "{err}");
+}
+
+#[test]
+fn the_selected_units_are_floored_once_not_one_by_one() {
+    // 1.5 payment units each: three units cost 4.5, floored once to 4, where
+    // flooring every unit to 1 first would have charged 3.
+    let product = U256::from(3u64) * U256::from(500_000_000_000u64);
+    assert_eq!(
+        runtime::settlement_units(product, U256::from(3u64), None, 0).unwrap(),
+        U256::from(4u64)
+    );
+}
+
+#[test]
+fn the_fx_leg_is_floored_together_with_the_units() {
+    // One reference unit at COEN/target 1 and COEN/reference 3: a third, floored.
+    let rate = Some((U256::from(1_000_000u64), U256::from(3_000_000u64)));
+    assert_eq!(
+        runtime::settlement_units(U256::from(1_000_000_000_000u64), U256::ONE, rate, 6).unwrap(),
+        U256::from(333_333u64)
+    );
 }
 
 #[test]
 fn cost_amount_rejects_unsupported_payment_decimals() {
-    let err = runtime::product_to_payment_units(product(), 19).unwrap_err();
+    let err = runtime::settlement_units(product(), U256::ONE, None, 19).unwrap_err();
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
 }
 
 #[test]
 fn cost_amount_rejects_scaling_overflow() {
-    let err = runtime::product_to_payment_units(U256::MAX, 18).unwrap_err();
+    let err = runtime::settlement_units(U256::MAX, U256::ONE, None, 18).unwrap_err();
     assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
 }
 
@@ -101,7 +124,8 @@ fn settlement_quote_prices_an_accepted_token() {
         (18, U256::from(1_000_000_000_000_000_000u64)),
     ] {
         with_payment_token(1, 840, decimals, |s| {
-            let (_, cost) = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap();
+            let (_, cost) =
+                runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
             assert_eq!(cost, expected, "payment token decimals {decimals}");
         });
     }
@@ -110,7 +134,7 @@ fn settlement_quote_prices_an_accepted_token() {
 #[test]
 fn settlement_quote_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
-        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
         assert!(err.to_string().contains("no registered vault"), "{err}");
     });
 }
@@ -118,7 +142,7 @@ fn settlement_quote_rejects_an_unregistered_token() {
 #[test]
 fn settlement_quote_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
-        let err = runtime::quote_settlement(&s, sid(7), payment_token()).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
     });
 }
@@ -126,7 +150,7 @@ fn settlement_quote_rejects_a_foreign_currency() {
 #[test]
 fn settlement_quote_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::quote_settlement(&s, sid(7), payment_token()).is_err());
+        assert!(runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).is_err());
     });
 }
 
@@ -138,6 +162,7 @@ fn settlement_quote_dispatch() {
             &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
                 paymentToken: payment_token(),
+                amount: U256::from(2u64),
             }
             .abi_encode(),
             holder(),
@@ -146,7 +171,7 @@ fn settlement_quote_dispatch() {
         .unwrap();
         let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
         assert_eq!(ret.settlementCurrency, 840);
-        assert_eq!(ret.payableUnits, U256::from(1_000_000_000_000_000_000u64));
+        assert_eq!(ret.payableUnits, U256::from(2_000_000_000_000_000_000u64));
     });
 }
 
@@ -216,16 +241,17 @@ fn set_authorized_settler_round_trip() {
 }
 
 #[test]
-fn settled_token_id_derivation() {
-    // uint256(keccak256("SETTLED" ++ seriesId_be64))
+fn settled_token_id_tags_the_series_id() {
     let series_id = sid(7);
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(series_id.as_bytes());
-    assert_eq!(
-        runtime::settled_token_id(series_id),
-        U256::from_be_bytes(keccak256(&buf).0)
-    );
+    let issued = U256::from_be_slice(series_id.as_bytes());
+    let settled = runtime::settled_token_id(series_id);
+    let tag: U256 = U256::from(1u8) << 112;
+
+    // Solidity derives the same value; the tag sits above the 14-byte series-id space, so the two
+    // id classes cannot collide and clearing it recovers the series.
+    assert!(issued < tag);
+    assert_eq!(settled, issued | tag);
+    assert_eq!(settled & !tag, issued);
 }
 
 #[test]

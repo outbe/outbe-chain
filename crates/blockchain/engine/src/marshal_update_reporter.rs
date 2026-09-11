@@ -174,7 +174,7 @@ mod tests {
             let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
             let (ack, waiter) = Exact::handle();
 
-            let feedback = reporter.report(Update::Block(make_test_block(0x01), ack));
+            let feedback = reporter.report(Update::Block(make_test_block(0x01).into(), ack));
             assert!(
                 matches!(feedback, commonware_actor::Feedback::Ok),
                 "report must succeed when both mailboxes are open"
@@ -218,7 +218,7 @@ mod tests {
             let (mut reporter, mut exec_rx, mut pm_rx) = build_reporter();
             let (ack, waiter) = Exact::handle();
 
-            let feedback = reporter.report(Update::Block(make_test_block(0x02), ack));
+            let feedback = reporter.report(Update::Block(make_test_block(0x02).into(), ack));
             assert!(
                 matches!(feedback, commonware_actor::Feedback::Ok),
                 "report must succeed when both mailboxes are open"

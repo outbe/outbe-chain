@@ -3,7 +3,6 @@ use std::sync::Arc;
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{B256, U256};
 use alloy_rlp::Encodable as _;
-use either::Either;
 use outbe_evm::{AccountedParentArtifact, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
 use outbe_primitives::{
     consensus::OUTBE_MAX_BLOCK_SIZE,
@@ -25,7 +24,7 @@ use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{
-    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, BlockExecutor},
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
     ConfigureEvm, Evm, NextBlockEnvAttributes, RecoveredTx,
 };
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
@@ -126,7 +125,7 @@ where
         let BuildArguments {
             mut cached_reads,
             execution_cache: _,
-            trie_handle,
+            mut state_root_handle,
             config,
             cancel,
             best_payload,
@@ -135,6 +134,7 @@ where
             parent_header,
             attributes,
             payload_id,
+            parent_block_info: _,
         } = config;
 
         let state_provider = self.provider.state_by_block_hash(parent_header.hash())?;
@@ -268,10 +268,11 @@ where
         ));
         let mut total_fees = U256::ZERO;
 
-        if let Some(ref handle) = trie_handle {
+        if let Some(handle) = state_root_handle.as_mut() {
             builder
-                .executor_mut()
-                .set_state_hook(Some(Box::new(handle.state_hook())));
+                .evm_mut()
+                .db_mut()
+                .set_state_hook(Some(Box::new(handle.take_state_hook())));
         }
 
         if let Err(err) = builder.apply_pre_execution_changes() {
@@ -390,7 +391,7 @@ where
                 {
                     best_txs.mark_invalid(
                         &pool_tx,
-                        &InvalidPoolTransactionError::ExceedsGasLimit(
+                        InvalidPoolTransactionError::ExceedsGasLimit(
                             pool_tx.gas_limit(),
                             block_gas_limit,
                         ),
@@ -413,7 +414,7 @@ where
                 if is_osaka && estimated_block_size > MAX_RLP_BLOCK_SIZE {
                     best_txs.mark_invalid(
                         &pool_tx,
-                        &InvalidPoolTransactionError::OversizedData {
+                        InvalidPoolTransactionError::OversizedData {
                             size: estimated_block_size,
                             limit: MAX_RLP_BLOCK_SIZE,
                         },
@@ -428,7 +429,7 @@ where
                 if estimated_block_size > OUTBE_MAX_BLOCK_SIZE {
                     best_txs.mark_invalid(
                         &pool_tx,
-                        &InvalidPoolTransactionError::OversizedData {
+                        InvalidPoolTransactionError::OversizedData {
                             size: estimated_block_size,
                             limit: OUTBE_MAX_BLOCK_SIZE,
                         },
@@ -442,7 +443,7 @@ where
                     if block_blob_count + tx_blob_count > max_blob_count {
                         best_txs.mark_invalid(
                             &pool_tx,
-                            &InvalidPoolTransactionError::Eip4844(
+                            InvalidPoolTransactionError::Eip4844(
                                 Eip4844PoolTransactionError::TooManyEip4844Blobs {
                                     have: block_blob_count + tx_blob_count,
                                     permitted: max_blob_count,
@@ -462,7 +463,7 @@ where
                         Some(sidecar) if is_osaka && !sidecar.is_eip7594() => {
                             best_txs.mark_invalid(
                                 &pool_tx,
-                                &InvalidPoolTransactionError::Eip4844(
+                                InvalidPoolTransactionError::Eip4844(
                                     Eip4844PoolTransactionError::UnexpectedEip4844SidecarAfterOsaka,
                                 ),
                             );
@@ -472,7 +473,7 @@ where
                         Some(_) => {
                             best_txs.mark_invalid(
                             &pool_tx,
-                            &InvalidPoolTransactionError::Eip4844(
+                            InvalidPoolTransactionError::Eip4844(
                                 Eip4844PoolTransactionError::UnexpectedEip7594SidecarBeforeOsaka,
                             ),
                         );
@@ -481,7 +482,7 @@ where
                         None => {
                             best_txs.mark_invalid(
                                 &pool_tx,
-                                &InvalidPoolTransactionError::Eip4844(
+                                InvalidPoolTransactionError::Eip4844(
                                     Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
                                 ),
                             );
@@ -520,7 +521,7 @@ where
                         if !error.is_nonce_too_low() {
                             best_txs.mark_invalid(
                                 &pool_tx,
-                                &InvalidPoolTransactionError::Consensus(
+                                InvalidPoolTransactionError::Consensus(
                                     InvalidTransactionError::TxTypeNotSupported,
                                 ),
                             );
@@ -590,7 +591,7 @@ where
             );
         }
 
-        let outcome = if let Some(mut handle) = trie_handle {
+        let outcome = if let Some(mut handle) = state_root_handle {
             // CE end-block cleanup is consensus state. Deliver its zeroing
             // changes to the parallel trie task before detaching the hook and
             // freezing the precomputed root.
@@ -604,7 +605,7 @@ where
                 .executor_mut()
                 .prepare_final_header_artifacts(attributes.timestamp_millis_part())
                 .map_err(PayloadBuilderError::evm)?;
-            builder.executor_mut().set_state_hook(None);
+            builder.evm_mut().db_mut().set_state_hook(None);
             match handle.state_root() {
                 Ok(outcome) => builder.finish(
                     state_provider.as_ref(),
@@ -627,6 +628,7 @@ where
             hashed_state,
             trie_updates,
             block,
+            block_access_list,
         } = outcome;
 
         let requests = chain_spec
@@ -651,8 +653,8 @@ where
         let executed_block = BuiltPayloadExecutedBlock::<OutbePrimitives> {
             recovered_block: recovered_block.clone(),
             execution_output,
-            hashed_state: Either::Left(Arc::new(hashed_state)),
-            trie_updates: Either::Left(Arc::new(trie_updates)),
+            hashed_state: Arc::new(hashed_state),
+            trie_updates: Arc::new(trie_updates),
         };
 
         let sealed_block = Arc::new(recovered_block.sealed_block().clone());
@@ -684,9 +686,13 @@ where
             }));
         }
 
-        let inner =
-            EthBuiltPayload::<OutbePrimitives>::new(sealed_block, total_fees, requests, None)
-                .with_sidecars(blob_sidecars);
+        let inner = EthBuiltPayload::<OutbePrimitives>::new(
+            recovered_block,
+            total_fees,
+            requests,
+            block_access_list.map(|bal| alloy_rlp::encode(&bal).into()),
+        )
+        .with_sidecars(blob_sidecars);
         let payload = OutbeBuiltPayload::new(inner, Some(executed_block));
 
         Ok(BuildOutcome::Better {
@@ -828,7 +834,7 @@ mod tests {
     }
 
     impl BestTransactions for TestBestTransactions {
-        fn mark_invalid(&mut self, _transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
+        fn mark_invalid(&mut self, _transaction: &Self::Item, kind: InvalidPoolTransactionError) {
             assert!(
                 matches!(kind, InvalidPoolTransactionError::ExceedsGasLimit(_, _)),
                 "boundary transaction must only be rejected by the gas reservation: {kind}"

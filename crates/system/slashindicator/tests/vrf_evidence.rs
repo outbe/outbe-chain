@@ -70,8 +70,8 @@ use outbe_validatorset::state::{
     committee_set_hash_v2, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
-use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 // ---------------------------------------------------------------------------
 // Fixture constants - chosen so admissibility checks pass by default and
@@ -183,10 +183,11 @@ fn build_cert(
     valid_vrf: bool,
 ) -> HybridCertificate<MinSig> {
     let participants = dkg.keys.len();
-    let signers = Signers::from(
-        participants,
+    let signers = Signers::new(
+        participants as u32,
         signer_indices.iter().copied().map(Participant::new),
-    );
+    )
+    .unwrap();
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
     // finalize votes bind the ordered committee; build the canonical `Set`
@@ -197,8 +198,9 @@ fn build_cert(
         .iter()
         .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
         .collect();
-    let bls_aggregated_vote =
-        aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
+    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
+    );
 
     let vrf_signer = if valid_vrf {
         dkg.vrf_threshold_private.clone()

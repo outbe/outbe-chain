@@ -18,12 +18,13 @@ library CreateSeriesLib {
 
     function params(uint32 worldwideDay, uint32 issuedIntexCount, uint32 callNoticePeriod)
         internal
-        pure
+        view
         returns (IIntexNFT1155.CreateSeriesParams memory)
     {
         return IIntexNFT1155.CreateSeriesParams({
             seriesId: seriesId(worldwideDay),
             worldwideDay: worldwideDay,
+            issuedAt: uint32(block.timestamp),
             issuanceCurrency: 840,
             referenceCurrency: 840,
             issuedIntexCount: issuedIntexCount,

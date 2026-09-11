@@ -91,6 +91,16 @@ const PAYMENT_TOKEN: Record<string, Address> = {
   "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };
 
+/** Block the NFT pair was deployed at, per network. Holdings are read from transfer logs, and the
+ *  scan starts here: an unset network scans from genesis, which public RPCs range-limit. Fill this
+ *  in when the pair is deployed - recovering a deployment block afterwards needs archive state. */
+const NFT_DEPLOY_BLOCK: Record<string, bigint> = {};
+
+/** First block worth scanning for this network's NFT transfer logs. */
+export function intexNftFromBlock(network: string): bigint {
+  return NFT_DEPLOY_BLOCK[network] ?? 0n;
+}
+
 /** Resolve a contract address for a network, or throw a clear error. */
 export function intexAddress(network: string, key: keyof IntexAddresses): Address {
   let addr: Address | undefined;

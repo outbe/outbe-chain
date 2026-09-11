@@ -1,9 +1,11 @@
 //! IntexFactory runtime use-cases: issuance, settlement, Promis mining.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
+use outbe_common::settlement::floor_to_asset_units;
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
+use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -18,6 +20,7 @@ use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
     ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -88,6 +91,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
+                issuedAt: issued_at,
                 issuedIntexCount: params.issued_intex_count,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
@@ -282,28 +286,23 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 /// on the six-decimal scale independently of native COEN denomination.
 const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
-/// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into payment-token
-/// minor units, rounded up in favor of the reserve receiving the settlement.
-pub(crate) fn product_to_payment_units(product: U256, payment_decimals: u8) -> Result<U256> {
-    const MAX_PAYMENT_DECIMALS: u8 = 18;
-
-    if payment_decimals > MAX_PAYMENT_DECIMALS {
-        return Err(IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals).into());
-    }
-
-    let payment_decimals = u32::from(payment_decimals);
-    if payment_decimals < PRODUCT_DECIMALS {
-        Ok(
-            product
-                .div_ceil(U256::from(10u64).pow(U256::from(PRODUCT_DECIMALS - payment_decimals))),
-        )
-    } else if payment_decimals > PRODUCT_DECIMALS {
-        product
-            .checked_mul(U256::from(10u64).pow(U256::from(payment_decimals - PRODUCT_DECIMALS)))
-            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))
-    } else {
-        Ok(product)
-    }
+/// Cost of `amount` units in payment-token minor units, floored once over the
+/// whole operation. `rate` is `(COEN/target, COEN/reference)` when the token is
+/// not in the reference currency.
+pub(crate) fn settlement_units(
+    product: U256,
+    amount: U256,
+    rate: Option<(U256, U256)>,
+    payment_decimals: u8,
+) -> Result<U256> {
+    let overflow = || PrecompileError::Revert("settlement cost overflow".into());
+    let obligation = product.checked_mul(amount).ok_or_else(overflow)?;
+    let (numerator, denominator) = match rate {
+        Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
+        None => (obligation, U256::ONE),
+    };
+    floor_to_asset_units(numerator, denominator, PRODUCT_DECIMALS, payment_decimals)
+        .map_err(|e| IntexFactoryError::from(e).into())
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -850,9 +849,7 @@ fn discharge_cost(
     }
 
     let currency = accept_payment_token(storage, claim.asset, series)?;
-    let cost = cost_in_token(storage, series, claim.asset, currency)?
-        .checked_mul(amount)
-        .ok_or_else(|| PrecompileError::Revert("settlement cost overflow".into()))?;
+    let cost = cost_in_token(storage, series, claim.asset, currency, amount)?;
     if claim.spend_amount < cost {
         return Err(IntexFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
@@ -874,13 +871,14 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
 }
 
-/// What settling one Intex of `series_id` with `payment_token` costs, and which of
-/// the series' two currencies that token settles on. Rejects a token the series
-/// does not accept.
+/// What settling `amount` units of `series_id` with `payment_token` costs, and
+/// which of the series' two currencies that token settles on. Priced exactly as
+/// `settle` charges it. Rejects a token the series does not accept.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     payment_token: Address,
+    amount: U256,
 ) -> Result<(u16, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     let currency = accept_payment_token(storage, payment_token, &series)?;
@@ -890,7 +888,7 @@ pub fn quote_settlement(
     };
     Ok((
         settlement_currency,
-        cost_in_token(storage, &series, payment_token, currency)?,
+        cost_in_token(storage, &series, payment_token, currency, amount)?,
     ))
 }
 
@@ -901,15 +899,15 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// Per-Intex cost in `token`'s minor units. The Cost Amount is denominated in the
-/// reference currency; an issuance-currency token is charged at the live COEN cross
-/// rate. Multiplying scaling is exact and precedes the conversion; dividing scaling
-/// follows it, and nested ceilings collapse to one net rounding, always upwards.
+/// Cost of `amount` units in `token`'s minor units. The Cost Amount is denominated
+/// in the reference currency; an issuance-currency token is charged at the live
+/// COEN cross rate, folded into the same fraction so the operation is floored once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
     token: Address,
     currency: PaymentCurrency,
+    amount: U256,
 ) -> Result<U256> {
     let payment_decimals = erc20_decimals(storage, token)?;
     let product = series
@@ -920,19 +918,14 @@ fn cost_in_token(
         PaymentCurrency::Reference => series.reference_currency,
         PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let convert = |amount| {
-        outbe_oracle::api::fresh_currency_cross_rate(
-            storage.clone(),
-            series.reference_currency,
-            target_iso,
-            amount,
-        )
-    };
-    if u32::from(payment_decimals) >= PRODUCT_DECIMALS {
-        convert(product_to_payment_units(product, payment_decimals)?)
+    let rate = if target_iso == series.reference_currency {
+        None
     } else {
-        product_to_payment_units(convert(product)?, payment_decimals)
-    }
+        let from = fresh_coen_rate_for(storage.clone(), series.reference_currency)?;
+        let to = fresh_coen_rate_for(storage.clone(), target_iso)?;
+        Some((to, from))
+    };
+    settlement_units(product, amount, rate, payment_decimals)
 }
 
 /// Rejects `token` unless the router holds a vault for it and the token reports
@@ -1043,12 +1036,11 @@ pub fn mine_promis(
     Ok(promis_amount)
 }
 
-/// Settled token id = `uint256(keccak256("SETTLED" ++ seriesId))`.
+/// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
+/// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
+/// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    let mut buf = Vec::with_capacity(7 + SERIES_ID_LEN);
-    buf.extend_from_slice(b"SETTLED");
-    buf.extend_from_slice(series_id.as_bytes());
-    U256::from_be_bytes(keccak256(&buf).0)
+    U256::from_be_slice(series_id.as_bytes()) | SETTLED_TAG
 }
 
 /// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.

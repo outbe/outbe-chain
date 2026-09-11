@@ -1,3 +1,4 @@
+use super::TEST_CHAIN_ID;
 use alloy_primitives::{address, B256};
 use alloy_sol_types::SolEvent;
 use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
@@ -49,7 +50,7 @@ fn tee_policy(
 ) -> TeePolicyV1 {
     TeePolicyV1 {
         policy_version,
-        chain_id: alloy_primitives::U256::from(1).to_be_bytes(),
+        chain_id: alloy_primitives::U256::from(TEST_CHAIN_ID).to_be_bytes(),
         genesis_hash,
         activation_height,
         predecessor_policy_hash,
@@ -86,7 +87,7 @@ fn tee_policy(
 fn with_vote<F: FnOnce(outbe_primitives::storage::StorageHandle)>(f: F) {
     let mut provider =
         outbe_primitives::storage::hashmap::HashMapStorageProvider::new_with_chain_identity(
-            1,
+            TEST_CHAIN_ID,
             B256::repeat_byte(0x01),
         );
     provider.set_block_number(1);
@@ -151,7 +152,7 @@ fn approved_vote_proposal_schedules_update_and_activates() {
         assert_eq!(scheduled.activation_height, activation);
 
         let ctx = BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(activation, 0, 1),
+            outbe_primitives::block::BlockContext::empty_for_tests(activation, 0, TEST_CHAIN_ID),
             storage.clone(),
         );
         update
@@ -470,7 +471,8 @@ fn unknown_target_is_rejected_at_creation() {
 
 #[test]
 fn expired_update_proposal_does_not_emit_upgrade_activated() {
-    let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+    let mut provider =
+        outbe_primitives::storage::hashmap::HashMapStorageProvider::new(TEST_CHAIN_ID);
     let storage = outbe_primitives::storage::StorageHandle::new(&mut provider);
     setup_validators(storage.clone());
 

@@ -204,7 +204,10 @@ fn verify_v2_certificate_low_level(
             committee_size: participants_len,
         });
     }
-    let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(signer_pubkeys);
+    let aggregate_pk = aggregate::combine_public_keys::<MinPk, _>(
+        commonware_utils::iter::NonEmpty::try_new(signer_pubkeys.into_iter())
+            .ok_or(V2VerifyError::BlsAggregateInvalid)?,
+    );
     aggregate::verify_same_message::<MinPk>(
         &aggregate_pk,
         binding.namespace,
