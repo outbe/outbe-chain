@@ -168,10 +168,12 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "intex_call_daily",
             period_seconds: INTEX_CALL_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history and marks series Called; no
+            // Reads finalized oracle VWAP history to qualify and call series; no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
+            // The sweeps take their day from the block clock, so a missed slot
+            // would only walk the same day again.
+            coalesces_backlog: true,
             handler: TriggerHandler::IntexDaily,
         },
         TriggerSpec {
@@ -193,10 +195,12 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "gem_call_daily",
             period_seconds: GEM_CALL_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
+            // Reads finalized oracle VWAP history to qualify and force-call gems;
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
+            // The sweeps take their day from the block clock, so a missed slot
+            // would only walk the same day again.
+            coalesces_backlog: true,
             handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
@@ -301,8 +305,12 @@ mod protocol_parameter_tests {
         // The gem sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
-            (GEM_CALL_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
-            (86_400, 86_400)
+            (
+                GEM_CALL_PERIOD_SECONDS,
+                GEM_POSITION_PERIOD_SECONDS,
+                INTEX_NOTIFY_PERIOD_SECONDS
+            ),
+            (86_400, 86_400, 300)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
@@ -320,7 +328,7 @@ mod protocol_parameter_tests {
             configured[4].handler,
             TriggerHandler::AuctionClearing
         ));
-        assert_eq!(configured[5].period_seconds, 300);
+        assert_eq!(configured[5].period_seconds, INTEX_NOTIFY_PERIOD_SECONDS);
         assert!(matches!(configured[5].handler, TriggerHandler::IntexNotify));
         assert_eq!(configured[6].period_seconds, 86_400);
         assert_eq!(configured[6].start_offset_seconds, 0);
