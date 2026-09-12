@@ -18,15 +18,15 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
-    IntexCallDaily = 1,
+    IntexDaily = 1,
     /// Reserved historical identifier; no active trigger uses it.
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
-    GemCallDaily = 4,
+    GemDaily = 4,
     AuctionClearing = 5,
     IntexNotify = 6,
     CredisCallDaily = 7,
-    NodCallDaily = 8,
+    NodDaily = 8,
     GemPositionDaily = 9,
 }
 
@@ -164,7 +164,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::ProtocolCycle,
         },
         TriggerSpec {
-            id: TriggerId::IntexCallDaily.as_u32(),
+            id: TriggerId::IntexDaily.as_u32(),
             label: "intex_daily",
             period_seconds: INTEX_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
@@ -191,7 +191,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionAdvance,
         },
         TriggerSpec {
-            id: TriggerId::GemCallDaily.as_u32(),
+            id: TriggerId::GemDaily.as_u32(),
             label: "gem_daily",
             period_seconds: GEM_DAILY_PERIOD_SECONDS,
             start_offset_seconds: 0,
@@ -240,7 +240,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::CredisCallDaily,
         },
         TriggerSpec {
-            id: TriggerId::NodCallDaily.as_u32(),
+            id: TriggerId::NodDaily.as_u32(),
             label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,

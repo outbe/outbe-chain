@@ -1699,7 +1699,7 @@ fn nod_daily_qualifies_before_calling_and_does_not_repeat_between_utc_days() {
                     .last_executed_at
                     .write(&spec.id, midnight + 10 * SECONDS_PER_DAY)?;
             }
-            let trigger = TriggerId::NodCallDaily.as_u32();
+            let trigger = TriggerId::NodDaily.as_u32();
             cycle.last_executed_at.write(&trigger, midnight - 1)?;
             let oracle = OracleContract::new(storage.clone());
             let index =
