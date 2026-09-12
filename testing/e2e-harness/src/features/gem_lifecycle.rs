@@ -46,8 +46,12 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const QUALIFY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
-/// Past the DEV notice (10 minutes) with room for the sweep to reach the queue.
-const FORFEIT_TIMEOUT_SECS: u64 = 900;
+/// Once the bucket is closed the sweep reaches the gem in the next block or two.
+const FORFEIT_TIMEOUT_SECS: u64 = 120;
+/// The expiry queue buckets deadlines by the hour they fall in.
+const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Slack past the deadline so the notice is spent before the bucket is closed.
+const EXPIRY_MARGIN_SECS: u64 = 30;
 /// The position sweep runs after its deadline, on the same cadence.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
@@ -450,6 +454,44 @@ fn gem_is_forfeited(world: &mut World) {
         .unallocated_before_forfeit
         .expect("the unallocated pool was read when the gem was called");
 
+    // The notice is waited out for real, but the sweep opens a bucket only once its
+    // hour has closed - so once the notice is spent the gem is re-queued on a deadline
+    // already behind a closed bucket rather than idling out the rest of the hour.
+    let called = read_gem(&url, gem_id);
+    let notice = u64::from(called.callNoticePeriod);
+    assert!(
+        notice <= EXPIRY_BUCKET_SECS,
+        "call notice is {notice}s: the DEV parameter profile is not active, so this \
+         scenario would wait out the production window"
+    );
+    let notice_end = called.calledAt + notice + EXPIRY_MARGIN_SECS;
+    let catch_up = Instant::now() + Duration::from_secs(notice + CALL_TIMEOUT_SECS);
+    loop {
+        let now = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp");
+        if now >= notice_end {
+            eth::send_call(
+                &url,
+                addresses::GEM_ADDR,
+                DEPLOYER_KEY,
+                &IGemTestArming::closeCallNoticeForTestCall {
+                    gemId: gem_id,
+                    deadline: now.saturating_sub(EXPIRY_BUCKET_SECS),
+                },
+                None,
+            )
+            .expect("close the expiry bucket the gem sits in");
+            break;
+        }
+        assert!(
+            Instant::now() < catch_up,
+            "gem {gem_id} never reached its call deadline {notice_end}, stuck at {now}"
+        );
+        sleep(Duration::from_secs(2));
+    }
+
     let deadline = Instant::now() + Duration::from_secs(FORFEIT_TIMEOUT_SECS);
     loop {
         if gem_count(&url, merchant).is_zero() {
@@ -538,6 +580,7 @@ fn position_returns_capacity(world: &mut World) {
 alloy_sol_types::sol! {
     interface IGemTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
+        function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
     }
 }
 
