@@ -6146,7 +6146,48 @@ fn read_pending_late_result(
     }
 }
 
-#[then("validator 3 safely handles its correct late result without changing the canonical outcome or votes")]
+// Completed quorum evidence is immutable, but an unfilled participant slot
+// remains open until the exclusive response deadline. Build the exact expected
+// projection from the pre-release snapshot and the canonical accepted vote.
+fn late_result_expected_accountability(
+    baseline: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    late_vote: Option<(u64, Vec<u8>)>,
+    height: u64,
+    deadline: u64,
+) -> eyre::Result<crate::world::rpc::OcompPublicVoteAccountabilityV1> {
+    ensure!(baseline.slot_validator_indexes == [0, 1, 2]);
+    ensure!(baseline.member_count == 4 && baseline.quorum_threshold == 3);
+    ensure!(baseline.closed_height.is_none());
+    let mut expected = baseline.clone();
+    if let Some((inclusion, signature)) = late_vote {
+        ensure!(
+            baseline
+                .quorum_height
+                .is_some_and(|quorum| inclusion > quorum)
+                && inclusion < deadline
+                && inclusion <= height,
+            "late vote must be finalized after quorum and before the exclusive deadline"
+        );
+        expected.slot_validator_indexes.push(3);
+        expected.slot_first_signatures.push((3, signature));
+    }
+    if height >= deadline {
+        let timely = if expected.slot_validator_indexes.len() == 4 {
+            0x0f
+        } else {
+            0x07
+        };
+        expected.closed_height = Some(deadline);
+        expected.timely_bitmap = Some(vec![timely]);
+        expected.matching_bitmap = Some(vec![timely]);
+        expected.missing_bitmap = Some(vec![0x0f ^ timely]);
+        expected.divergent_bitmap = Some(vec![0]);
+        expected.equivocation_bitmap = Some(vec![0]);
+    }
+    Ok(expected)
+}
+
+#[then("validator 3 safely handles its correct late result without changing the canonical outcome or quorum")]
 fn late_local_result_is_not_fatal(world: &mut World) {
     let activation = world
         .state
@@ -6253,6 +6294,67 @@ fn late_local_result_is_not_fatal(world: &mut World) {
         .ocomp_vote_accountability
         .as_ref()
         .expect("pre-release canonical votes");
+    let delegate = world
+        .ocomp
+        .ocomp_delegate_address(3)
+        .expect("validator-3 delegate");
+    let canonical_result =
+        LysisResultV1::decode_canonical(&observation.canonical_result, &poc_schema_limits())
+            .expect("decode exact late result");
+    let transactions = world
+        .rpc
+        .finalized_ocomp_result_vote_transactions_on(
+            primary,
+            finalized_before + 1,
+            checkpoint.height,
+        )
+        .expect("enumerate canonical post-release votes and matching receipts");
+    let mut late_vote = None;
+    for transaction in transactions
+        .iter()
+        .filter(|tx| tx.success && tx.signer == delegate)
+    {
+        let bytes = world
+            .rpc
+            .ocomp_result_vote_bytes_on(primary, transaction.transaction_hash)
+            .expect("read canonical validator-3 vote");
+        let vote = ResultVoteV1::decode_canonical(&bytes, &poc_schema_limits())
+            .expect("decode canonical validator-3 vote");
+        if vote.job_id != job_id {
+            continue;
+        }
+        assert_eq!(vote.result, canonical_result);
+        assert_eq!(vote.attempt, request.attempt);
+        assert_eq!(
+            vote.result_validator_set_epoch,
+            baseline_accountability.result_validator_set_epoch
+        );
+        assert_eq!(
+            vote.result_committee_set_hash,
+            baseline_accountability.result_committee_set_hash
+        );
+        assert_eq!(
+            vote.result_ocomp_binding_hash,
+            baseline_accountability.result_ocomp_binding_hash
+        );
+        assert!(transaction.block_number >= request.open_height);
+        assert!(
+            transaction.block_number < request.deadline_height,
+            "validator-3 vote succeeded at or after the exclusive deadline"
+        );
+        // The first accepted signature owns the slot; later identical retries
+        // cannot replace it. Canonical block enumeration is height ordered.
+        if late_vote.is_none() {
+            late_vote = Some((transaction.block_number, vote.signature_rs.to_vec()));
+        }
+    }
+    let expected_accountability = late_result_expected_accountability(
+        baseline_accountability,
+        late_vote,
+        checkpoint.height,
+        request.deadline_height,
+    )
+    .expect("exact late-vote and natural deadline expectations");
     for port in world.validators.committee_ports() {
         let before = world
             .rpc
@@ -6276,33 +6378,9 @@ fn late_local_result_is_not_fatal(world: &mut World) {
             &accountability
         ));
         assert_eq!(
-            accountability.slot_validator_indexes,
-            baseline_accountability.slot_validator_indexes
+            accountability, expected_accountability,
+            "late result may only add validator-3's canonical timely matching vote and deadline summary"
         );
-        assert_eq!(
-            accountability.slot_first_signatures,
-            baseline_accountability.slot_first_signatures
-        );
-        if checkpoint.height >= request.deadline_height {
-            dynamic_deadline_validate_accountability(
-                &accountability,
-                baseline_accountability,
-                &[0, 1, 2],
-                request.deadline_height,
-                (
-                    baseline_accountability.member_count,
-                    baseline_accountability.quorum_threshold,
-                ),
-            )
-            .expect("natural deadline closure preserves exactly the original votes");
-            assert_eq!(accountability.timely_bitmap, Some(vec![0x07]));
-            assert_eq!(accountability.matching_bitmap, Some(vec![0x07]));
-            assert_eq!(accountability.missing_bitmap, Some(vec![0x08]));
-            assert_eq!(accountability.divergent_bitmap, Some(vec![0x00]));
-            assert_eq!(accountability.equivocation_bitmap, Some(vec![0x00]));
-        } else {
-            assert_eq!(&accountability, baseline_accountability);
-        }
     }
     world
         .localnet
@@ -8362,6 +8440,48 @@ mod tests {
             &expected,
             &replaced_signature
         ));
+    }
+
+    #[test]
+    fn late_result_accountability_covers_timely_vote_and_pruned_result_at_close() {
+        let baseline = completed_accountability();
+        for (vote, timely, missing) in [(None, 0x07, 0x08), (Some((94, vec![0xa3])), 0x0f, 0x00)] {
+            let open = super::late_result_expected_accountability(&baseline, vote.clone(), 95, 100)
+                .unwrap();
+            assert!(completed_accountability_is_preserved(&baseline, &open));
+            assert_eq!(open.closed_height, None);
+            assert_eq!(
+                open.slot_validator_indexes.len(),
+                if vote.is_some() { 4 } else { 3 }
+            );
+            let closed =
+                super::late_result_expected_accountability(&baseline, vote, 100, 100).unwrap();
+            assert!(completed_accountability_is_preserved(&baseline, &closed));
+            assert_eq!(closed.slot_first_signatures, open.slot_first_signatures);
+            assert_eq!(closed.closed_height, Some(100));
+            assert_eq!(closed.timely_bitmap, Some(vec![timely]));
+            assert_eq!(closed.matching_bitmap, Some(vec![timely]));
+            assert_eq!(closed.missing_bitmap, Some(vec![missing]));
+            assert_eq!(closed.divergent_bitmap, Some(vec![0]));
+            assert_eq!(closed.equivocation_bitmap, Some(vec![0]));
+        }
+    }
+
+    #[test]
+    fn late_result_accountability_rejects_unfinalized_and_out_of_window_votes() {
+        let baseline = completed_accountability();
+        for inclusion in [91, 92, 96, 100, 101] {
+            assert!(
+                super::late_result_expected_accountability(
+                    &baseline,
+                    Some((inclusion, vec![0xa3])),
+                    95,
+                    100,
+                )
+                .is_err(),
+                "unexpected acceptance at {inclusion}"
+            );
+        }
     }
 
     #[test]
