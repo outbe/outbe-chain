@@ -753,7 +753,11 @@ fn surviving_validators_fail_closed(world: &mut World) {
 #[then("the old committee keeps finalizing through the stalled reshare")]
 fn old_committee_keeps_finalizing(world: &mut World) {
     let kill_h = world.state.marker_height.expect("kill height");
-    let deadline = Instant::now() + Duration::from_secs(300);
+    // The fault precedes the prepare window. Include reaching that window with
+    // one founder offline, then the real 120-second failed-ceremony timeout.
+    // In SGX, missed proposer rounds left the survivors at height 54 after five
+    // minutes, before the configured freeze at 80 (epoch 180, prepare 100).
+    let deadline = Instant::now() + Duration::from_secs(1200);
     let ports = dkg_ports(world, &[0, 1, 2]).expect("three owned DKG survivors");
     let target = world
         .rpc
@@ -786,7 +790,9 @@ fn old_committee_keeps_finalizing(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "stalled target did not retry with fresh survivor finality"
+            "stalled target did not retry with fresh survivor finality: \
+             finalized={}, required_progress={target}, fault_height={kill_h}",
+            point.height
         );
     }
 }
