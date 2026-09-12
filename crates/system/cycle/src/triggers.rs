@@ -26,7 +26,7 @@ pub enum TriggerId {
     AuctionClearing = 5,
     IntexNotify = 6,
     CredisCallDaily = 7,
-    NodDaily = 8,
+    NodCallDaily = 8,
     GemPositionDaily = 9,
 }
 
@@ -240,7 +240,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::CredisCallDaily,
         },
         TriggerSpec {
-            id: TriggerId::NodDaily.as_u32(),
+            id: TriggerId::NodCallDaily.as_u32(),
             label: "nod_daily",
             period_seconds: 86_400,
             start_offset_seconds: 0,
