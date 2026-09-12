@@ -181,6 +181,12 @@ impl Service {
 const BLOCK: u16 = 21;
 const RADICLE_BLOCK: u16 = Service::RADICLE.len() as u16;
 const RADICLE_BASE: u16 = 50_000;
+#[cfg(not(target_os = "macos"))]
+const SCANNED_RADICLE_BASE: u16 = RADICLE_BASE;
+// macOS's default ephemeral interval extends through u16::MAX; start below it
+// when scanning. The explicit static layout retains the same ports everywhere.
+#[cfg(target_os = "macos")]
+const SCANNED_RADICLE_BASE: u16 = 30_000;
 
 /// Port allocator shared by every [`Config`](crate::internal::config::Config)
 /// clone of a run.
@@ -220,7 +226,11 @@ impl Ports {
                 blocks: HashMap::new(),
                 radicle_blocks: HashMap::new(),
                 cursor: u64::from(NODE_BASE),
-                radicle_cursor: u64::from(RADICLE_BASE),
+                radicle_cursor: u64::from(if scan {
+                    SCANNED_RADICLE_BASE
+                } else {
+                    RADICLE_BASE
+                }),
                 issued: Vec::new(),
                 scan,
             })),
@@ -256,7 +266,7 @@ impl Ports {
                 blocks: starts.iter().copied().enumerate().collect(),
                 radicle_blocks: HashMap::new(),
                 cursor,
-                radicle_cursor: u64::from(RADICLE_BASE),
+                radicle_cursor: u64::from(SCANNED_RADICLE_BASE),
                 issued: starts
                     .iter()
                     .map(|&start| (start, start + (BLOCK - 1)))
@@ -420,11 +430,33 @@ fn ranges_overlap(left: (u16, u16), right: (u16, u16)) -> bool {
     left.0 <= right.1 && right.0 <= left.1
 }
 
+#[cfg(not(target_os = "macos"))]
 fn ephemeral_port_range() -> Result<(u16, u16)> {
     let path = "/proc/sys/net/ipv4/ip_local_port_range";
     let value = std::fs::read_to_string(path)
         .wrap_err_with(|| format!("read {path} for Radicle port allocation"))?;
     parse_ephemeral_port_range(&value).wrap_err_with(|| format!("parse {path}"))
+}
+
+#[cfg(target_os = "macos")]
+fn ephemeral_port_range() -> Result<(u16, u16)> {
+    let output = std::process::Command::new("/usr/sbin/sysctl")
+        .args([
+            "-n",
+            "net.inet.ip.portrange.first",
+            "net.inet.ip.portrange.last",
+        ])
+        .output()
+        .wrap_err("read macOS ephemeral port range for Radicle port allocation")?;
+    if !output.status.success() {
+        bail!(
+            "read macOS ephemeral port range: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let value =
+        std::str::from_utf8(&output.stdout).wrap_err("decode macOS ephemeral port range")?;
+    parse_ephemeral_port_range(value).wrap_err("parse macOS ephemeral port range")
 }
 
 fn parse_ephemeral_port_range(value: &str) -> Result<(u16, u16)> {

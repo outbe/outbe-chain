@@ -417,6 +417,8 @@ fn serve_mock_prices(listener: TcpListener, state: &MockServerState) {
 }
 
 fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> Result<()> {
+    // Accepted sockets may inherit the listener's nonblocking mode.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = [0_u8; 8_192];
     let mut size = 0;

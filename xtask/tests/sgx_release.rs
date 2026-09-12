@@ -405,8 +405,13 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     assert!(adapter.contains("verify_dcap_native_qvl.py"));
     assert!(adapter.contains("--install-dir"));
 
-    let sgx_release = fs::read_to_string(root.join("xtask/src/release/sgx.rs"))
-        .expect("SGX release implementation");
+    let sgx_release = [
+        fs::read_to_string(root.join("xtask/src/release/sgx/toolchain.rs"))
+            .expect("SGX release implementation"),
+        fs::read_to_string(root.join("xtask/src/release/sgx/commands.rs"))
+            .expect("SGX release implementation"),
+    ]
+    .join("\n");
     assert!(sgx_release.contains("Dockerfile.project-toolchain"));
     assert!(sgx_release.contains("[\"--target\", \"toolchain\", \"--tag\", &image]"));
     assert!(sgx_release.contains("build project toolchain image"));

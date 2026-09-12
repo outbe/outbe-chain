@@ -1201,18 +1201,39 @@ mod owned_committee_tests {
         // Let bash replace itself so the child has the formerly matched argv.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let argv = std::fs::read(format!("/proc/{}/cmdline", survivor.pid())).unwrap();
-            if argv.starts_with(b"outbe-chain node --datadir /another-run/validator-0/data\0") {
+            let observed = Command::new("ps")
+                .args(["-p", &survivor.pid().to_string(), "-o", "args="])
+                .output()
+                .unwrap();
+            assert!(
+                observed.status.success(),
+                "owned fixture must still be alive"
+            );
+            let argv = String::from_utf8(observed.stdout).unwrap();
+            if argv
+                .trim_start()
+                .starts_with("outbe-chain node --datadir /another-run/validator-0/data ")
+            {
                 break;
             }
             assert!(std::time::Instant::now() < deadline);
             sleep(Duration::from_millis(10));
         }
         localnet.kill_validator(0).unwrap();
-        assert!(!std::path::Path::new(&format!("/proc/{}", pids.0)).exists());
+        let stopped = Command::new("ps")
+            .args(["-p", &pids.0.to_string(), "-o", "pid="])
+            .output()
+            .unwrap();
+        assert!(!stopped.status.success() && stopped.stdout.is_empty());
         assert!(!localnet.validators.contains_key(&0));
         assert_eq!(localnet.enclaves.get(&0).unwrap().pid(), pids.1);
-        assert!(std::path::Path::new(&format!("/proc/{}", pids.1)).exists());
+        assert!(localnet
+            .enclaves
+            .get_mut(&0)
+            .unwrap()
+            .exit_status()
+            .unwrap()
+            .is_none());
         assert!(survivor.exit_status().unwrap().is_none());
         assert!(localnet
             .kill_validator(0)
