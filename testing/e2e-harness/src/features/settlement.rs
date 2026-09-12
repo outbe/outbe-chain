@@ -392,6 +392,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
+        350_000,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
             payNoteProof: paynote_proof.into(),
@@ -399,6 +400,10 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
+    eprintln!(
+        "settlement_evidence kind=sponsored_settle_gem tx={} gas_limit=350000 gas_used={}",
+        settle.transaction_hash, settle.receipt["gasUsed"]
+    );
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
 
     let promis_before = promis_balance(&url, owner, &keys.view);
@@ -422,6 +427,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
+        500_000,
         &eth::IGemFactory::minePromisCall {
             gemId: gem_id,
             nonce: pow,
@@ -456,6 +462,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::PROMIS_FACTORY_ADDR,
+        500_000,
         &eth::IPromisFactory::mineCoenCall {
             amount: gem.promisLoad,
             mac: B256::from(burn_mac),

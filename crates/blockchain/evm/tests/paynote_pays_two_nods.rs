@@ -559,9 +559,8 @@ fn measure_settle_gem_gas_with_real_paynote() {
             .gas_price(0)
             .data(calldata.clone())
             // The real proof's Prague calldata floor alone exceeds 300k.
-            // Bound execution by the existing ZeroFee envelope without
-            // weakening transaction validation or claiming a 300k total.
-            .gas_limit(500_000)
+            // The 350k total budget includes calldata and execution.
+            .gas_limit(350_000)
             .build()
             .unwrap();
         tx.chain_id = Some(CHAIN_ID);
@@ -581,7 +580,7 @@ fn measure_settle_gem_gas_with_real_paynote() {
             "successful execution must emit GemSettled"
         );
         let used = outcome.result.tx_gas_used();
-        assert!(used <= 500_000);
+        assert!(used <= 350_000);
         if let revm::context::result::ExecutionResult::Success { gas, .. } = &outcome.result {
             eprintln!("SETTLE_GEM_METER sample={sample} {gas:?}");
         }

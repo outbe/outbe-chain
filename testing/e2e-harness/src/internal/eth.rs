@@ -1384,14 +1384,14 @@ pub(crate) fn install_delegation_for_authority(
 }
 
 /// Submit a canonical sponsored protocol call from an already delegated
-/// signer. The explicit 500k limit is the standard ZeroFee envelope cap;
-/// using the generic revert-friendly 10m helper would intentionally fall
-/// outside sponsorship classification.
+/// signer with the scenario's explicit gas budget. Ordinary sponsored calls
+/// must fit the standard 500k ZeroFee envelope cap.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn send_sponsored_call<C: SolCall>(
     url: &str,
     key: &str,
     to: Address,
+    gas_limit: u64,
     call: &C,
 ) -> Result<MinedCallOutcome> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
@@ -1406,7 +1406,7 @@ pub(crate) fn send_sponsored_call<C: SolCall>(
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
-            .gas_limit(500_000)
+            .gas_limit(gas_limit)
             .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
