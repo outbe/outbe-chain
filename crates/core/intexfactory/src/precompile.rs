@@ -61,6 +61,7 @@ sol! {
             uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
+        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline) external;
     }
 }
 
@@ -142,6 +143,35 @@ pub fn dispatch(
             }
         }
         crate::api::send_issuance(&storage, legs)?;
+        return Ok(Bytes::new());
+    }
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
+        // The sweep opens a bucket only once its hour has closed, so a notice that
+        // lapsed minutes ago would idle out the rest of the hour. Re-queue the group
+        // on a lapsed deadline the sweep will already open.
+        use crate::schema::IntexFactoryContract;
+        use outbe_primitives::storage::types::Storable;
+        use outbe_primitives::time::WorldwideDay;
+
+        let mut factory = IntexFactoryContract::new(storage.clone());
+        let worldwide_day = WorldwideDay::from(call.worldwideDay);
+        let key = IntexFactoryContract::scoped(call.isoCode, worldwide_day.value());
+        let count = factory.called_group_count.read(&key)?;
+        if count == 0 {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "closeCallNoticeForTest: no called group".into(),
+            ));
+        }
+        let mut members = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let word = factory.called_group_members.read(
+                &IntexFactoryContract::group_member_key(call.isoCode, worldwide_day, index),
+            )?;
+            members.push(SeriesId::from_word(word));
+        }
+        factory.remove_called_group(call.isoCode, worldwide_day)?;
+        factory.push_called_group(call.isoCode, worldwide_day, call.deadline, &members)?;
         return Ok(Bytes::new());
     }
     #[cfg(feature = "e2e-test")]
