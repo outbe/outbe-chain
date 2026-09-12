@@ -1180,3 +1180,46 @@ fn an_unindexable_day_price_is_reported_once() {
     assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
     assert_eq!(events[0].utcDay, day);
 }
+
+/// The Called sweep reports a currency it cannot price just as the qualify sweep does:
+/// the day's window price is out of the bin ladder, so the currency waits a day.
+#[test]
+fn an_unindexable_window_price_is_reported_once() {
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    let day = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        seed_issued(&s, 7);
+        outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
+        IntexFactoryContract::new(s.clone())
+            .insert_qualified_group(
+                REFERENCE_ISO,
+                WorldwideDay::new(7),
+                U256::from(EXPECTED_TRIGGER),
+                &[sid(7)],
+            )
+            .unwrap();
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let day = previous_date_key(timestamp_to_date_key(MATURE_TS));
+        fill_days(&oracle, day, pair, 30, U256::MAX);
+
+        assert_eq!(
+            called::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(),
+            0
+        );
+        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Qualified);
+        day
+    });
+
+    let events: Vec<_> = storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::CallScanSkipped::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
+    assert_eq!(events[0].utcDay, day);
+}

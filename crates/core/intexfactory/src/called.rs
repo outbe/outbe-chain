@@ -185,7 +185,14 @@ fn call_currency(
     let p_bin = match IntexFactoryContract::price_to_bin(window.p_star) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency");
+            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency for the day");
+            crate::runtime::emit_event(
+                &ctx.storage,
+                crate::precompile::IIntexFactory::CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: last_closed_day,
+                },
+            )?;
             return Ok((0, true));
         }
     };

@@ -248,6 +248,25 @@
   },
   {
     "type": "event",
+    "name": "CallScanSkipped",
+    "inputs": [
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "utcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ContributorBatchPaid",
     "inputs": [
       {
